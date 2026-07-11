@@ -4,19 +4,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Foray Planner</title>
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    />
-    <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
     <header>
       <h1>🍄 Foray Planner</h1>
       <p class="home" id="home-line">
-        Location: <strong id="home-name">{{ home.name }}</strong>
-        (<span id="home-coords">{{ "%.3f"|format(home.lat) }}, {{ "%.3f"|format(home.lng) }}</span>) ·
-        radius {{ home.radius_km|int }} km
+        Location: <strong id="home-name">…</strong>
+        (<span id="home-coords">…</span>) · radius <span id="home-radius">…</span> km
       </p>
       <form class="locbar" id="locform">
         <input
@@ -60,7 +54,6 @@
       </aside>
     </main>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="/static/app.js"></script>
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

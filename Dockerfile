@@ -1,5 +1,18 @@
 # syntax=docker/dockerfile:1
 
+# ---- frontend: build the Vite/TypeScript client bundle ----
+FROM node:22-slim AS frontend
+WORKDIR /app/frontend
+
+# Install deps first, keyed only on the lockfiles, so source edits don't bust the cache.
+COPY frontend/package.json frontend/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+
+# Then the client sources. `npm run build` type-checks and emits the bundle to
+# ../src/foray/web/dist (i.e. /app/src/foray/web/dist), copied into the runtime below.
+COPY frontend/ ./
+RUN npm run build
+
 # ---- builder: resolve + install deps and the project with uv ----
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
@@ -38,6 +51,8 @@ RUN useradd --uid 1000 --create-home foray \
 
 WORKDIR /app
 COPY --from=builder --chown=foray:foray /app /app
+# Overlay the built client bundle (gitignored, so not in the uv builder's context).
+COPY --from=frontend --chown=foray:foray /app/src/foray/web/dist /app/src/foray/web/dist
 
 USER foray
 VOLUME ["/data"]

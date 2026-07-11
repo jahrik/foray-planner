@@ -9,10 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from foray import geocode, scoring
@@ -20,8 +19,11 @@ from foray.cache import connect
 from foray.config import Config, Home, load_config, location_path, save_location
 from foray.ingest import ingest
 
+# The client is a Vite/TypeScript app (see frontend/); `npm run build` emits its bundle
+# here. Absent only when the frontend hasn't been built (e.g. a fresh checkout running the
+# API directly) — `/` then shows a hint instead of 500-ing so `foray openapi` still works.
 _WEB = Path(__file__).parent / "web"
-templates = Jinja2Templates(directory=str(_WEB / "templates"))
+_DIST = _WEB / "dist"
 
 
 class LocationBody(BaseModel):
@@ -35,7 +37,8 @@ class LocationBody(BaseModel):
 def create_app(cfg: Config | None = None) -> FastAPI:
     cfg = cfg or load_config()
     app = FastAPI(title="Foray Planner")
-    app.mount("/static", StaticFiles(directory=str(_WEB / "static")), name="static")
+    if (_DIST / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_DIST / "assets")), name="assets")
 
     # One shared read-write connection for the whole app. Per-request cursors are
     # thread-safe, and a background refresh writing through the same connection avoids
@@ -200,10 +203,15 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         return {"status": "started"}
 
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request) -> Any:
-        cfg = current()
-        return templates.TemplateResponse(
-            request, "index.html", {"home": cfg.home.model_dump(), "species": cfg.species}
+    def index() -> Any:
+        # The SPA fetches /api/config on load, so no server-side templating is needed —
+        # just hand back the built entry point.
+        if (_DIST / "index.html").is_file():
+            return FileResponse(_DIST / "index.html")
+        return HTMLResponse(
+            "<h1>Foray Planner</h1><p>Frontend not built. Run "
+            "<code>cd frontend &amp;&amp; npm ci &amp;&amp; npm run build</code>.</p>",
+            status_code=503,
         )
 
     return app

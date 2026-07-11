@@ -31,11 +31,14 @@ against the local DuckDB, so the web app is fast and offline once data is pulled
 
 ```bash
 uv sync
+(cd frontend && npm ci && npm run build)   # build the web client bundle
 uv run foray refresh      # pull data + build phenology (first run hits iNat; minutes)
 uv run foray serve        # http://127.0.0.1:8000
 ```
 
 Then open the app and set your location from the header bar — no config editing needed.
+(The Docker image builds the client for you; the `npm run build` step is only for running
+the backend directly from a source checkout.)
 
 ## Using the web app
 
@@ -79,6 +82,23 @@ uv run pytest
 
 Tests are hermetic (no network): scoring runs on hand-built fixtures and geocoding is mocked.
 Conventions follow the `python` skill — including no single-letter variable names.
+
+### Frontend (`frontend/`)
+
+The web client is a Vite + TypeScript (strict) app using Leaflet, built into
+`src/foray/web/dist/` and served by FastAPI as static assets.
+
+```bash
+cd frontend
+npm ci
+npm run dev        # Vite dev server on :5173, proxying /api to uvicorn on :8000
+npm run build      # type-check (tsc --noEmit) + emit the production bundle
+npm run gen:api    # regenerate src/api/schema.ts from the live OpenAPI schema
+```
+
+For live development run `uv run foray serve` (backend) and `npm run dev` (client) together.
+`src/api/schema.ts` is generated from FastAPI's OpenAPI schema via `openapi-typescript` and
+committed; rerun `npm run gen:api` after changing an API route.
 
 ## Data & attribution
 

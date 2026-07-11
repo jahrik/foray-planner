@@ -9,6 +9,10 @@ wheels/
 # Virtual environments
 .venv
 
+# Node deps + built client bundle (rebuilt via `cd frontend && npm run build`)
+node_modules/
+src/foray/web/dist/
+
 # Local iNaturalist cache (rebuildable via `foray refresh`)
 data/*.duckdb
 data/*.duckdb.wal
