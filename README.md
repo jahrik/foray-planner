@@ -1,5 +1,8 @@
 # 🍄 Foray Planner
 
+[![CI](https://github.com/jahrik/foray-planner/actions/workflows/ci.yml/badge.svg)](https://github.com/jahrik/foray-planner/actions/workflows/ci.yml)
+[![CD](https://github.com/jahrik/foray-planner/actions/workflows/cd.yml/badge.svg)](https://github.com/jahrik/foray-planner/actions/workflows/cd.yml)
+
 Plan where to go mushroom hunting next, using [iNaturalist](https://www.inaturalist.org)
 observation data. It cross-references *what has been observed in a given month* against
 *where it has historically been observed* to rank travel destinations — and inverts the same
