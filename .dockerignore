@@ -1,0 +1,21 @@
+# VCS / local tooling
+.git
+.gitignore
+.github
+
+# Python caches / build artifacts
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv
+
+# Local cache + personal runtime state (rebuilt in-container on the volume)
+data/*.duckdb
+data/*.duckdb.wal
+data/location.json
+
+# Local-only notes and docs not needed in the image
+TODO.md
