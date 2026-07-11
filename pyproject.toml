@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Plan mushroom-hunting trips from iNaturalist observation phenology"
 readme = "README.md"
 authors = [{ name = "Wesley Gill", email = "jahrik@gmail.com" }]
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = [
     "pyinaturalist>=0.19",
