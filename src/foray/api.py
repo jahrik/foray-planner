@@ -1,0 +1,209 @@
+"""FastAPI app: JSON API over the scoring engine + the server-rendered web UI."""
+
+from __future__ import annotations
+
+import datetime as dt
+import threading
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+import duckdb
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+
+from foray import geocode, scoring
+from foray.cache import connect
+from foray.config import Config, Home, load_config, location_path, save_location
+from foray.ingest import ingest
+
+_WEB = Path(__file__).parent / "web"
+templates = Jinja2Templates(directory=str(_WEB / "templates"))
+
+
+class LocationBody(BaseModel):
+    query: str | None = None
+    lat: float | None = None
+    lng: float | None = None
+    name: str | None = None
+    radius_km: float | None = None
+
+
+def create_app(cfg: Config | None = None) -> FastAPI:
+    cfg = cfg or load_config()
+    app = FastAPI(title="Foray Planner")
+    app.mount("/static", StaticFiles(directory=str(_WEB / "static")), name="static")
+
+    # One shared read-write connection for the whole app. Per-request cursors are
+    # thread-safe, and a background refresh writing through the same connection avoids
+    # the file-lock conflict that separate connections would hit.
+    db = connect(cfg.db_path)
+    state: dict[str, Any] = {"cfg": cfg, "refreshing": False, "last_error": None}
+
+    def current() -> Config:
+        return state["cfg"]
+
+    def require_idle() -> None:
+        if state["refreshing"]:
+            raise HTTPException(409, "refreshing data for this area — try again shortly")
+
+    def parse_months(months: str) -> list[int]:
+        try:
+            values = [int(token) for token in months.split(",") if token.strip()]
+        except ValueError as error:
+            raise HTTPException(400, f"bad months: {months}") from error
+        if not all(1 <= month <= 12 for month in values):
+            raise HTTPException(400, "months must be 1-12")
+        return values or list(range(1, 13))
+
+    def parse_species(species: str) -> list[int]:
+        if species == "all" or not species:
+            return current().taxon_ids
+        try:
+            return [int(token) for token in species.split(",") if token.strip()]
+        except ValueError as error:
+            raise HTTPException(400, f"bad species: {species}") from error
+
+    def run_refresh() -> None:
+        try:
+            ingest(current(), db)
+            scoring.build_phenology(db, current().cell_deg)
+            state["last_error"] = None
+        except Exception as error:  # surface to the UI rather than dying silently
+            state["last_error"] = str(error)
+        finally:
+            state["refreshing"] = False
+
+    @app.get("/api/config")
+    def get_config() -> dict[str, Any]:
+        cfg = current()
+        return {
+            "home": cfg.home.model_dump(),
+            "cell_deg": cfg.cell_deg,
+            "recent_weeks": cfg.recent_weeks,
+            "refreshing": state["refreshing"],
+            "last_error": state["last_error"],
+        }
+
+    @app.get("/api/species")
+    def get_species() -> list[dict[str, Any]]:
+        return [
+            {**species.model_dump(), "inat_url": species.inat_url} for species in current().species
+        ]
+
+    @app.get("/api/destinations")
+    def destinations(
+        months: str | None = Query(None),
+        species: str = Query("all"),
+        radius_km: float | None = Query(None),
+    ) -> JSONResponse:
+        require_idle()
+        cfg = current()
+        # No months given -> default to the current calendar month.
+        selected_months = parse_months(months) if months is not None else [dt.date.today().month]
+        cursor = db.cursor()
+        try:
+            ranked = scoring.rank_destinations(
+                cursor,
+                months=selected_months,
+                taxon_ids=parse_species(species),
+                home_lat=cfg.home.lat,
+                home_lng=cfg.home.lng,
+                radius_km=radius_km or cfg.home.radius_km,
+                cell_deg=cfg.cell_deg,
+                recent_weeks=cfg.recent_weeks,
+            )
+        except duckdb.CatalogException:
+            raise HTTPException(409, "no data for this area yet — click Fetch data") from None
+        finally:
+            cursor.close()
+        return JSONResponse([asdict(region) for region in ranked])
+
+    @app.get("/api/calendar")
+    def calendar(region_id: str, species: str = Query("all")) -> dict[int, Any]:
+        require_idle()
+        cursor = db.cursor()
+        try:
+            calendar = scoring.place_calendar(
+                cursor, region_id=region_id, taxon_ids=parse_species(species)
+            )
+        except duckdb.CatalogException:
+            raise HTTPException(409, "no data for this area yet — click Fetch data") from None
+        finally:
+            cursor.close()
+        return calendar
+
+    @app.get("/api/alerts")
+    def get_alerts(
+        species: str = Query("all"),
+        weeks: int | None = Query(None),
+        radius_km: float | None = Query(None),
+    ) -> list[dict[str, Any]]:
+        require_idle()
+        cfg = current()
+        cursor = db.cursor()
+        try:
+            return scoring.alerts(
+                cursor,
+                taxon_ids=parse_species(species),
+                home_lat=cfg.home.lat,
+                home_lng=cfg.home.lng,
+                radius_km=radius_km or cfg.home.radius_km,
+                cell_deg=cfg.cell_deg,
+                weeks=weeks or cfg.recent_weeks,
+            )
+        except duckdb.CatalogException:
+            return []
+        finally:
+            cursor.close()
+
+    @app.post("/api/location")
+    def set_location(body: LocationBody) -> dict[str, Any]:
+        cfg = current()
+        if body.lat is not None and body.lng is not None:
+            home = Home(
+                name=body.name or f"{body.lat:.4f}, {body.lng:.4f}",
+                lat=body.lat,
+                lng=body.lng,
+                radius_km=body.radius_km or cfg.home.radius_km,
+            )
+        elif body.query:
+            try:
+                location = geocode.resolve(body.query)
+            except (LookupError, ValueError) as error:
+                raise HTTPException(404, str(error)) from None
+            except Exception as error:  # network/geocoder failure
+                raise HTTPException(502, f"geocoding failed: {error}") from None
+            home = Home(
+                name=body.name or location.name,
+                lat=location.lat,
+                lng=location.lng,
+                radius_km=body.radius_km or cfg.home.radius_km,
+            )
+        else:
+            raise HTTPException(400, "provide `query` or both `lat` and `lng`")
+
+        save_location(location_path(cfg.db_path), home)
+        state["cfg"] = cfg.model_copy(update={"home": home})
+        return {"home": home.model_dump()}
+
+    @app.post("/api/refresh")
+    def refresh() -> dict[str, Any]:
+        if state["refreshing"]:
+            return {"status": "already running"}
+        state["refreshing"] = True
+        state["last_error"] = None
+        threading.Thread(target=run_refresh, daemon=True).start()
+        return {"status": "started"}
+
+    @app.get("/", response_class=HTMLResponse)
+    def index(request: Request) -> Any:
+        cfg = current()
+        return templates.TemplateResponse(
+            request, "index.html", {"home": cfg.home.model_dump(), "species": cfg.species}
+        )
+
+    return app

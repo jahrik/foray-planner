@@ -1,0 +1,38 @@
+[project]
+name = "foray"
+version = "0.1.0"
+description = "Plan mushroom-hunting trips from iNaturalist observation phenology"
+readme = "README.md"
+authors = [{ name = "Wesley Gill", email = "jahrik@gmail.com" }]
+requires-python = ">=3.13"
+dependencies = [
+    "pyinaturalist>=0.19",
+    "duckdb>=1.1",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "jinja2>=3.1",
+    "pyyaml>=6.0",
+    "click>=8.1",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+foray = "foray.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest>=8.3", "ruff>=0.8", "ty>=0.0.1a1"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

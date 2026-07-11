@@ -1,0 +1,23 @@
+# Foray planner configuration.
+# Home base + radius define which destinations get ranked. Edit lat/lng to your home.
+home:
+  name: "Home"
+  lat: 47.6062      # Seattle, WA — change to your home base
+  lng: -122.3321
+  radius_km: 400    # rank destinations within this distance
+
+# Region granularity for candidate destinations.
+# grid: a uniform lat/lng grid over the search radius (simple, uniform coverage).
+regions:
+  mode: grid
+  cell_deg: 0.5     # ~55 km cells at mid-latitudes
+
+# Ingestion window: how far back to pull historical observations for phenology.
+ingest:
+  since_year: 2015
+  quality_grade: research   # only research-grade counts toward scoring
+  recent_weeks: 4           # trailing window for the "fruiting now" live signal
+
+paths:
+  db: data/foray.duckdb
+  species_seed: data/species_seed.yaml

@@ -1,0 +1,113 @@
+"""Incremental ingestion: iNat observations -> DuckDB cache.
+
+Ingests one seed taxon at a time and tags every observation with that *seed* taxon_id
+(not the leaf species), so phenology curves are per foraging target. Idempotent: the
+observations table ignores ids already present, and each (taxon, geo, window) pull is
+recorded in ingest_log.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+from typing import Any
+
+import duckdb
+
+from foray.cache import connect, record_ingest, upsert_observations, upsert_taxa
+from foray.config import Config
+from foray.inat import iter_observations
+
+
+def _coords(obs: dict[str, Any]) -> tuple[float | None, float | None]:
+    geo = obs.get("geojson") or {}
+    coords = geo.get("coordinates")
+    if coords and len(coords) == 2:
+        lng, lat = coords[0], coords[1]
+        return float(lat), float(lng)
+    loc = obs.get("location")
+    if isinstance(loc, (list, tuple)) and len(loc) == 2:
+        return float(loc[0]), float(loc[1])
+    if isinstance(loc, str) and "," in loc:
+        lat_str, lng_str = loc.split(",", 1)
+        return float(lat_str), float(lng_str)
+    return None, None
+
+
+def _observed_date(obs: dict[str, Any]) -> dt.date | None:
+    val = obs.get("observed_on")
+    if isinstance(val, dt.datetime):
+        return val.date()
+    if isinstance(val, dt.date):
+        return val
+    if isinstance(val, str) and val:
+        try:
+            return dt.date.fromisoformat(val[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _to_row(obs: dict[str, Any], seed_taxon_id: int) -> tuple[Any, ...] | None:
+    lat, lng = _coords(obs)
+    day = _observed_date(obs)
+    if lat is None or lng is None or day is None:
+        return None
+    return (
+        obs["id"],
+        seed_taxon_id,
+        lat,
+        lng,
+        day,
+        day.month,
+        day.year,
+        obs.get("quality_grade"),
+        obs.get("positional_accuracy"),
+    )
+
+
+def ingest(cfg: Config, con: duckdb.DuckDBPyConnection | None = None) -> dict[int, int]:
+    """Pull observations for every seed taxon within the home radius. Returns {taxon_id: rows}."""
+    own_con = con is None
+    db = con if con is not None else connect(cfg.db_path)
+    upsert_taxa(
+        db,
+        [
+            {
+                "taxon_id": species.taxon_id,
+                "name": species.name,
+                "common_name": species.common_name,
+                "rank": species.rank,
+            }
+            for species in cfg.species
+        ],
+    )
+
+    start_date = f"{cfg.since_year}-01-01"
+    end_date = dt.date.today().isoformat()
+    home = cfg.home
+    counts: dict[int, int] = {}
+
+    for species in cfg.species:
+        rows: list[tuple[Any, ...]] = []
+        for obs in iter_observations(
+            taxon_id=species.taxon_id,
+            lat=home.lat,
+            lng=home.lng,
+            radius_km=home.radius_km,
+            d1=start_date,
+            d2=end_date,
+            quality_grade=cfg.quality_grade,
+        ):
+            row = _to_row(obs, species.taxon_id)
+            if row is not None:
+                rows.append(row)
+        upsert_observations(db, rows)
+        key = (
+            f"obs:{species.taxon_id}:{home.lat}:{home.lng}:{home.radius_km}:{start_date}:{end_date}"
+        )
+        record_ingest(db, key, len(rows))
+        counts[species.taxon_id] = len(rows)
+
+    if own_con:
+        db.close()
+    return counts

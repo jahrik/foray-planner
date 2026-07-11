@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Foray Planner</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>🍄 Foray Planner</h1>
+      <p class="home" id="home-line">
+        Location: <strong id="home-name">{{ home.name }}</strong>
+        (<span id="home-coords">{{ "%.3f"|format(home.lat) }}, {{ "%.3f"|format(home.lng) }}</span>) ·
+        radius {{ home.radius_km|int }} km
+      </p>
+      <form class="locbar" id="locform">
+        <input
+          id="loc"
+          type="text"
+          placeholder="Set location — place name or lat,lng (e.g. Coos Bay, OR)"
+          autocomplete="off"
+        />
+        <button type="submit" class="primary">Set location</button>
+        <span class="loc-hint">Changing location re-fetches iNaturalist data for the new area.</span>
+      </form>
+    </header>
+
+    <section class="controls">
+      <div class="field">
+        <label>Months</label>
+        <div id="months" class="months"></div>
+      </div>
+      <div class="field">
+        <label for="species">Target species</label>
+        <select id="species" multiple size="6"></select>
+        <small>Ctrl/Cmd-click for multiple · none = all</small>
+      </div>
+      <div class="field actions">
+        <button id="run" class="primary">Rank destinations</button>
+        <button id="refresh">Refresh data</button>
+        <span id="status"></span>
+      </div>
+    </section>
+
+    <nav class="tabs">
+      <button data-view="destinations" class="active">Destinations</button>
+      <button data-view="calendar">Place calendar</button>
+      <button data-view="alerts">Fruiting now</button>
+    </nav>
+
+    <main>
+      <div id="map"></div>
+      <aside id="panel">
+        <p class="hint">Pick months and click <em>Rank destinations</em>.</p>
+      </aside>
+    </main>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

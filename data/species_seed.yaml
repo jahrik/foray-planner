@@ -1,0 +1,20 @@
+# Curated foraging-target fungi, resolved to iNaturalist taxon_ids.
+# taxon_id verified via pyinaturalist get_taxa (iconic_taxon = Fungi for all).
+# No authored descriptions: the UI links each taxon to its iNaturalist page,
+# where descriptions, ranges, and photos come straight from iNat.
+species:
+  - { taxon_id: 47348, name: Cantharellus, common_name: Chanterelles, rank: genus }
+  - { taxon_id: 56831, name: Morchellaceae, common_name: Morels and allies, rank: family }
+  - { taxon_id: 58682, name: Morchella esculenta, common_name: Yellow Morel, rank: species }
+  - { taxon_id: 48701, name: Boletus edulis, common_name: King Bolete, rank: species }
+  - { taxon_id: 48641, name: Hydnum repandum, common_name: Wood Hedgehog, rank: species }
+  - { taxon_id: 48431, name: Laetiporus, common_name: Chicken of the Woods, rank: genus }
+  - { taxon_id: 53714, name: Grifola frondosa, common_name: Hen of the Woods, rank: species }
+  - { taxon_id: 1520823, name: Hericium erinaceus, common_name: Lion's Mane, rank: complex }
+  - { taxon_id: 48607, name: Craterellus cornucopioides, common_name: Black Trumpet, rank: species }
+  - { taxon_id: 521711, name: Tricholoma murrillianum, common_name: Western Matsutake, rank: species }
+  - { taxon_id: 48215, name: Hypomyces lactifluorum, common_name: Lobster Mushroom, rank: species }
+  - { taxon_id: 1196165, name: Pleurotus ostreatus, common_name: Oyster Mushroom, rank: complex }
+  - { taxon_id: 63020, name: Sparassis, common_name: Cauliflower Mushroom, rank: genus }
+  - { taxon_id: 57692, name: Calvatia gigantea, common_name: Giant Puffball, rank: species }
+  - { taxon_id: 47347, name: Cantharellus cibarius, common_name: Golden Chanterelle, rank: species }

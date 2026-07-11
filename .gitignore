@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local iNaturalist cache (rebuildable via `foray refresh`)
+data/*.duckdb
+data/*.duckdb.wal
+
+# Runtime location override (personal state, set from the UI)
+data/location.json
