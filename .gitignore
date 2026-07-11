@@ -15,3 +15,6 @@ data/*.duckdb.wal
 
 # Runtime location override (personal state, set from the UI)
 data/location.json
+
+# Personal planning notes (local only)
+TODO.md

@@ -34,6 +34,22 @@ Follows the global `python` skill: uv, ruff, ty, pytest, and **no single-letter 
 names**. Tests are hermetic — never hit the network (scoring uses fixtures, geocoding is
 mocked).
 
+## Commands
+
+```bash
+uv sync                 # install deps into the venv
+uv run foray refresh    # ingest iNat obs + build phenology (first run hits the network)
+uv run foray serve      # http://127.0.0.1:8000  (--host / --port to override)
+```
+
+Run one test file / one test / by keyword:
+
+```bash
+uv run pytest tests/test_scoring.py
+uv run pytest tests/test_scoring.py::test_april_ranks_morel_region_first
+uv run pytest -k haversine
+```
+
 Gate before finishing:
 
 ```bash

@@ -83,3 +83,7 @@ Observation data © iNaturalist and its contributors; geocoding © OpenStreetMap
 Requests are throttled (~1/s via pyinaturalist) and sent with a descriptive User-Agent.
 Respect the [iNaturalist API terms](https://www.inaturalist.org/pages/api+reference) and the
 [Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/).
+
+## License
+
+[MIT](LICENSE) © Wesley Gill
