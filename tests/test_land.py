@@ -141,6 +141,30 @@ def test_fetch_public_land_dedupes_and_skips_a_failing_source() -> None:
     assert [row[0] for row in rows] == ["blm:7"]  # deduped; USFS 500 skipped
 
 
+def test_fetch_public_land_skips_a_source_returning_malformed_payload() -> None:
+    # A 200 that isn't well-formed GeoJSON (decode error) must be skipped like a transport
+    # error — ownership ingest is best-effort and must not abort the refresh.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "usfs" in str(request.url):
+            return httpx.Response(200, text="<html>maintenance</html>")  # not JSON
+        offset = int(request.url.params.get("resultOffset", "0"))
+        if offset > 0:
+            return httpx.Response(200, json={"type": "FeatureCollection", "features": []})
+        return httpx.Response(
+            200,
+            json={
+                "type": "FeatureCollection",
+                "features": [{"properties": {"OBJECTID": 3}, "geometry": _polygon(47.6, -122.3)}],
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    rows = fetch_public_land(
+        lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, client=client, sources=(BLM, USFS)
+    )
+    assert [row[0] for row in rows] == ["blm:3"]  # BLM ingested; malformed USFS skipped
+
+
 def test_fetch_public_land_pages_until_transfer_limit_clears() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         offset = int(request.url.params.get("resultOffset", "0"))

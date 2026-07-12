@@ -1,9 +1,10 @@
 """Public-land ownership ingest from ArcGIS REST feature services.
 
 For the free-camping question ("can I sleep near here for free"), the first thing to know is
-*who owns the ground* — dispersed camping is generally tolerated on **BLM** and **USFS** land
-and generally not elsewhere. This module pulls those two ownership layers as GeoJSON and
-caches the polygons so the map can shade land ownership offline.
+*who owns the ground*. **BLM** and **USFS** are the two agencies the dispersed-camping proxy
+(slice 2b) will consider, so this module pulls those two ownership layers as GeoJSON and caches
+the polygons for the map. It reports ownership and links the official source — nothing more; it
+makes no claim about whether camping is permitted anywhere (see AGENTS.md).
 
 Two authoritative ArcGIS layers, queried with an envelope around home:
 
@@ -212,8 +213,10 @@ def fetch_public_land(
 ) -> list[tuple[Any, ...]]:
     """Fetch ownership polygons near home from each source, deduped by id.
 
-    A source that fails (network/service error) is skipped so the others still ingest —
-    ownership is best-effort context, never a hard dependency of the refresh.
+    A source that fails is skipped so the others still ingest — ownership is best-effort
+    context, never a hard dependency of the refresh. "Fails" covers both transport errors
+    (``httpx.HTTPError``) and a service returning something other than well-formed GeoJSON
+    (a decode error — ``ValueError`` — or an unexpected shape — ``KeyError``/``TypeError``).
     """
     owns = client is None
     client = client or httpx.Client(timeout=60.0)
@@ -226,7 +229,7 @@ def fetch_public_land(
                     row = _parse_feature(source, feature)
                     if row is not None:
                         by_id[row[0]] = row
-            except httpx.HTTPError:
+            except (httpx.HTTPError, ValueError, KeyError, TypeError):
                 continue  # skip this source; keep whatever the others returned
     finally:
         if owns:
