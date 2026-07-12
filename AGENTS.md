@@ -55,9 +55,14 @@ phenology. Public repo: [jahrik/foray-planner](https://github.com/jahrik/foray-p
   greedy itinerary; `openapi` dumps the schema that feeds the frontend type generator).
 - `src/foray/web/dist/` — the built client bundle (gitignored; emitted by the frontend build
   and served by FastAPI as static assets at `/assets` + `/`).
-- `frontend/` — the web client: **Vite + TypeScript (strict)**, Leaflet map. `src/main.ts`
-  (ported from the old `app.js`), `src/api/` (typed client + `schema.ts` generated from the
-  backend's OpenAPI via `openapi-typescript`), `src/style.css`. Builds into
+- `frontend/` — the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern:
+  `src/state.ts` (shared `State`, DOM `qs()`/`setStatus()` helpers), `src/map.ts` (Leaflet init,
+  theme/tile switching, marker palette, `clear*()` layer helpers), `src/layers.ts` (camps/land/
+  trails fetch + render + popups), `src/views.ts` (destinations/calendar/alerts tabs),
+  `src/plan.ts` (route planning UI + GPX/JSON export), `src/refresh.ts` (SSE refresh + set-location),
+  and `src/main.ts` (DOM wiring/orchestration only — kept small on purpose so new features don't
+  pile back into one file). `src/api/` holds the typed client + `schema.ts` generated from the
+  backend's OpenAPI via `openapi-typescript`, `src/style.css` is the stylesheet. Builds into
   `../src/foray/web/dist`. Marker palette is bright/neon and deliberately non-green (hot magenta =
   strength, electric cyan = recent) so it reads on both basemaps. A **light/dark theme toggle**
   (🌙/☀️, header) is `data-theme`-driven with a `localStorage` preference (default **dark**), set
