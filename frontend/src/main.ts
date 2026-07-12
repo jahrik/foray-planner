@@ -170,12 +170,31 @@ async function loadCamps(): Promise<void> {
       fillOpacity: 0.9,
     })
       .addTo(map)
-      .bindPopup(
-        `<b>${site.name}</b><br>${site.distance_km} km · ${cost}<br>` +
-          `<a href="${site.url}" target="_blank" rel="noopener">Recreation.gov ↗</a>`,
-      );
+      .bindPopup(campPopup(site, cost));
     state.campMarkers.push(marker);
   });
+}
+
+// Build the campground popup from DOM nodes rather than an HTML string: `site.name` and the
+// fee text come from an external API, so `textContent` escapes them instead of injecting raw
+// HTML. `site.url` is server-constructed (recreation.gov + facility id), so it's a safe href.
+function campPopup(site: CampSite, cost: string): HTMLElement {
+  const root = document.createElement("div");
+  const title = document.createElement("b");
+  title.textContent = site.name;
+  const link = document.createElement("a");
+  link.href = site.url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = "Recreation.gov ↗";
+  root.append(
+    title,
+    document.createElement("br"),
+    document.createTextNode(`${site.distance_km} km · ${cost}`),
+    document.createElement("br"),
+    link,
+  );
+  return root;
 }
 
 function focusRegion(lat: number, lng: number): void {

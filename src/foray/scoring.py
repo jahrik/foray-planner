@@ -233,30 +233,31 @@ def camps_near(
     except duckdb.CatalogException:
         return []
 
-    results: list[CampSite] = []
+    # Keep the unrounded distance alongside each site so ranking is exact; distance_km is
+    # only rounded for display and must not be the sort key (near-equal sites would tie).
+    scored: list[tuple[bool, float, CampSite]] = []
     for site_id, name, kind, fee, free, site_lat, site_lng, source, url in rows:
         if free_only and not free:
             continue
         dist = haversine_km(lat, lng, site_lat, site_lng)
         if dist > radius_km:
             continue
-        results.append(
-            CampSite(
-                id=site_id,
-                name=name,
-                kind=kind,
-                fee=fee,
-                free=free,
-                center_lat=site_lat,
-                center_lng=site_lng,
-                distance_km=round(dist, 1),
-                source=source,
-                url=url,
-            )
+        site = CampSite(
+            id=site_id,
+            name=name,
+            kind=kind,
+            fee=fee,
+            free=free,
+            center_lat=site_lat,
+            center_lng=site_lng,
+            distance_km=round(dist, 1),
+            source=source,
+            url=url,
         )
-    # Free sites first (True > None/False), then nearest.
-    results.sort(key=lambda site: (site.free is not True, site.distance_km))
-    return results
+        scored.append((free is not True, dist, site))
+    # Free sites first (True > None/False), then nearest by true distance.
+    scored.sort(key=lambda item: (item[0], item[1]))
+    return [site for _, _, site in scored]
 
 
 def place_calendar(

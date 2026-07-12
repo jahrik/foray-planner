@@ -185,6 +185,22 @@ def test_camps_near_ranks_free_first_then_distance(con: duckdb.DuckDBPyConnectio
     assert [site.name for site in free] == ["Free Close", "Free Far"]
 
 
+def test_camps_near_ranks_by_true_distance_not_rounded(con: duckdb.DuckDBPyConnection) -> None:
+    # Two sites whose distances both round to 2.2 km but differ slightly. The farther one is
+    # inserted first, so sorting by the *rounded* key (a tie) would leave it mis-ordered via a
+    # stable sort; only sorting by true distance puts the nearer one first.
+    upsert_campsites(
+        con,
+        [
+            ("ridb:far", "Far", "campground", None, None, 47.6200, -122.30, "ridb", "u"),
+            ("ridb:near", "Near", "campground", None, None, 47.6199, -122.30, "ridb", "u"),
+        ],
+    )
+    sites = camps_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0)
+    assert sites[0].distance_km == sites[1].distance_km == 2.2  # tie once rounded
+    assert [site.name for site in sites] == ["Near", "Far"]  # ordered by true distance
+
+
 def test_camps_near_missing_table_returns_empty() -> None:
     conn = duckdb.connect(":memory:")  # no schema → no campsites table
     assert camps_near(conn, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0) == []
