@@ -198,6 +198,68 @@ def rank_destinations(
     return results
 
 
+@dataclass
+class CampSite:
+    id: str
+    name: str
+    kind: str
+    fee: str | None
+    free: bool | None
+    center_lat: float
+    center_lng: float
+    distance_km: float
+    source: str
+    url: str
+
+
+def camps_near(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    lat: float,
+    lng: float,
+    radius_km: float,
+    free_only: bool = False,
+) -> list[CampSite]:
+    """Campsites within ``radius_km`` of a point, ranked free-first then by distance.
+
+    ``free`` is only TRUE where the source explicitly said so; ``free_only`` therefore
+    keeps just those (it never guesses that an unpriced site is free). Missing table
+    (no camps ingested yet) yields an empty list, mirroring the other modes.
+    """
+    try:
+        rows = con.execute(
+            "SELECT id, name, kind, fee, free, lat, lng, source, url FROM campsites"
+        ).fetchall()
+    except duckdb.CatalogException:
+        return []
+
+    # Keep the unrounded distance alongside each site so ranking is exact; distance_km is
+    # only rounded for display and must not be the sort key (near-equal sites would tie).
+    scored: list[tuple[bool, float, CampSite]] = []
+    for site_id, name, kind, fee, free, site_lat, site_lng, source, url in rows:
+        if free_only and not free:
+            continue
+        dist = haversine_km(lat, lng, site_lat, site_lng)
+        if dist > radius_km:
+            continue
+        site = CampSite(
+            id=site_id,
+            name=name,
+            kind=kind,
+            fee=fee,
+            free=free,
+            center_lat=site_lat,
+            center_lng=site_lng,
+            distance_km=round(dist, 1),
+            source=source,
+            url=url,
+        )
+        scored.append((free is not True, dist, site))
+    # Free sites first (True > None/False), then nearest by true distance.
+    scored.sort(key=lambda item: (item[0], item[1]))
+    return [site for _, _, site in scored]
+
+
 def place_calendar(
     con: duckdb.DuckDBPyConnection, *, region_id: str, taxon_ids: list[int]
 ) -> dict[int, dict[str, Any]]:

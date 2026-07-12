@@ -35,6 +35,15 @@ header .home { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .field small { color: var(--muted); font-size: 11px; }
+.field label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: inherit;
+}
 .months { display: flex; flex-wrap: wrap; gap: 4px; max-width: 320px; }
 .months button {
   width: 42px; padding: 4px 0; border: 1px solid var(--border);

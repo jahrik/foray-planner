@@ -20,5 +20,8 @@ data/*.duckdb.wal
 # Runtime location override (personal state, set from the UI)
 data/location.json
 
+# Local secrets (e.g. RIDB_API_KEY) — never commit; use env vars in prod
+.env
+
 # Personal planning notes (local only)
 TODO.md
