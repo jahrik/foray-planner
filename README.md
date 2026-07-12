@@ -5,7 +5,7 @@
 
 A trip-planning tool for mushroom hunters. Point it at where you are or want to go,
 and it tells you which areas near you are most likely to be fruiting this month
-and points you towards to the closest hiking trail, campsite, BLM & FS land near that area.
+and points you to the closest hiking trail, campsite, BLM & FS land near that area.
 
 > **No identification or edibility claims are made here.** This is a trip-planning
 > and mapping tool only. Every species links to its
