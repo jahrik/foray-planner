@@ -9,6 +9,7 @@ recorded in ingest_log.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from typing import Any
 
 import duckdb
@@ -16,6 +17,8 @@ import duckdb
 from foray.cache import connect, record_ingest, upsert_observations, upsert_taxa
 from foray.config import Config
 from foray.inat import iter_observations
+
+logger = logging.getLogger(__name__)
 
 
 def _coords(obs: dict[str, Any]) -> tuple[float | None, float | None]:
@@ -87,7 +90,19 @@ def ingest(cfg: Config, con: duckdb.DuckDBPyConnection | None = None) -> dict[in
     home = cfg.home
     counts: dict[int, int] = {}
 
-    for species in cfg.species:
+    total = len(cfg.species)
+    logger.info(
+        "ingest: %d taxa within %.0f km of %s (%s..%s)",
+        total,
+        home.radius_km,
+        home.name,
+        start_date,
+        end_date,
+    )
+    for index, species in enumerate(cfg.species, start=1):
+        logger.info(
+            "ingest [%d/%d] %s (taxon %d)…", index, total, species.common_name, species.taxon_id
+        )
         rows: list[tuple[Any, ...]] = []
         for obs in iter_observations(
             taxon_id=species.taxon_id,
@@ -107,6 +122,11 @@ def ingest(cfg: Config, con: duckdb.DuckDBPyConnection | None = None) -> dict[in
         )
         record_ingest(db, key, len(rows))
         counts[species.taxon_id] = len(rows)
+        logger.info(
+            "ingest [%d/%d] %s: %d observations", index, total, species.common_name, len(rows)
+        )
+
+    logger.info("ingest: done — %d observations across %d taxa", sum(counts.values()), total)
 
     if own_con:
         db.close()

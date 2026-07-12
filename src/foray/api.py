@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -18,6 +19,8 @@ from foray import camps, geocode, land, scoring
 from foray.cache import connect
 from foray.config import Config, Home, load_config, location_path, save_location
 from foray.ingest import ingest
+
+logger = logging.getLogger(__name__)
 
 # The client is a Vite/TypeScript app (see frontend/); `npm run build` emits its bundle
 # here. Absent only when the frontend hasn't been built (e.g. a fresh checkout running the
@@ -82,12 +85,16 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     def run_refresh() -> None:
         try:
+            logger.info("refresh: starting for %s", current().home.name)
             ingest(current(), db)
             camps.ingest_campgrounds(current(), db)
             land.ingest_public_land(current(), db)
+            logger.info("refresh: building phenology…")
             scoring.build_phenology(db, current().cell_deg)
             state["last_error"] = None
+            logger.info("refresh: complete")
         except Exception as error:  # surface to the UI rather than dying silently
+            logger.exception("refresh: failed")
             state["last_error"] = str(error)
         finally:
             state["refreshing"] = False

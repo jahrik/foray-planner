@@ -24,6 +24,7 @@ rather than aborting the whole refresh.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -33,6 +34,8 @@ import httpx
 
 from foray.cache import connect, record_ingest, upsert_public_land
 from foray.config import Config
+
+logger = logging.getLogger(__name__)
 
 USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
 
@@ -224,13 +227,16 @@ def fetch_public_land(
     by_id: dict[str, tuple[Any, ...]] = {}
     try:
         for source in sources:
+            before = len(by_id)
             try:
                 for feature in _iter_features(client, source, envelope):
                     row = _parse_feature(source, feature)
                     if row is not None:
                         by_id[row[0]] = row
-            except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+                logger.warning("land: source %s failed (%s) — skipping", source.key, error)
                 continue  # skip this source; keep whatever the others returned
+            logger.info("land: %s returned %d units", source.key, len(by_id) - before)
     finally:
         if owns:
             client.close()
@@ -249,6 +255,7 @@ def ingest_public_land(
     database = con if con is not None else connect(cfg.db_path)
     home = cfg.home
     try:
+        logger.info("land: fetching BLM/USFS ownership within %.0f km of home…", home.radius_km)
         rows = fetch_public_land(
             lat=home.lat,
             lng=home.lng,
@@ -259,6 +266,7 @@ def ingest_public_land(
         upsert_public_land(database, rows)
         key = f"land:{home.lat}:{home.lng}:{home.radius_km}"
         record_ingest(database, key, len(rows))
+        logger.info("land: cached %d public-land units", len(rows))
         return len(rows)
     finally:
         if own_con:

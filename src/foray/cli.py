@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import click
 
 from foray.cache import connect, observation_count
@@ -12,11 +14,21 @@ from foray.land import ingest_public_land
 from foray.scoring import build_phenology
 
 
+def _setup_logging() -> None:
+    """Send `foray.*` progress logs to stderr at INFO. Idempotent (safe to call twice)."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+
 @click.group()
 @click.option("--config", "config_path", default="config.yaml", help="Path to config.yaml")
 @click.pass_context
 def cli(ctx: click.Context, config_path: str) -> None:
     """Plan mushroom-hunting trips from iNaturalist phenology."""
+    _setup_logging()
     ctx.ensure_object(dict)
     ctx.obj["cfg"] = load_config(config_path)
 
