@@ -130,3 +130,38 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
   main { grid-template-columns: 1fr; grid-template-rows: 300px 1fr; height: auto; }
   #panel { border-left: none; border-top: 1px solid var(--border); }
 }
+
+/* ── Plan route ── */
+#plan-row input[type="number"] {
+  width: 80px; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel); color: var(--ink); font-size: 14px;
+}
+.plan-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 10px; flex-wrap: wrap;
+  margin-bottom: 12px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.plan-summary { font-size: 13px; color: var(--muted); flex: 1; }
+.plan-skipped { margin-left: 6px; color: var(--accent); font-size: 12px; }
+.plan-export { display: flex; gap: 6px; flex-shrink: 0; }
+.plan-export button { padding: 6px 12px; font-size: 13px; }
+
+.stop-card {
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 10px; cursor: pointer;
+}
+.stop-card:hover { border-color: var(--accent); }
+.stop-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 4px;
+}
+.stop-num { font-weight: 700; font-size: 15px; color: var(--accent); }
+.stop-drive { font-size: 12px; color: var(--muted); }
+.stop-camp {
+  font-size: 12px; margin-top: 6px;
+  padding: 4px 8px; border-radius: 4px;
+  background: var(--bg); border: 1px solid var(--border);
+}
+.stop-camp.muted { color: var(--muted); }
