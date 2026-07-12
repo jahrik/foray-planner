@@ -4,13 +4,13 @@ home:
   name: "Home"
   lat: 47.6062      # Seattle, WA — change to your home base
   lng: -122.3321
-  radius_km: 400    # rank destinations within this distance
+  radius_km: 150    # rank destinations within this distance (smaller = much faster refresh)
 
 # Region granularity for candidate destinations.
 # grid: a uniform lat/lng grid over the search radius (simple, uniform coverage).
 regions:
   mode: grid
-  cell_deg: 0.5     # ~55 km cells at mid-latitudes
+  cell_deg: 0.25    # ~28x20 km cells at mid-latitudes (near the iNat ~0.2° obscuring floor)
 
 # Ingestion window: how far back to pull historical observations for phenology.
 ingest:

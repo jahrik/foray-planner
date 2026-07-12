@@ -45,22 +45,23 @@ const state: State = {
 let map: L.Map;
 let homeMarker: L.CircleMarker;
 
-// Marker palette — deliberately non-green so it reads against the green OSM terrain.
-const HEAT = "#e6398b"; // magenta — historical strength (destinations)
-const HEAT_RGB = "230,57,139";
-const LIVE = "#22c3e6"; // cyan — fresh / recently observed
+// Marker palette — bright/neon so it pops on the dark basemap (the default), while still
+// reading over the lighter OSM terrain in light mode. Deliberately non-green vs the terrain.
+const HEAT = "#ff2d9b"; // hot magenta — historical strength (destinations)
+const HEAT_RGB = "255,45,155";
+const LIVE = "#22e0ff"; // electric cyan — fresh / recently observed
 const HOME_FILL = "#ffffff"; // white "you are here" dot
-const HOME_RING = "#161a12";
-const CAMP_FREE = "#ffd24d"; // gold — free / no-fee campground
-const CAMP_PAID = "#f5a623"; // amber — fee or unknown-cost campground
-const CAMP_OSM = "#12b5a8"; // teal — OSM dispersed layer (solid = reported, dashed ring = proxy)
-// Public-land ownership fill — non-green so it reads over the OSM terrain, one hue per agency.
+const HOME_RING = "#0c0d09";
+const CAMP_FREE = "#ffe14d"; // neon gold — free / no-fee campground
+const CAMP_PAID = "#ff9e2e"; // bright amber — fee or unknown-cost campground
+const CAMP_OSM = "#1fe6d0"; // neon teal — OSM dispersed layer (solid = reported, dashed = proxy)
+// Public-land ownership fill — non-green so it reads over the terrain, one hue per agency.
 const LAND_COLORS: Record<string, string> = {
-  BLM: "#b06f3c", // earthy brown
-  USFS: "#7b6cd9", // violet
+  BLM: "#e8974a", // bright ochre
+  USFS: "#a693ff", // bright violet
 };
-const LAND_DEFAULT = "#8a8a8a"; // any other agency
-const TRAIL = "#e34a4a"; // red — the walking network (paths/routes) + trailhead dots
+const LAND_DEFAULT = "#b5b5b5"; // any other agency
+const TRAIL = "#ff5555"; // bright red — the walking network (paths/routes) + trailhead dots
 
 // Theme-aware basemap: a dark CARTO raster under dark mode, standard OSM under light. The bright
 // marker palette above reads well over both. Attribution stays per each provider's terms.
