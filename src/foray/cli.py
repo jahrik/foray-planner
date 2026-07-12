@@ -116,12 +116,30 @@ def refresh(ctx: click.Context) -> None:
     con.close()
 
 
+def _parse_months(months: str) -> list[int]:
+    """Parse a comma-separated month list, raising a Click error on junk or out-of-range values."""
+    try:
+        values = [int(token) for token in months.split(",") if token.strip()]
+    except ValueError as error:
+        raise click.BadParameter(f"months must be integers 1-12: {months!r}") from error
+    if not all(1 <= month <= 12 for month in values):
+        raise click.BadParameter("months must be in 1-12")
+    return values
+
+
 @cli.command("plan")
 @click.option(
     "--months", default="", help="Comma-separated months (1-12); default = current month."
 )
-@click.option("--max-stops", default=5, type=int, help="Maximum stays in the itinerary.")
-@click.option("--max-drive-km", default=400.0, type=float, help="Max great-circle km per leg.")
+@click.option(
+    "--max-stops", default=5, type=click.IntRange(min=1), help="Maximum stays in the itinerary."
+)
+@click.option(
+    "--max-drive-km",
+    default=400.0,
+    type=click.FloatRange(min=0, min_open=True),
+    help="Max great-circle km per leg.",
+)
 @click.option("--any-camp", is_flag=True, help="Allow stops whose nearest camp isn't free-tagged.")
 @click.pass_context
 def plan_cmd(
@@ -129,7 +147,7 @@ def plan_cmd(
 ) -> None:
     """Sequence the top destinations into a greedy, low-backtrack trip itinerary."""
     cfg = ctx.obj["cfg"]
-    selected = [int(t) for t in months.split(",") if t.strip()] or [dt.date.today().month]
+    selected = _parse_months(months) or [dt.date.today().month]
     con = connect(cfg.db_path)
     trip = plan_route(
         con,

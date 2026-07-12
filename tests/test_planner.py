@@ -30,8 +30,8 @@ def con() -> duckdb.DuckDBPyConnection:
     rows: list[tuple] = []
     obs_id = 1
     # More observations closer in, so score (and thus selection order) tracks distance here.
-    for (lat, lng), n in ((NEAR, 40), (MID, 25), (FAR, 15)):
-        for _ in range(n):
+    for (lat, lng), obs_count in ((NEAR, 40), (MID, 25), (FAR, 15)):
+        for _ in range(obs_count):
             rows.append((obs_id, MOREL, lat, lng, dt.date(2022, 10, 15), 10, 2022, "research", 10))
             obs_id += 1
     conn.executemany("INSERT INTO observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)

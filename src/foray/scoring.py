@@ -535,22 +535,15 @@ def plan_route(
     for region in ranked:
         if region.score_norm < min_score_norm:
             continue
-        free = camps_near(
-            con,
-            lat=region.center_lat,
-            lng=region.center_lng,
-            radius_km=camp_radius_km,
-            free_only=True,
+        # camps_near ranks free-first, so its nearest result is the nearest *free* camp when one
+        # is in range, else the nearest of any kind — one query answers both cases.
+        nearby = camps_near(
+            con, lat=region.center_lat, lng=region.center_lng, radius_km=camp_radius_km
         )
-        if free:
-            camp, camp_is_free = free[0], True
-        else:
-            if require_free_camp:
-                continue
-            nearby = camps_near(
-                con, lat=region.center_lat, lng=region.center_lng, radius_km=camp_radius_km
-            )
-            camp, camp_is_free = (nearby[0] if nearby else None), False
+        camp = nearby[0] if nearby else None
+        camp_is_free = camp is not None and camp.free is True
+        if require_free_camp and not camp_is_free:
+            continue
         candidates.append((region, camp, camp_is_free))
         if len(candidates) >= max_stops:
             break
@@ -564,8 +557,8 @@ def plan_route(
     while remaining:
         nearest = min(
             range(len(remaining)),
-            key=lambda i: haversine_km(
-                cur_lat, cur_lng, remaining[i][0].center_lat, remaining[i][0].center_lng
+            key=lambda idx: haversine_km(
+                cur_lat, cur_lng, remaining[idx][0].center_lat, remaining[idx][0].center_lng
             ),
         )
         region, camp, camp_is_free = remaining[nearest]
