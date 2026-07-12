@@ -281,28 +281,26 @@ def dispersed_proxy_rows(
     )
     con.execute(
         "CREATE OR REPLACE TEMP TABLE _road_pts "
-        "(way_id BIGINT, seq INTEGER, name VARCHAR, lat DOUBLE, lng DOUBLE)"
+        "(way_id BIGINT, name VARCHAR, lat DOUBLE, lng DOUBLE)"
     )
-    point_rows = [
-        (road.way_id, seq, road.name, lat, lng)
-        for road in roads
-        for seq, (lat, lng) in enumerate(road.coords)
-    ]
-    con.executemany("INSERT INTO _road_pts VALUES (?, ?, ?, ?, ?)", point_rows)
-    # Cheap bbox pre-filter gates the expensive ST_Contains; keep one point per way (lowest seq
-    # inside any polygon). ST_Point takes (x=lng, y=lat).
+    point_rows = []
+    for road in roads:
+        if not road.coords:
+            continue
+        lat, lng = road.coords[len(road.coords) // 2]
+        point_rows.append((road.way_id, road.name, lat, lng))
+
+    con.executemany("INSERT INTO _road_pts VALUES (?, ?, ?, ?)", point_rows)
+    # Cheap bbox pre-filter gates the expensive ST_Contains.
+    # We only check the midpoint of each road to massively speed up the spatial join.
     inside = con.execute(
         """
-        WITH hits AS (
-            SELECT p.way_id, p.name, p.lat, p.lng, p.seq,
-                   row_number() OVER (PARTITION BY p.way_id ORDER BY p.seq) AS rn
-            FROM _road_pts p
-            JOIN _land_geom l
-              ON p.lat BETWEEN l.min_lat AND l.max_lat
-             AND p.lng BETWEEN l.min_lng AND l.max_lng
-             AND ST_Contains(l.geom, ST_Point(p.lng, p.lat))
-        )
-        SELECT way_id, name, lat, lng FROM hits WHERE rn = 1
+        SELECT DISTINCT p.way_id, p.name, p.lat, p.lng
+        FROM _road_pts p
+        JOIN _land_geom l
+          ON p.lat BETWEEN l.min_lat AND l.max_lat
+         AND p.lng BETWEEN l.min_lng AND l.max_lng
+         AND ST_Contains(l.geom, ST_Point(p.lng, p.lat))
         """
     ).fetchall()
     con.execute("DROP TABLE IF EXISTS _road_pts")
