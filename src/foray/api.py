@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
+import json
 import logging
+import queue
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -11,7 +14,7 @@ from typing import Any
 
 import duckdb
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -47,7 +50,24 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     # thread-safe, and a background refresh writing through the same connection avoids
     # the file-lock conflict that separate connections would hit.
     db = connect(cfg.db_path)
-    state: dict[str, Any] = {"cfg": cfg, "refreshing": False, "last_error": None}
+    state: dict[str, Any] = {
+        "cfg": cfg,
+        "refreshing": False,
+        "last_error": None,
+        "listeners": [],
+        "last_progress": None,
+    }
+
+    def broadcast(msg: dict[str, Any]) -> None:
+        state["last_progress"] = msg
+        for q in state["listeners"]:
+            q.put(msg)
+
+    def make_cb(base_pct: float, range_pct: float) -> Any:
+        def cb(step: str, local_pct: float) -> None:
+            broadcast({"step": step, "progress": base_pct + range_pct * (local_pct / 100.0)})
+
+        return cb
 
     def current() -> Config:
         return state["cfg"]
@@ -85,19 +105,25 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     def run_refresh() -> None:
         try:
+            broadcast({"step": "Starting refresh…", "progress": 0.0})
             logger.info("refresh: starting for %s", current().home.name)
-            ingest(current(), db)
-            camps.ingest_campgrounds(current(), db)
-            land.ingest_public_land(current(), db)
-            dispersed.ingest_dispersed(current(), db)  # after land: proxy intersects public_land
-            trails.ingest_trails(current(), db)
+            ingest(current(), db, progress_cb=make_cb(0.0, 50.0))
+            camps.ingest_campgrounds(current(), db, progress_cb=make_cb(50.0, 10.0))
+            land.ingest_public_land(current(), db, progress_cb=make_cb(60.0, 10.0))
+            dispersed.ingest_dispersed(current(), db, progress_cb=make_cb(70.0, 10.0))
+            trails.ingest_trails(current(), db, progress_cb=make_cb(80.0, 10.0))
+
+            broadcast({"step": "Building phenology…", "progress": 90.0})
             logger.info("refresh: building phenology…")
             scoring.build_phenology(db, current().cell_deg)
+
             state["last_error"] = None
+            broadcast({"step": "Done", "progress": 100.0, "done": True})
             logger.info("refresh: complete")
         except Exception as error:  # surface to the UI rather than dying silently
             logger.exception("refresh: failed")
             state["last_error"] = str(error)
+            broadcast({"error": str(error), "done": True})
         finally:
             state["refreshing"] = False
 
@@ -329,8 +355,29 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             return {"status": "already running"}
         state["refreshing"] = True
         state["last_error"] = None
+        state["last_progress"] = None
         threading.Thread(target=run_refresh, daemon=True).start()
         return {"status": "started"}
+
+    @app.get("/api/refresh/stream")
+    async def refresh_stream() -> StreamingResponse:
+        q: queue.Queue = queue.Queue()
+        if state["last_progress"]:
+            q.put(state["last_progress"])
+        state["listeners"].append(q)
+
+        async def event_generator():
+            try:
+                while True:
+                    msg = await asyncio.to_thread(q.get)
+                    yield f"data: {json.dumps(msg)}\n\n"
+                    if msg.get("done") or msg.get("error"):
+                        break
+            finally:
+                if q in state["listeners"]:
+                    state["listeners"].remove(q)
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> Any:

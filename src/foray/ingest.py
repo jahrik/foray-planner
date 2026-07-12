@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from collections.abc import Callable
 from typing import Any
 
 import duckdb
@@ -68,7 +69,12 @@ def _to_row(obs: dict[str, Any], seed_taxon_id: int) -> tuple[Any, ...] | None:
     )
 
 
-def ingest(cfg: Config, con: duckdb.DuckDBPyConnection | None = None) -> dict[int, int]:
+def ingest(
+    cfg: Config,
+    con: duckdb.DuckDBPyConnection | None = None,
+    *,
+    progress_cb: Callable[[str, float], None] | None = None,
+) -> dict[int, int]:
     """Pull observations for every seed taxon within the home radius. Returns {taxon_id: rows}."""
     own_con = con is None
     db = con if con is not None else connect(cfg.db_path)
@@ -100,6 +106,8 @@ def ingest(cfg: Config, con: duckdb.DuckDBPyConnection | None = None) -> dict[in
         end_date,
     )
     for index, species in enumerate(cfg.species, start=1):
+        if progress_cb:
+            progress_cb(f"Fetching {species.common_name}…", (index - 1) / total * 100.0)
         logger.info(
             "ingest [%d/%d] %s (taxon %d)…", index, total, species.common_name, species.taxon_id
         )

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -213,6 +213,7 @@ def fetch_public_land(
     radius_km: float,
     client: httpx.Client | None = None,
     sources: Iterable[LandSource] = SOURCES,
+    progress_cb: Callable[[str, float], None] | None = None,
 ) -> list[tuple[Any, ...]]:
     """Fetch ownership polygons near home from each source, deduped by id.
 
@@ -226,7 +227,11 @@ def fetch_public_land(
     envelope = _envelope(lat, lng, radius_km)
     by_id: dict[str, tuple[Any, ...]] = {}
     try:
-        for source in sources:
+        sources_list = list(sources)
+        total = len(sources_list)
+        for index, source in enumerate(sources_list):
+            if progress_cb:
+                progress_cb(f"Fetching {source.agency} land…", (index / total) * 100.0)
             before = len(by_id)
             try:
                 for feature in _iter_features(client, source, envelope):
@@ -249,6 +254,7 @@ def ingest_public_land(
     *,
     client: httpx.Client | None = None,
     sources: Iterable[LandSource] = SOURCES,
+    progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest public-land ownership polygons into the cache. Returns rows upserted."""
     own_con = con is None
@@ -262,6 +268,7 @@ def ingest_public_land(
             radius_km=home.radius_km,
             client=client,
             sources=sources,
+            progress_cb=progress_cb,
         )
         upsert_public_land(database, rows)
         key = f"land:{home.lat}:{home.lng}:{home.radius_km}"

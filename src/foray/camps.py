@@ -206,6 +206,7 @@ def fetch_campsites(
     api_key: str,
     client: httpx.Client | None = None,
     min_interval: float = _MIN_REQUEST_INTERVAL,
+    progress_cb: Callable[[str, float], None] | None = None,
 ) -> list[tuple[Any, ...]]:
     """Fetch developed campgrounds within ``radius_km`` of home, deduped and clipped."""
     owns = client is None
@@ -214,7 +215,14 @@ def fetch_campsites(
     query_radius_km = _QUERY_RADIUS_MI * _KM_PER_MILE
     by_id: dict[str, tuple[Any, ...]] = {}
     try:
-        for center_lat, center_lng in _query_centers(lat, lng, radius_km, query_radius_km):
+        centers = _query_centers(lat, lng, radius_km, query_radius_km)
+        total_centers = len(centers)
+        for index, (center_lat, center_lng) in enumerate(centers):
+            if progress_cb:
+                progress_cb(
+                    f"Fetching campgrounds ({index + 1}/{total_centers})…",
+                    (index / total_centers) * 100.0,
+                )
             for record in _iter_facilities(
                 client, throttle, api_key, center_lat, center_lng, _QUERY_RADIUS_MI
             ):
@@ -236,6 +244,7 @@ def ingest_campgrounds(
     *,
     api_key: str | None = None,
     client: httpx.Client | None = None,
+    progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest developed campgrounds into the cache. Returns rows upserted (0 if no key)."""
     api_key = api_key or os.getenv("RIDB_API_KEY")
@@ -253,6 +262,7 @@ def ingest_campgrounds(
             radius_km=home.radius_km,
             api_key=api_key,
             client=client,
+            progress_cb=progress_cb,
         )
         upsert_campsites(database, rows)
         key = f"camps:ridb:{home.lat}:{home.lng}:{home.radius_km}"

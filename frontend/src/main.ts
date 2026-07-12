@@ -546,22 +546,50 @@ function updateHome(home: Home): void {
   }
 }
 
-// Kick off a data refresh and resolve once the server finishes (polls /api/config).
+// Kick off a data refresh and resolve once the server finishes (listens via SSE).
 async function startRefresh(message: string): Promise<boolean> {
   setStatus(message);
   qs<HTMLButtonElement>("#refresh").disabled = true;
+  const progress = qs<HTMLProgressElement>("#refresh-progress");
+  progress.style.display = "inline-block";
+  progress.value = 0;
+
   await fetch("/api/refresh", { method: "POST" });
   return new Promise((resolve) => {
-    const timer = setInterval(async () => {
-      const config = await getJson<Config>("/api/config");
-      if (!config.refreshing) {
-        clearInterval(timer);
-        qs<HTMLButtonElement>("#refresh").disabled = false;
-        if (config.last_error) setStatus("Refresh error: " + config.last_error);
-        else setStatus("Data ready.");
-        resolve(!config.last_error);
+    const source = new EventSource("/api/refresh/stream");
+    
+    source.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.step) {
+        setStatus(data.step);
       }
-    }, 2000);
+      if (data.progress !== undefined) {
+        progress.value = data.progress;
+      }
+      
+      if (data.error) {
+        setStatus("Refresh error: " + data.error);
+        qs<HTMLButtonElement>("#refresh").disabled = false;
+        progress.style.display = "none";
+        source.close();
+        resolve(false);
+      } else if (data.done) {
+        setStatus("Data ready.");
+        qs<HTMLButtonElement>("#refresh").disabled = false;
+        progress.style.display = "none";
+        source.close();
+        resolve(true);
+      }
+    };
+    
+    source.onerror = (err) => {
+      console.error("SSE Error:", err);
+      source.close();
+      // Only un-disable if we haven't already finished.
+      qs<HTMLButtonElement>("#refresh").disabled = false;
+      progress.style.display = "none";
+      resolve(false);
+    };
   });
 }
 
