@@ -51,15 +51,16 @@ you're ready to leave today and want the freshest signal.
 
 ## Camping layers
 
-After you rank destinations, click any region card and the camping layers load for
-that area. Toggle them on from the **Camping** controls:
+After you rank destinations, click any region card and the camping and trail layers load
+for that area. Toggle them on from the **Camping** controls:
 
 | Toggle | What it shows | Marker |
 |---|---|---|
 | **Show campgrounds** | Named campgrounds from Recreation.gov | Gold = free · Amber = fee/unknown |
 | **Show dispersed camping (OSM)** | OSM-tagged free campsites + likely dispersed zones | Teal solid = reported site · Teal dashed ring = proxy |
 | **Free only** | Filters both layers to free/no-fee options only | — |
-| **Show public land (BLM/USFS)** | Land ownership polygons shaded by agency | Brown = BLM · Violet = USFS |
+| **Show public land (BLM/USFS)** | Land ownership polygons shaded by agency | Ochre = BLM · Violet = USFS |
+| **Show trails (OSM)** | Hiking paths, named routes & trailheads near the hotspot | Red lines = trails · Red dots = trailheads |
 
 **A note on dispersed camping:** the dashed-ring markers are a *best-guess proxy* —
 drivable forest roads that fall on BLM or USFS land, where dispersed camping is
@@ -78,6 +79,16 @@ ownership polygons show who manages the land; they are informational only.
 | **Target species** | Narrow to one or more genera (Ctrl/Cmd-click for multiples). Leave unselected to include all 21 targets. |
 | **Rank destinations** | Score and plot regions for the selected months + species. |
 | **Refresh data** | Re-pulls the latest observations from iNaturalist for the current area. Runs in the background; a status line shows progress. |
+| **Theme toggle (🌙 / ☀️)** | Switch between dark (the default) and light; the map basemap follows. Your choice is remembered across visits. |
+
+---
+
+## Trip planning (CLI / API)
+
+`foray plan` (or `GET /api/plan`) sequences the top destinations into a greedy multi-stop
+itinerary — each stop a region with active targets **and** a nearby free camp, ordered from
+home to keep the driving down. A map-based itinerary view is coming; for now see the
+[development guide](docs/development.md#cli-reference).
 
 ---
 
