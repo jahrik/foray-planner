@@ -17,5 +17,9 @@ data/*.duckdb
 data/*.duckdb.wal
 data/location.json
 
+# Node deps + generated schema input — the frontend stage runs `npm ci` and builds fresh
+node_modules
+frontend/openapi.json
+
 # Local-only notes and docs not needed in the image
 TODO.md

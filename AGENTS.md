@@ -20,13 +20,19 @@ phenology. Local-only project (no GitHub remote yet).
   three modes: `rank_destinations`, `place_calendar`, `alerts`. Grid binning is one reusable
   SQL fragment (`_BINNED`).
 - `src/foray/api.py` — FastAPI: `/api/{config,species,destinations,calendar,alerts,location,
-  refresh}` + `/` (Jinja UI). One shared DuckDB connection handing out per-request cursors;
-  live config is mutable app state; `refresh` runs in a background thread with reads guarded
-  while it rebuilds. `destinations` defaults to the current month when none is given.
-- `src/foray/cli.py` — `foray ingest | refresh | serve`.
-- `src/foray/web/` — Jinja template + Leaflet UI (`static/app.js`, `static/style.css`).
-  Marker palette is deliberately non-green (magenta = strength, cyan = recent) so it reads
-  against the OSM terrain.
+  refresh}` + `/` (serves the built client). One shared DuckDB connection handing out
+  per-request cursors; live config is mutable app state; `refresh` runs in a background thread
+  with reads guarded while it rebuilds. `destinations` defaults to the current month when none
+  is given.
+- `src/foray/cli.py` — `foray ingest | refresh | serve | openapi` (the last dumps the OpenAPI
+  schema that feeds the frontend type generator).
+- `src/foray/web/dist/` — the built client bundle (gitignored; emitted by the frontend build
+  and served by FastAPI as static assets at `/assets` + `/`).
+- `frontend/` — the web client: **Vite + TypeScript (strict)**, Leaflet map. `src/main.ts`
+  (ported from the old `app.js`), `src/api/` (typed client + `schema.ts` generated from the
+  backend's OpenAPI via `openapi-typescript`), `src/style.css`. Builds into
+  `../src/foray/web/dist`. Marker palette is deliberately non-green (magenta = strength,
+  cyan = recent) so it reads against the OSM terrain.
 
 ## Conventions
 
@@ -54,6 +60,12 @@ Gate before finishing:
 
 ```bash
 uv run ruff format . && uv run ruff check . && uv run ty check && uv run pytest
+```
+
+When touching `frontend/`, also gate the client (Node ≥ 22; `npm ci` first):
+
+```bash
+cd frontend && npm run build   # tsc --noEmit + vite build
 ```
 
 ## Data model notes

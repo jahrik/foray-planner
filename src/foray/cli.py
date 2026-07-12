@@ -49,6 +49,17 @@ def refresh(ctx: click.Context) -> None:
 
 
 @cli.command()
+@click.pass_context
+def openapi(ctx: click.Context) -> None:
+    """Print the FastAPI OpenAPI schema as JSON (feeds the frontend type generator)."""
+    import json
+
+    from foray.api import create_app
+
+    click.echo(json.dumps(create_app(ctx.obj["cfg"]).openapi()))
+
+
+@cli.command()
 @click.option("--host", default="127.0.0.1")
 @click.option("--port", default=8000, type=int)
 @click.pass_context
