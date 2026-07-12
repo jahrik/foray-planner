@@ -4,8 +4,8 @@
 [![CD](https://github.com/jahrik/foray-planner/actions/workflows/cd.yml/badge.svg)](https://github.com/jahrik/foray-planner/actions/workflows/cd.yml)
 
 A trip-planning tool for mushroom hunters. Point it at where you are or want to go,
-and it tells you **which areas near you are most likely to be fruiting this month** —
-and where you can park and sleep for free while you're out there.
+and it tells you which areas near you are most likely to be fruiting this month
+and points you towards to the closest hiking trail, campsite, BLM & FS land near that area.
 
 > **No identification or edibility claims are made here.** This is a trip-planning
 > and mapping tool only. Every species links to its
@@ -83,7 +83,7 @@ ownership polygons show who manages the land; they are informational only.
 
 ## Target species
 
-The app tracks a curated list of 21 edible-target genera — morels, chanterelles, king
+The app tracks a curated list of 21 genera — morels, chanterelles, king
 boletes, hedgehogs, lobster mushrooms, and more. The full list is in
 [`data/species_seed.yaml`](data/species_seed.yaml). Each species chip in the UI links
 directly to its iNaturalist page for photos, range maps, and community notes.
