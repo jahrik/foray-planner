@@ -259,8 +259,11 @@ def dispersed_proxy_rows(
         logger.info("dispersed: no public_land cached — skipping road proxy")
         return []
 
-    con.execute("INSTALL spatial")
-    con.execute("LOAD spatial")
+    try:
+        con.execute("LOAD spatial")
+    except duckdb.Error:
+        con.execute("INSTALL spatial")
+        con.execute("LOAD spatial")
     # ArcGIS polygons are server-generalized and can be slightly self-intersecting; ST_MakeValid
     # keeps a bad ring from aborting the whole join.
     con.execute(

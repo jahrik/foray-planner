@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS campsites (
     name        VARCHAR,
     kind        VARCHAR,               -- "campground" (RIDB), "reported"/"dispersed" (OSM)
     fee         VARCHAR,               -- raw fee description when known, else NULL
-    free        BOOLEAN,               -- TRUE only on an explicit no-fee signal, else NULL
+    free        BOOLEAN,               -- TRUE on an explicit no-fee signal (RIDB/OSM tag) OR for
+                                       --   the dispersed proxy (public-land camping is free of
+                                       --   charge by nature, not from a per-site tag); else NULL
     lat         DOUBLE,
     lng         DOUBLE,
     source      VARCHAR,               -- "ridb", "osm"

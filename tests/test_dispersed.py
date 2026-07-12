@@ -32,9 +32,15 @@ HOME_LAT, HOME_LNG = 47.6, -122.3
 
 
 def _spatial_ready() -> bool:
+    """Return True only if the spatial extension is already installed (LOAD-only check).
+
+    We deliberately do *not* run INSTALL here — that can attempt a network download at
+    test-collection time, violating the file's no-network guarantee and making the suite
+    flaky in offline/locked-down environments. If the extension isn't present yet, CI or
+    local setup should install it separately (``duckdb -c "INSTALL spatial"``).
+    """
     conn = duckdb.connect()
     try:
-        conn.execute("INSTALL spatial")
         conn.execute("LOAD spatial")
         return True
     except (duckdb.Error, OSError):
