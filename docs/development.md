@@ -56,13 +56,17 @@ uv run foray ingest      # pull iNat observations only (no phenology rebuild)
 uv run foray camps       # ingest Recreation.gov campgrounds (needs RIDB_API_KEY)
 uv run foray land        # ingest BLM/USFS ownership boundaries (ArcGIS, no key)
 uv run foray dispersed   # ingest OSM dispersed-camping layer (Overpass, no key)
+uv run foray trails      # ingest OSM trails: paths, hiking routes, trailheads (Overpass, no key)
 uv run foray refresh     # all of the above + rebuild phenology/regions tables
+uv run foray plan        # print a greedy multi-stop trip itinerary (--months, --max-stops,
+                         #   --max-drive-km, --any-camp)
 uv run foray serve       # start the FastAPI server (--host / --port to override)
 uv run foray openapi     # dump OpenAPI schema (feeds npm run gen:api)
 ```
 
 `refresh` is the normal daily/weekly operation: it runs ingest → camps → land → dispersed →
-phenology in sequence, logging progress per stage.
+trails → phenology in sequence, logging progress per stage. `plan` reads the already-refreshed
+cache and does no network I/O.
 
 ---
 

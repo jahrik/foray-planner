@@ -1,4 +1,5 @@
-:root {
+:root,
+:root[data-theme="dark"] {
   --bg: #12140f;
   --panel: #1c1f17;
   --ink: #eef0e6;
@@ -6,6 +7,15 @@
   --accent: #d9a441;
   --accent2: #7fae5e;
   --border: #2c3122;
+}
+:root[data-theme="light"] {
+  --bg: #f4f2e9;
+  --panel: #ffffff;
+  --ink: #23271c;
+  --muted: #5f6653;
+  --accent: #b9832a;
+  --accent2: #6ba043;
+  --border: #d8d4c4;
 }
 * { box-sizing: border-box; }
 body {
@@ -15,7 +25,9 @@ body {
   color: var(--ink);
 }
 header { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+header .topline { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 header h1 { margin: 0; font-size: 20px; }
+.theme-toggle { padding: 6px 10px; font-size: 16px; line-height: 1; flex: 0 0 auto; }
 header .home { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
 .locbar { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
 .locbar input {

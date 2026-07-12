@@ -257,6 +257,42 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             cursor.close()
         return JSONResponse([asdict(trail) for trail in found])
 
+    @app.get("/api/plan")
+    def plan(
+        months: str | None = Query(None),
+        species: str = Query("all"),
+        radius_km: float | None = Query(None),
+        max_stops: int = Query(5, ge=1, le=20),
+        max_drive_km: float = Query(400.0, gt=0),
+        camp_radius_km: float = Query(40.0, gt=0),
+        require_free_camp: bool = Query(True),
+    ) -> JSONResponse:
+        """Greedy multi-stop itinerary: top destinations sequenced home-out with the least drive."""
+        require_idle()
+        cfg = current()
+        selected_months = parse_months(months) if months is not None else [dt.date.today().month]
+        cursor = db.cursor()
+        try:
+            trip = scoring.plan_route(
+                cursor,
+                months=selected_months,
+                taxon_ids=parse_species(species),
+                home_lat=cfg.home.lat,
+                home_lng=cfg.home.lng,
+                radius_km=radius_km or cfg.home.radius_km,
+                cell_deg=cfg.cell_deg,
+                recent_weeks=cfg.recent_weeks,
+                max_stops=max_stops,
+                max_drive_km=max_drive_km,
+                camp_radius_km=camp_radius_km,
+                require_free_camp=require_free_camp,
+            )
+        except duckdb.CatalogException:
+            raise HTTPException(409, "no data for this area yet — click Fetch data") from None
+        finally:
+            cursor.close()
+        return JSONResponse(asdict(trip))
+
     @app.post("/api/location")
     def set_location(body: LocationBody) -> dict[str, Any]:
         cfg = current()

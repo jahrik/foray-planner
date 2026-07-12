@@ -38,25 +38,30 @@ phenology. Public repo: [jahrik/foray-planner](https://github.com/jahrik/foray-p
   ingests; informational only (links the OSM source, no legal-access claim).
 - `src/foray/scoring.py` — `build_phenology` (materializes `regions` + `phenology`) and the
   scoring modes: `rank_destinations`, `place_calendar`, `alerts`, `camps_near` (campsites
-  near a point, free-first by distance), and `trails_near` (trails near a hotspot, nearest first,
-  each annotated with the distance to the closest campsite — "park → hike → fungi"). Grid binning
+  near a point, free-first by distance), `trails_near` (trails near a hotspot, nearest first,
+  each annotated with the distance to the closest campsite — "park → hike → fungi"), and
+  `plan_route` (greedy multi-stop itinerary: pick the top destinations that have a nearby free
+  camp, then order them nearest-neighbour from home under a per-leg drive cap). Grid binning
   is one reusable SQL fragment (`_BINNED`).
 - `src/foray/api.py` — FastAPI: `/api/{config,species,destinations,calendar,alerts,camps,land,
-  trails,location,refresh}` + `/` (serves the built client). `/api/camps` takes a `region_id` or a
-  `lat`/`lng` plus `radius_km` + `free_only`; `/api/land` and `/api/trails` take a `region_id` or
-  `lat`/`lng` + `radius_km`. One shared DuckDB connection handing out per-request cursors; live
-  config is mutable app state; `refresh` runs in a background thread with reads guarded while it
-  rebuilds. `destinations` defaults to the current month when none is given.
-- `src/foray/cli.py` — `foray ingest | camps | land | dispersed | trails | refresh | serve |
-  openapi` (`refresh` does obs + camps + land + dispersed + trails + phenology; `openapi` dumps the
-  schema that feeds the frontend type generator).
+  trails,plan,location,refresh}` + `/` (serves the built client). `/api/camps` takes a `region_id`
+  or a `lat`/`lng` plus `radius_km` + `free_only`; `/api/land` and `/api/trails` take a `region_id`
+  or `lat`/`lng` + `radius_km`; `/api/plan` takes `months`/`species` + `max_stops`, `max_drive_km`,
+  `camp_radius_km`, `require_free_camp`. One shared DuckDB connection handing out per-request
+  cursors; live config is mutable app state; `refresh` runs in a background thread with reads
+  guarded while it rebuilds. `destinations`/`plan` default to the current month when none is given.
+- `src/foray/cli.py` — `foray ingest | camps | land | dispersed | trails | plan | refresh | serve |
+  openapi` (`refresh` does obs + camps + land + dispersed + trails + phenology; `plan` prints a
+  greedy itinerary; `openapi` dumps the schema that feeds the frontend type generator).
 - `src/foray/web/dist/` — the built client bundle (gitignored; emitted by the frontend build
   and served by FastAPI as static assets at `/assets` + `/`).
 - `frontend/` — the web client: **Vite + TypeScript (strict)**, Leaflet map. `src/main.ts`
   (ported from the old `app.js`), `src/api/` (typed client + `schema.ts` generated from the
   backend's OpenAPI via `openapi-typescript`), `src/style.css`. Builds into
-  `../src/foray/web/dist`. Marker palette is deliberately non-green (magenta = strength,
-  cyan = recent) so it reads against the OSM terrain.
+  `../src/foray/web/dist`. Marker palette is bright/neon and deliberately non-green (hot magenta =
+  strength, electric cyan = recent) so it reads on both basemaps. A **light/dark theme toggle**
+  (🌙/☀️, header) is `data-theme`-driven with a `localStorage` preference (default **dark**), set
+  before first paint by an inline `<head>` script; the basemap follows it (CARTO dark / OSM light).
 
 ## Conventions
 

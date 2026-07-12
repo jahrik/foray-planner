@@ -455,3 +455,143 @@ def alerts(
     results = list(by_region.values())
     results.sort(key=lambda region: region["total"], reverse=True)
     return results
+
+
+@dataclass
+class Stop:
+    """One week-long stay in a planned trip: a destination + how you get there + where you sleep."""
+
+    order: int  # 1-based position in the itinerary
+    region_id: str
+    center_lat: float
+    center_lng: float
+    score_norm: float  # destination score relative to the best region (0..1)
+    n_species: int
+    recent_count: int
+    species: list[SpeciesHit]
+    drive_km_from_prev: float  # great-circle leg from the previous stop (or home for stop 1)
+    cumulative_drive_km: float  # running total from home
+    camp: CampSite | None  # closest free camp (or closest of any kind if none is free-tagged)
+    camp_is_free: bool
+
+
+@dataclass
+class TripPlan:
+    home_lat: float
+    home_lng: float
+    months: list[int]
+    n_stops: int
+    total_drive_km: float
+    stops: list[Stop]
+    skipped_unreachable: int  # viable candidates dropped for being past ``max_drive_km`` from route
+
+
+def plan_route(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    months: list[int],
+    taxon_ids: list[int],
+    home_lat: float,
+    home_lng: float,
+    radius_km: float,
+    cell_deg: float,
+    recent_weeks: int = 4,
+    max_stops: int = 5,
+    max_drive_km: float = 400.0,
+    camp_radius_km: float = 40.0,
+    require_free_camp: bool = True,
+    min_score_norm: float = 0.0,
+) -> TripPlan:
+    """Sequence the top destinations into a greedy, low-backtrack itinerary of week-long stays.
+
+    Two passes, both built on the existing primitives (no new geography):
+
+    1. **Select** — take ``rank_destinations`` (already score-desc), annotate each with its nearest
+       campsite via ``camps_near`` (free-first), drop regions below ``min_score_norm`` or — when
+       ``require_free_camp`` — without a free camp inside ``camp_radius_km``, then keep the top
+       ``max_stops`` by score. These are the "worth the drive" stops.
+    2. **Order** — nearest-neighbour from home: repeatedly hop to the closest remaining stop,
+       accumulating ``haversine_km`` legs. Once the closest remaining stop is past ``max_drive_km``
+       from the current position everything left is farther still, so the rest are reported as
+       ``skipped_unreachable`` rather than forcing an implausible leg. Great-circle distance stands
+       in for real drive time until road routing lands (Epic 4 export slice).
+
+    Missing tables (nothing ingested yet) surface as ``rank_destinations`` raising, mirroring the
+    other modes; an empty candidate set yields an empty plan.
+    """
+    ranked = rank_destinations(
+        con,
+        months=months,
+        taxon_ids=taxon_ids,
+        home_lat=home_lat,
+        home_lng=home_lng,
+        radius_km=radius_km,
+        cell_deg=cell_deg,
+        recent_weeks=recent_weeks,
+    )
+
+    # Pass 1 — annotate + filter, preserving the score-desc order rank_destinations returns.
+    candidates: list[tuple[RegionScore, CampSite | None, bool]] = []
+    for region in ranked:
+        if region.score_norm < min_score_norm:
+            continue
+        # camps_near ranks free-first, so its nearest result is the nearest *free* camp when one
+        # is in range, else the nearest of any kind — one query answers both cases.
+        nearby = camps_near(
+            con, lat=region.center_lat, lng=region.center_lng, radius_km=camp_radius_km
+        )
+        camp = nearby[0] if nearby else None
+        camp_is_free = camp is not None and camp.free is True
+        if require_free_camp and not camp_is_free:
+            continue
+        candidates.append((region, camp, camp_is_free))
+        if len(candidates) >= max_stops:
+            break
+
+    # Pass 2 — nearest-neighbour ordering from home.
+    remaining = candidates[:]
+    cur_lat, cur_lng = home_lat, home_lng
+    stops: list[Stop] = []
+    cumulative = 0.0
+    skipped = 0
+    while remaining:
+        nearest = min(
+            range(len(remaining)),
+            key=lambda idx: haversine_km(
+                cur_lat, cur_lng, remaining[idx][0].center_lat, remaining[idx][0].center_lng
+            ),
+        )
+        region, camp, camp_is_free = remaining[nearest]
+        leg = haversine_km(cur_lat, cur_lng, region.center_lat, region.center_lng)
+        if leg > max_drive_km:
+            skipped = len(remaining)  # closest is unreachable ⇒ so is everything else
+            break
+        remaining.pop(nearest)
+        cumulative += leg
+        stops.append(
+            Stop(
+                order=len(stops) + 1,
+                region_id=region.region_id,
+                center_lat=region.center_lat,
+                center_lng=region.center_lng,
+                score_norm=region.score_norm,
+                n_species=region.n_species,
+                recent_count=region.recent_count,
+                species=region.species,
+                drive_km_from_prev=round(leg, 1),
+                cumulative_drive_km=round(cumulative, 1),
+                camp=camp,
+                camp_is_free=camp_is_free,
+            )
+        )
+        cur_lat, cur_lng = region.center_lat, region.center_lng
+
+    return TripPlan(
+        home_lat=home_lat,
+        home_lng=home_lng,
+        months=months,
+        n_stops=len(stops),
+        total_drive_km=round(cumulative, 1),
+        stops=stops,
+        skipped_unreachable=skipped,
+    )

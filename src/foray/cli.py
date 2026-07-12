@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 
 import click
@@ -12,7 +13,7 @@ from foray.config import load_config
 from foray.dispersed import ingest_dispersed
 from foray.ingest import ingest
 from foray.land import ingest_public_land
-from foray.scoring import build_phenology
+from foray.scoring import build_phenology, plan_route
 from foray.trails import ingest_trails
 
 
@@ -113,6 +114,78 @@ def refresh(ctx: click.Context) -> None:
         f"Phenology rebuilt across {region_count} regions ({observation_count(con)} observations)."
     )
     con.close()
+
+
+def _parse_months(months: str) -> list[int]:
+    """Parse a comma-separated month list, raising a Click error on junk or out-of-range values."""
+    try:
+        values = [int(token) for token in months.split(",") if token.strip()]
+    except ValueError as error:
+        raise click.BadParameter(f"months must be integers 1-12: {months!r}") from error
+    if not all(1 <= month <= 12 for month in values):
+        raise click.BadParameter("months must be in 1-12")
+    return values
+
+
+@cli.command("plan")
+@click.option(
+    "--months", default="", help="Comma-separated months (1-12); default = current month."
+)
+@click.option(
+    "--max-stops", default=5, type=click.IntRange(min=1), help="Maximum stays in the itinerary."
+)
+@click.option(
+    "--max-drive-km",
+    default=400.0,
+    type=click.FloatRange(min=0, min_open=True),
+    help="Max great-circle km per leg.",
+)
+@click.option("--any-camp", is_flag=True, help="Allow stops whose nearest camp isn't free-tagged.")
+@click.pass_context
+def plan_cmd(
+    ctx: click.Context, months: str, max_stops: int, max_drive_km: float, any_camp: bool
+) -> None:
+    """Sequence the top destinations into a greedy, low-backtrack trip itinerary."""
+    cfg = ctx.obj["cfg"]
+    selected = _parse_months(months) or [dt.date.today().month]
+    con = connect(cfg.db_path)
+    trip = plan_route(
+        con,
+        months=selected,
+        taxon_ids=cfg.taxon_ids,
+        home_lat=cfg.home.lat,
+        home_lng=cfg.home.lng,
+        radius_km=cfg.home.radius_km,
+        cell_deg=cfg.cell_deg,
+        recent_weeks=cfg.recent_weeks,
+        max_stops=max_stops,
+        max_drive_km=max_drive_km,
+        require_free_camp=not any_camp,
+    )
+    con.close()
+    if not trip.stops:
+        click.echo("No viable stops found — try a wider radius, more months, or --any-camp.")
+        return
+    click.echo(
+        f"Trip from {cfg.home.name} — months {selected}, {trip.n_stops} stops, "
+        f"{trip.total_drive_km:.0f} km total drive:"
+    )
+    for stop in trip.stops:
+        top = ", ".join(hit.common_name for hit in stop.species[:3]) or "—"
+        camp = (
+            "no camp"
+            if stop.camp is None
+            else (
+                f"{'FREE ' if stop.camp_is_free else ''}{stop.camp.name} "
+                f"({stop.camp.distance_km:.0f} km)"
+            )
+        )
+        click.echo(
+            f"  {stop.order}. {stop.region_id}  +{stop.drive_km_from_prev:.0f} km  "
+            f"score {stop.score_norm:.2f}  {stop.n_species} spp [{top}]  camp: {camp}"
+        )
+    if trip.skipped_unreachable:
+        click.echo(f"  ({trip.skipped_unreachable} viable stop(s) skipped — beyond max drive.)")
 
 
 @cli.command()
