@@ -17,6 +17,7 @@ proxy-based layer (Epic 2, follow-up) — this module only handles developed cam
 from __future__ import annotations
 
 import html
+import logging
 import math
 import os
 import re
@@ -30,6 +31,8 @@ import httpx
 from foray.cache import connect, record_ingest, upsert_campsites
 from foray.config import Config
 from foray.scoring import haversine_km
+
+logger = logging.getLogger(__name__)
 
 RIDB_FACILITIES = "https://ridb.recreation.gov/api/v1/facilities"
 USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
@@ -237,11 +240,13 @@ def ingest_campgrounds(
     """Ingest developed campgrounds into the cache. Returns rows upserted (0 if no key)."""
     api_key = api_key or os.getenv("RIDB_API_KEY")
     if not api_key:
+        logger.info("camps: RIDB_API_KEY unset — skipping campground ingest")
         return 0
     own_con = con is None
     database = con if con is not None else connect(cfg.db_path)
     home = cfg.home
     try:
+        logger.info("camps: fetching developed campgrounds within %.0f km of home…", home.radius_km)
         rows = fetch_campsites(
             lat=home.lat,
             lng=home.lng,
@@ -252,6 +257,7 @@ def ingest_campgrounds(
         upsert_campsites(database, rows)
         key = f"camps:ridb:{home.lat}:{home.lng}:{home.radius_km}"
         record_ingest(database, key, len(rows))
+        logger.info("camps: cached %d campgrounds", len(rows))
         return len(rows)
     finally:
         if own_con:
