@@ -50,6 +50,7 @@ const HOME_FILL = "#ffffff"; // white "you are here" dot
 const HOME_RING = "#161a12";
 const CAMP_FREE = "#ffd24d"; // gold — free / no-fee campground
 const CAMP_PAID = "#f5a623"; // amber — fee or unknown-cost campground
+const CAMP_OSM = "#12b5a8"; // teal — OSM dispersed layer (solid = reported, dashed ring = proxy)
 // Public-land ownership fill — non-green so it reads over the OSM terrain, one hue per agency.
 const LAND_COLORS: Record<string, string> = {
   BLM: "#b06f3c", // earthy brown
@@ -159,14 +160,20 @@ function clearLand(): void {
 }
 
 const campsOn = (): boolean => qs<HTMLInputElement>("#show-camps").checked;
+const dispersedOn = (): boolean => qs<HTMLInputElement>("#show-dispersed").checked;
 const freeOnly = (): boolean => qs<HTMLInputElement>("#free-camps").checked;
 const landOn = (): boolean => qs<HTMLInputElement>("#show-land").checked;
 
-// Fetch + plot campgrounds near the focused region. No-op (just clears) when the toggle
-// is off. Failures degrade quietly to a status line rather than throwing.
+// OSM dispersed layer: real tagged sites ("reported") + the road∩public-land proxy ("dispersed").
+const isDispersed = (site: CampSite): boolean =>
+  site.kind === "dispersed" || site.kind === "reported";
+
+// Fetch + plot camping near the focused region. `/api/camps` returns developed campgrounds and
+// the OSM dispersed layer together; each is drawn only when its toggle is on. No-op (just clears)
+// when neither is on. Failures degrade quietly to a status line rather than throwing.
 async function loadCamps(): Promise<void> {
   clearCamps();
-  if (!campsOn() || !state.focused) return;
+  if ((!campsOn() && !dispersedOn()) || !state.focused) return;
   const { lat, lng } = state.focused;
   let sites: CampSite[];
   try {
@@ -178,25 +185,38 @@ async function loadCamps(): Promise<void> {
     return;
   }
   sites.forEach((site) => {
+    const dispersed = isDispersed(site);
+    if (dispersed ? !dispersedOn() : !campsOn()) return; // gated by the matching toggle
+    const proxy = site.kind === "dispersed"; // inferred point (vs a tagged "reported" site)
     const isFree = site.free === true;
-    const cost = isFree ? "free" : site.fee ? site.fee : "cost unknown";
     const marker = L.circleMarker([site.center_lat, site.center_lng], {
-      radius: 5,
-      color: HOME_RING,
-      weight: 1,
-      fillColor: isFree ? CAMP_FREE : CAMP_PAID,
-      fillOpacity: 0.9,
+      radius: dispersed ? 6 : 5,
+      color: proxy ? CAMP_OSM : HOME_RING,
+      weight: proxy ? 2 : 1,
+      dashArray: proxy ? "3 3" : undefined, // dashed ring signals the low-confidence proxy
+      fillColor: dispersed ? CAMP_OSM : isFree ? CAMP_FREE : CAMP_PAID,
+      fillOpacity: proxy ? 0.35 : 0.9,
     })
       .addTo(map)
-      .bindPopup(campPopup(site, cost));
+      .bindPopup(campPopup(site));
     state.campMarkers.push(marker);
   });
 }
 
-// Build the campground popup from DOM nodes rather than an HTML string: `site.name` and the
-// fee text come from an external API, so `textContent` escapes them instead of injecting raw
-// HTML. `site.url` is server-constructed (recreation.gov + facility id), so it's a safe href.
-function campPopup(site: CampSite, cost: string): HTMLElement {
+// Build the camp popup from DOM nodes rather than an HTML string: `site.name` and the fee text
+// come from an external API, so `textContent` escapes them instead of injecting raw HTML.
+// `site.url` is server-constructed (recreation.gov / openstreetmap + id), so it's a safe href.
+function campPopup(site: CampSite): HTMLElement {
+  const isOsm = site.source === "osm";
+  // The proxy is a guess, so its detail line carries the "verify" caveat instead of a cost.
+  const detail =
+    site.kind === "dispersed"
+      ? "likely dispersed-legal — verify with the agency"
+      : site.free === true
+        ? "free"
+        : site.fee
+          ? site.fee
+          : "cost unknown";
   const root = document.createElement("div");
   const title = document.createElement("b");
   title.textContent = site.name;
@@ -204,11 +224,11 @@ function campPopup(site: CampSite, cost: string): HTMLElement {
   link.href = site.url;
   link.target = "_blank";
   link.rel = "noopener";
-  link.textContent = "Recreation.gov ↗";
+  link.textContent = isOsm ? "OpenStreetMap ↗" : "Recreation.gov ↗";
   root.append(
     title,
     document.createElement("br"),
-    document.createTextNode(`${site.distance_km} km · ${cost}`),
+    document.createTextNode(`${site.distance_km} km · ${detail}`),
     document.createElement("br"),
     link,
   );
@@ -472,6 +492,7 @@ async function main(): Promise<void> {
   initTabs();
   qs("#run").onclick = runDestinations;
   qs("#show-camps").onchange = () => loadCamps();
+  qs("#show-dispersed").onchange = () => loadCamps();
   qs("#free-camps").onchange = () => loadCamps();
   qs("#show-land").onchange = () => loadLand();
   qs("#refresh").onclick = () =>

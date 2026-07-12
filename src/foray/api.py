@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from foray import camps, geocode, land, scoring
+from foray import camps, dispersed, geocode, land, scoring
 from foray.cache import connect
 from foray.config import Config, Home, load_config, location_path, save_location
 from foray.ingest import ingest
@@ -89,6 +89,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             ingest(current(), db)
             camps.ingest_campgrounds(current(), db)
             land.ingest_public_land(current(), db)
+            dispersed.ingest_dispersed(current(), db)  # after land: proxy intersects public_land
             logger.info("refresh: building phenology…")
             scoring.build_phenology(db, current().cell_deg)
             state["last_error"] = None
