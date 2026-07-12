@@ -129,6 +129,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/trails": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Trails
+         * @description Trails near a region (by id) or an explicit lat/lng, nearest to the hotspot first.
+         */
+        get: operations["get_trails_api_trails_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/location": {
         parameters: {
             query?: never;
@@ -406,6 +426,40 @@ export interface operations {
         };
     };
     get_land_api_land_get: {
+        parameters: {
+            query?: {
+                region_id?: string | null;
+                lat?: number | null;
+                lng?: number | null;
+                radius_km?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trails_api_trails_get: {
         parameters: {
             query?: {
                 region_id?: string | null;

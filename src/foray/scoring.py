@@ -305,6 +305,76 @@ def land_near(
     ]
 
 
+@dataclass
+class Trail:
+    id: str
+    name: str
+    kind: str
+    source: str
+    url: str
+    center_lat: float
+    center_lng: float
+    distance_km: float  # from the hotspot to the trail's representative point
+    camp_distance_km: float | None  # nearest cached campsite to the trail ("park → hike → fungi")
+    geometry: dict[str, Any]  # parsed GeoJSON geometry, ready for Leaflet
+
+
+def trails_near(
+    con: duckdb.DuckDBPyConnection, *, lat: float, lng: float, radius_km: float
+) -> list[Trail]:
+    """Trails whose representative point is within ``radius_km`` of a hotspot, nearest first.
+
+    A cheap bbox-vs-envelope prefilter in SQL (the stored geometry needs no spatial extension)
+    narrows candidates; the exact cut and ordering use ``haversine_km`` on each trail's stored
+    center. Each trail is annotated with the distance to the nearest cached campsite so the UI can
+    show the "park → hike → fungi" chain. Missing table (no trails ingested yet) yields an empty
+    list, mirroring ``camps_near`` / ``land_near``.
+    """
+    dlat = radius_km / 111.0
+    dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
+    try:
+        rows = con.execute(
+            """
+            SELECT id, name, kind, source, url, center_lat, center_lng, geojson FROM trails
+            WHERE min_lat <= ? AND max_lat >= ? AND min_lng <= ? AND max_lng >= ?
+            """,
+            [lat + dlat, lat - dlat, lng + dlng, lng - dlng],
+        ).fetchall()
+    except duckdb.CatalogException:
+        return []
+    # Nearest-campsite distance is a per-trail annotation; fetch the camp points once and reuse.
+    try:
+        camps = con.execute("SELECT lat, lng FROM campsites").fetchall()
+    except duckdb.CatalogException:
+        camps = []
+
+    scored: list[Trail] = []
+    for trail_id, name, kind, source, url, clat, clng, geojson in rows:
+        dist = haversine_km(lat, lng, clat, clng)
+        if dist > radius_km:
+            continue
+        camp_dist = min(
+            (haversine_km(clat, clng, camp_lat, camp_lng) for camp_lat, camp_lng in camps),
+            default=None,
+        )
+        scored.append(
+            Trail(
+                id=trail_id,
+                name=name,
+                kind=kind,
+                source=source,
+                url=url,
+                center_lat=clat,
+                center_lng=clng,
+                distance_km=round(dist, 1),
+                camp_distance_km=round(camp_dist, 1) if camp_dist is not None else None,
+                geometry=json.loads(geojson),
+            )
+        )
+    scored.sort(key=lambda trail: trail.distance_km)
+    return scored
+
+
 def place_calendar(
     con: duckdb.DuckDBPyConnection, *, region_id: str, taxon_ids: list[int]
 ) -> dict[int, dict[str, Any]]:

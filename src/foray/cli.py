@@ -13,6 +13,7 @@ from foray.dispersed import ingest_dispersed
 from foray.ingest import ingest
 from foray.land import ingest_public_land
 from foray.scoring import build_phenology
+from foray.trails import ingest_trails
 
 
 def _setup_logging() -> None:
@@ -84,16 +85,28 @@ def dispersed_cmd(ctx: click.Context) -> None:
     con.close()
 
 
+@cli.command("trails")
+@click.pass_context
+def trails_cmd(ctx: click.Context) -> None:
+    """Ingest OSM trails (paths/footways, hiking routes, trailheads) near home."""
+    cfg = ctx.obj["cfg"]
+    con = connect(cfg.db_path)
+    count = ingest_trails(cfg, con)
+    click.echo(f"Cached {count} trails within {cfg.home.radius_km} km of home.")
+    con.close()
+
+
 @cli.command()
 @click.pass_context
 def refresh(ctx: click.Context) -> None:
-    """Ingest observations + campgrounds + land + dispersed, then (re)build phenology."""
+    """Ingest observations + campgrounds + land + dispersed + trails, then (re)build phenology."""
     cfg = ctx.obj["cfg"]
     con = connect(cfg.db_path)
     ingest(cfg, con)
     ingest_campgrounds(cfg, con)
     ingest_public_land(cfg, con)
     ingest_dispersed(cfg, con)
+    ingest_trails(cfg, con)
     build_phenology(con, cfg.cell_deg)
     region_count = (con.execute("SELECT count(*) FROM regions").fetchone() or (0,))[0]
     click.echo(

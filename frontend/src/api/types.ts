@@ -97,6 +97,20 @@ export interface LandUnit {
   geometry: GeoJSON.Geometry;
 }
 
+/** A trail near a hotspot (`GET /api/trails`). `geometry` is raw GeoJSON (line or point). */
+export interface Trail {
+  id: string;
+  name: string;
+  kind: string; // "path" | "route" | "trailhead"
+  source: string;
+  url: string;
+  center_lat: number;
+  center_lng: number;
+  distance_km: number;
+  camp_distance_km: number | null; // nearest campsite, null when none cached
+  geometry: GeoJSON.Geometry;
+}
+
 export interface LocationResponse {
   home: Home;
 }
