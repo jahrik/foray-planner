@@ -28,7 +28,7 @@ from typing import Any
 import duckdb
 import httpx
 
-from foray.cache import connect, record_ingest, upsert_campsites
+from foray.cache import connect, is_ingested, record_ingest, upsert_campsites
 from foray.config import Config
 from foray.scoring import haversine_km
 
@@ -206,6 +206,7 @@ def fetch_campsites(
     api_key: str,
     client: httpx.Client | None = None,
     min_interval: float = _MIN_REQUEST_INTERVAL,
+    progress_cb: Callable[[str, float], None] | None = None,
 ) -> list[tuple[Any, ...]]:
     """Fetch developed campgrounds within ``radius_km`` of home, deduped and clipped."""
     owns = client is None
@@ -214,7 +215,14 @@ def fetch_campsites(
     query_radius_km = _QUERY_RADIUS_MI * _KM_PER_MILE
     by_id: dict[str, tuple[Any, ...]] = {}
     try:
-        for center_lat, center_lng in _query_centers(lat, lng, radius_km, query_radius_km):
+        centers = _query_centers(lat, lng, radius_km, query_radius_km)
+        total_centers = len(centers)
+        for index, (center_lat, center_lng) in enumerate(centers):
+            if progress_cb:
+                progress_cb(
+                    f"Fetching campgrounds ({index + 1}/{total_centers})…",
+                    ((index + 1) / total_centers) * 100.0 if total_centers else 100.0,
+                )
             for record in _iter_facilities(
                 client, throttle, api_key, center_lat, center_lng, _QUERY_RADIUS_MI
             ):
@@ -236,6 +244,7 @@ def ingest_campgrounds(
     *,
     api_key: str | None = None,
     client: httpx.Client | None = None,
+    progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest developed campgrounds into the cache. Returns rows upserted (0 if no key)."""
     api_key = api_key or os.getenv("RIDB_API_KEY")
@@ -245,6 +254,14 @@ def ingest_campgrounds(
     own_con = con is None
     database = con if con is not None else connect(cfg.db_path)
     home = cfg.home
+    key = f"camps:ridb:{home.lat}:{home.lng}:{home.radius_km}"
+    if is_ingested(database, key):
+        logger.info("camps: already ingested for this area, skipping")
+        if progress_cb:
+            progress_cb("Campgrounds already cached, skipping…", 100.0)
+        if own_con:
+            database.close()
+        return 0
     try:
         logger.info("camps: fetching developed campgrounds within %.0f km of home…", home.radius_km)
         rows = fetch_campsites(
@@ -253,6 +270,7 @@ def ingest_campgrounds(
             radius_km=home.radius_km,
             api_key=api_key,
             client=client,
+            progress_cb=progress_cb,
         )
         upsert_campsites(database, rows)
         key = f"camps:ridb:{home.lat}:{home.lng}:{home.radius_km}"

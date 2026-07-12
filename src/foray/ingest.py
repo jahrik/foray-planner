@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import threading
+from collections.abc import Callable
 from typing import Any
 
 import duckdb
 
-from foray.cache import connect, record_ingest, upsert_observations, upsert_taxa
+from foray.cache import connect, latest_obs_date, record_ingest, upsert_observations, upsert_taxa
 from foray.config import Config
 from foray.inat import iter_observations
 
@@ -68,10 +70,15 @@ def _to_row(obs: dict[str, Any], seed_taxon_id: int) -> tuple[Any, ...] | None:
     )
 
 
-def ingest(cfg: Config, con: duckdb.DuckDBPyConnection | None = None) -> dict[int, int]:
+def ingest(
+    cfg: Config,
+    database: duckdb.DuckDBPyConnection | str,
+    progress_cb: Callable[[str, float], None] | None = None,
+    abort_event: threading.Event | None = None,
+) -> dict[int, int]:
     """Pull observations for every seed taxon within the home radius. Returns {taxon_id: rows}."""
-    own_con = con is None
-    db = con if con is not None else connect(cfg.db_path)
+    own_con = isinstance(database, str)
+    db = connect(database) if own_con else database
     upsert_taxa(
         db,
         [
@@ -100,8 +107,24 @@ def ingest(cfg: Config, con: duckdb.DuckDBPyConnection | None = None) -> dict[in
         end_date,
     )
     for index, species in enumerate(cfg.species, start=1):
+        if progress_cb:
+            progress_cb(f"Fetching {species.common_name}…", (index - 1) / total * 100.0)
+        latest = latest_obs_date(db, species.taxon_id, home.lat, home.lng, home.radius_km)
+        if latest:
+            overlap = (dt.date.fromisoformat(latest) - dt.timedelta(days=7)).isoformat()
+            species_start = max(start_date, overlap)
+        else:
+            species_start = start_date
+
+        # Removing the skip-if-latest==end_date logic since we now overlap by 7 days
+
         logger.info(
-            "ingest [%d/%d] %s (taxon %d)…", index, total, species.common_name, species.taxon_id
+            "ingest [%d/%d] %s (taxon %d) from %s…",
+            index,
+            total,
+            species.common_name,
+            species.taxon_id,
+            species_start,
         )
         rows: list[tuple[Any, ...]] = []
         for obs in iter_observations(
@@ -109,16 +132,23 @@ def ingest(cfg: Config, con: duckdb.DuckDBPyConnection | None = None) -> dict[in
             lat=home.lat,
             lng=home.lng,
             radius_km=home.radius_km,
-            d1=start_date,
+            d1=species_start,
             d2=end_date,
             quality_grade=cfg.quality_grade,
         ):
+            if abort_event and abort_event.is_set():
+                break
             row = _to_row(obs, species.taxon_id)
             if row is not None:
                 rows.append(row)
+
+        if abort_event and abort_event.is_set():
+            logger.info("ingest: cancelled during %s", species.common_name)
+            break
         upsert_observations(db, rows)
         key = (
-            f"obs:{species.taxon_id}:{home.lat}:{home.lng}:{home.radius_km}:{start_date}:{end_date}"
+            f"obs:{species.taxon_id}:{home.lat}:{home.lng}:"
+            f"{home.radius_km}:{species_start}:{end_date}"
         )
         record_ingest(db, key, len(rows))
         counts[species.taxon_id] = len(rows)

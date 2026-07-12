@@ -24,9 +24,9 @@ body {
   background: var(--bg);
   color: var(--ink);
 }
-header { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+header { padding: 10px 20px; border-bottom: 1px solid var(--border); }
 header .topline { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-header h1 { margin: 0; font-size: 20px; }
+header h1 { margin: 0; font-size: 18px; }
 .theme-toggle { padding: 6px 10px; font-size: 16px; line-height: 1; flex: 0 0 auto; }
 header .home { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
 .locbar { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
@@ -38,23 +38,49 @@ header .home { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
 
 .controls {
   display: flex;
-  gap: 22px;
-  flex-wrap: wrap;
-  align-items: flex-end;
+  flex-direction: column;
+  gap: 16px;
   padding: 14px 20px;
   border-bottom: 1px solid var(--border);
 }
+.row { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-end; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .field small { color: var(--muted); font-size: 11px; }
-.field label.check {
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
+.toggle-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.toggle-btn {
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-btn input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-btn input[type="checkbox"]:focus-visible + span {
+  outline: 2px solid var(--accent2);
+  outline-offset: 2px;
+}
+.toggle-btn span {
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--panel);
+  color: var(--muted);
   font-size: 13px;
-  text-transform: none;
-  letter-spacing: normal;
-  color: inherit;
+  transition: all 0.2s ease;
+}
+.toggle-btn input[type="checkbox"]:checked + span {
+  background: var(--accent2);
+  color: #10230a;
+  border-color: var(--accent2);
+  font-weight: 600;
 }
 .months { display: flex; flex-wrap: wrap; gap: 4px; max-width: 320px; }
 .months button {
@@ -67,12 +93,14 @@ select {
   border-radius: 6px; padding: 6px; min-width: 240px;
 }
 .actions { flex-direction: row; align-items: center; gap: 10px; }
+.actions.centered { justify-content: center; width: 100%; margin-top: 8px; flex-wrap: wrap; }
 button.primary, button {
   padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border);
   background: var(--panel); color: var(--ink); cursor: pointer; font-size: 14px;
 }
 button.primary { background: var(--accent2); color: #10230a; border-color: var(--accent2); font-weight: 600; }
-#status { color: var(--muted); font-size: 13px; }
+#status { color: var(--muted); font-size: 13px; font-weight: 500; margin: 0 10px; }
+progress { width: 100%; max-width: 400px; height: 10px; border-radius: 5px; }
 
 .tabs { display: flex; gap: 2px; padding: 8px 20px 0; }
 .tabs button { border-bottom: none; border-radius: 6px 6px 0 0; opacity: 0.6; }

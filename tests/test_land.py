@@ -172,9 +172,9 @@ def test_fetch_public_land_pages_until_transfer_limit_clears() -> None:
             features = [
                 {
                     "properties": {"OBJECTID": index},
-                    "geometry": _polygon(47.6 + index * 0.01, -122.3),
+                    "geometry": _polygon(47.6 + index * 0.001, -122.3),
                 }
-                for index in range(200)  # a full page → exceededTransferLimit
+                for index in range(1000)  # a full page → exceededTransferLimit
             ]
             return httpx.Response(
                 200,
@@ -188,7 +188,9 @@ def test_fetch_public_land_pages_until_transfer_limit_clears() -> None:
             200,
             json={
                 "type": "FeatureCollection",
-                "features": [{"properties": {"OBJECTID": 999}, "geometry": _polygon(47.7, -122.3)}],
+                "features": [
+                    {"properties": {"OBJECTID": 1000}, "geometry": _polygon(47.7, -122.3)}
+                ],
             },
         )
 
@@ -197,8 +199,8 @@ def test_fetch_public_land_pages_until_transfer_limit_clears() -> None:
         lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, client=client, sources=(BLM,)
     )
     ids = {row[0] for row in rows}
-    assert "blm:999" in ids  # the second page was fetched
-    assert len(ids) == 201
+    assert "blm:1000" in ids  # the second page was fetched
+    assert len(ids) == 1001
 
 
 def test_land_near_filters_by_bbox_and_returns_geometry(con: duckdb.DuckDBPyConnection) -> None:

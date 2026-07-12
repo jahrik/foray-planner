@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
+import json
 import logging
+import queue
 import threading
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import duckdb
+import httpx
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -38,8 +43,10 @@ class LocationBody(BaseModel):
 
 
 def create_app(cfg: Config | None = None) -> FastAPI:
+    """Wire up the API, starting the shared DuckDB connection and config state."""
     cfg = cfg or load_config()
-    app = FastAPI(title="Foray Planner")
+    app = FastAPI(title="Foray Planner API")
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
     if (_DIST / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=str(_DIST / "assets")), name="assets")
 
@@ -47,7 +54,36 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     # thread-safe, and a background refresh writing through the same connection avoids
     # the file-lock conflict that separate connections would hit.
     db = connect(cfg.db_path)
-    state: dict[str, Any] = {"cfg": cfg, "refreshing": False, "last_error": None}
+    state: dict[str, Any] = {
+        "cfg": cfg,
+        "refreshing": False,
+        "last_error": None,
+        "listeners": [],
+        "listeners_lock": threading.Lock(),
+        "last_progress": None,
+        "abort_event": threading.Event(),
+        "http_client": None,
+    }
+
+    def broadcast(msg: dict[str, Any]) -> None:
+        state["last_progress"] = msg
+        with state["listeners_lock"]:
+            listener_queues = list(state["listeners"])
+        for listener_queue in listener_queues:
+            try:
+                listener_queue.put_nowait(msg)
+            except queue.Full:
+                try:
+                    listener_queue.get_nowait()
+                    listener_queue.put_nowait(msg)
+                except (queue.Empty, queue.Full):
+                    pass
+
+    def make_cb(base_pct: float, range_pct: float) -> Any:
+        def cb(step: str, local_pct: float) -> None:
+            broadcast({"step": step, "progress": base_pct + range_pct * (local_pct / 100.0)})
+
+        return cb
 
     def current() -> Config:
         return state["cfg"]
@@ -83,22 +119,85 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         cell = current().cell_deg
         return (ilat + 0.5) * cell, (ilng + 0.5) * cell
 
-    def run_refresh() -> None:
+    def run_refresh(target: str = "all") -> None:
         try:
-            logger.info("refresh: starting for %s", current().home.name)
-            ingest(current(), db)
-            camps.ingest_campgrounds(current(), db)
-            land.ingest_public_land(current(), db)
-            dispersed.ingest_dispersed(current(), db)  # after land: proxy intersects public_land
-            trails.ingest_trails(current(), db)
-            logger.info("refresh: building phenology…")
-            scoring.build_phenology(db, current().cell_deg)
-            state["last_error"] = None
-            logger.info("refresh: complete")
+            state["abort_event"].clear()
+            # 300s covers Overpass trail queries that can take up to 180s; set a
+            # generous ceiling so the shared client doesn't cut off slow phases.
+            state["http_client"] = httpx.Client(timeout=300.0)
+
+            broadcast({"step": "Starting refresh…", "progress": 0.0})
+            logger.info("refresh: starting for %s (target=%s)", current().home.name, target)
+
+            if target in ("all", "mushrooms") and not state["abort_event"].is_set():
+                ingest(
+                    current(),
+                    db,
+                    progress_cb=make_cb(0.0, 90.0 if target == "mushrooms" else 50.0),
+                    abort_event=state["abort_event"],
+                )
+            if target in ("all", "camps") and not state["abort_event"].is_set():
+                camps.ingest_campgrounds(
+                    current(),
+                    db,
+                    client=state["http_client"],
+                    progress_cb=make_cb(
+                        50.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
+                    ),
+                )
+            if target in ("all", "land") and not state["abort_event"].is_set():
+                land.ingest_public_land(
+                    current(),
+                    db,
+                    client=state["http_client"],
+                    progress_cb=make_cb(
+                        60.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
+                    ),
+                )
+            if target in ("all", "dispersed") and not state["abort_event"].is_set():
+                dispersed.ingest_dispersed(
+                    current(),
+                    db,
+                    client=state["http_client"],
+                    progress_cb=make_cb(
+                        70.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
+                    ),
+                )
+            if target in ("all", "trails") and not state["abort_event"].is_set():
+                trails.ingest_trails(
+                    current(),
+                    db,
+                    client=state["http_client"],
+                    progress_cb=make_cb(
+                        80.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
+                    ),
+                )
+
+            if target in ("all", "mushrooms") and not state["abort_event"].is_set():
+                broadcast({"step": "Building phenology…", "progress": 90.0})
+                logger.info("refresh: building phenology…")
+                scoring.build_phenology(db, current().cell_deg)
+
+            if state["abort_event"].is_set():
+                logger.info("refresh: cancelled by user")
+                state["last_error"] = "Cancelled"
+                broadcast({"error": "Cancelled", "done": True})
+            else:
+                state["last_error"] = None
+                broadcast({"step": "Done", "progress": 100.0, "done": True})
+                logger.info("refresh: complete")
+        except (httpx.LocalProtocolError, httpx.ReadError, httpx.PoolTimeout):
+            logger.info("refresh: network client closed explicitly (cancelled)")
+            state["last_error"] = "Cancelled"
+            broadcast({"error": "Cancelled", "done": True})
         except Exception as error:  # surface to the UI rather than dying silently
             logger.exception("refresh: failed")
             state["last_error"] = str(error)
+            broadcast({"error": str(error), "done": True})
         finally:
+            if state["http_client"] is not None:
+                state["http_client"].close()
+                state["http_client"] = None
             state["refreshing"] = False
 
     @app.get("/api/config")
@@ -321,16 +420,85 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
         save_location(location_path(cfg.db_path), home)
         state["cfg"] = cfg.model_copy(update={"home": home})
-        return {"home": home.model_dump()}
+
+        needs_refresh = True
+        cursor = None
+        try:
+            cursor = db.cursor()
+            # The core data is mushrooms; check if we've ingested observations for this area.
+            key_pattern = f"obs:%:{home.lat}:{home.lng}:{home.radius_km}:%"
+            row = cursor.execute(
+                "SELECT 1 FROM ingest_log WHERE key LIKE ?", [key_pattern]
+            ).fetchone()
+            has_obs = row is not None
+            phenology_row = cursor.execute("SELECT 1 FROM phenology LIMIT 1").fetchone()
+            has_phenology = phenology_row is not None
+            needs_refresh = not (has_obs and has_phenology)
+        except duckdb.CatalogException:
+            needs_refresh = True
+        finally:
+            if cursor is not None:
+                cursor.close()
+
+        return {"home": home.model_dump(), "needs_refresh": needs_refresh}
+
+    _VALID_REFRESH_TARGETS = frozenset({"all", "mushrooms", "camps", "land", "dispersed", "trails"})
 
     @app.post("/api/refresh")
-    def refresh() -> dict[str, Any]:
+    def refresh(target: str = Query("mushrooms")) -> dict[str, Any]:
+        if target not in _VALID_REFRESH_TARGETS:
+            raise HTTPException(
+                400, f"unknown target '{target}'; valid: {sorted(_VALID_REFRESH_TARGETS)}"
+            )
         if state["refreshing"]:
             return {"status": "already running"}
         state["refreshing"] = True
         state["last_error"] = None
-        threading.Thread(target=run_refresh, daemon=True).start()
+        state["last_progress"] = None
+        threading.Thread(target=run_refresh, args=(target,), daemon=True).start()
         return {"status": "started"}
+
+    @app.delete("/api/refresh")
+    def cancel_refresh() -> dict[str, Any]:
+        if state["refreshing"]:
+            state["abort_event"].set()
+            if state["http_client"] is not None:
+                state["http_client"].close()
+            return {"status": "cancelling"}
+        return {"status": "idle"}
+
+    @app.get("/api/refresh/stream")
+    async def refresh_stream() -> StreamingResponse:
+        listener_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=100)
+        if state["last_progress"]:
+            listener_queue.put_nowait(state["last_progress"])
+        with state["listeners_lock"]:
+            state["listeners"].append(listener_queue)
+
+        async def event_generator():
+            try:
+                while True:
+                    try:
+                        msg = await asyncio.to_thread(listener_queue.get, True, 0.5)
+                    except queue.Empty:
+                        continue
+                    yield f"data: {json.dumps(msg)}\n\n"
+                    if msg.get("done") or msg.get("error"):
+                        break
+            finally:
+                with state["listeners_lock"]:
+                    if listener_queue in state["listeners"]:
+                        state["listeners"].remove(listener_queue)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> Any:

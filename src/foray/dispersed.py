@@ -31,14 +31,14 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import duckdb
 import httpx
 
-from foray.cache import connect, record_ingest, upsert_campsites
+from foray.cache import connect, is_ingested, record_ingest, upsert_campsites
 from foray.config import Config
 
 logger = logging.getLogger(__name__)
@@ -210,6 +210,7 @@ def fetch_dispersed_sources(
     radius_km: float,
     client: httpx.Client | None = None,
     min_interval: float = _MIN_REQUEST_INTERVAL,
+    progress_cb: Callable[[str, float], None] | None = None,
 ) -> tuple[list[tuple[Any, ...]], list[Road]]:
     """Fetch OSM reported campsites + drivable tracks near home. Each query is best-effort.
 
@@ -223,6 +224,8 @@ def fetch_dispersed_sources(
     roads: list[Road] = []
     try:
         try:
+            if progress_cb:
+                progress_cb("Fetching reported campsites…", 0.0)
             payload = _post_overpass(client, _reported_query(lat, lng, radius_m))
             reported = _parse_reported(payload)
             logger.info("dispersed: %d reported OSM campsites", len(reported))
@@ -231,6 +234,8 @@ def fetch_dispersed_sources(
         if min_interval > 0:
             time.sleep(min_interval)
         try:
+            if progress_cb:
+                progress_cb("Fetching drivable tracks…", 50.0)
             payload = _post_overpass(client, _tracks_query(lat, lng, radius_m))
             roads = _parse_tracks(payload)
             logger.info("dispersed: %d drivable tracks", len(roads))
@@ -276,28 +281,26 @@ def dispersed_proxy_rows(
     )
     con.execute(
         "CREATE OR REPLACE TEMP TABLE _road_pts "
-        "(way_id BIGINT, seq INTEGER, name VARCHAR, lat DOUBLE, lng DOUBLE)"
+        "(way_id BIGINT, name VARCHAR, lat DOUBLE, lng DOUBLE)"
     )
-    point_rows = [
-        (road.way_id, seq, road.name, lat, lng)
-        for road in roads
-        for seq, (lat, lng) in enumerate(road.coords)
-    ]
-    con.executemany("INSERT INTO _road_pts VALUES (?, ?, ?, ?, ?)", point_rows)
-    # Cheap bbox pre-filter gates the expensive ST_Contains; keep one point per way (lowest seq
-    # inside any polygon). ST_Point takes (x=lng, y=lat).
+    point_rows = []
+    for road in roads:
+        if not road.coords:
+            continue
+        lat, lng = road.coords[len(road.coords) // 2]
+        point_rows.append((road.way_id, road.name, lat, lng))
+
+    con.executemany("INSERT INTO _road_pts VALUES (?, ?, ?, ?)", point_rows)
+    # Cheap bbox pre-filter gates the expensive ST_Contains.
+    # We only check the midpoint of each road to massively speed up the spatial join.
     inside = con.execute(
         """
-        WITH hits AS (
-            SELECT p.way_id, p.name, p.lat, p.lng, p.seq,
-                   row_number() OVER (PARTITION BY p.way_id ORDER BY p.seq) AS rn
-            FROM _road_pts p
-            JOIN _land_geom l
-              ON p.lat BETWEEN l.min_lat AND l.max_lat
-             AND p.lng BETWEEN l.min_lng AND l.max_lng
-             AND ST_Contains(l.geom, ST_Point(p.lng, p.lat))
-        )
-        SELECT way_id, name, lat, lng FROM hits WHERE rn = 1
+        SELECT DISTINCT p.way_id, p.name, p.lat, p.lng
+        FROM _road_pts p
+        JOIN _land_geom l
+          ON p.lat BETWEEN l.min_lat AND l.max_lat
+         AND p.lng BETWEEN l.min_lng AND l.max_lng
+         AND ST_Contains(l.geom, ST_Point(p.lng, p.lat))
         """
     ).fetchall()
     con.execute("DROP TABLE IF EXISTS _road_pts")
@@ -323,6 +326,7 @@ def ingest_dispersed(
     con: duckdb.DuckDBPyConnection | None = None,
     *,
     client: httpx.Client | None = None,
+    progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest OSM reported campsites + the road∩public-land proxy into ``campsites``.
 
@@ -332,12 +336,24 @@ def ingest_dispersed(
     own_con = con is None
     database = con if con is not None else connect(cfg.db_path)
     home = cfg.home
+    key = f"dispersed:{home.lat}:{home.lng}:{home.radius_km}"
+    if is_ingested(database, key):
+        logger.info("dispersed: already ingested for this area, skipping")
+        if progress_cb:
+            progress_cb("Dispersed camping already cached, skipping…", 100.0)
+        if own_con:
+            database.close()
+        return 0
     try:
         logger.info(
             "dispersed: fetching OSM camping layers within %.0f km of home…", home.radius_km
         )
         reported, roads = fetch_dispersed_sources(
-            lat=home.lat, lng=home.lng, radius_km=home.radius_km, client=client
+            lat=home.lat,
+            lng=home.lng,
+            radius_km=home.radius_km,
+            client=client,
+            progress_cb=progress_cb,
         )
         try:
             proxy = dispersed_proxy_rows(database, roads)

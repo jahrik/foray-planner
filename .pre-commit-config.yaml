@@ -1,0 +1,44 @@
+---
+# Local quality gate — runs the same checks CI does before a commit lands.
+# ruff/ty are driven through `uv run` so their versions come from uv.lock
+# (single source of truth); no separately pinned hook revs to drift.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: ty
+        name: ty check
+        entry: uv run ty check
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: pytest
+        name: pytest
+        entry: uv run python -m pytest
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: frontend-build
+        name: frontend build (type-check + vite build)
+        entry: bash -c 'export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH" && cd frontend && npm run build'
+        language: system
+        types_or: [ts, css, html, json, javascript]
+        pass_filenames: false

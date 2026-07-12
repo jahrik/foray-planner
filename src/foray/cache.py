@@ -238,3 +238,25 @@ def record_ingest(con: duckdb.DuckDBPyConnection, key: str, row_count: int) -> N
 def observation_count(con: duckdb.DuckDBPyConnection) -> int:
     row = con.execute("SELECT count(*) FROM observations").fetchone()
     return int(row[0]) if row else 0
+
+
+def is_ingested(con: duckdb.DuckDBPyConnection, key: str) -> bool:
+    try:
+        row = con.execute("SELECT 1 FROM ingest_log WHERE key = ?", [key]).fetchone()
+        return row is not None
+    except duckdb.CatalogException:
+        return False
+
+
+def latest_obs_date(
+    con: duckdb.DuckDBPyConnection, taxon_id: int, lat: float, lng: float, radius_km: float
+) -> str | None:
+    prefix = f"obs:{taxon_id}:{lat}:{lng}:{radius_km}:%"
+    try:
+        rows = con.execute("SELECT key FROM ingest_log WHERE key LIKE ?", [prefix]).fetchall()
+        if not rows:
+            return None
+        dates = [row[0].split(":")[-1] for row in rows]
+        return max(dates)
+    except duckdb.CatalogException:
+        return None

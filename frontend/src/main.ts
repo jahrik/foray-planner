@@ -546,39 +546,73 @@ function updateHome(home: Home): void {
   }
 }
 
-// Kick off a data refresh and resolve once the server finishes (polls /api/config).
-async function startRefresh(message: string): Promise<boolean> {
+// Kick off a data refresh and resolve once the server finishes (listens via SSE).
+async function startRefresh(message: string, target: string = "mushrooms"): Promise<boolean> {
   setStatus(message);
   qs<HTMLButtonElement>("#refresh").disabled = true;
-  await fetch("/api/refresh", { method: "POST" });
+  const progress = qs<HTMLProgressElement>("#refresh-progress");
+  progress.style.display = "inline-block";
+  progress.value = 0;
+
+  await fetch(`/api/refresh?target=${target}`, { method: "POST" });
   return new Promise((resolve) => {
-    const timer = setInterval(async () => {
-      const config = await getJson<Config>("/api/config");
-      if (!config.refreshing) {
-        clearInterval(timer);
-        qs<HTMLButtonElement>("#refresh").disabled = false;
-        if (config.last_error) setStatus("Refresh error: " + config.last_error);
-        else setStatus("Data ready.");
-        resolve(!config.last_error);
+    const source = new EventSource("/api/refresh/stream");
+
+    source.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.step) {
+        setStatus(data.step);
       }
-    }, 2000);
+      if (data.progress !== undefined) {
+        progress.value = data.progress;
+      }
+
+      if (data.error) {
+        setStatus("Refresh error: " + data.error);
+        qs<HTMLButtonElement>("#refresh").disabled = false;
+        progress.style.display = "none";
+        source.close();
+        resolve(false);
+      } else if (data.done) {
+        setStatus("Data ready.");
+        qs<HTMLButtonElement>("#refresh").disabled = false;
+        progress.style.display = "none";
+        source.close();
+        resolve(true);
+      }
+    };
+
+    source.onerror = (err) => {
+      console.error("SSE Error:", err);
+      source.close();
+      // Only un-disable if we haven't already finished.
+      qs<HTMLButtonElement>("#refresh").disabled = false;
+      progress.style.display = "none";
+      resolve(false);
+    };
   });
 }
 
 async function setLocation(query: string): Promise<void> {
   setStatus("Finding location…");
-  let response: { home: Home };
+  let response: { home: Home; needs_refresh: boolean };
   try {
-    response = await postJson<{ home: Home }>("/api/location", { query });
+    response = await postJson<{ home: Home; needs_refresh: boolean }>("/api/location", { query });
   } catch (error) {
     setStatus(errorDetail(error) || "location not found");
     return;
   }
   updateHome(response.home);
-  const succeeded = await startRefresh(
-    `Fetching iNaturalist data around ${response.home.name}… (a few minutes)`,
-  );
-  if (succeeded) runDestinations();
+
+  if (response.needs_refresh) {
+    const succeeded = await startRefresh(
+      `Fetching iNaturalist data around ${response.home.name}… (a few minutes)`,
+      "mushrooms"
+    );
+    if (succeeded) runDestinations();
+  } else {
+    runDestinations();
+  }
 }
 
 function initTheme(): void {
@@ -607,15 +641,44 @@ async function main(): Promise<void> {
   updateHome(config.home);
   initTabs();
   qs("#run").onclick = runDestinations;
-  qs("#show-camps").onchange = () => loadCamps();
-  qs("#show-dispersed").onchange = () => loadCamps();
+  qs("#refresh").onclick = () => startRefresh("Refreshing mushroom data…", "mushrooms");
+
+  let currentRefreshTarget: string | null = null;
+
+  const ensureLayer = async (target: string, msg: string) => {
+    // startRefresh will instantly skip if the backend detects it's already ingested
+    await startRefresh(msg, target);
+    currentRefreshTarget = null;
+    loadCamps();
+    loadLand();
+    loadTrails();
+  };
+  const cancelLayerRefresh = async (target: string) => {
+    // Only cancel if the in-flight refresh is for this specific layer, so we
+    // don't accidentally abort an unrelated mushroom refresh.
+    if (currentRefreshTarget === target) {
+      await fetch("/api/refresh", { method: "DELETE" });
+      currentRefreshTarget = null;
+    }
+  };
+
+  qs("#show-camps").onchange = (e) => {
+    if ((e.target as HTMLInputElement).checked) { currentRefreshTarget = "camps"; ensureLayer("camps", "Fetching campgrounds…"); }
+    else { cancelLayerRefresh("camps"); loadCamps(); }
+  };
+  qs("#show-dispersed").onchange = (e) => {
+    if ((e.target as HTMLInputElement).checked) { currentRefreshTarget = "dispersed"; ensureLayer("dispersed", "Fetching dispersed camping…"); }
+    else { cancelLayerRefresh("dispersed"); loadCamps(); }
+  };
   qs("#free-camps").onchange = () => loadCamps();
-  qs("#show-land").onchange = () => loadLand();
-  qs("#show-trails").onchange = () => loadTrails();
-  qs("#refresh").onclick = () =>
-    startRefresh("Refreshing from iNaturalist…").then((succeeded) => {
-      if (succeeded) runDestinations();
-    });
+  qs("#show-land").onchange = (e) => {
+    if ((e.target as HTMLInputElement).checked) { currentRefreshTarget = "land"; ensureLayer("land", "Fetching public land…"); }
+    else { cancelLayerRefresh("land"); loadLand(); }
+  };
+  qs("#show-trails").onchange = (e) => {
+    if ((e.target as HTMLInputElement).checked) { currentRefreshTarget = "trails"; ensureLayer("trails", "Fetching trails…"); }
+    else { cancelLayerRefresh("trails"); loadTrails(); }
+  };
   qs<HTMLFormElement>("#locform").onsubmit = (event) => {
     event.preventDefault();
     const query = qs<HTMLInputElement>("#loc").value.trim();

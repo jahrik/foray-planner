@@ -34,13 +34,13 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import duckdb
 import httpx
 
-from foray.cache import connect, record_ingest, upsert_trails
+from foray.cache import connect, is_ingested, record_ingest, upsert_trails
 from foray.config import Config
 
 logger = logging.getLogger(__name__)
@@ -222,6 +222,7 @@ def fetch_trails(
     lng: float,
     radius_km: float,
     client: httpx.Client | None = None,
+    progress_cb: Callable[[str, float], None] | None = None,
 ) -> list[tuple[Any, ...]]:
     """Fetch OSM paths, hiking routes, and trailheads near home as trails rows.
 
@@ -232,6 +233,8 @@ def fetch_trails(
     client = client or httpx.Client(timeout=180.0)
     radius_m = radius_km * 1000.0
     try:
+        if progress_cb:
+            progress_cb("Fetching trails…", 50.0)
         payload = _post_overpass(client, _trails_query(lat, lng, radius_m))
         rows = _parse_trails(payload)
         logger.info("trails: %d trails/routes/trailheads", len(rows))
@@ -249,14 +252,29 @@ def ingest_trails(
     con: duckdb.DuckDBPyConnection | None = None,
     *,
     client: httpx.Client | None = None,
+    progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest the OSM trail network near home into ``trails``. Returns rows upserted."""
     own_con = con is None
     database = con if con is not None else connect(cfg.db_path)
     home = cfg.home
+    key = f"trails:{home.lat}:{home.lng}:{home.radius_km}"
+    if is_ingested(database, key):
+        logger.info("trails: already ingested for this area, skipping")
+        if progress_cb:
+            progress_cb("Trails already cached, skipping…", 100.0)
+        if own_con:
+            database.close()
+        return 0
     try:
         logger.info("trails: fetching OSM trail network within %.0f km of home…", home.radius_km)
-        rows = fetch_trails(lat=home.lat, lng=home.lng, radius_km=home.radius_km, client=client)
+        rows = fetch_trails(
+            lat=home.lat,
+            lng=home.lng,
+            radius_km=home.radius_km,
+            client=client,
+            progress_cb=progress_cb,
+        )
         upsert_trails(database, rows)
         key = f"trails:{home.lat}:{home.lng}:{home.radius_km}"
         record_ingest(database, key, len(rows))

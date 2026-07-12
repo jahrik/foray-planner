@@ -25,14 +25,14 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
 import duckdb
 import httpx
 
-from foray.cache import connect, record_ingest, upsert_public_land
+from foray.cache import connect, is_ingested, record_ingest, upsert_public_land
 from foray.config import Config
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
 
 _KM_PER_DEG_LAT = 111.0
-_PAGE_SIZE = 200
+_PAGE_SIZE = 1000
 # Server-side geometry generalization, in degrees (~0.005° ≈ 500 m). Keeps national-forest
 # MultiPolygons small enough to cache and render on a phone; ownership shading needs no more.
 _SIMPLIFY_DEG = 0.005
@@ -213,6 +213,7 @@ def fetch_public_land(
     radius_km: float,
     client: httpx.Client | None = None,
     sources: Iterable[LandSource] = SOURCES,
+    progress_cb: Callable[[str, float], None] | None = None,
 ) -> list[tuple[Any, ...]]:
     """Fetch ownership polygons near home from each source, deduped by id.
 
@@ -226,7 +227,14 @@ def fetch_public_land(
     envelope = _envelope(lat, lng, radius_km)
     by_id: dict[str, tuple[Any, ...]] = {}
     try:
-        for source in sources:
+        sources_list = list(sources)
+        total = len(sources_list)
+        for index, source in enumerate(sources_list):
+            if progress_cb:
+                progress_cb(
+                    f"Fetching {source.agency} land…",
+                    ((index + 1) / total) * 100.0 if total else 100.0,
+                )
             before = len(by_id)
             try:
                 for feature in _iter_features(client, source, envelope):
@@ -249,11 +257,20 @@ def ingest_public_land(
     *,
     client: httpx.Client | None = None,
     sources: Iterable[LandSource] = SOURCES,
+    progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest public-land ownership polygons into the cache. Returns rows upserted."""
     own_con = con is None
     database = con if con is not None else connect(cfg.db_path)
     home = cfg.home
+    key = f"land:{home.lat}:{home.lng}:{home.radius_km}"
+    if is_ingested(database, key):
+        logger.info("land: already ingested for this area, skipping")
+        if progress_cb:
+            progress_cb("Public land already cached, skipping…", 100.0)
+        if own_con:
+            database.close()
+        return 0
     try:
         logger.info("land: fetching BLM/USFS ownership within %.0f km of home…", home.radius_km)
         rows = fetch_public_land(
@@ -262,6 +279,7 @@ def ingest_public_land(
             radius_km=home.radius_km,
             client=client,
             sources=sources,
+            progress_cb=progress_cb,
         )
         upsert_public_land(database, rows)
         key = f"land:{home.lat}:{home.lng}:{home.radius_km}"
