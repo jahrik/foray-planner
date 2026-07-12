@@ -87,6 +87,16 @@ export interface CampSite {
   url: string;
 }
 
+/** A public-land ownership polygon (`GET /api/land`). `geometry` is raw GeoJSON. */
+export interface LandUnit {
+  id: string;
+  agency: string;
+  unit: string;
+  source: string;
+  url: string;
+  geometry: GeoJSON.Geometry;
+}
+
 export interface LocationResponse {
   home: Home;
 }

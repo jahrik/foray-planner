@@ -8,6 +8,7 @@ from foray.cache import connect, observation_count
 from foray.camps import ingest_campgrounds
 from foray.config import load_config
 from foray.ingest import ingest
+from foray.land import ingest_public_land
 from foray.scoring import build_phenology
 
 
@@ -48,14 +49,26 @@ def camps_cmd(ctx: click.Context) -> None:
     con.close()
 
 
+@cli.command("land")
+@click.pass_context
+def land_cmd(ctx: click.Context) -> None:
+    """Ingest public-land ownership (BLM + USFS) polygons within the home radius."""
+    cfg = ctx.obj["cfg"]
+    con = connect(cfg.db_path)
+    count = ingest_public_land(cfg, con)
+    click.echo(f"Cached {count} public-land units within {cfg.home.radius_km} km of home.")
+    con.close()
+
+
 @cli.command()
 @click.pass_context
 def refresh(ctx: click.Context) -> None:
-    """Ingest observations + campgrounds, then (re)build the phenology + regions tables."""
+    """Ingest observations + campgrounds + public land, then (re)build phenology + regions."""
     cfg = ctx.obj["cfg"]
     con = connect(cfg.db_path)
     ingest(cfg, con)
     ingest_campgrounds(cfg, con)
+    ingest_public_land(cfg, con)
     build_phenology(con, cfg.cell_deg)
     region_count = (con.execute("SELECT count(*) FROM regions").fetchone() or (0,))[0]
     click.echo(

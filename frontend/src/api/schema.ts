@@ -109,6 +109,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/land": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Land
+         * @description Public-land ownership polygons near a region (by id) or an explicit lat/lng.
+         */
+        get: operations["get_land_api_land_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/location": {
         parameters: {
             query?: never;
@@ -358,6 +378,40 @@ export interface operations {
                 lng?: number | null;
                 radius_km?: number;
                 free_only?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_land_api_land_get: {
+        parameters: {
+            query?: {
+                region_id?: string | null;
+                lat?: number | null;
+                lng?: number | null;
+                radius_km?: number;
             };
             header?: never;
             path?: never;

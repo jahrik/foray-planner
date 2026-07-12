@@ -10,6 +10,7 @@ import type {
   CampSite,
   Config,
   Home,
+  LandUnit,
   RegionScore,
   Species,
 } from "./api/types";
@@ -25,6 +26,7 @@ interface State {
   home: Home | null;
   markers: L.CircleMarker[];
   campMarkers: L.CircleMarker[];
+  landLayer: L.GeoJSON | null;
   focused: { lat: number; lng: number } | null;
 }
 
@@ -34,6 +36,7 @@ const state: State = {
   home: null,
   markers: [],
   campMarkers: [],
+  landLayer: null,
   focused: null,
 };
 let map: L.Map;
@@ -47,6 +50,12 @@ const HOME_FILL = "#ffffff"; // white "you are here" dot
 const HOME_RING = "#161a12";
 const CAMP_FREE = "#ffd24d"; // gold — free / no-fee campground
 const CAMP_PAID = "#f5a623"; // amber — fee or unknown-cost campground
+// Public-land ownership fill — non-green so it reads over the OSM terrain, one hue per agency.
+const LAND_COLORS: Record<string, string> = {
+  BLM: "#b06f3c", // earthy brown
+  USFS: "#7b6cd9", // violet
+};
+const LAND_DEFAULT = "#8a8a8a"; // any other agency
 
 function qs<T extends HTMLElement = HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -133,6 +142,7 @@ function clearMarkers(): void {
   state.markers.forEach((marker) => map.removeLayer(marker));
   state.markers = [];
   clearCamps();
+  clearLand();
   state.focused = null;
 }
 
@@ -141,8 +151,16 @@ function clearCamps(): void {
   state.campMarkers = [];
 }
 
+function clearLand(): void {
+  if (state.landLayer) {
+    map.removeLayer(state.landLayer);
+    state.landLayer = null;
+  }
+}
+
 const campsOn = (): boolean => qs<HTMLInputElement>("#show-camps").checked;
 const freeOnly = (): boolean => qs<HTMLInputElement>("#free-camps").checked;
+const landOn = (): boolean => qs<HTMLInputElement>("#show-land").checked;
 
 // Fetch + plot campgrounds near the focused region. No-op (just clears) when the toggle
 // is off. Failures degrade quietly to a status line rather than throwing.
@@ -197,9 +215,66 @@ function campPopup(site: CampSite, cost: string): HTMLElement {
   return root;
 }
 
+// Fetch + shade public-land ownership around the focused region. No-op (just clears) when the
+// toggle is off. Polygons sit behind the observation/campground markers and degrade quietly.
+async function loadLand(): Promise<void> {
+  clearLand();
+  if (!landOn() || !state.focused) return;
+  const { lat, lng } = state.focused;
+  let units: LandUnit[];
+  try {
+    units = await getJson<LandUnit[]>(`/api/land?lat=${lat}&lng=${lng}`);
+  } catch (error) {
+    setStatus(errorDetail(error));
+    return;
+  }
+  const layer = L.geoJSON(undefined, {
+    style: (feature) => {
+      const agency = (feature?.properties as LandUnit | undefined)?.agency ?? "";
+      const color = LAND_COLORS[agency] ?? LAND_DEFAULT;
+      return { color, weight: 1, fillColor: color, fillOpacity: 0.18 };
+    },
+    onEachFeature: (feature, lyr) => lyr.bindPopup(landPopup(feature.properties as LandUnit)),
+  });
+  // Carry each unit's fields as GeoJSON `properties` so style/popup can read them.
+  units.forEach((unit) => {
+    const feature: GeoJSON.Feature = {
+      type: "Feature",
+      properties: unit,
+      geometry: unit.geometry,
+    };
+    layer.addData(feature);
+  });
+  layer.addTo(map);
+  layer.bringToBack(); // keep observation + campground markers clickable on top
+  state.landLayer = layer;
+}
+
+// Popup built from DOM nodes: agency/unit come from an external service, so `textContent`
+// escapes them; the source url is a fixed ArcGIS service link.
+function landPopup(unit: LandUnit): HTMLElement {
+  const root = document.createElement("div");
+  const title = document.createElement("b");
+  title.textContent = unit.unit;
+  const link = document.createElement("a");
+  link.href = unit.url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = "Source (ArcGIS) ↗";
+  root.append(
+    title,
+    document.createElement("br"),
+    document.createTextNode(`${unit.agency} · ownership only, not legal advice`),
+    document.createElement("br"),
+    link,
+  );
+  return root;
+}
+
 function focusRegion(lat: number, lng: number): void {
   state.focused = { lat, lng };
   loadCamps();
+  loadLand();
 }
 
 function plot(lat: number, lng: number, weight: number, popup: string, live: boolean): L.CircleMarker {
@@ -398,6 +473,7 @@ async function main(): Promise<void> {
   qs("#run").onclick = runDestinations;
   qs("#show-camps").onchange = () => loadCamps();
   qs("#free-camps").onchange = () => loadCamps();
+  qs("#show-land").onchange = () => loadLand();
   qs("#refresh").onclick = () =>
     startRefresh("Refreshing from iNaturalist…").then((succeeded) => {
       if (succeeded) runDestinations();

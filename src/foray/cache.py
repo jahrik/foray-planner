@@ -53,6 +53,25 @@ CREATE TABLE IF NOT EXISTS campsites (
     source      VARCHAR,               -- "ridb", ...
     url         VARCHAR
 );
+
+-- Public-land ownership polygons (BLM Surface Management Agency + USFS admin forest
+-- boundaries, via ArcGIS REST). Keyed by "{source}:{source_id}" so re-ingesting the same
+-- area is a no-op. Geometry is stored as GeoJSON *text* and the bounding box as plain
+-- columns, so the read/map path needs no DuckDB spatial extension — a cheap bbox filter
+-- serves the "land near here" query. Informational only: this shows ownership and links the
+-- official source; it never asserts camping legality (see AGENTS.md).
+CREATE TABLE IF NOT EXISTS public_land (
+    id          VARCHAR PRIMARY KEY,   -- "{source}:{source_id}", e.g. "usfs:1234"
+    agency      VARCHAR,               -- "BLM", "USFS"
+    unit        VARCHAR,               -- unit / forest name when the source provides one
+    source      VARCHAR,               -- "blm", "usfs"
+    url         VARCHAR,               -- official source (the ArcGIS service)
+    min_lat     DOUBLE,                -- geometry bounding box, for radius filtering
+    min_lng     DOUBLE,
+    max_lat     DOUBLE,
+    max_lng     DOUBLE,
+    geojson     VARCHAR                -- polygon geometry as GeoJSON text
+);
 """
 
 
@@ -114,6 +133,34 @@ def upsert_campsites(con: duckdb.DuckDBPyConnection, rows: Sequence[tuple[Any, .
             lng = excluded.lng,
             source = excluded.source,
             url = excluded.url
+        """,
+        rows,
+    )
+    return len(rows)
+
+
+def upsert_public_land(con: duckdb.DuckDBPyConnection, rows: Sequence[tuple[Any, ...]]) -> int:
+    """Upsert public-land polygons, refreshing existing rows in place. Returns rows attempted.
+
+    Each tuple is (id, agency, unit, source, url, min_lat, min_lng, max_lat, max_lng, geojson).
+    """
+    if not rows:
+        return 0
+    con.executemany(
+        """
+        INSERT INTO public_land
+            (id, agency, unit, source, url, min_lat, min_lng, max_lat, max_lng, geojson)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET
+            agency = excluded.agency,
+            unit = excluded.unit,
+            source = excluded.source,
+            url = excluded.url,
+            min_lat = excluded.min_lat,
+            min_lng = excluded.min_lng,
+            max_lat = excluded.max_lat,
+            max_lng = excluded.max_lng,
+            geojson = excluded.geojson
         """,
         rows,
     )
