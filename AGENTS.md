@@ -1,7 +1,7 @@
 # AGENTS.md — Foray Planner
 
 Python web app that ranks mushroom-hunting destinations from iNaturalist observation
-phenology. Local-only project (no GitHub remote yet).
+phenology. Public repo: [jahrik/foray-planner](https://github.com/jahrik/foray-planner).
 
 ## Layout
 
@@ -56,24 +56,56 @@ mocked).
 
 ## Commands
 
+### Running from source (quick start)
+
 ```bash
-uv sync                 # install deps into the venv
-uv run foray refresh    # ingest iNat obs + build phenology (first run hits the network)
+uv sync
+export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH"  # Node via nvm
+cd frontend && npm ci && npm run build && cd ..
+uv run foray refresh    # pull iNat obs + build phenology (first run hits the network)
 uv run foray serve      # http://127.0.0.1:8000  (--host / --port to override)
 ```
+
+### Backend CLI
+
+```bash
+uv run foray ingest      # pull observations only
+uv run foray refresh     # ingest + rebuild phenology/regions (obs + camps + land + dispersed)
+uv run foray serve --host 0.0.0.0 --port 8000
+```
+
+### Frontend dev (hot-reload)
+
+Node is via **nvm**, not on `PATH` by default:
+```bash
+export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH"
+cd frontend && npm ci
+npm run dev        # Vite dev server on :5173, proxying /api to uvicorn on :8000
+npm run build      # type-check (tsc --noEmit) + emit the production bundle
+npm run gen:api    # regenerate src/api/schema.ts from the live OpenAPI schema
+```
+
+For live development, run `uv run foray serve` (backend) and `npm run dev` (client) together.
+Rerun `npm run gen:api` after changing any `/api/*` route.
+
+### Tests
 
 Run one test file / one test / by keyword:
 
 ```bash
-uv run pytest tests/test_scoring.py
-uv run pytest tests/test_scoring.py::test_april_ranks_morel_region_first
-uv run pytest -k haversine
+uv run python -m pytest tests/test_scoring.py
+uv run python -m pytest tests/test_scoring.py::test_april_ranks_morel_region_first
+uv run python -m pytest -k haversine
 ```
 
-Gate before finishing:
+(`uv run pytest` fails locally because venv console-script shebangs point at the old path
+`inat-foray-planner` since the repo was renamed; `uv run python -m pytest` works fine. CI
+is unaffected. Fix permanently with `uv sync --reinstall`.)
+
+### Gate before finishing
 
 ```bash
-uv run ruff format . && uv run ruff check . && uv run ty check && uv run pytest
+uv run ruff format . && uv run ruff check . && uv run ty check && uv run python -m pytest
 ```
 
 When touching `frontend/`, also gate the client (Node ≥ 22; `npm ci` first):
