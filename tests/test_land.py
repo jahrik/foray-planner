@@ -1,4 +1,4 @@
-"""Public-land ingest + scoring tests — no network (mocked ArcGIS transport)."""
+"""Public-land ingest + scoring tests - no network (mocked ArcGIS transport)."""
 
 from __future__ import annotations
 
@@ -143,7 +143,7 @@ def test_fetch_public_land_dedupes_and_skips_a_failing_source() -> None:
 
 def test_fetch_public_land_skips_a_source_returning_malformed_payload() -> None:
     # A 200 that isn't well-formed GeoJSON (decode error) must be skipped like a transport
-    # error — ownership ingest is best-effort and must not abort the refresh.
+    # error - ownership ingest is best-effort and must not abort the refresh.
     def handler(request: httpx.Request) -> httpx.Response:
         if "usfs" in str(request.url):
             return httpx.Response(200, text="<html>maintenance</html>")  # not JSON

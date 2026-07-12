@@ -1,10 +1,10 @@
 # Container config: identical to config.yaml except the DuckDB cache (and the
 # runtime location.json beside it) live on the mounted /data volume, while the
 # curated species seed stays immutable in the image. Home base here is only a
-# default — the UI's location override (/data/location.json) wins at runtime.
+# default - the UI's location override (/data/location.json) wins at runtime.
 home:
   name: "Home"
-  lat: 47.6062      # Seattle, WA — default until set from the UI
+  lat: 47.6062      # Seattle, WA - default until set from the UI
   lng: -122.3321
   radius_km: 400
 

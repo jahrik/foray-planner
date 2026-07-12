@@ -1,4 +1,4 @@
-"""Campground ingest + scoring tests — no network (mocked RIDB transport)."""
+"""Campground ingest + scoring tests - no network (mocked RIDB transport)."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def con() -> duckdb.DuckDBPyConnection:
 def test_free_from_fee_only_asserts_on_explicit_signal() -> None:
     assert _free_from_fee("No fee for this site") is True
     assert _free_from_fee("$0.00 per night") is True
-    # A described fee, or silence, is left unknown — never guessed as paid or free.
+    # A described fee, or silence, is left unknown - never guessed as paid or free.
     assert _free_from_fee("$15 per night") is None
     assert _free_from_fee(None) is None
     assert _free_from_fee("") is None
@@ -101,7 +101,7 @@ def test_fetch_campsites_dedupes_and_clips_to_radius() -> None:
     far = {
         "FacilityID": "2",
         "FacilityName": "Far CG",
-        "FacilityLatitude": 40.0,  # ~800 km south — outside the radius
+        "FacilityLatitude": 40.0,  # ~800 km south - outside the radius
         "FacilityLongitude": -122.3,
     }
 

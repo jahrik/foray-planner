@@ -3,24 +3,24 @@ import L from "leaflet";
 import type { Home } from "./api/types";
 import { qs, state } from "./state";
 
-// Marker palette — bright/neon so it pops on the dark basemap (the default), while still
+// Marker palette - bright/neon so it pops on the dark basemap (the default), while still
 // reading over the lighter OSM terrain in light mode. Deliberately non-green vs the terrain.
-export const HEAT = "#ff2d9b"; // hot magenta — historical strength (destinations)
+export const HEAT = "#ff2d9b"; // hot magenta - historical strength (destinations)
 export const HEAT_RGB = "255,45,155";
-export const LIVE = "#22e0ff"; // electric cyan — fresh / recently observed
+export const LIVE = "#22e0ff"; // electric cyan - fresh / recently observed
 export const HOME_FILL = "#ffffff"; // white "you are here" dot
 export const HOME_RING = "#0c0d09";
-export const CAMP_FREE = "#ffe14d"; // neon gold — free / no-fee campground
-export const CAMP_PAID = "#ff9e2e"; // bright amber — fee or unknown-cost campground
-export const CAMP_OSM = "#1fe6d0"; // neon teal — OSM dispersed layer (solid = reported, dashed = proxy)
-// Public-land ownership fill — non-green so it reads over the terrain, one hue per agency.
+export const CAMP_FREE = "#ffe14d"; // neon gold - free / no-fee campground
+export const CAMP_PAID = "#ff9e2e"; // bright amber - fee or unknown-cost campground
+export const CAMP_OSM = "#1fe6d0"; // neon teal - OSM dispersed layer (solid = reported, dashed = proxy)
+// Public-land ownership fill - non-green so it reads over the terrain, one hue per agency.
 export const LAND_COLORS: Record<string, string> = {
   BLM: "#e8974a", // bright ochre
   USFS: "#a693ff", // bright violet
 };
 export const LAND_DEFAULT = "#b5b5b5"; // any other agency
-export const TRAIL = "#ff5555"; // bright red — the walking network (paths/routes) + trailhead dots
-export const PLAN_STOP = "#ffd060"; // neon gold — planned-route stops and connecting line
+export const TRAIL = "#ff5555"; // bright red - the walking network (paths/routes) + trailhead dots
+export const PLAN_STOP = "#ffd060"; // neon gold - planned-route stops and connecting line
 
 // Theme-aware basemap: a dark CARTO raster under dark mode, standard OSM under light. The bright
 // marker palette above reads well over both. Attribution stays per each provider's terms.

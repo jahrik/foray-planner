@@ -2,7 +2,7 @@
 # Home base + radius define which destinations get ranked. Edit lat/lng to your home.
 home:
   name: "Home"
-  lat: 47.6062      # Seattle, WA — change to your home base
+  lat: 47.6062      # Seattle, WA - change to your home base
   lng: -122.3321
   radius_km: 150    # rank destinations within this distance (smaller = much faster refresh)
 

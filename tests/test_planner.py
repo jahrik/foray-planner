@@ -1,4 +1,4 @@
-"""Trip-planner tests on hand-built fixtures — no network (per python skill: hermetic)."""
+"""Trip-planner tests on hand-built fixtures - no network (per python skill: hermetic)."""
 
 from __future__ import annotations
 

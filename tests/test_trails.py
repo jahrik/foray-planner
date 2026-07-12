@@ -1,4 +1,4 @@
-"""Trail ingest + scoring tests — no network (mocked Overpass transport)."""
+"""Trail ingest + scoring tests - no network (mocked Overpass transport)."""
 
 from __future__ import annotations
 

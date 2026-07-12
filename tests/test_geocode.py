@@ -1,4 +1,4 @@
-"""Geocoding tests — coordinate parsing (offline) and a mocked Nominatim lookup."""
+"""Geocoding tests - coordinate parsing (offline) and a mocked Nominatim lookup."""
 
 from __future__ import annotations
 

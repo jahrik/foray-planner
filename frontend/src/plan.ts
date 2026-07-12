@@ -96,7 +96,7 @@ export async function runPlan(): Promise<void> {
   `;
   trip.stops.forEach((stop) => panel.appendChild(buildStopCard(stop)));
 
-  // Wire export buttons — trip is captured in closure.
+  // Wire export buttons - trip is captured in closure.
   document.getElementById("export-gpx")!.onclick = () => exportGpx(trip);
   document.getElementById("export-json")!.onclick = () => exportJson(trip);
 
@@ -135,7 +135,7 @@ function buildStopCard(stop: Stop): HTMLElement {
   }`;
   card.appendChild(meta);
 
-  // Species chips (top 5) — built as DOM nodes so common_name/label from
+  // Species chips (top 5) - built as DOM nodes so common_name/label from
   // external APIs are set via textContent and never injected as raw HTML.
   const chips = document.createElement("div");
   chips.className = "chips";

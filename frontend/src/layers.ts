@@ -70,7 +70,7 @@ function campPopup(site: CampSite): HTMLElement {
   // The proxy is a guess, so its detail line carries the "verify" caveat instead of a cost.
   const detail =
     site.kind === "dispersed"
-      ? "likely dispersed-legal — verify with the agency"
+      ? "likely dispersed-legal - verify with the agency"
       : site.free === true
         ? "free"
         : site.fee

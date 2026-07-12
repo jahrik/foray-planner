@@ -156,7 +156,7 @@ def ingest(
             "ingest [%d/%d] %s: %d observations", index, total, species.common_name, len(rows)
         )
 
-    logger.info("ingest: done — %d observations across %d taxa", sum(counts.values()), total)
+    logger.info("ingest: done - %d observations across %d taxa", sum(counts.values()), total)
 
     if own_con:
         db.close()
