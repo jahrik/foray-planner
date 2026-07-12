@@ -16,9 +16,12 @@ proxy-based layer (Epic 2, follow-up) — this module only handles developed cam
 
 from __future__ import annotations
 
+import html
 import math
 import os
-from collections.abc import Iterator
+import re
+import time
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import duckdb
@@ -38,9 +41,24 @@ _QUERY_RADIUS_MI = 50.0
 _PAGE_SIZE = 50  # RIDB's max page size for the facilities endpoint
 _KM_PER_DEG_LAT = 111.0
 
+# RIDB rate-limits at 50 requests/minute; a wide radius tiles into dozens of requests, so
+# pace them to stay comfortably under (45/min) and back off on a 429.
+_MIN_REQUEST_INTERVAL = 60.0 / 45.0
+
 # Fee descriptions that explicitly signal no charge. We only ever *assert* free on one of
 # these; anything else stays unknown (NULL) rather than guessing paid — see AGENTS.md.
 _FREE_MARKERS = ("no fee", "no charge", "free of charge", "fee: none", "$0", "$0.00")
+
+_TAG = re.compile(r"<[^>]+>")
+_WHITESPACE = re.compile(r"\s+")
+
+
+def _clean_text(text: str | None) -> str | None:
+    """Strip HTML tags/entities and collapse whitespace — RIDB fee fields ship raw markup."""
+    if not text:
+        return None
+    stripped = _WHITESPACE.sub(" ", html.unescape(_TAG.sub(" ", text))).strip()
+    return stripped or None
 
 
 def _free_from_fee(fee: str | None) -> bool | None:
@@ -89,7 +107,7 @@ def _parse_facility(record: dict[str, Any]) -> tuple[Any, ...] | None:
     lat, lng = float(raw_lat), float(raw_lng)
     if lat == 0.0 and lng == 0.0:  # RIDB uses 0,0 as "no coordinates"
         return None
-    fee = record.get("FacilityUseFeeDescription") or None
+    fee = _clean_text(record.get("FacilityUseFeeDescription"))
     return (
         f"ridb:{facility_id}",
         record.get("FacilityName") or f"Facility {facility_id}",
@@ -103,14 +121,59 @@ def _parse_facility(record: dict[str, Any]) -> tuple[Any, ...] | None:
     )
 
 
+def _make_throttle(min_interval: float) -> Callable[[], None]:
+    """A pacer that blocks until at least ``min_interval`` has passed since the last call."""
+    last = [0.0]
+
+    def throttle() -> None:
+        if min_interval <= 0:
+            return
+        wait = min_interval - (time.monotonic() - last[0])
+        if wait > 0:
+            time.sleep(wait)
+        last[0] = time.monotonic()
+
+    return throttle
+
+
+def _get_page(
+    client: httpx.Client,
+    throttle: Callable[[], None],
+    params: dict[str, Any],
+    headers: dict[str, str],
+    *,
+    attempts: int = 5,
+    base_delay: float = 2.0,
+) -> httpx.Response:
+    """GET one page, pacing requests and backing off on a 429 (honoring Retry-After)."""
+    resp = None
+    for attempt in range(1, attempts + 1):
+        throttle()
+        resp = client.get(RIDB_FACILITIES, params=params, headers=headers)
+        if resp.status_code != 429 or attempt == attempts:
+            break
+        retry_after = resp.headers.get("Retry-After", "")
+        delay = float(retry_after) if retry_after.isdigit() else base_delay * 2 ** (attempt - 1)
+        time.sleep(delay)
+    assert resp is not None
+    resp.raise_for_status()
+    return resp
+
+
 def _iter_facilities(
-    client: httpx.Client, api_key: str, lat: float, lng: float, radius_mi: float
+    client: httpx.Client,
+    throttle: Callable[[], None],
+    api_key: str,
+    lat: float,
+    lng: float,
+    radius_mi: float,
 ) -> Iterator[dict[str, Any]]:
     """Yield every CAMPING facility RIDB returns for one query circle, paging by offset."""
     offset = 0
     while True:
-        resp = client.get(
-            RIDB_FACILITIES,
+        resp = _get_page(
+            client,
+            throttle,
             params={
                 "latitude": lat,
                 "longitude": lng,
@@ -121,7 +184,6 @@ def _iter_facilities(
             },
             headers={"apikey": api_key, "User-Agent": USER_AGENT},
         )
-        resp.raise_for_status()
         payload = resp.json()
         records = payload.get("RECDATA", [])
         if not records:
@@ -140,16 +202,18 @@ def fetch_campsites(
     radius_km: float,
     api_key: str,
     client: httpx.Client | None = None,
+    min_interval: float = _MIN_REQUEST_INTERVAL,
 ) -> list[tuple[Any, ...]]:
     """Fetch developed campgrounds within ``radius_km`` of home, deduped and clipped."""
     owns = client is None
     client = client or httpx.Client(timeout=30.0)
+    throttle = _make_throttle(min_interval)
     query_radius_km = _QUERY_RADIUS_MI * _KM_PER_MILE
     by_id: dict[str, tuple[Any, ...]] = {}
     try:
         for center_lat, center_lng in _query_centers(lat, lng, radius_km, query_radius_km):
             for record in _iter_facilities(
-                client, api_key, center_lat, center_lng, _QUERY_RADIUS_MI
+                client, throttle, api_key, center_lat, center_lng, _QUERY_RADIUS_MI
             ):
                 row = _parse_facility(record)
                 if row is None:

@@ -8,6 +8,7 @@ import pytest
 
 from foray.cache import SCHEMA, upsert_campsites
 from foray.camps import (
+    _clean_text,
     _free_from_fee,
     _parse_facility,
     _query_centers,
@@ -32,6 +33,27 @@ def test_free_from_fee_only_asserts_on_explicit_signal() -> None:
     assert _free_from_fee("$15 per night") is None
     assert _free_from_fee(None) is None
     assert _free_from_fee("") is None
+
+
+def test_clean_text_strips_html_and_entities() -> None:
+    assert _clean_text("<p>Extra Vehicle Fee $8.00</p>") == "Extra Vehicle Fee $8.00"
+    assert _clean_text("Fees vary&nbsp;by&nbsp;season") == "Fees vary by season"
+    assert _clean_text("<br/>") is None  # tags-only collapses to empty -> None
+    assert _clean_text(None) is None
+
+
+def test_parse_facility_cleans_html_fee_and_keeps_free_signal() -> None:
+    row = _parse_facility(
+        {
+            "FacilityID": "9",
+            "FacilityLatitude": 47.7,
+            "FacilityLongitude": -122.1,
+            "FacilityUseFeeDescription": "<p>No fee for this site</p>",
+        }
+    )
+    assert row is not None
+    assert row[3] == "No fee for this site"  # fee: HTML stripped
+    assert row[4] is True  # free signal survives the cleaning
 
 
 def test_parse_facility_skips_missing_and_zero_coords() -> None:
@@ -93,10 +115,53 @@ def test_fetch_campsites_dedupes_and_clips_to_radius() -> None:
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     rows = fetch_campsites(
-        lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, api_key="test-key", client=client
+        lat=HOME_LAT,
+        lng=HOME_LNG,
+        radius_km=50.0,
+        api_key="test-key",
+        client=client,
+        min_interval=0.0,
     )
     ids = [row[0] for row in rows]
     assert ids == ["ridb:1"]  # far one clipped out, near one deduped to a single row
+
+
+def test_fetch_campsites_retries_on_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("foray.camps.time.sleep", lambda _seconds: None)  # no real backoff wait
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:  # first request is rate-limited, then it succeeds on retry
+            return httpx.Response(429, headers={"Retry-After": "1"})
+        return httpx.Response(
+            200,
+            json={
+                "RECDATA": [
+                    {
+                        "FacilityID": "1",
+                        "FacilityName": "CG",
+                        "FacilityLatitude": 47.61,
+                        "FacilityLongitude": -122.31,
+                    }
+                ],
+                "METADATA": {"RESULTS": {"TOTAL_COUNT": 1}},
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    rows = fetch_campsites(
+        lat=HOME_LAT,
+        lng=HOME_LNG,
+        radius_km=5.0,
+        api_key="test-key",
+        client=client,
+        min_interval=0.0,
+    )
+    # Getting a row back at all proves the 429 was retried, not raised (which would abort
+    # the whole ingest); the extra call is that retry.
+    assert calls["n"] >= 2
+    assert [row[0] for row in rows] == ["ridb:1"]
 
 
 def test_camps_near_ranks_free_first_then_distance(con: duckdb.DuckDBPyConnection) -> None:
