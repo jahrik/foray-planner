@@ -39,18 +39,19 @@ CREATE TABLE IF NOT EXISTS ingest_log (
     row_count     BIGINT
 );
 
--- Campsites: developed campgrounds (Recreation.gov RIDB) and, later, dispersed-camping
--- zones. Keyed by "{source}:{source_id}" so re-ingesting the same area is a no-op.
--- `free` is nullable on purpose: we only assert free when the source says so, never guess.
+-- Campsites: developed campgrounds (Recreation.gov RIDB) plus the OSM dispersed-camping layer
+-- (reported sites + a road∩public-land proxy). Keyed by "{source}:{source_id}" so re-ingesting
+-- the same area is a no-op. `free` is nullable on purpose: we only assert free when the source
+-- says so (or, for the dispersed proxy, because public-land camping carries no fee), never guess.
 CREATE TABLE IF NOT EXISTS campsites (
-    id          VARCHAR PRIMARY KEY,   -- "{source}:{source_id}", e.g. "ridb:250018"
+    id          VARCHAR PRIMARY KEY,   -- "{source}:{source_id}", e.g. "ridb:250018", "osm:way/42"
     name        VARCHAR,
-    kind        VARCHAR,               -- e.g. "campground", "dispersed" (later)
+    kind        VARCHAR,               -- "campground" (RIDB), "reported"/"dispersed" (OSM)
     fee         VARCHAR,               -- raw fee description when known, else NULL
     free        BOOLEAN,               -- TRUE only on an explicit no-fee signal, else NULL
     lat         DOUBLE,
     lng         DOUBLE,
-    source      VARCHAR,               -- "ridb", ...
+    source      VARCHAR,               -- "ridb", "osm"
     url         VARCHAR
 );
 

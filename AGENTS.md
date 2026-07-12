@@ -21,6 +21,13 @@ phenology. Local-only project (no GitHub remote yet).
   dedupes facilities, clips to the true radius with `haversine_km`. Skipped (no-op) when the
   key is unset, so the iNat refresh still works. `free` is only asserted on an explicit
   no-fee signal — never guessed.
+- `src/foray/dispersed.py` — dispersed-camping layer from OSM **Overpass** (httpx, no key). Two
+  ODbL signals, both cached as `campsites`: reported sites (`kind='reported'` — `tourism=camp_site`
+  /`camp_pitch`, `backcountry=yes`) and a proxy (`kind='dispersed'` — `highway=track`/`unclassified`
+  ∩ cached `public_land`, via the DuckDB **spatial** extension's point-in-polygon, ingest-side only
+  so the read path stays spatial-free). `free=TRUE` on proxy points (public-land camping is free of
+  charge); the *legality* caveat rides on `kind`+UI label, never asserted. Best-effort like camps/
+  land. iOverlander/The Dyrt are **not** usable (personal-use-only license / no open API).
 - `src/foray/scoring.py` — `build_phenology` (materializes `regions` + `phenology`) and the
   scoring modes: `rank_destinations`, `place_calendar`, `alerts`, and `camps_near` (campsites
   near a point, free-first by distance). Grid binning is one reusable SQL fragment (`_BINNED`).
@@ -30,9 +37,9 @@ phenology. Local-only project (no GitHub remote yet).
   per-request cursors; live config is mutable app state; `refresh` runs in a background thread
   with reads guarded while it rebuilds. `destinations` defaults to the current month when none
   is given.
-- `src/foray/cli.py` — `foray ingest | camps | refresh | serve | openapi` (`camps` ingests
-  campgrounds; `refresh` does obs + camps + phenology; `openapi` dumps the schema that feeds
-  the frontend type generator).
+- `src/foray/cli.py` — `foray ingest | camps | land | dispersed | refresh | serve | openapi`
+  (`refresh` does obs + camps + land + dispersed + phenology; `openapi` dumps the schema that
+  feeds the frontend type generator).
 - `src/foray/web/dist/` — the built client bundle (gitignored; emitted by the frontend build
   and served by FastAPI as static assets at `/assets` + `/`).
 - `frontend/` — the web client: **Vite + TypeScript (strict)**, Leaflet map. `src/main.ts`
