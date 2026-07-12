@@ -3,109 +3,101 @@
 [![CI](https://github.com/jahrik/foray-planner/actions/workflows/ci.yml/badge.svg)](https://github.com/jahrik/foray-planner/actions/workflows/ci.yml)
 [![CD](https://github.com/jahrik/foray-planner/actions/workflows/cd.yml/badge.svg)](https://github.com/jahrik/foray-planner/actions/workflows/cd.yml)
 
-Plan where to go mushroom hunting next, using [iNaturalist](https://www.inaturalist.org)
-observation data. It cross-references *what has been observed in a given month* against
-*where it has historically been observed* to rank travel destinations — and inverts the same
-data to show the best months for a place, or which target species are **being observed right
-now**.
+A trip-planning tool for mushroom hunters. Point it at where you are or want to go,
+and it tells you **which areas near you are most likely to be fruiting this month** —
+and where you can park and sleep for free while you're out there.
 
-This is a trip-planning and mapping tool only. It makes no identification, edibility, or
-safety claims of any kind; each species links to its iNaturalist page for that information.
+> **No identification or edibility claims are made here.** This is a trip-planning
+> and mapping tool only. Every species links to its
+> [iNaturalist](https://www.inaturalist.org) page for that kind of information.
+> Always verify with an expert before eating anything you find.
 
-## How it works
+---
 
-1. **Ingest** — pull research-grade observations of a curated set of target fungi
-   (`data/species_seed.yaml`) within a home-base radius, into a local DuckDB cache.
-2. **Phenology** — bin observations into a lat/lng grid and build per-(species, region,
-   month) counts: the seasonality curve.
-3. **Score** — three modes from the same primitives:
-   - **Destinations**: pick month(s) → rank regions by observation activity. Defaults to the
-     current calendar month.
-   - **Calendar**: click a region → its busiest months (12-bucket heatmap).
-   - **Observed now**: recent (trailing-weeks) observations of target species by region.
+## What it does
 
-All iNat access is throttled, retried on transient network errors, and cached; queries run
-against the local DuckDB, so the web app is fast and offline once data is pulled.
+Foray Planner pulls real, research-grade observation records from
+[iNaturalist](https://www.inaturalist.org) — the world's largest nature-observation
+database — and turns years of accumulated field data into three practical views.
 
-## Quick start
+### 🗺️ Destinations tab — where should I go this month?
 
-```bash
-uv sync
-(cd frontend && npm ci && npm run build)   # build the web client bundle
-uv run foray refresh      # pull data + build phenology (first run hits iNat; minutes)
-uv run foray serve        # http://127.0.0.1:8000
-```
+The main view. Pick one or more months, hit **Rank destinations**, and the map fills
+with hotspot markers ranked by historical fruiting activity for that time of year.
+The side panel lists them in order with a score bar, the number of species active
+there, and small clickable chips for each one that open the species' iNaturalist page.
 
-Then open the app and set your location from the header bar — no config editing needed.
-(The Docker image builds the client for you; the `npm run build` step is only for running
-the backend directly from a source checkout.)
+- **Magenta markers** = strong historical signal for the selected months
+- **Cyan markers** = magenta + something was actually observed there recently
+- Bigger marker = stronger signal; marker size and color update every time you re-rank
 
-## Using the web app
+Clicking a card in the side panel zooms the map to that region and loads its
+12-month calendar automatically.
 
-- **Set location** — type a place name (`Coos Bay, OR`) or raw `lat,lng` in the header bar.
-  The name is geocoded via OpenStreetMap; the choice is saved to `data/location.json` (so it
-  survives restarts) and the app automatically re-fetches iNaturalist data for the new area.
-- **Months** default to the current month; toggle any combination.
-- **Map markers** — magenta scales with historical strength, cyan marks fresh/recent
-  activity, and the white dot is your location. Each species chip links to its iNat page.
-- **Refresh data** re-pulls from iNaturalist for the current location (runs in the
-  background with a progress indicator).
+### 📅 Place calendar tab — when is the best time for a specific spot?
 
-## CLI
+Click any ranked destination card and the side panel switches to a 12-month heatmap
+for that region — darker cells mean more observations historically for that month.
+Great for planning a trip weeks out: "is late October really the right time for this
+area, or should I wait until November?"
 
-```bash
-uv run foray ingest       # pull observations only
-uv run foray refresh      # ingest + rebuild phenology/regions tables
-uv run foray serve --host 0.0.0.0 --port 8000
-```
+### ⚡ Fruiting now tab — what's been spotted recently?
 
-## Configuration
+Shows only areas where target species were actually observed in the trailing few weeks.
+No historical averaging — just what's happening on the ground right now. Useful when
+you're ready to leave today and want the freshest signal.
 
-`config.yaml` — default home base (lat/lng/radius), grid `cell_deg`, ingest window
-(`since_year`, `quality_grade`), and the `recent_weeks` window for the live signal. Values
-are range-validated on load (pydantic), so a bad edit fails with a clear message.
+---
 
-`data/location.json` — the active location set from the UI; overrides `config.yaml`'s home
-so the defaults file stays pristine. Delete it to fall back to the config default.
+## Camping layers
 
-`data/species_seed.yaml` — the curated target taxa, each mapped to its iNat `taxon_id`.
-No authored descriptions; the UI links each taxon to iNaturalist. Add or remove species
-here, then re-run `foray refresh`.
+After you rank destinations, click any region card and the camping layers load for
+that area. Toggle them on from the **Camping** controls:
 
-## Development
+| Toggle | What it shows | Marker |
+|---|---|---|
+| **Show campgrounds** | Named campgrounds from Recreation.gov | Gold = free · Amber = fee/unknown |
+| **Show dispersed camping (OSM)** | OSM-tagged free campsites + likely dispersed zones | Teal solid = reported site · Teal dashed ring = proxy |
+| **Free only** | Filters both layers to free/no-fee options only | — |
+| **Show public land (BLM/USFS)** | Land ownership polygons shaded by agency | Brown = BLM · Violet = USFS |
 
-```bash
-uv run ruff format . && uv run ruff check .
-uv run ty check
-uv run pytest
-```
+**A note on dispersed camping:** the dashed-ring markers are a *best-guess proxy* —
+drivable forest roads that fall on BLM or USFS land, where dispersed camping is
+generally allowed. They are not a guarantee of legality. Always check with the local
+BLM or Forest Service district office before camping somewhere unfamiliar. The
+ownership polygons show who manages the land; they are informational only.
 
-Tests are hermetic (no network): scoring runs on hand-built fixtures and geocoding is mocked.
-Conventions follow the `python` skill — including no single-letter variable names.
+---
 
-### Frontend (`frontend/`)
+## Controls
 
-The web client is a Vite + TypeScript (strict) app using Leaflet, built into
-`src/foray/web/dist/` and served by FastAPI as static assets.
+| Control | What it does |
+|---|---|
+| **Location bar** | Type a place name (`Coos Bay, OR`) or raw `lat,lng`. The app geocodes it and fetches fresh iNaturalist data for that area. |
+| **Months** | Toggle any combination of months. The current month is on by default. |
+| **Target species** | Narrow to one or more genera (Ctrl/Cmd-click for multiples). Leave unselected to include all 21 targets. |
+| **Rank destinations** | Score and plot regions for the selected months + species. |
+| **Refresh data** | Re-pulls the latest observations from iNaturalist for the current area. Runs in the background; a status line shows progress. |
 
-```bash
-cd frontend
-npm ci
-npm run dev        # Vite dev server on :5173, proxying /api to uvicorn on :8000
-npm run build      # type-check (tsc --noEmit) + emit the production bundle
-npm run gen:api    # regenerate src/api/schema.ts from the live OpenAPI schema
-```
+---
 
-For live development run `uv run foray serve` (backend) and `npm run dev` (client) together.
-`src/api/schema.ts` is generated from FastAPI's OpenAPI schema via `openapi-typescript` and
-committed; rerun `npm run gen:api` after changing an API route.
+## Target species
 
-## Data & attribution
+The app tracks a curated list of 21 edible-target genera — morels, chanterelles, king
+boletes, hedgehogs, lobster mushrooms, and more. The full list is in
+[`data/species_seed.yaml`](data/species_seed.yaml). Each species chip in the UI links
+directly to its iNaturalist page for photos, range maps, and community notes.
 
-Observation data © iNaturalist and its contributors; geocoding © OpenStreetMap contributors.
-Requests are throttled (~1/s via pyinaturalist) and sent with a descriptive User-Agent.
-Respect the [iNaturalist API terms](https://www.inaturalist.org/pages/api+reference) and the
-[Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/).
+---
+
+## Attribution
+
+Observation data © [iNaturalist](https://www.inaturalist.org) contributors (CC-BY-NC).
+Camping data © [OpenStreetMap](https://www.openstreetmap.org) contributors (ODbL) and
+[Recreation.gov](https://recreation.gov) RIDB API. Land boundaries via BLM and USFS
+ArcGIS services. Geocoding © OpenStreetMap / Nominatim.
+
+---
 
 ## License
 
