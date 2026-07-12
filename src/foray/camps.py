@@ -28,7 +28,7 @@ from typing import Any
 import duckdb
 import httpx
 
-from foray.cache import connect, record_ingest, upsert_campsites
+from foray.cache import connect, is_ingested, record_ingest, upsert_campsites
 from foray.config import Config
 from foray.scoring import haversine_km
 
@@ -254,6 +254,14 @@ def ingest_campgrounds(
     own_con = con is None
     database = con if con is not None else connect(cfg.db_path)
     home = cfg.home
+    key = f"camps:ridb:{home.lat}:{home.lng}:{home.radius_km}"
+    if is_ingested(database, key):
+        logger.info("camps: already ingested for this area, skipping")
+        if progress_cb:
+            progress_cb("Campgrounds already cached, skipping…", 100.0)
+        if own_con:
+            database.close()
+        return 0
     try:
         logger.info("camps: fetching developed campgrounds within %.0f km of home…", home.radius_km)
         rows = fetch_campsites(

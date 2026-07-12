@@ -15,7 +15,7 @@ from typing import Any
 
 import duckdb
 
-from foray.cache import connect, record_ingest, upsert_observations, upsert_taxa
+from foray.cache import connect, latest_obs_date, record_ingest, upsert_observations, upsert_taxa
 from foray.config import Config
 from foray.inat import iter_observations
 
@@ -108,8 +108,27 @@ def ingest(
     for index, species in enumerate(cfg.species, start=1):
         if progress_cb:
             progress_cb(f"Fetching {species.common_name}…", (index - 1) / total * 100.0)
+        latest = latest_obs_date(db, species.taxon_id, home.lat, home.lng, home.radius_km)
+        species_start = latest if latest else start_date
+
+        if species_start == end_date:
+            logger.info(
+                "ingest [%d/%d] %s: already up to date (%s)",
+                index,
+                total,
+                species.common_name,
+                end_date,
+            )
+            counts[species.taxon_id] = 0
+            continue
+
         logger.info(
-            "ingest [%d/%d] %s (taxon %d)…", index, total, species.common_name, species.taxon_id
+            "ingest [%d/%d] %s (taxon %d) from %s…",
+            index,
+            total,
+            species.common_name,
+            species.taxon_id,
+            species_start,
         )
         rows: list[tuple[Any, ...]] = []
         for obs in iter_observations(
@@ -117,7 +136,7 @@ def ingest(
             lat=home.lat,
             lng=home.lng,
             radius_km=home.radius_km,
-            d1=start_date,
+            d1=species_start,
             d2=end_date,
             quality_grade=cfg.quality_grade,
         ):
@@ -126,7 +145,8 @@ def ingest(
                 rows.append(row)
         upsert_observations(db, rows)
         key = (
-            f"obs:{species.taxon_id}:{home.lat}:{home.lng}:{home.radius_km}:{start_date}:{end_date}"
+            f"obs:{species.taxon_id}:{home.lat}:{home.lng}:"
+            f"{home.radius_km}:{species_start}:{end_date}"
         )
         record_ingest(db, key, len(rows))
         counts[species.taxon_id] = len(rows)

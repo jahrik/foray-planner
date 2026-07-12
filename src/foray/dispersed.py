@@ -38,7 +38,7 @@ from typing import Any
 import duckdb
 import httpx
 
-from foray.cache import connect, record_ingest, upsert_campsites
+from foray.cache import connect, is_ingested, record_ingest, upsert_campsites
 from foray.config import Config
 
 logger = logging.getLogger(__name__)
@@ -338,6 +338,14 @@ def ingest_dispersed(
     own_con = con is None
     database = con if con is not None else connect(cfg.db_path)
     home = cfg.home
+    key = f"dispersed:{home.lat}:{home.lng}:{home.radius_km}"
+    if is_ingested(database, key):
+        logger.info("dispersed: already ingested for this area, skipping")
+        if progress_cb:
+            progress_cb("Dispersed camping already cached, skipping…", 100.0)
+        if own_con:
+            database.close()
+        return 0
     try:
         logger.info(
             "dispersed: fetching OSM camping layers within %.0f km of home…", home.radius_km
