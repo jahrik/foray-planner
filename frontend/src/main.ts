@@ -535,8 +535,12 @@ async function runPlan(): Promise<void> {
   setStatus("Planning route…");
   clearMarkers();
 
-  const maxStops = parseInt((document.getElementById("plan-stops") as HTMLInputElement).value, 10);
-  const maxDrive = parseFloat((document.getElementById("plan-drive") as HTMLInputElement).value);
+  const maxStops = Math.max(1, Math.min(20,
+    Math.round((document.getElementById("plan-stops") as HTMLInputElement).valueAsNumber) || 5,
+  ));
+  const maxDrive = Math.max(50,
+    (document.getElementById("plan-drive") as HTMLInputElement).valueAsNumber || 400,
+  );
   const requireFree = (document.getElementById("plan-free-camp") as HTMLInputElement).checked;
 
   let trip: TripPlan;
@@ -570,19 +574,29 @@ async function runPlan(): Promise<void> {
     dashArray: "8 5",
   }).addTo(map);
 
-  // Plot stop markers (reuse plot() then re-colour to gold).
+  // Plot stop markers (reuse plot() then re-colour to gold). Build the popup
+  // with DOM nodes so common_name values from the external API are never
+  // injected as raw HTML.
   trip.stops.forEach((stop) => {
-    const marker = plot(
-      stop.center_lat,
-      stop.center_lng,
-      stop.score_norm,
-      `<b>Stop ${stop.order}</b> · ${stop.drive_km_from_prev} km leg<br>${stop.species
-        .slice(0, 3)
-        .map((hit) => hit.common_name)
-        .join(", ")}`,
-      stop.recent_count > 0,
+    const popupEl = document.createElement("div");
+    const title = document.createElement("b");
+    title.textContent = `Stop ${stop.order}`;
+    const drive = document.createTextNode(` · ${stop.drive_km_from_prev} km leg`);
+    const br = document.createElement("br");
+    const names = document.createTextNode(
+      stop.species.slice(0, 3).map((hit) => hit.common_name).join(", "),
     );
-    marker.setStyle({ color: PLAN_STOP, fillColor: PLAN_STOP });
+    popupEl.append(title, drive, br, names);
+    const marker = L.circleMarker([stop.center_lat, stop.center_lng], {
+      radius: 6 + 14 * stop.score_norm,
+      color: PLAN_STOP,
+      fillColor: PLAN_STOP,
+      fillOpacity: 0.6,
+      weight: 1.5,
+    })
+      .addTo(map)
+      .bindPopup(popupEl);
+    state.markers.push(marker);
   });
 
   // Fit the map to the full route.
@@ -645,13 +659,20 @@ function buildStopCard(stop: Stop): HTMLElement {
   }`;
   card.appendChild(meta);
 
-  // Species chips (top 5).
+  // Species chips (top 5) — built as DOM nodes so common_name/label from
+  // external APIs are set via textContent and never injected as raw HTML.
   const chips = document.createElement("div");
   chips.className = "chips";
-  chips.innerHTML = stop.species
-    .slice(0, 5)
-    .map((hit) => speciesChip({ ...hit, label: `${(hit.w_pheno * 100).toFixed(0)}%` }))
-    .join("");
+  stop.species.slice(0, 5).forEach((hit) => {
+    const anchor = document.createElement("a");
+    anchor.className = "chip";
+    anchor.href = inatUrl(hit.taxon_id);
+    anchor.target = "_blank";
+    anchor.rel = "noopener";
+    anchor.onclick = (ev) => ev.stopPropagation();
+    anchor.textContent = `${hit.common_name} · ${(hit.w_pheno * 100).toFixed(0)}%`;
+    chips.appendChild(anchor);
+  });
   card.appendChild(chips);
 
   // Camp info.
@@ -729,7 +750,9 @@ function downloadFile(filename: string, content: string, mime: string): void {
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
-  URL.revokeObjectURL(url);
+  // Defer revocation so the browser has time to initiate the download before
+  // the object URL is released (synchronous revoke can truncate on Safari).
+  setTimeout(() => URL.revokeObjectURL(url), 100);
 }
 
 function setStatus(text: string): void {
@@ -747,12 +770,17 @@ function initTabs(): void {
       const planRow = document.getElementById("plan-row");
       if (planRow) planRow.style.display = state.view === "plan" ? "flex" : "none";
 
-      // Keep the run button label in sync with the active view.
+      // The run button is only meaningful on destinations / alerts / plan.
+      // Hide it on the calendar tab (no re-runnable action there).
       const runBtn = qs<HTMLButtonElement>("#run");
-      if (state.view === "destinations") runBtn.textContent = "Rank destinations";
-      else if (state.view === "alerts") runBtn.textContent = "Check alerts";
-      else if (state.view === "plan") runBtn.textContent = "Plan route";
-      else runBtn.textContent = "Rank destinations";
+      if (state.view === "calendar") {
+        runBtn.style.display = "none";
+      } else {
+        runBtn.style.display = "";
+        if (state.view === "destinations") runBtn.textContent = "Rank destinations";
+        else if (state.view === "alerts") runBtn.textContent = "Check alerts";
+        else if (state.view === "plan") runBtn.textContent = "Plan route";
+      }
 
       if (state.view === "destinations") runDestinations();
       else if (state.view === "alerts") runAlerts();
