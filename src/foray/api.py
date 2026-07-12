@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime as dt
 import json
 import logging
@@ -55,13 +56,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         "refreshing": False,
         "last_error": None,
         "listeners": [],
+        "listeners_lock": threading.Lock(),
         "last_progress": None,
     }
 
     def broadcast(msg: dict[str, Any]) -> None:
         state["last_progress"] = msg
-        for q in state["listeners"]:
-            q.put(msg)
+        with state["listeners_lock"]:
+            queues = list(state["listeners"])
+        for q in queues:
+            with contextlib.suppress(queue.Full):
+                q.put_nowait(msg)
 
     def make_cb(base_pct: float, range_pct: float) -> Any:
         def cb(step: str, local_pct: float) -> None:
@@ -376,23 +381,36 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/refresh/stream")
     async def refresh_stream() -> StreamingResponse:
-        q: queue.Queue = queue.Queue()
+        q: queue.Queue = queue.Queue(maxsize=100)
         if state["last_progress"]:
-            q.put(state["last_progress"])
-        state["listeners"].append(q)
+            q.put_nowait(state["last_progress"])
+        with state["listeners_lock"]:
+            state["listeners"].append(q)
 
         async def event_generator():
             try:
                 while True:
-                    msg = await asyncio.to_thread(q.get)
+                    try:
+                        msg = await asyncio.to_thread(q.get, True, 0.5)
+                    except queue.Empty:
+                        continue
                     yield f"data: {json.dumps(msg)}\n\n"
                     if msg.get("done") or msg.get("error"):
                         break
             finally:
-                if q in state["listeners"]:
-                    state["listeners"].remove(q)
+                with state["listeners_lock"]:
+                    if q in state["listeners"]:
+                        state["listeners"].remove(q)
 
-        return StreamingResponse(event_generator(), media_type="text/event-stream")
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> Any:
