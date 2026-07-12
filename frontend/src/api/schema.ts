@@ -149,6 +149,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Plan
+         * @description Greedy multi-stop itinerary: top destinations sequenced home-out with the least drive.
+         */
+        get: operations["plan_api_plan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/location": {
         parameters: {
             query?: never;
@@ -466,6 +486,43 @@ export interface operations {
                 lat?: number | null;
                 lng?: number | null;
                 radius_km?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    plan_api_plan_get: {
+        parameters: {
+            query?: {
+                months?: string | null;
+                species?: string;
+                radius_km?: number | null;
+                max_stops?: number;
+                max_drive_km?: number;
+                camp_radius_km?: number;
+                require_free_camp?: boolean;
             };
             header?: never;
             path?: never;

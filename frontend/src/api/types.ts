@@ -111,6 +111,33 @@ export interface Trail {
   geometry: GeoJSON.Geometry;
 }
 
+/** One week-long stay in a planned trip (a `TripPlan.stops` entry). */
+export interface Stop {
+  order: number;
+  region_id: string;
+  center_lat: number;
+  center_lng: number;
+  score_norm: number;
+  n_species: number;
+  recent_count: number;
+  species: SpeciesHit[];
+  drive_km_from_prev: number;
+  cumulative_drive_km: number;
+  camp: CampSite | null; // nearest camp, null when none is within range
+  camp_is_free: boolean;
+}
+
+/** A greedy multi-stop itinerary (`GET /api/plan`). */
+export interface TripPlan {
+  home_lat: number;
+  home_lng: number;
+  months: number[];
+  n_stops: number;
+  total_drive_km: number;
+  stops: Stop[];
+  skipped_unreachable: number;
+}
+
 export interface LocationResponse {
   home: Home;
 }
