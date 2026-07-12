@@ -595,18 +595,23 @@ async function startRefresh(message: string): Promise<boolean> {
 
 async function setLocation(query: string): Promise<void> {
   setStatus("Finding location…");
-  let response: { home: Home };
+  let response: { home: Home; needs_refresh: boolean };
   try {
-    response = await postJson<{ home: Home }>("/api/location", { query });
+    response = await postJson<{ home: Home; needs_refresh: boolean }>("/api/location", { query });
   } catch (error) {
     setStatus(errorDetail(error) || "location not found");
     return;
   }
   updateHome(response.home);
-  const succeeded = await startRefresh(
-    `Fetching iNaturalist data around ${response.home.name}… (a few minutes)`,
-  );
-  if (succeeded) runDestinations();
+
+  if (response.needs_refresh) {
+    const succeeded = await startRefresh(
+      `Fetching iNaturalist data around ${response.home.name}… (a few minutes)`,
+    );
+    if (succeeded) runDestinations();
+  } else {
+    runDestinations();
+  }
 }
 
 function initTheme(): void {

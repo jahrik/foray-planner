@@ -347,7 +347,22 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
         save_location(location_path(cfg.db_path), home)
         state["cfg"] = cfg.model_copy(update={"home": home})
-        return {"home": home.model_dump()}
+
+        needs_refresh = True
+        try:
+            cursor = db.cursor()
+            key = f"trails:{home.lat}:{home.lng}:{home.radius_km}"
+            row = cursor.execute("SELECT 1 FROM ingest_log WHERE key = ?", [key]).fetchone()
+            has_log = row is not None
+            cursor.execute("SELECT 1 FROM phenology LIMIT 1")
+            has_phenology = True
+            needs_refresh = not (has_log and has_phenology)
+        except duckdb.CatalogException:
+            needs_refresh = True
+        finally:
+            cursor.close()
+
+        return {"home": home.model_dump(), "needs_refresh": needs_refresh}
 
     @app.post("/api/refresh")
     def refresh() -> dict[str, Any]:
