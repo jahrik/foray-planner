@@ -557,7 +557,7 @@ async function startRefresh(message: string, target: string = "mushrooms"): Prom
   await fetch(`/api/refresh?target=${target}`, { method: "POST" });
   return new Promise((resolve) => {
     const source = new EventSource("/api/refresh/stream");
-    
+
     source.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.step) {
@@ -566,7 +566,7 @@ async function startRefresh(message: string, target: string = "mushrooms"): Prom
       if (data.progress !== undefined) {
         progress.value = data.progress;
       }
-      
+
       if (data.error) {
         setStatus("Refresh error: " + data.error);
         qs<HTMLButtonElement>("#refresh").disabled = false;
@@ -581,7 +581,7 @@ async function startRefresh(message: string, target: string = "mushrooms"): Prom
         resolve(true);
       }
     };
-    
+
     source.onerror = (err) => {
       console.error("SSE Error:", err);
       source.close();
