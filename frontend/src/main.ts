@@ -62,6 +62,30 @@ const LAND_COLORS: Record<string, string> = {
 const LAND_DEFAULT = "#8a8a8a"; // any other agency
 const TRAIL = "#e34a4a"; // red — the walking network (paths/routes) + trailhead dots
 
+// Theme-aware basemap: a dark CARTO raster under dark mode, standard OSM under light. The bright
+// marker palette above reads well over both. Attribution stays per each provider's terms.
+const TILES = {
+  dark: {
+    url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    attribution: "© OpenStreetMap © CARTO · observations © iNaturalist",
+  },
+  light: {
+    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution: "© OpenStreetMap · observations © iNaturalist",
+  },
+} as const;
+let tileLayer: L.TileLayer | null = null;
+
+const currentTheme = (): "dark" | "light" =>
+  document.documentElement.dataset.theme === "light" ? "light" : "dark";
+
+function setTiles(theme: "dark" | "light"): void {
+  if (!map) return; // map not built yet; initMap lays the first tiles for the current theme
+  if (tileLayer) tileLayer.remove();
+  const tiles = TILES[theme];
+  tileLayer = L.tileLayer(tiles.url, { attribution: tiles.attribution, maxZoom: 14 }).addTo(map);
+}
+
 function qs<T extends HTMLElement = HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
   if (!element) throw new Error(`missing element: ${selector}`);
@@ -128,10 +152,7 @@ function monthsParam(): string {
 
 function initMap(home: Home): void {
   map = L.map("map").setView([home.lat, home.lng], 7);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "© OpenStreetMap · observations © iNaturalist",
-    maxZoom: 14,
-  }).addTo(map);
+  setTiles(currentTheme());
   homeMarker = L.circleMarker([home.lat, home.lng], {
     radius: 7,
     color: HOME_RING,
@@ -559,9 +580,26 @@ async function setLocation(query: string): Promise<void> {
   if (succeeded) runDestinations();
 }
 
+function initTheme(): void {
+  const toggle = qs<HTMLButtonElement>("#theme-toggle");
+  const apply = (theme: "dark" | "light"): void => {
+    document.documentElement.dataset.theme = theme;
+    toggle.textContent = theme === "dark" ? "🌙" : "☀️";
+    toggle.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+    setTiles(theme); // no-op until the map exists; initMap lays the first tiles
+  };
+  apply(currentTheme()); // the inline <head> script already set the attribute (default dark)
+  toggle.onclick = () => {
+    const next = currentTheme() === "dark" ? "light" : "dark";
+    localStorage.setItem("foray-theme", next);
+    apply(next);
+  };
+}
+
 async function main(): Promise<void> {
   const config = await getJson<Config>("/api/config");
   state.home = config.home;
+  initTheme();
   initMonths();
   await initSpecies();
   initMap(config.home);
