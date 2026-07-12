@@ -643,33 +643,41 @@ async function main(): Promise<void> {
   qs("#run").onclick = runDestinations;
   qs("#refresh").onclick = () => startRefresh("Refreshing mushroom data…", "mushrooms");
 
+  let currentRefreshTarget: string | null = null;
+
   const ensureLayer = async (target: string, msg: string) => {
     // startRefresh will instantly skip if the backend detects it's already ingested
     await startRefresh(msg, target);
+    currentRefreshTarget = null;
     loadCamps();
     loadLand();
     loadTrails();
   };
-  const cancelRefresh = async () => {
-    await fetch("/api/refresh", { method: "DELETE" });
+  const cancelLayerRefresh = async (target: string) => {
+    // Only cancel if the in-flight refresh is for this specific layer, so we
+    // don't accidentally abort an unrelated mushroom refresh.
+    if (currentRefreshTarget === target) {
+      await fetch("/api/refresh", { method: "DELETE" });
+      currentRefreshTarget = null;
+    }
   };
 
   qs("#show-camps").onchange = (e) => {
-    if ((e.target as HTMLInputElement).checked) ensureLayer("camps", "Fetching campgrounds…");
-    else { cancelRefresh(); loadCamps(); }
+    if ((e.target as HTMLInputElement).checked) { currentRefreshTarget = "camps"; ensureLayer("camps", "Fetching campgrounds…"); }
+    else { cancelLayerRefresh("camps"); loadCamps(); }
   };
   qs("#show-dispersed").onchange = (e) => {
-    if ((e.target as HTMLInputElement).checked) ensureLayer("dispersed", "Fetching dispersed camping…");
-    else { cancelRefresh(); loadCamps(); }
+    if ((e.target as HTMLInputElement).checked) { currentRefreshTarget = "dispersed"; ensureLayer("dispersed", "Fetching dispersed camping…"); }
+    else { cancelLayerRefresh("dispersed"); loadCamps(); }
   };
   qs("#free-camps").onchange = () => loadCamps();
   qs("#show-land").onchange = (e) => {
-    if ((e.target as HTMLInputElement).checked) ensureLayer("land", "Fetching public land…");
-    else { cancelRefresh(); loadLand(); }
+    if ((e.target as HTMLInputElement).checked) { currentRefreshTarget = "land"; ensureLayer("land", "Fetching public land…"); }
+    else { cancelLayerRefresh("land"); loadLand(); }
   };
   qs("#show-trails").onchange = (e) => {
-    if ((e.target as HTMLInputElement).checked) ensureLayer("trails", "Fetching trails…");
-    else { cancelRefresh(); loadTrails(); }
+    if ((e.target as HTMLInputElement).checked) { currentRefreshTarget = "trails"; ensureLayer("trails", "Fetching trails…"); }
+    else { cancelLayerRefresh("trails"); loadTrails(); }
   };
   qs<HTMLFormElement>("#locform").onsubmit = (event) => {
     event.preventDefault();

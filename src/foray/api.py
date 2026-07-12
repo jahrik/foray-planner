@@ -68,14 +68,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     def broadcast(msg: dict[str, Any]) -> None:
         state["last_progress"] = msg
         with state["listeners_lock"]:
-            queues = list(state["listeners"])
-        for q in queues:
+            listener_queues = list(state["listeners"])
+        for listener_queue in listener_queues:
             try:
-                q.put_nowait(msg)
+                listener_queue.put_nowait(msg)
             except queue.Full:
                 try:
-                    q.get_nowait()
-                    q.put_nowait(msg)
+                    listener_queue.get_nowait()
+                    listener_queue.put_nowait(msg)
                 except (queue.Empty, queue.Full):
                     pass
 
@@ -122,7 +122,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     def run_refresh(target: str = "all") -> None:
         try:
             state["abort_event"].clear()
-            state["http_client"] = httpx.Client(timeout=60.0)
+            # 300s covers Overpass trail queries that can take up to 180s; set a
+            # generous ceiling so the shared client doesn't cut off slow phases.
+            state["http_client"] = httpx.Client(timeout=300.0)
 
             broadcast({"step": "Starting refresh…", "progress": 0.0})
             logger.info("refresh: starting for %s (target=%s)", current().home.name, target)
@@ -429,8 +431,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 "SELECT 1 FROM ingest_log WHERE key LIKE ?", [key_pattern]
             ).fetchone()
             has_obs = row is not None
-            cursor.execute("SELECT 1 FROM phenology LIMIT 1")
-            has_phenology = True
+            phenology_row = cursor.execute("SELECT 1 FROM phenology LIMIT 1").fetchone()
+            has_phenology = phenology_row is not None
             needs_refresh = not (has_obs and has_phenology)
         except duckdb.CatalogException:
             needs_refresh = True
@@ -440,8 +442,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
         return {"home": home.model_dump(), "needs_refresh": needs_refresh}
 
+    _VALID_REFRESH_TARGETS = frozenset({"all", "mushrooms", "camps", "land", "dispersed", "trails"})
+
     @app.post("/api/refresh")
     def refresh(target: str = Query("mushrooms")) -> dict[str, Any]:
+        if target not in _VALID_REFRESH_TARGETS:
+            raise HTTPException(
+                400, f"unknown target '{target}'; valid: {sorted(_VALID_REFRESH_TARGETS)}"
+            )
         if state["refreshing"]:
             return {"status": "already running"}
         state["refreshing"] = True
@@ -461,17 +469,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/refresh/stream")
     async def refresh_stream() -> StreamingResponse:
-        q: queue.Queue = queue.Queue(maxsize=100)
+        listener_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=100)
         if state["last_progress"]:
-            q.put_nowait(state["last_progress"])
+            listener_queue.put_nowait(state["last_progress"])
         with state["listeners_lock"]:
-            state["listeners"].append(q)
+            state["listeners"].append(listener_queue)
 
         async def event_generator():
             try:
                 while True:
                     try:
-                        msg = await asyncio.to_thread(q.get, True, 0.5)
+                        msg = await asyncio.to_thread(listener_queue.get, True, 0.5)
                     except queue.Empty:
                         continue
                     yield f"data: {json.dumps(msg)}\n\n"
@@ -479,8 +487,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         break
             finally:
                 with state["listeners_lock"]:
-                    if q in state["listeners"]:
-                        state["listeners"].remove(q)
+                    if listener_queue in state["listeners"]:
+                        state["listeners"].remove(listener_queue)
 
         return StreamingResponse(
             event_generator(),
