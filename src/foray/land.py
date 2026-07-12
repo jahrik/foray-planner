@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
 
 _KM_PER_DEG_LAT = 111.0
-_PAGE_SIZE = 200
+_PAGE_SIZE = 1000
 # Server-side geometry generalization, in degrees (~0.005° ≈ 500 m). Keeps national-forest
 # MultiPolygons small enough to cache and render on a phone; ownership shading needs no more.
 _SIMPLIFY_DEG = 0.005

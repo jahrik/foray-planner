@@ -16,6 +16,7 @@ from typing import Any
 import duckdb
 import httpx
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -43,8 +44,10 @@ class LocationBody(BaseModel):
 
 
 def create_app(cfg: Config | None = None) -> FastAPI:
+    """Wire up the API, starting the shared DuckDB connection and config state."""
     cfg = cfg or load_config()
-    app = FastAPI(title="Foray Planner")
+    app = FastAPI(title="Foray Planner API")
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
     if (_DIST / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=str(_DIST / "assets")), name="assets")
 
