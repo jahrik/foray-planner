@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import datetime as dt
 import json
 import logging
@@ -71,8 +70,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         with state["listeners_lock"]:
             queues = list(state["listeners"])
         for q in queues:
-            with contextlib.suppress(queue.Full):
+            try:
                 q.put_nowait(msg)
+            except queue.Full:
+                try:
+                    q.get_nowait()
+                    q.put_nowait(msg)
+                except (queue.Empty, queue.Full):
+                    pass
 
     def make_cb(base_pct: float, range_pct: float) -> Any:
         def cb(step: str, local_pct: float) -> None:
@@ -415,18 +420,23 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         state["cfg"] = cfg.model_copy(update={"home": home})
 
         needs_refresh = True
+        cursor = None
         try:
             cursor = db.cursor()
-            key = f"trails:{home.lat}:{home.lng}:{home.radius_km}"
-            row = cursor.execute("SELECT 1 FROM ingest_log WHERE key = ?", [key]).fetchone()
-            has_log = row is not None
+            # The core data is mushrooms; check if we've ingested observations for this area.
+            key_pattern = f"obs:%:{home.lat}:{home.lng}:{home.radius_km}:%"
+            row = cursor.execute(
+                "SELECT 1 FROM ingest_log WHERE key LIKE ?", [key_pattern]
+            ).fetchone()
+            has_obs = row is not None
             cursor.execute("SELECT 1 FROM phenology LIMIT 1")
             has_phenology = True
-            needs_refresh = not (has_log and has_phenology)
+            needs_refresh = not (has_obs and has_phenology)
         except duckdb.CatalogException:
             needs_refresh = True
         finally:
-            cursor.close()
+            if cursor is not None:
+                cursor.close()
 
         return {"home": home.model_dump(), "needs_refresh": needs_refresh}
 

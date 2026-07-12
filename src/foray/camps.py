@@ -221,7 +221,7 @@ def fetch_campsites(
             if progress_cb:
                 progress_cb(
                     f"Fetching campgrounds ({index + 1}/{total_centers})…",
-                    (index / total_centers) * 100.0,
+                    ((index + 1) / total_centers) * 100.0 if total_centers else 100.0,
                 )
             for record in _iter_facilities(
                 client, throttle, api_key, center_lat, center_lng, _QUERY_RADIUS_MI

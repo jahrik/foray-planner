@@ -231,7 +231,10 @@ def fetch_public_land(
         total = len(sources_list)
         for index, source in enumerate(sources_list):
             if progress_cb:
-                progress_cb(f"Fetching {source.agency} land…", (index / total) * 100.0)
+                progress_cb(
+                    f"Fetching {source.agency} land…",
+                    ((index + 1) / total) * 100.0 if total else 100.0,
+                )
             before = len(by_id)
             try:
                 for feature in _iter_features(client, source, envelope):

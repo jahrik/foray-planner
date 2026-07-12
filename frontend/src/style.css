@@ -57,7 +57,14 @@ header .home { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
   user-select: none;
 }
 .toggle-btn input[type="checkbox"] {
-  display: none;
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-btn input[type="checkbox"]:focus-visible + span {
+  outline: 2px solid var(--accent2);
+  outline-offset: 2px;
 }
 .toggle-btn span {
   display: inline-block;

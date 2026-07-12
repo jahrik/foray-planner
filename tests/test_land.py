@@ -188,7 +188,9 @@ def test_fetch_public_land_pages_until_transfer_limit_clears() -> None:
             200,
             json={
                 "type": "FeatureCollection",
-                "features": [{"properties": {"OBJECTID": 1000}, "geometry": _polygon(47.7, -122.3)}],
+                "features": [
+                    {"properties": {"OBJECTID": 1000}, "geometry": _polygon(47.7, -122.3)}
+                ],
             },
         )
 

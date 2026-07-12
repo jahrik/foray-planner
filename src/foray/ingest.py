@@ -110,18 +110,13 @@ def ingest(
         if progress_cb:
             progress_cb(f"Fetching {species.common_name}…", (index - 1) / total * 100.0)
         latest = latest_obs_date(db, species.taxon_id, home.lat, home.lng, home.radius_km)
-        species_start = latest if latest else start_date
+        if latest:
+            overlap = (dt.date.fromisoformat(latest) - dt.timedelta(days=7)).isoformat()
+            species_start = max(start_date, overlap)
+        else:
+            species_start = start_date
 
-        if species_start == end_date:
-            logger.info(
-                "ingest [%d/%d] %s: already up to date (%s)",
-                index,
-                total,
-                species.common_name,
-                end_date,
-            )
-            counts[species.taxon_id] = 0
-            continue
+        # Removing the skip-if-latest==end_date logic since we now overlap by 7 days
 
         logger.info(
             "ingest [%d/%d] %s (taxon %d) from %s…",
