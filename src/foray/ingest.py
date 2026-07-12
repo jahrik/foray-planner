@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -71,13 +72,13 @@ def _to_row(obs: dict[str, Any], seed_taxon_id: int) -> tuple[Any, ...] | None:
 
 def ingest(
     cfg: Config,
-    con: duckdb.DuckDBPyConnection | None = None,
-    *,
+    database: duckdb.DuckDBPyConnection | str,
     progress_cb: Callable[[str, float], None] | None = None,
+    abort_event: threading.Event | None = None,
 ) -> dict[int, int]:
     """Pull observations for every seed taxon within the home radius. Returns {taxon_id: rows}."""
-    own_con = con is None
-    db = con if con is not None else connect(cfg.db_path)
+    own_con = isinstance(database, str)
+    db = connect(database) if own_con else database
     upsert_taxa(
         db,
         [
@@ -140,9 +141,15 @@ def ingest(
             d2=end_date,
             quality_grade=cfg.quality_grade,
         ):
+            if abort_event and abort_event.is_set():
+                break
             row = _to_row(obs, species.taxon_id)
             if row is not None:
                 rows.append(row)
+
+        if abort_event and abort_event.is_set():
+            logger.info("ingest: cancelled during %s", species.common_name)
+            break
         upsert_observations(db, rows)
         key = (
             f"obs:{species.taxon_id}:{home.lat}:{home.lng}:"

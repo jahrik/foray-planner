@@ -547,14 +547,14 @@ function updateHome(home: Home): void {
 }
 
 // Kick off a data refresh and resolve once the server finishes (listens via SSE).
-async function startRefresh(message: string): Promise<boolean> {
+async function startRefresh(message: string, target: string = "mushrooms"): Promise<boolean> {
   setStatus(message);
   qs<HTMLButtonElement>("#refresh").disabled = true;
   const progress = qs<HTMLProgressElement>("#refresh-progress");
   progress.style.display = "inline-block";
   progress.value = 0;
 
-  await fetch("/api/refresh", { method: "POST" });
+  await fetch(`/api/refresh?target=${target}`, { method: "POST" });
   return new Promise((resolve) => {
     const source = new EventSource("/api/refresh/stream");
     
@@ -607,6 +607,7 @@ async function setLocation(query: string): Promise<void> {
   if (response.needs_refresh) {
     const succeeded = await startRefresh(
       `Fetching iNaturalist data around ${response.home.name}… (a few minutes)`,
+      "mushrooms"
     );
     if (succeeded) runDestinations();
   } else {
@@ -640,15 +641,36 @@ async function main(): Promise<void> {
   updateHome(config.home);
   initTabs();
   qs("#run").onclick = runDestinations;
-  qs("#show-camps").onchange = () => loadCamps();
-  qs("#show-dispersed").onchange = () => loadCamps();
+  qs("#refresh").onclick = () => startRefresh("Refreshing mushroom data…", "mushrooms");
+
+  const ensureLayer = async (target: string, msg: string) => {
+    // startRefresh will instantly skip if the backend detects it's already ingested
+    await startRefresh(msg, target);
+    loadCamps();
+    loadLand();
+    loadTrails();
+  };
+  const cancelRefresh = async () => {
+    await fetch("/api/refresh", { method: "DELETE" });
+  };
+
+  qs("#show-camps").onchange = (e) => {
+    if ((e.target as HTMLInputElement).checked) ensureLayer("camps", "Fetching campgrounds…");
+    else { cancelRefresh(); loadCamps(); }
+  };
+  qs("#show-dispersed").onchange = (e) => {
+    if ((e.target as HTMLInputElement).checked) ensureLayer("dispersed", "Fetching dispersed camping…");
+    else { cancelRefresh(); loadCamps(); }
+  };
   qs("#free-camps").onchange = () => loadCamps();
-  qs("#show-land").onchange = () => loadLand();
-  qs("#show-trails").onchange = () => loadTrails();
-  qs("#refresh").onclick = () =>
-    startRefresh("Refreshing from iNaturalist…").then((succeeded) => {
-      if (succeeded) runDestinations();
-    });
+  qs("#show-land").onchange = (e) => {
+    if ((e.target as HTMLInputElement).checked) ensureLayer("land", "Fetching public land…");
+    else { cancelRefresh(); loadLand(); }
+  };
+  qs("#show-trails").onchange = (e) => {
+    if ((e.target as HTMLInputElement).checked) ensureLayer("trails", "Fetching trails…");
+    else { cancelRefresh(); loadTrails(); }
+  };
   qs<HTMLFormElement>("#locform").onsubmit = (event) => {
     event.preventDefault();
     const query = qs<HTMLInputElement>("#loc").value.trim();

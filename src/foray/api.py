@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -58,6 +59,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         "listeners": [],
         "listeners_lock": threading.Lock(),
         "last_progress": None,
+        "abort_event": threading.Event(),
+        "http_client": None,
     }
 
     def broadcast(msg: dict[str, Any]) -> None:
@@ -108,28 +111,83 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         cell = current().cell_deg
         return (ilat + 0.5) * cell, (ilng + 0.5) * cell
 
-    def run_refresh() -> None:
+    def run_refresh(target: str = "all") -> None:
         try:
+            state["abort_event"].clear()
+            state["http_client"] = httpx.Client(timeout=60.0)
+
             broadcast({"step": "Starting refresh…", "progress": 0.0})
-            logger.info("refresh: starting for %s", current().home.name)
-            ingest(current(), db, progress_cb=make_cb(0.0, 50.0))
-            camps.ingest_campgrounds(current(), db, progress_cb=make_cb(50.0, 10.0))
-            land.ingest_public_land(current(), db, progress_cb=make_cb(60.0, 10.0))
-            dispersed.ingest_dispersed(current(), db, progress_cb=make_cb(70.0, 10.0))
-            trails.ingest_trails(current(), db, progress_cb=make_cb(80.0, 10.0))
+            logger.info("refresh: starting for %s (target=%s)", current().home.name, target)
 
-            broadcast({"step": "Building phenology…", "progress": 90.0})
-            logger.info("refresh: building phenology…")
-            scoring.build_phenology(db, current().cell_deg)
+            if target in ("all", "mushrooms") and not state["abort_event"].is_set():
+                ingest(
+                    current(),
+                    db,
+                    progress_cb=make_cb(0.0, 90.0 if target == "mushrooms" else 50.0),
+                    abort_event=state["abort_event"],
+                )
+            if target in ("all", "camps") and not state["abort_event"].is_set():
+                camps.ingest_campgrounds(
+                    current(),
+                    db,
+                    client=state["http_client"],
+                    progress_cb=make_cb(
+                        50.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
+                    ),
+                )
+            if target in ("all", "land") and not state["abort_event"].is_set():
+                land.ingest_public_land(
+                    current(),
+                    db,
+                    client=state["http_client"],
+                    progress_cb=make_cb(
+                        60.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
+                    ),
+                )
+            if target in ("all", "dispersed") and not state["abort_event"].is_set():
+                dispersed.ingest_dispersed(
+                    current(),
+                    db,
+                    client=state["http_client"],
+                    progress_cb=make_cb(
+                        70.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
+                    ),
+                )
+            if target in ("all", "trails") and not state["abort_event"].is_set():
+                trails.ingest_trails(
+                    current(),
+                    db,
+                    client=state["http_client"],
+                    progress_cb=make_cb(
+                        80.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
+                    ),
+                )
 
-            state["last_error"] = None
-            broadcast({"step": "Done", "progress": 100.0, "done": True})
-            logger.info("refresh: complete")
+            if target in ("all", "mushrooms") and not state["abort_event"].is_set():
+                broadcast({"step": "Building phenology…", "progress": 90.0})
+                logger.info("refresh: building phenology…")
+                scoring.build_phenology(db, current().cell_deg)
+
+            if state["abort_event"].is_set():
+                logger.info("refresh: cancelled by user")
+                state["last_error"] = "Cancelled"
+                broadcast({"error": "Cancelled", "done": True})
+            else:
+                state["last_error"] = None
+                broadcast({"step": "Done", "progress": 100.0, "done": True})
+                logger.info("refresh: complete")
+        except (httpx.LocalProtocolError, httpx.ReadError, httpx.PoolTimeout):
+            logger.info("refresh: network client closed explicitly (cancelled)")
+            state["last_error"] = "Cancelled"
+            broadcast({"error": "Cancelled", "done": True})
         except Exception as error:  # surface to the UI rather than dying silently
             logger.exception("refresh: failed")
             state["last_error"] = str(error)
             broadcast({"error": str(error), "done": True})
         finally:
+            if state["http_client"] is not None:
+                state["http_client"].close()
+                state["http_client"] = None
             state["refreshing"] = False
 
     @app.get("/api/config")
@@ -370,14 +428,23 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         return {"home": home.model_dump(), "needs_refresh": needs_refresh}
 
     @app.post("/api/refresh")
-    def refresh() -> dict[str, Any]:
+    def refresh(target: str = Query("mushrooms")) -> dict[str, Any]:
         if state["refreshing"]:
             return {"status": "already running"}
         state["refreshing"] = True
         state["last_error"] = None
         state["last_progress"] = None
-        threading.Thread(target=run_refresh, daemon=True).start()
+        threading.Thread(target=run_refresh, args=(target,), daemon=True).start()
         return {"status": "started"}
+
+    @app.delete("/api/refresh")
+    def cancel_refresh() -> dict[str, Any]:
+        if state["refreshing"]:
+            state["abort_event"].set()
+            if state["http_client"] is not None:
+                state["http_client"].close()
+            return {"status": "cancelling"}
+        return {"status": "idle"}
 
     @app.get("/api/refresh/stream")
     async def refresh_stream() -> StreamingResponse:
