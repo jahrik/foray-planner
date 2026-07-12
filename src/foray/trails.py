@@ -4,8 +4,11 @@ Epic 3's question is "shortest walk from where I can park to where they're fruit
 module pulls the walkable network near home from OSM and caches it as ``trails`` rows the map and
 scoring read directly. One ODbL-licensed Overpass query gathers three element classes:
 
-* **Paths** (``kind='path'``) — walkable ways (``highway=path`` / ``footway``), cached as a
-  ``LineString`` polyline.
+* **Paths** (``kind='path'``) — backcountry/trail ways (``highway=path``), cached as a
+  ``LineString`` polyline. We deliberately *exclude* ``highway=footway``: it is dominated by urban
+  sidewalks (measured ~6x the row count over a wide radius — e.g. 44.7k vs 7.4k ways at 200 km),
+  which is noise for a mushroom-trail planner and heavy enough to time the full-radius query out
+  on public Overpass. ``highway=path`` is the tag that actually maps forest trails.
 * **Hiking routes** (``kind='route'``) — named long trails (``route=hiking`` relations), cached as
   a ``MultiLineString`` stitched from their member ways.
 * **Trailheads** (``kind='trailhead'``) — where you actually start walking (``highway=trailhead``
@@ -20,11 +23,10 @@ Like the campground, land, and dispersed ingests, this is best-effort: a failing
 is logged and skipped rather than aborting the whole refresh. It is informational only — it links
 the OSM source and makes no legal-access claim (see AGENTS.md, "No claims").
 
-Known limitation (v1): ``highway=footway`` sweeps in urban sidewalks, so at a very wide home
-radius (the 400 km Coos Bay cache) the single query is large enough that public Overpass can time
-it out. The read path is unaffected (it filters to the hotspot), but tightening the ingest —
-tiling the disk like ``camps.py``, or dropping ``footway`` in favour of ``sac_scale``/``trailhead``
-hints — is a sensible v2 follow-up.
+Scale note: even ``highway=path`` alone grows with radius (~7.4k ways at 200 km around Coos Bay,
+~15k at the full 400 km), but stays inside Overpass's server budget as a single query. If a future
+radius pushes past that, tile the home disk into sub-queries the way ``camps.py`` does — the read
+path (bbox + haversine to the hotspot) is unaffected either way.
 """
 
 from __future__ import annotations
@@ -61,7 +63,7 @@ def _trails_query(lat: float, lng: float, radius_m: float) -> str:
     return (
         "[out:json][timeout:180];"
         "("
-        f'way["highway"~"^(path|footway)$"]({around});'
+        f'way["highway"="path"]({around});'
         f'relation["route"="hiking"]({around});'
         f'node["highway"="trailhead"]({around});'
         ");"

@@ -29,7 +29,8 @@ phenology. Public repo: [jahrik/foray-planner](https://github.com/jahrik/foray-p
   charge); the *legality* caveat rides on `kind`+UI label, never asserted. Best-effort like camps/
   land. iOverlander/The Dyrt are **not** usable (personal-use-only license / no open API).
 - `src/foray/trails.py` — trail layer from OSM **Overpass** (httpx, no key). One ODbL query pulls
-  walkable paths (`highway=path`/`footway` → `kind='path'`, LineString), named hiking routes
+  backcountry paths (`highway=path` → `kind='path'`, LineString; `footway` is **excluded** — it's
+  mostly urban sidewalks, ~6x the volume and irrelevant here), named hiking routes
   (`route=hiking` relations → `kind='route'`, MultiLineString stitched from member ways), and
   trailheads (`highway=trailhead` nodes → `kind='trailhead'`, Point). Geometry is cached as
   GeoJSON *text* + bbox + a representative center in `trails`, so the read path stays spatial-free
