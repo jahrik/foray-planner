@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from foray import camps, geocode, scoring
+from foray import camps, geocode, land, scoring
 from foray.cache import connect
 from foray.config import Config, Home, load_config, location_path, save_location
 from foray.ingest import ingest
@@ -84,6 +84,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         try:
             ingest(current(), db)
             camps.ingest_campgrounds(current(), db)
+            land.ingest_public_land(current(), db)
             scoring.build_phenology(db, current().cell_deg)
             state["last_error"] = None
         except Exception as error:  # surface to the UI rather than dying silently
@@ -202,6 +203,28 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         finally:
             cursor.close()
         return JSONResponse([asdict(site) for site in sites])
+
+    @app.get("/api/land")
+    def get_land(
+        region_id: str | None = Query(None),
+        lat: float | None = Query(None),
+        lng: float | None = Query(None),
+        radius_km: float = Query(40.0),
+    ) -> JSONResponse:
+        """Public-land ownership polygons near a region (by id) or an explicit lat/lng."""
+        require_idle()
+        if region_id is not None:
+            center_lat, center_lng = region_center(region_id)
+        elif lat is not None and lng is not None:
+            center_lat, center_lng = lat, lng
+        else:
+            raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
+        cursor = db.cursor()
+        try:
+            units = scoring.land_near(cursor, lat=center_lat, lng=center_lng, radius_km=radius_km)
+        finally:
+            cursor.close()
+        return JSONResponse([asdict(unit) for unit in units])
 
     @app.post("/api/location")
     def set_location(body: LocationBody) -> dict[str, Any]:

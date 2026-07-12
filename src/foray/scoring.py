@@ -15,6 +15,7 @@ Fix the month axis -> rank regions (destinations). Fix the region -> rank months
 from __future__ import annotations
 
 import datetime as dt
+import json
 import math
 from dataclasses import dataclass
 from typing import Any
@@ -258,6 +259,50 @@ def camps_near(
     # Free sites first (True > None/False), then nearest by true distance.
     scored.sort(key=lambda item: (item[0], item[1]))
     return [site for _, _, site in scored]
+
+
+@dataclass
+class LandUnit:
+    id: str
+    agency: str
+    unit: str
+    source: str
+    url: str
+    geometry: dict[str, Any]  # parsed GeoJSON geometry, ready for Leaflet
+
+
+def land_near(
+    con: duckdb.DuckDBPyConnection, *, lat: float, lng: float, radius_km: float
+) -> list[LandUnit]:
+    """Public-land ownership polygons whose bounding box overlaps the home disk.
+
+    Filtering is a cheap bbox-vs-envelope overlap in SQL (the stored geometry needs no spatial
+    extension); it's coarse on purpose — the map just shades approximate ownership. Missing
+    table (no land ingested yet) yields an empty list, mirroring ``camps_near``.
+    """
+    dlat = radius_km / 111.0
+    dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
+    try:
+        rows = con.execute(
+            """
+            SELECT id, agency, unit, source, url, geojson FROM public_land
+            WHERE min_lat <= ? AND max_lat >= ? AND min_lng <= ? AND max_lng >= ?
+            """,
+            [lat + dlat, lat - dlat, lng + dlng, lng - dlng],
+        ).fetchall()
+    except duckdb.CatalogException:
+        return []
+    return [
+        LandUnit(
+            id=land_id,
+            agency=agency,
+            unit=unit,
+            source=source,
+            url=url,
+            geometry=json.loads(geojson),
+        )
+        for land_id, agency, unit, source, url, geojson in rows
+    ]
 
 
 def place_calendar(
