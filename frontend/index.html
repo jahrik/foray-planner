@@ -41,30 +41,35 @@
     </header>
 
     <section class="controls">
-      <div class="field">
-        <label>Months</label>
-        <div id="months" class="months"></div>
+      <div class="row">
+        <div class="field">
+          <label>Months</label>
+          <div id="months" class="months"></div>
+        </div>
+        <div class="field">
+          <label for="species">Target species</label>
+          <select id="species" multiple size="4"></select>
+          <small>Ctrl/Cmd-click for multiple · none = all</small>
+        </div>
       </div>
-      <div class="field">
-        <label for="species">Target species</label>
-        <select id="species" multiple size="6"></select>
-        <small>Ctrl/Cmd-click for multiple · none = all</small>
+      
+      <div class="row">
+        <div class="field">
+          <label>Map Layers</label>
+          <div class="toggle-group">
+            <label class="toggle-btn"><input type="checkbox" id="show-camps" /> <span>🏕️ Campgrounds</span></label>
+            <label class="toggle-btn"><input type="checkbox" id="show-dispersed" /> <span>🚐 Dispersed (OSM)</span></label>
+            <label class="toggle-btn"><input type="checkbox" id="free-camps" /> <span>🆓 Free Camps Only</span></label>
+            <label class="toggle-btn"><input type="checkbox" id="show-land" /> <span>🌲 Public Land</span></label>
+            <label class="toggle-btn"><input type="checkbox" id="show-trails" /> <span>🥾 Trails</span></label>
+          </div>
+        </div>
       </div>
-      <div class="field">
-        <label>Camping</label>
-        <label class="check"><input type="checkbox" id="show-camps" /> Show campgrounds</label>
-        <label class="check"><input type="checkbox" id="show-dispersed" /> Show dispersed camping (OSM)</label>
-        <label class="check"><input type="checkbox" id="free-camps" /> Free only</label>
-        <label class="check"><input type="checkbox" id="show-land" /> Show public land (BLM/USFS)</label>
-        <label class="check"><input type="checkbox" id="show-trails" /> Show trails (OSM)</label>
-        <small>Ownership + dispersed sites are informational, not legal advice — dispersed spots
-          are a proxy; verify with the managing agency.</small>
-      </div>
-      <div class="field actions">
+      <div class="field actions centered">
         <button id="run" class="primary">Rank destinations</button>
         <button id="refresh">Refresh data</button>
-        <progress id="refresh-progress" value="0" max="100" style="display: none; margin-left: 10px;" aria-label="Refresh Progress"></progress>
         <span id="status"></span>
+        <progress id="refresh-progress" value="0" max="100" style="display: none;" aria-label="Refresh Progress"></progress>
       </div>
     </section>
 
