@@ -348,7 +348,7 @@ def trails_near(
     except duckdb.CatalogException:
         camps = []
 
-    scored: list[Trail] = []
+    scored: list[tuple[float, Trail]] = []
     for trail_id, name, kind, source, url, clat, clng, geojson in rows:
         dist = haversine_km(lat, lng, clat, clng)
         if dist > radius_km:
@@ -358,21 +358,26 @@ def trails_near(
             default=None,
         )
         scored.append(
-            Trail(
-                id=trail_id,
-                name=name,
-                kind=kind,
-                source=source,
-                url=url,
-                center_lat=clat,
-                center_lng=clng,
-                distance_km=round(dist, 1),
-                camp_distance_km=round(camp_dist, 1) if camp_dist is not None else None,
-                geometry=json.loads(geojson),
+            (
+                dist,
+                Trail(
+                    id=trail_id,
+                    name=name,
+                    kind=kind,
+                    source=source,
+                    url=url,
+                    center_lat=clat,
+                    center_lng=clng,
+                    distance_km=round(dist, 1),
+                    camp_distance_km=round(camp_dist, 1) if camp_dist is not None else None,
+                    geometry=json.loads(geojson),
+                ),
             )
         )
-    scored.sort(key=lambda trail: trail.distance_km)
-    return scored
+    # Rank on the unrounded distance so near-ties keep their true order (matches ``camps_near``);
+    # the rounded ``distance_km`` is display-only.
+    scored.sort(key=lambda item: item[0])
+    return [trail for _, trail in scored]
 
 
 def place_calendar(

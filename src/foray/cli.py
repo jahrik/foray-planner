@@ -88,7 +88,7 @@ def dispersed_cmd(ctx: click.Context) -> None:
 @cli.command("trails")
 @click.pass_context
 def trails_cmd(ctx: click.Context) -> None:
-    """Ingest OSM trails (paths/footways, hiking routes, trailheads) near home."""
+    """Ingest OSM trails (paths, hiking routes, trailheads) near home."""
     cfg = ctx.obj["cfg"]
     con = connect(cfg.db_path)
     count = ingest_trails(cfg, con)

@@ -56,7 +56,7 @@ def test_parse_element_names_unnamed_way_from_ref_then_fallback() -> None:
         {
             "type": "way",
             "id": 1,
-            "tags": {"highway": "footway", "ref": "FR 100"},
+            "tags": {"highway": "path", "ref": "FR 100"},
             "geometry": [{"lat": 47.6, "lon": -122.3}, {"lat": 47.61, "lon": -122.29}],
         }
     )

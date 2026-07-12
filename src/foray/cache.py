@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS public_land (
     geojson     VARCHAR                -- polygon geometry as GeoJSON text
 );
 
--- Trails (OSM Overpass): hiking paths/footways, named hiking routes, and trailheads. Keyed by
+-- Trails (OSM Overpass): hiking paths, named hiking routes, and trailheads. Keyed by
 -- "{source}:{osm_type}/{osm_id}" so re-ingesting the same area is a no-op. Geometry is stored as
 -- GeoJSON *text* (LineString/MultiLineString for paths/routes, Point for trailheads) with a
 -- bounding box + a representative center point, so the read/map path needs no spatial extension:
