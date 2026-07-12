@@ -28,18 +28,28 @@ phenology. Public repo: [jahrik/foray-planner](https://github.com/jahrik/foray-p
   so the read path stays spatial-free). `free=TRUE` on proxy points (public-land camping is free of
   charge); the *legality* caveat rides on `kind`+UI label, never asserted. Best-effort like camps/
   land. iOverlander/The Dyrt are **not** usable (personal-use-only license / no open API).
+- `src/foray/trails.py` — trail layer from OSM **Overpass** (httpx, no key). One ODbL query pulls
+  backcountry paths (`highway=path` → `kind='path'`, LineString; `footway` is **excluded** — it's
+  mostly urban sidewalks, ~6x the volume and irrelevant here), named hiking routes
+  (`route=hiking` relations → `kind='route'`, MultiLineString stitched from member ways), and
+  trailheads (`highway=trailhead` nodes → `kind='trailhead'`, Point). Geometry is cached as
+  GeoJSON *text* + bbox + a representative center in `trails`, so the read path stays spatial-free
+  (bbox filter + `haversine_km`); way vertices are thinned. Best-effort like the other OSM/ArcGIS
+  ingests; informational only (links the OSM source, no legal-access claim).
 - `src/foray/scoring.py` — `build_phenology` (materializes `regions` + `phenology`) and the
-  scoring modes: `rank_destinations`, `place_calendar`, `alerts`, and `camps_near` (campsites
-  near a point, free-first by distance). Grid binning is one reusable SQL fragment (`_BINNED`).
-- `src/foray/api.py` — FastAPI: `/api/{config,species,destinations,calendar,alerts,camps,
-  location,refresh}` + `/` (serves the built client). `/api/camps` takes a `region_id` or a
-  `lat`/`lng` plus `radius_km` + `free_only`. One shared DuckDB connection handing out
-  per-request cursors; live config is mutable app state; `refresh` runs in a background thread
-  with reads guarded while it rebuilds. `destinations` defaults to the current month when none
-  is given.
-- `src/foray/cli.py` — `foray ingest | camps | land | dispersed | refresh | serve | openapi`
-  (`refresh` does obs + camps + land + dispersed + phenology; `openapi` dumps the schema that
-  feeds the frontend type generator).
+  scoring modes: `rank_destinations`, `place_calendar`, `alerts`, `camps_near` (campsites
+  near a point, free-first by distance), and `trails_near` (trails near a hotspot, nearest first,
+  each annotated with the distance to the closest campsite — "park → hike → fungi"). Grid binning
+  is one reusable SQL fragment (`_BINNED`).
+- `src/foray/api.py` — FastAPI: `/api/{config,species,destinations,calendar,alerts,camps,land,
+  trails,location,refresh}` + `/` (serves the built client). `/api/camps` takes a `region_id` or a
+  `lat`/`lng` plus `radius_km` + `free_only`; `/api/land` and `/api/trails` take a `region_id` or
+  `lat`/`lng` + `radius_km`. One shared DuckDB connection handing out per-request cursors; live
+  config is mutable app state; `refresh` runs in a background thread with reads guarded while it
+  rebuilds. `destinations` defaults to the current month when none is given.
+- `src/foray/cli.py` — `foray ingest | camps | land | dispersed | trails | refresh | serve |
+  openapi` (`refresh` does obs + camps + land + dispersed + trails + phenology; `openapi` dumps the
+  schema that feeds the frontend type generator).
 - `src/foray/web/dist/` — the built client bundle (gitignored; emitted by the frontend build
   and served by FastAPI as static assets at `/assets` + `/`).
 - `frontend/` — the web client: **Vite + TypeScript (strict)**, Leaflet map. `src/main.ts`

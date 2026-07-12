@@ -75,6 +75,27 @@ CREATE TABLE IF NOT EXISTS public_land (
     max_lng     DOUBLE,
     geojson     VARCHAR                -- polygon geometry as GeoJSON text
 );
+
+-- Trails (OSM Overpass): hiking paths, named hiking routes, and trailheads. Keyed by
+-- "{source}:{osm_type}/{osm_id}" so re-ingesting the same area is a no-op. Geometry is stored as
+-- GeoJSON *text* (LineString/MultiLineString for paths/routes, Point for trailheads) with a
+-- bounding box + a representative center point, so the read/map path needs no spatial extension:
+-- a cheap bbox filter serves "trails near here", and haversine on the center ranks by distance.
+-- Informational only: links the OSM source; makes no legal-access claim (see AGENTS.md).
+CREATE TABLE IF NOT EXISTS trails (
+    id          VARCHAR PRIMARY KEY,   -- "{source}:{osm_type}/{osm_id}", e.g. "osm:way/42"
+    name        VARCHAR,
+    kind        VARCHAR,               -- "path" (way) | "route" (relation) | "trailhead" (node)
+    source      VARCHAR,               -- "osm"
+    url         VARCHAR,               -- official source (the OSM element page)
+    min_lat     DOUBLE,                -- geometry bounding box, for radius filtering
+    min_lng     DOUBLE,
+    max_lat     DOUBLE,
+    max_lng     DOUBLE,
+    center_lat  DOUBLE,                -- representative point on the trail, for distance ranking
+    center_lng  DOUBLE,
+    geojson     VARCHAR                -- GeoJSON text (LineString / MultiLineString / Point)
+);
 """
 
 
@@ -163,6 +184,39 @@ def upsert_public_land(con: duckdb.DuckDBPyConnection, rows: Sequence[tuple[Any,
             min_lng = excluded.min_lng,
             max_lat = excluded.max_lat,
             max_lng = excluded.max_lng,
+            geojson = excluded.geojson
+        """,
+        rows,
+    )
+    return len(rows)
+
+
+def upsert_trails(con: duckdb.DuckDBPyConnection, rows: Sequence[tuple[Any, ...]]) -> int:
+    """Upsert trail tuples, refreshing existing rows in place. Returns rows attempted.
+
+    Each tuple is
+    (id, name, kind, source, url, min_lat, min_lng, max_lat, max_lng, center_lat, center_lng,
+    geojson).
+    """
+    if not rows:
+        return 0
+    con.executemany(
+        """
+        INSERT INTO trails
+            (id, name, kind, source, url, min_lat, min_lng, max_lat, max_lng,
+             center_lat, center_lng, geojson)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET
+            name = excluded.name,
+            kind = excluded.kind,
+            source = excluded.source,
+            url = excluded.url,
+            min_lat = excluded.min_lat,
+            min_lng = excluded.min_lng,
+            max_lat = excluded.max_lat,
+            max_lng = excluded.max_lng,
+            center_lat = excluded.center_lat,
+            center_lng = excluded.center_lng,
             geojson = excluded.geojson
         """,
         rows,

@@ -13,6 +13,7 @@ import type {
   LandUnit,
   RegionScore,
   Species,
+  Trail,
 } from "./api/types";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -27,6 +28,7 @@ interface State {
   markers: L.CircleMarker[];
   campMarkers: L.CircleMarker[];
   landLayer: L.GeoJSON | null;
+  trailLayer: L.GeoJSON | null;
   focused: { lat: number; lng: number } | null;
 }
 
@@ -37,6 +39,7 @@ const state: State = {
   markers: [],
   campMarkers: [],
   landLayer: null,
+  trailLayer: null,
   focused: null,
 };
 let map: L.Map;
@@ -57,6 +60,7 @@ const LAND_COLORS: Record<string, string> = {
   USFS: "#7b6cd9", // violet
 };
 const LAND_DEFAULT = "#8a8a8a"; // any other agency
+const TRAIL = "#e34a4a"; // red — the walking network (paths/routes) + trailhead dots
 
 function qs<T extends HTMLElement = HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -144,6 +148,7 @@ function clearMarkers(): void {
   state.markers = [];
   clearCamps();
   clearLand();
+  clearTrails();
   state.focused = null;
 }
 
@@ -159,10 +164,18 @@ function clearLand(): void {
   }
 }
 
+function clearTrails(): void {
+  if (state.trailLayer) {
+    map.removeLayer(state.trailLayer);
+    state.trailLayer = null;
+  }
+}
+
 const campsOn = (): boolean => qs<HTMLInputElement>("#show-camps").checked;
 const dispersedOn = (): boolean => qs<HTMLInputElement>("#show-dispersed").checked;
 const freeOnly = (): boolean => qs<HTMLInputElement>("#free-camps").checked;
 const landOn = (): boolean => qs<HTMLInputElement>("#show-land").checked;
+const trailsOn = (): boolean => qs<HTMLInputElement>("#show-trails").checked;
 
 // OSM dispersed layer: real tagged sites ("reported") + the road∩public-land proxy ("dispersed").
 const isDispersed = (site: CampSite): boolean =>
@@ -291,10 +304,74 @@ function landPopup(unit: LandUnit): HTMLElement {
   return root;
 }
 
+// Fetch + draw the OSM trail network around the focused region. Paths/routes render as red
+// polylines; trailheads as small red dots. No-op (just clears) when the toggle is off. Trails sit
+// above the land shading but below the observation/campground markers, and degrade quietly.
+async function loadTrails(): Promise<void> {
+  clearTrails();
+  if (!trailsOn() || !state.focused) return;
+  const { lat, lng } = state.focused;
+  let found: Trail[];
+  try {
+    found = await getJson<Trail[]>(`/api/trails?lat=${lat}&lng=${lng}`);
+  } catch (error) {
+    setStatus(errorDetail(error));
+    return;
+  }
+  const layer = L.geoJSON(undefined, {
+    style: { color: TRAIL, weight: 2, opacity: 0.85 },
+    // Trailheads come through as GeoJSON points; render them as small dots instead of pins.
+    pointToLayer: (_feature, latlng) =>
+      L.circleMarker(latlng, {
+        radius: 5,
+        color: TRAIL,
+        weight: 1,
+        fillColor: TRAIL,
+        fillOpacity: 0.9,
+      }),
+    onEachFeature: (feature, lyr) => lyr.bindPopup(trailPopup(feature.properties as Trail)),
+  });
+  // Carry each trail's fields as GeoJSON `properties` so the popup can read them.
+  found.forEach((trail) => {
+    const feature: GeoJSON.Feature = {
+      type: "Feature",
+      properties: trail,
+      geometry: trail.geometry,
+    };
+    layer.addData(feature);
+  });
+  layer.addTo(map);
+  state.trailLayer = layer;
+}
+
+// Popup built from DOM nodes: the trail name comes from an external service, so `textContent`
+// escapes it; the source url is a fixed openstreetmap.org element link.
+function trailPopup(trail: Trail): HTMLElement {
+  const root = document.createElement("div");
+  const title = document.createElement("b");
+  title.textContent = trail.name;
+  const camp =
+    trail.camp_distance_km != null ? ` · nearest camp ${trail.camp_distance_km} km` : "";
+  const link = document.createElement("a");
+  link.href = trail.url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = "OpenStreetMap ↗";
+  root.append(
+    title,
+    document.createElement("br"),
+    document.createTextNode(`${trail.kind} · ${trail.distance_km} km away${camp}`),
+    document.createElement("br"),
+    link,
+  );
+  return root;
+}
+
 function focusRegion(lat: number, lng: number): void {
   state.focused = { lat, lng };
   loadCamps();
   loadLand();
+  loadTrails();
 }
 
 function plot(lat: number, lng: number, weight: number, popup: string, live: boolean): L.CircleMarker {
@@ -495,6 +572,7 @@ async function main(): Promise<void> {
   qs("#show-dispersed").onchange = () => loadCamps();
   qs("#free-camps").onchange = () => loadCamps();
   qs("#show-land").onchange = () => loadLand();
+  qs("#show-trails").onchange = () => loadTrails();
   qs("#refresh").onclick = () =>
     startRefresh("Refreshing from iNaturalist…").then((succeeded) => {
       if (succeeded) runDestinations();
