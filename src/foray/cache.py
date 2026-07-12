@@ -38,6 +38,21 @@ CREATE TABLE IF NOT EXISTS ingest_log (
     fetched_at    TIMESTAMP,
     row_count     BIGINT
 );
+
+-- Campsites: developed campgrounds (Recreation.gov RIDB) and, later, dispersed-camping
+-- zones. Keyed by "{source}:{source_id}" so re-ingesting the same area is a no-op.
+-- `free` is nullable on purpose: we only assert free when the source says so, never guess.
+CREATE TABLE IF NOT EXISTS campsites (
+    id          VARCHAR PRIMARY KEY,   -- "{source}:{source_id}", e.g. "ridb:250018"
+    name        VARCHAR,
+    kind        VARCHAR,               -- e.g. "campground", "dispersed" (later)
+    fee         VARCHAR,               -- raw fee description when known, else NULL
+    free        BOOLEAN,               -- TRUE only on an explicit no-fee signal, else NULL
+    lat         DOUBLE,
+    lng         DOUBLE,
+    source      VARCHAR,               -- "ridb", ...
+    url         VARCHAR
+);
 """
 
 
@@ -73,6 +88,32 @@ def upsert_observations(con: duckdb.DuckDBPyConnection, rows: Sequence[tuple[Any
             (id, taxon_id, lat, lng, observed_on, month, year, quality_grade, positional_accuracy)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (id) DO NOTHING
+        """,
+        rows,
+    )
+    return len(rows)
+
+
+def upsert_campsites(con: duckdb.DuckDBPyConnection, rows: Sequence[tuple[Any, ...]]) -> int:
+    """Upsert campsite tuples, refreshing existing rows in place. Returns rows attempted.
+
+    Each tuple is (id, name, kind, fee, free, lat, lng, source, url).
+    """
+    if not rows:
+        return 0
+    con.executemany(
+        """
+        INSERT INTO campsites (id, name, kind, fee, free, lat, lng, source, url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET
+            name = excluded.name,
+            kind = excluded.kind,
+            fee = excluded.fee,
+            free = excluded.free,
+            lat = excluded.lat,
+            lng = excluded.lng,
+            source = excluded.source,
+            url = excluded.url
         """,
         rows,
     )

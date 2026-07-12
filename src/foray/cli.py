@@ -5,6 +5,7 @@ from __future__ import annotations
 import click
 
 from foray.cache import connect, observation_count
+from foray.camps import ingest_campgrounds
 from foray.config import load_config
 from foray.ingest import ingest
 from foray.scoring import build_phenology
@@ -33,13 +34,28 @@ def ingest_cmd(ctx: click.Context) -> None:
     con.close()
 
 
+@cli.command("camps")
+@click.pass_context
+def camps_cmd(ctx: click.Context) -> None:
+    """Ingest developed campgrounds (Recreation.gov RIDB) within the home radius."""
+    cfg = ctx.obj["cfg"]
+    con = connect(cfg.db_path)
+    count = ingest_campgrounds(cfg, con)
+    if count:
+        click.echo(f"Cached {count} campgrounds within {cfg.home.radius_km} km of home.")
+    else:
+        click.echo("No campgrounds ingested — set RIDB_API_KEY to enable camp data.")
+    con.close()
+
+
 @cli.command()
 @click.pass_context
 def refresh(ctx: click.Context) -> None:
-    """Ingest, then (re)build the phenology + regions tables."""
+    """Ingest observations + campgrounds, then (re)build the phenology + regions tables."""
     cfg = ctx.obj["cfg"]
     con = connect(cfg.db_path)
     ingest(cfg, con)
+    ingest_campgrounds(cfg, con)
     build_phenology(con, cfg.cell_deg)
     region_count = (con.execute("SELECT count(*) FROM regions").fetchone() or (0,))[0]
     click.echo(

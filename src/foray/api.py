@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from foray import geocode, scoring
+from foray import camps, geocode, scoring
 from foray.cache import connect
 from foray.config import Config, Home, load_config, location_path, save_location
 from foray.ingest import ingest
@@ -70,9 +70,20 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         except ValueError as error:
             raise HTTPException(400, f"bad species: {species}") from error
 
+    def region_center(region_id: str) -> tuple[float, float]:
+        """Grid-cell center for a region id ("{ilat}_{ilng}"), inverse of scoring's binning."""
+        try:
+            ilat_str, ilng_str = region_id.split("_", 1)
+            ilat, ilng = int(ilat_str), int(ilng_str)
+        except ValueError as error:
+            raise HTTPException(400, f"bad region_id: {region_id}") from error
+        cell = current().cell_deg
+        return (ilat + 0.5) * cell, (ilng + 0.5) * cell
+
     def run_refresh() -> None:
         try:
             ingest(current(), db)
+            camps.ingest_campgrounds(current(), db)
             scoring.build_phenology(db, current().cell_deg)
             state["last_error"] = None
         except Exception as error:  # surface to the UI rather than dying silently
@@ -162,6 +173,35 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             return []
         finally:
             cursor.close()
+
+    @app.get("/api/camps")
+    def get_camps(
+        region_id: str | None = Query(None),
+        lat: float | None = Query(None),
+        lng: float | None = Query(None),
+        radius_km: float = Query(40.0),
+        free_only: bool = Query(False),
+    ) -> JSONResponse:
+        """Campsites near a region (by id) or an explicit lat/lng, free-first by distance."""
+        require_idle()
+        if region_id is not None:
+            center_lat, center_lng = region_center(region_id)
+        elif lat is not None and lng is not None:
+            center_lat, center_lng = lat, lng
+        else:
+            raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
+        cursor = db.cursor()
+        try:
+            sites = scoring.camps_near(
+                cursor,
+                lat=center_lat,
+                lng=center_lng,
+                radius_km=radius_km,
+                free_only=free_only,
+            )
+        finally:
+            cursor.close()
+        return JSONResponse([asdict(site) for site in sites])
 
     @app.post("/api/location")
     def set_location(body: LocationBody) -> dict[str, Any]:

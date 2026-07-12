@@ -73,6 +73,20 @@ export interface AlertRegion {
   species: AlertHit[];
 }
 
+/** A campsite near a region (`GET /api/camps`). `free` is null when the source is silent. */
+export interface CampSite {
+  id: string;
+  name: string;
+  kind: string;
+  fee: string | null;
+  free: boolean | null;
+  center_lat: number;
+  center_lng: number;
+  distance_km: number;
+  source: string;
+  url: string;
+}
+
 export interface LocationResponse {
   home: Home;
 }

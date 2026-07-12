@@ -7,6 +7,7 @@ import type {
   AlertRegion,
   ApiError,
   Calendar,
+  CampSite,
   Config,
   Home,
   RegionScore,
@@ -23,9 +24,18 @@ interface State {
   view: View;
   home: Home | null;
   markers: L.CircleMarker[];
+  campMarkers: L.CircleMarker[];
+  focused: { lat: number; lng: number } | null;
 }
 
-const state: State = { months: new Set([CURRENT_MONTH]), view: "destinations", home: null, markers: [] };
+const state: State = {
+  months: new Set([CURRENT_MONTH]),
+  view: "destinations",
+  home: null,
+  markers: [],
+  campMarkers: [],
+  focused: null,
+};
 let map: L.Map;
 let homeMarker: L.CircleMarker;
 
@@ -35,6 +45,8 @@ const HEAT_RGB = "230,57,139";
 const LIVE = "#22c3e6"; // cyan — fresh / recently observed
 const HOME_FILL = "#ffffff"; // white "you are here" dot
 const HOME_RING = "#161a12";
+const CAMP_FREE = "#ffd24d"; // gold — free / no-fee campground
+const CAMP_PAID = "#f5a623"; // amber — fee or unknown-cost campground
 
 function qs<T extends HTMLElement = HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -120,6 +132,55 @@ function initMap(home: Home): void {
 function clearMarkers(): void {
   state.markers.forEach((marker) => map.removeLayer(marker));
   state.markers = [];
+  clearCamps();
+  state.focused = null;
+}
+
+function clearCamps(): void {
+  state.campMarkers.forEach((marker) => map.removeLayer(marker));
+  state.campMarkers = [];
+}
+
+const campsOn = (): boolean => qs<HTMLInputElement>("#show-camps").checked;
+const freeOnly = (): boolean => qs<HTMLInputElement>("#free-camps").checked;
+
+// Fetch + plot campgrounds near the focused region. No-op (just clears) when the toggle
+// is off. Failures degrade quietly to a status line rather than throwing.
+async function loadCamps(): Promise<void> {
+  clearCamps();
+  if (!campsOn() || !state.focused) return;
+  const { lat, lng } = state.focused;
+  let sites: CampSite[];
+  try {
+    sites = await getJson<CampSite[]>(
+      `/api/camps?lat=${lat}&lng=${lng}&free_only=${freeOnly()}`,
+    );
+  } catch (error) {
+    setStatus(errorDetail(error));
+    return;
+  }
+  sites.forEach((site) => {
+    const isFree = site.free === true;
+    const cost = isFree ? "free" : site.fee ? site.fee : "cost unknown";
+    const marker = L.circleMarker([site.center_lat, site.center_lng], {
+      radius: 5,
+      color: HOME_RING,
+      weight: 1,
+      fillColor: isFree ? CAMP_FREE : CAMP_PAID,
+      fillOpacity: 0.9,
+    })
+      .addTo(map)
+      .bindPopup(
+        `<b>${site.name}</b><br>${site.distance_km} km · ${cost}<br>` +
+          `<a href="${site.url}" target="_blank" rel="noopener">Recreation.gov ↗</a>`,
+      );
+    state.campMarkers.push(marker);
+  });
+}
+
+function focusRegion(lat: number, lng: number): void {
+  state.focused = { lat, lng };
+  loadCamps();
 }
 
 function plot(lat: number, lng: number, weight: number, popup: string, live: boolean): L.CircleMarker {
@@ -177,6 +238,7 @@ async function runDestinations(): Promise<void> {
     card.onclick = () => {
       map.setView([region.center_lat, region.center_lng], 9);
       marker.openPopup();
+      focusRegion(region.center_lat, region.center_lng);
       loadCalendar(region.region_id);
     };
     panel.appendChild(card);
@@ -232,7 +294,10 @@ async function runAlerts(): Promise<void> {
       <div class="chips">${region.species
         .map((hit) => speciesChip({ ...hit, label: hit.count + " · " + hit.last_seen }, "live"))
         .join("")}</div>`;
-    card.onclick = () => map.setView([region.center_lat, region.center_lng], 9);
+    card.onclick = () => {
+      map.setView([region.center_lat, region.center_lng], 9);
+      focusRegion(region.center_lat, region.center_lng);
+    };
     panel.appendChild(card);
   });
   setStatus(`${regions.length} active regions`);
@@ -312,6 +377,8 @@ async function main(): Promise<void> {
   updateHome(config.home);
   initTabs();
   qs("#run").onclick = runDestinations;
+  qs("#show-camps").onchange = () => loadCamps();
+  qs("#free-camps").onchange = () => loadCamps();
   qs("#refresh").onclick = () =>
     startRefresh("Refreshing from iNaturalist…").then((succeeded) => {
       if (succeeded) runDestinations();
