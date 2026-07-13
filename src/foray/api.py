@@ -23,7 +23,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 from foray import camps, dispersed, geocode, land, scoring, trails
-from foray.cache import SCHEMA
+from foray.cache import _ENABLE_POSTGIS, SCHEMA
 from foray.cache import load_location as db_load_location
 from foray.cache import save_location as db_save_location
 from foray.config import Config, Home, load_config
@@ -71,6 +71,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         pool.open()
         with pool.connection() as conn:
+            try:
+                conn.execute(_ENABLE_POSTGIS)
+            except psycopg.errors.InsufficientPrivilege:
+                logger.warning(
+                    "api: app role lacks CREATE EXTENSION privilege - postgis not enabled; "
+                    "the dispersed-camping proxy will be skipped."
+                )
             conn.execute(SCHEMA)
             override = db_load_location(conn)
         if override is not None:

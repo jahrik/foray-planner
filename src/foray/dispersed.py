@@ -253,8 +253,8 @@ def dispersed_proxy_rows(con: psycopg.Connection, roads: Sequence[Road]) -> list
     One representative point per way (its first vertex inside any BLM/USFS polygon) becomes a
     ``kind='dispersed'`` campsite. Uses PostGIS for the point-in-polygon test - this is the only
     place it's needed, and only at ingest time (the ``postgis`` extension is enabled once by
-    ``cache.SCHEMA``, not per-call). Yields ``[]`` when there are no roads or no cached public
-    land to intersect against.
+    ``cache.connect()`` / the API lifespan, not per-call). Yields ``[]`` when there are no roads
+    or no cached public land to intersect against.
     """
     if not roads:
         return []

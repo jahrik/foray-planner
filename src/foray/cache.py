@@ -132,9 +132,9 @@ def connect(conninfo: str = "") -> psycopg.Connection:
 
     ``conninfo`` empty (the default) means "use libpq's usual env vars"
     (``PGHOST``/``PGPORT``/``PGUSER``/``PGPASSWORD``/``PGDATABASE``), which is how the
-    ECS task and local dev (via ``docker-compose.yml``'s port mapping + a ``.env``) are
-    wired - no DSN-building code needed in the app. Tests pass an explicit DSN/conninfo
-    string instead.
+    ECS task, local dev (via ``docker-compose.yml``'s port mapping + a ``.env``), and
+    tests (via CI service container env or local PG* vars) are all wired - no
+    DSN-building code needed anywhere.
     """
     con = psycopg.connect(conninfo, autocommit=True)
     try:
