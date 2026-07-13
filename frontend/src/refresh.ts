@@ -12,7 +12,15 @@ export async function startRefresh(message: string, target: string = "mushrooms"
   progress.style.display = "inline-block";
   progress.value = 0;
 
-  const started = await fetch(`/api/refresh?target=${target}`, { method: "POST" });
+  let started: Response;
+  try {
+    started = await fetch(`/api/refresh?target=${target}`, { method: "POST" });
+  } catch (error) {
+    setStatus(errorDetail(error) || "refresh failed to start - no connection");
+    qs<HTMLButtonElement>("#refresh").disabled = false;
+    progress.style.display = "none";
+    return false;
+  }
   if (!started.ok) {
     let detail = `refresh failed to start (${started.status})`;
     try {
