@@ -142,7 +142,7 @@ async function main(): Promise<void> {
 }
 
 function formatAge(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+  const diff = Math.max(0, Date.now() - new Date(iso).getTime());
   const hours = Math.floor(diff / 3600000);
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);

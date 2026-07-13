@@ -261,7 +261,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 ).fetchone()
                 last_ingest = row[0].isoformat() if row and row[0] else None
                 count_row = conn.execute(
-                    "SELECT count(*) FROM ingest_log WHERE key LIKE %s",
+                    "SELECT count(DISTINCT split_part(key, ':', 2)) "
+                    "FROM ingest_log WHERE key LIKE %s",
                     [f"obs:%:place:{region.place_id}:%"],
                 ).fetchone()
                 results.append(

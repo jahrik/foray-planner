@@ -351,24 +351,6 @@ def is_area_covered(
     return False
 
 
-def has_observations_in_area(
-    con: psycopg.Connection, lat: float, lng: float, radius_km: float, min_taxa: int = 3
-) -> bool:
-    """Check if observations exist in the bounding box with sufficient taxonomic diversity."""
-    dlat = radius_km / 111.0
-    dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
-    row = con.execute(
-        "SELECT count(*) FROM ("
-        "  SELECT DISTINCT taxon_id FROM observations"
-        "  WHERE lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s"
-        "  LIMIT %s"
-        ") sub",
-        [lat - dlat, lat + dlat, lng - dlng, lng + dlng, min_taxa],
-    ).fetchone()
-    assert row is not None
-    return row[0] >= min_taxa
-
-
 def latest_obs_date(
     con: psycopg.Connection, taxon_id: int, lat: float, lng: float, radius_km: float
 ) -> str | None:

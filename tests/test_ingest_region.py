@@ -9,7 +9,6 @@ import psycopg
 import pytest
 from click.testing import CliRunner
 
-from foray.cache import has_observations_in_area
 from foray.cli import cli
 from foray.config import CoverageRegion, Settings
 from foray.inat import iter_observations
@@ -125,25 +124,6 @@ def test_cli_ingest_region_and_all_regions_mutually_exclusive(env_with_coverage)
     result = runner.invoke(cli, ["ingest", "--region", "Washington", "--all-regions"])
     assert result.exit_code != 0
     assert "not both" in result.output
-
-
-def test_has_observations_in_area(con: psycopg.Connection, env_with_coverage) -> None:
-    assert has_observations_in_area(con, 47.6, -122.3, 50) is False
-
-    cfg = Settings()
-    region = CoverageRegion(name="Washington", place_id=46)
-    with patch("foray.ingest.iter_observations") as mock_iter:
-        mock_iter.return_value = iter(
-            [
-                _fake_obs(100, 111),
-                _fake_obs(101, 111),
-                _fake_obs(102, 111),
-            ]
-        )
-        ingest_region(cfg, con, region)
-
-    assert has_observations_in_area(con, 47.6, -122.3, 50) is False
-    assert has_observations_in_area(con, 47.6, -122.3, 50, min_taxa=1) is True
 
 
 def test_cli_ingest_all_regions_no_coverage(con, monkeypatch) -> None:

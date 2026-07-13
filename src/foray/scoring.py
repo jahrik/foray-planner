@@ -451,7 +451,10 @@ def alerts(
                    AVG(lat)::double precision AS center_lat,
                    AVG(lng)::double precision AS center_lng,
                    taxon_id, count(*) AS cnt,
-                   max(observed_on) AS last_seen
+                   max(observed_on) AS last_seen,
+                   (array_agg(place_guess ORDER BY observed_on DESC))[1] AS place_guess,
+                   (array_agg(uri ORDER BY observed_on DESC))[1] AS uri,
+                   (array_agg(obscured ORDER BY observed_on DESC))[1] AS obscured
             FROM ({binned})
             WHERE observed_on >= %s AND taxon_id IN ({_in(taxon_ids)})
             GROUP BY region_id, taxon_id
@@ -461,30 +464,8 @@ def alerts(
     ).fetchall()
     names = dict(con.execute("SELECT taxon_id, common_name FROM taxa").fetchall())
 
-    # Fetch the most recent observation per (region, taxon) for place_guess + uri.
-    recent_obs = con.execute(
-        cast(
-            LiteralString,
-            f"""
-            SELECT DISTINCT ON (region_id, taxon_id)
-                   region_id, taxon_id, place_guess, uri, obscured
-            FROM ({binned})
-            WHERE observed_on >= %s AND taxon_id IN ({_in(taxon_ids)})
-            ORDER BY region_id, taxon_id, observed_on DESC
-            """,
-        ),
-        [cutoff, *taxon_ids],
-    ).fetchall()
-    obs_detail: dict[tuple[str, int], dict[str, Any]] = {}
-    for region_id, taxon_id, place_guess, uri, obscured in recent_obs:
-        obs_detail[(region_id, taxon_id)] = {
-            "place_guess": place_guess,
-            "uri": uri,
-            "obscured": obscured or False,
-        }
-
     by_region: dict[str, dict[str, Any]] = {}
-    for region_id, clat, clng, taxon_id, cnt, last_seen in rows:
+    for region_id, clat, clng, taxon_id, cnt, last_seen, place_guess, uri, obscured in rows:
         dist = haversine_km(home_lat, home_lng, clat, clng)
         if dist > radius_km:
             continue
@@ -500,16 +481,15 @@ def alerts(
             },
         )
         entry["total"] += cnt
-        detail = obs_detail.get((region_id, taxon_id), {})
         entry["species"].append(
             {
                 "taxon_id": taxon_id,
                 "common_name": names.get(taxon_id, str(taxon_id)),
                 "count": cnt,
                 "last_seen": str(last_seen),
-                "place_guess": detail.get("place_guess"),
-                "uri": detail.get("uri"),
-                "obscured": detail.get("obscured", False),
+                "place_guess": place_guess,
+                "uri": uri,
+                "obscured": obscured or False,
             }
         )
     results = list(by_region.values())

@@ -1,4 +1,4 @@
-.PHONY: db install lint test check frontend start stop restart clean ingest
+.PHONY: db install lint test check frontend start stop clean ingest
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
