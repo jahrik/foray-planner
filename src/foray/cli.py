@@ -62,34 +62,31 @@ def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool) -
             raise click.UsageError(f"Unknown region {region_name!r}. Available: {available}")
 
     con = connect()
-
-    rebuild_phenology = False
-    if all_regions:
-        for region in cfg.coverage:
-            click.echo(f"Ingesting {region.name} (place_id={region.place_id})…")
-            counts = ingest_region(cfg, con, region)
+    try:
+        if all_regions:
+            for region in cfg.coverage:
+                click.echo(f"Ingesting {region.name} (place_id={region.place_id})…")
+                counts = ingest_region(cfg, con, region)
+                for species in cfg.species:
+                    click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
+        elif region_name:
+            click.echo(f"Ingesting {resolved_region.name} (place_id={resolved_region.place_id})…")
+            counts = ingest_region(cfg, con, resolved_region)
             for species in cfg.species:
                 click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
-        rebuild_phenology = True
-    elif region_name:
-        click.echo(f"Ingesting {resolved_region.name} (place_id={resolved_region.place_id})…")
-        counts = ingest_region(cfg, con, resolved_region)
-        for species in cfg.species:
-            click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
-        rebuild_phenology = True
-    else:
-        click.echo(f"Ingesting {len(cfg.species)} species within {cfg.home.radius_km} km of home…")
-        counts = ingest(cfg, con)
-        for species in cfg.species:
-            click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
-        rebuild_phenology = True
+        else:
+            click.echo(
+                f"Ingesting {len(cfg.species)} species within {cfg.home.radius_km} km of home…"
+            )
+            counts = ingest(cfg, con)
+            for species in cfg.species:
+                click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
 
-    if rebuild_phenology:
         click.echo("Rebuilding phenology…")
         build_phenology(con, cfg.cell_deg)
-
-    click.echo(f"Total observations cached: {observation_count(con)}")
-    con.close()
+        click.echo(f"Total observations cached: {observation_count(con)}")
+    finally:
+        con.close()
 
 
 @cli.command("camps")

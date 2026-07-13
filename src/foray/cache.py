@@ -131,6 +131,8 @@ CREATE TABLE IF NOT EXISTS app_location (
     lng       DOUBLE PRECISION NOT NULL,
     radius_km DOUBLE PRECISION NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS ix_observations_lat_lng ON observations (lat, lng);
 """
 
 
@@ -386,16 +388,13 @@ def latest_obs_date(
 
 def latest_obs_date_by_place(con: psycopg.Connection, taxon_id: int, place_id: int) -> str | None:
     """Return the latest end-date from ingest_log for a place_id-based pull, or None."""
-    rows = con.execute(
-        "SELECT key FROM ingest_log WHERE key LIKE %s",
+    row = con.execute(
+        "SELECT max(split_part(key, ':', -1)) FROM ingest_log WHERE key LIKE %s",
         [f"obs:{taxon_id}:place:{place_id}:%"],
-    ).fetchall()
-    if not rows:
+    ).fetchone()
+    if row is None or row[0] is None:
         return None
-    dates: list[str] = []
-    for (key,) in rows:
-        dates.append(key.rsplit(":", 1)[-1])
-    return max(dates) if dates else None
+    return row[0]
 
 
 def load_location(con: psycopg.Connection) -> dict[str, Any] | None:
