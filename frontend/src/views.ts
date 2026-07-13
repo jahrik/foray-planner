@@ -109,9 +109,15 @@ export async function runDestinations(): Promise<void> {
 }
 
 export async function loadCalendar(regionId: string): Promise<void> {
-  const calendar = await getJson<Calendar>(
-    `/api/calendar?region_id=${regionId}&species=${selectedSpecies()}`,
-  );
+  let calendar: Calendar;
+  try {
+    calendar = await getJson<Calendar>(
+      `/api/calendar?region_id=${regionId}&species=${selectedSpecies()}`,
+    );
+  } catch (error) {
+    setStatus(errorDetail(error));
+    return;
+  }
   const peak = Math.max(1, ...Object.values(calendar).map((bucket) => bucket.total));
   let rows = "";
   for (let month = 1; month <= 12; month++) {
@@ -134,7 +140,13 @@ export async function loadCalendar(regionId: string): Promise<void> {
 export async function runAlerts(): Promise<void> {
   setStatus("Checking recent activity…");
   clearMarkers();
-  const regions = await getJson<AlertRegion[]>(`/api/alerts?species=${selectedSpecies()}`);
+  let regions: AlertRegion[];
+  try {
+    regions = await getJson<AlertRegion[]>(`/api/alerts?species=${selectedSpecies()}`);
+  } catch (error) {
+    setStatus(errorDetail(error));
+    return;
+  }
   const panel = qs("#panel");
   if (!regions.length) {
     panel.innerHTML = "<p class='hint'>No target species observed in the trailing window yet.</p>";
