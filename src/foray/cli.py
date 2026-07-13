@@ -9,7 +9,7 @@ import click
 
 from foray.cache import connect, load_location, observation_count
 from foray.camps import ingest_campgrounds
-from foray.config import Home, load_config
+from foray.config import Home, Settings
 from foray.dispersed import ingest_dispersed
 from foray.ingest import ingest
 from foray.land import ingest_public_land
@@ -27,13 +27,12 @@ def _setup_logging() -> None:
 
 
 @click.group()
-@click.option("--config", "config_path", default="config.yaml", help="Path to config.yaml")
 @click.pass_context
-def cli(ctx: click.Context, config_path: str) -> None:
+def cli(ctx: click.Context) -> None:
     """Plan mushroom-hunting trips from iNaturalist phenology."""
     _setup_logging()
     ctx.ensure_object(dict)
-    ctx.obj["cfg"] = load_config(config_path)
+    ctx.obj["cfg"] = Settings()
 
 
 @cli.command("ingest")

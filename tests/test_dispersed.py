@@ -6,7 +6,7 @@ import httpx
 import psycopg
 import pytest
 
-from foray.config import Config, Home
+from foray.config import Config, Home, Ingest
 from foray.dispersed import (
     _parse_reported,
     fetch_reported_campsites,
@@ -122,9 +122,7 @@ def test_ingest_dispersed_upserts_reported_sites(
     cfg = Config(
         home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=40.0),
         cell_deg=0.5,
-        since_year=2015,
-        quality_grade="research",
-        recent_weeks=4,
+        ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=4),
     )
 
     count = ingest_dispersed(cfg, con, client=client)

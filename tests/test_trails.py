@@ -9,7 +9,7 @@ import psycopg
 import pytest
 
 from foray.cache import upsert_campsites, upsert_trails
-from foray.config import Config, Home
+from foray.config import Config, Home, Ingest
 from foray.scoring import trails_near
 from foray.trails import (
     _parse_element,
@@ -238,9 +238,7 @@ def test_ingest_trails_upserts_into_cache(con: psycopg.Connection) -> None:
     cfg = Config(
         home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=40.0),
         cell_deg=0.5,
-        since_year=2015,
-        quality_grade="research",
-        recent_weeks=4,
+        ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=4),
     )
     count = ingest_trails(cfg, con, client=client)
     assert count == 1

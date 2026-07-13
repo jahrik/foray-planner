@@ -26,7 +26,7 @@ from foray import camps, dispersed, geocode, land, scoring, trails
 from foray.cache import _ENABLE_POSTGIS, SCHEMA, is_area_covered
 from foray.cache import load_location as db_load_location
 from foray.cache import save_location as db_save_location
-from foray.config import Config, Home, load_config
+from foray.config import Config, Home, Settings
 from foray.ingest import ingest
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ class LocationBody(BaseModel):
 
 def create_app(cfg: Config | None = None) -> FastAPI:
     """Wire up the API: a Postgres connection pool + config state, opened/closed via lifespan."""
-    cfg = cfg or load_config()
+    cfg = cfg or Settings()
 
     # Pool connections carry PG* env vars by default (see cache.connect's docstring) - no
     # DSN-building code needed. `open=False` defers the actual connections until the

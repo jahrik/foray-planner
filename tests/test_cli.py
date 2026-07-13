@@ -3,6 +3,8 @@ monkeypatched to record calls)."""
 
 from __future__ import annotations
 
+import json
+
 import psycopg
 import pytest
 from click.testing import CliRunner
@@ -12,36 +14,22 @@ from foray.cli import cli
 
 
 @pytest.fixture
-def config_file(tmp_path, con: psycopg.Connection):
-    species_seed = tmp_path / "species_seed.yaml"
-    species_seed.write_text(
-        """
-species:
-  - taxon_id: 111
-    name: Morchella
-    common_name: Morels
-    rank: genus
-"""
+def env_config(tmp_path, con: psycopg.Connection, monkeypatch):
+    species_file = tmp_path / "species.json"
+    species_file.write_text(
+        json.dumps(
+            [{"taxon_id": 111, "name": "Morchella", "common_name": "Morels", "rank": "genus"}]
+        )
     )
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        f"""
-home:
-  name: Home
-  lat: 47.6
-  lng: -122.3
-  radius_km: 200
-regions:
-  cell_deg: 0.25
-ingest:
-  since_year: 2015
-  quality_grade: research
-  recent_weeks: 4
-paths:
-  species_seed: {species_seed}
-"""
-    )
-    return config_path
+    monkeypatch.setenv("FORAY_HOME__NAME", "Home")
+    monkeypatch.setenv("FORAY_HOME__LAT", "47.6")
+    monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
+    monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
+    monkeypatch.setenv("FORAY_CELL_DEG", "0.25")
+    monkeypatch.setenv("FORAY_INGEST__SINCE_YEAR", "2015")
+    monkeypatch.setenv("FORAY_INGEST__QUALITY_GRADE", "research")
+    monkeypatch.setenv("FORAY_INGEST__RECENT_WEEKS", "4")
+    monkeypatch.setenv("FORAY_SPECIES_FILE", str(species_file))
 
 
 @pytest.fixture
@@ -64,9 +52,9 @@ def calls(monkeypatch):
     return seen
 
 
-def test_refresh_default_runs_everything(config_file, calls) -> None:
+def test_refresh_default_runs_everything(env_config, calls) -> None:
     runner = CliRunner()
-    result = runner.invoke(cli, ["--config", str(config_file), "refresh"])
+    result = runner.invoke(cli, ["refresh"])
     assert result.exit_code == 0, result.output
     assert calls == [
         "ingest",
@@ -78,17 +66,17 @@ def test_refresh_default_runs_everything(config_file, calls) -> None:
     ]
 
 
-def test_refresh_with_subset_skips_others(config_file, calls) -> None:
+def test_refresh_with_subset_skips_others(env_config, calls) -> None:
     runner = CliRunner()
-    result = runner.invoke(cli, ["--config", str(config_file), "refresh", "--with", "camps,trails"])
+    result = runner.invoke(cli, ["refresh", "--with", "camps,trails"])
     assert result.exit_code == 0, result.output
     assert calls == ["ingest_campgrounds", "ingest_trails"]
     assert "Warmed: camps, trails." in result.output
 
 
-def test_refresh_with_unknown_target_errors(config_file, calls) -> None:
+def test_refresh_with_unknown_target_errors(env_config, calls) -> None:
     runner = CliRunner()
-    result = runner.invoke(cli, ["--config", str(config_file), "refresh", "--with", "bogus"])
+    result = runner.invoke(cli, ["refresh", "--with", "bogus"])
     assert result.exit_code != 0
     assert "unknown target" in result.output
     assert calls == []
