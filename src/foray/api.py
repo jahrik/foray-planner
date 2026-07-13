@@ -161,22 +161,12 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             # via MVCC, unlike the DuckDB-era single-writer-file model this replaced.
             with pool.connection() as db:
                 if target in ("all", "mushrooms") and not state["abort_event"].is_set():
-                    cfg = current()
-                    skip_obs = has_observations_in_area(
-                        db, cfg.home.lat, cfg.home.lng, cfg.home.radius_km
+                    ingest(
+                        current(),
+                        db,
+                        progress_cb=make_cb(0.0, 90.0 if target == "mushrooms" else 50.0),
+                        abort_event=state["abort_event"],
                     )
-                    if skip_obs:
-                        logger.info(
-                            "refresh: observations already cover %s, skipping ingest",
-                            cfg.home.name,
-                        )
-                    else:
-                        ingest(
-                            cfg,
-                            db,
-                            progress_cb=make_cb(0.0, 90.0 if target == "mushrooms" else 50.0),
-                            abort_event=state["abort_event"],
-                        )
                 if target in ("all", "camps") and not state["abort_event"].is_set():
                     camps.ingest_campgrounds(
                         current(),

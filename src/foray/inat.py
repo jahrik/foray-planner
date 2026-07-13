@@ -60,6 +60,12 @@ def iter_observations(
     Walks pages by ascending id using ``id_above`` so it is not bounded by iNat's
     ~10k deep-paging limit. Supports either point+radius or place_id for geo filtering.
     """
+    has_point = lat is not None and lng is not None and radius_km is not None
+    if place_id is not None and has_point:
+        raise ValueError("provide place_id or lat/lng/radius_km, not both")
+    if place_id is None and not has_point:
+        raise ValueError("provide either place_id or all of lat/lng/radius_km")
+
     geo_kwargs: dict[str, Any] = {}
     if place_id is not None:
         geo_kwargs["place_id"] = place_id

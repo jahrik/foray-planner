@@ -49,6 +49,8 @@ def cli(ctx: click.Context) -> None:
 def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool) -> None:
     """Pull observations into the cache (home radius, or --region/--all-regions for place_id)."""
     cfg = ctx.obj["cfg"]
+    if region_name and all_regions:
+        raise click.UsageError("Use --region or --all-regions, not both.")
     con = connect()
 
     rebuild_phenology = False

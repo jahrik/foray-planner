@@ -12,6 +12,7 @@ from click.testing import CliRunner
 from foray.cache import has_observations_in_area
 from foray.cli import cli
 from foray.config import CoverageRegion, Settings
+from foray.inat import iter_observations
 from foray.ingest import ingest_region
 
 
@@ -119,6 +120,13 @@ def test_cli_ingest_unknown_region(env_with_coverage) -> None:
     assert "Unknown region" in result.output
 
 
+def test_cli_ingest_region_and_all_regions_mutually_exclusive(env_with_coverage) -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli, ["ingest", "--region", "Washington", "--all-regions"])
+    assert result.exit_code != 0
+    assert "not both" in result.output
+
+
 def test_has_observations_in_area(con: psycopg.Connection, env_with_coverage) -> None:
     assert has_observations_in_area(con, 47.6, -122.3, 50) is False
 
@@ -154,3 +162,24 @@ def test_cli_ingest_all_regions_no_coverage(con, monkeypatch) -> None:
     result = runner.invoke(cli, ["ingest", "--all-regions"])
     assert result.exit_code != 0
     assert "No coverage regions configured" in result.output
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"taxon_id": 1, "d1": "2024-01-01", "d2": "2024-06-01"},
+        {
+            "taxon_id": 1,
+            "lat": 47.0,
+            "lng": -122.0,
+            "radius_km": 50,
+            "place_id": 46,
+            "d1": "2024-01-01",
+            "d2": "2024-06-01",
+        },
+    ],
+    ids=["no_geo", "both_geo"],
+)
+def test_iter_observations_rejects_invalid_geo(kwargs) -> None:
+    with pytest.raises(ValueError, match="place_id"):
+        next(iter_observations(**kwargs))
