@@ -22,15 +22,11 @@ from typing import Any, LiteralString, cast
 
 import psycopg
 
-# Grid-cell id and center, derived from lat/lng and a cell size (degrees).
-# Kept as a reusable SQL fragment so binning is defined once.
 _BINNED = """
 SELECT
     o.*,
     CAST(floor(o.lat / {cell}) AS INTEGER) AS ilat,
     CAST(floor(o.lng / {cell}) AS INTEGER) AS ilng,
-    CAST((CAST(floor(o.lat / {cell}) AS INTEGER) + 0.5) * {cell} AS DOUBLE PRECISION) AS center_lat,
-    CAST((CAST(floor(o.lng / {cell}) AS INTEGER) + 0.5) * {cell} AS DOUBLE PRECISION) AS center_lng,
     (CAST(floor(o.lat / {cell}) AS INTEGER))::text || '_' ||
         (CAST(floor(o.lng / {cell}) AS INTEGER))::text AS region_id
 FROM observations o
@@ -53,9 +49,12 @@ def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
                 LiteralString,
                 f"""
                 CREATE TABLE phenology AS
-                SELECT region_id, center_lat, center_lng, taxon_id, month, count(*) AS cnt
+                SELECT region_id,
+                       AVG(lat)::double precision AS center_lat,
+                       AVG(lng)::double precision AS center_lng,
+                       taxon_id, month, count(*) AS cnt
                 FROM ({binned})
-                GROUP BY region_id, center_lat, center_lng, taxon_id, month
+                GROUP BY region_id, taxon_id, month
                 """,
             )
         )
@@ -64,11 +63,13 @@ def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
                 LiteralString,
                 f"""
                 CREATE TABLE regions AS
-                SELECT region_id, center_lat, center_lng,
+                SELECT region_id,
+                       AVG(lat)::double precision AS center_lat,
+                       AVG(lng)::double precision AS center_lng,
                        count(*) AS n_obs,
                        count(DISTINCT taxon_id) AS n_taxa
                 FROM ({binned})
-                GROUP BY region_id, center_lat, center_lng
+                GROUP BY region_id
                 """,
             )
         )
@@ -156,11 +157,13 @@ def rank_destinations(
             LiteralString,
             f"""
             WITH tot AS (
-                SELECT region_id, center_lat, center_lng, taxon_id,
+                SELECT region_id, taxon_id,
+                       AVG(center_lat)::double precision AS center_lat,
+                       AVG(center_lng)::double precision AS center_lng,
                        sum(cnt)::bigint AS total_cnt
                 FROM phenology
                 WHERE taxon_id IN ({_in(taxon_ids)})
-                GROUP BY region_id, center_lat, center_lng, taxon_id
+                GROUP BY region_id, taxon_id
             ),
             win AS (
                 SELECT region_id, taxon_id, sum(cnt)::bigint AS month_cnt
@@ -444,11 +447,14 @@ def alerts(
         cast(
             LiteralString,
             f"""
-            SELECT region_id, center_lat, center_lng, taxon_id, count(*) AS cnt,
+            SELECT region_id,
+                   AVG(lat)::double precision AS center_lat,
+                   AVG(lng)::double precision AS center_lng,
+                   taxon_id, count(*) AS cnt,
                    max(observed_on) AS last_seen
             FROM ({binned})
             WHERE observed_on >= %s AND taxon_id IN ({_in(taxon_ids)})
-            GROUP BY region_id, center_lat, center_lng, taxon_id
+            GROUP BY region_id, taxon_id
             """,
         ),
         [cutoff, *taxon_ids],

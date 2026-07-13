@@ -14,6 +14,7 @@ transactions for) - callers that need atomicity across statements (e.g.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -52,7 +53,10 @@ CREATE TABLE IF NOT EXISTS observations (
 CREATE TABLE IF NOT EXISTS ingest_log (
     key           TEXT PRIMARY KEY,   -- e.g. "obs:47348:47.6:-122.3:150:2015-01-01:2026-07-11"
     fetched_at    TIMESTAMP,
-    row_count     BIGINT
+    row_count     BIGINT,
+    lat           DOUBLE PRECISION,
+    lng           DOUBLE PRECISION,
+    radius_km     DOUBLE PRECISION
 );
 
 -- Campsites: developed campgrounds (Recreation.gov RIDB) plus the OSM dispersed-camping layer
@@ -146,6 +150,12 @@ def connect(conninfo: str = "") -> psycopg.Connection:
             "Run `CREATE EXTENSION postgis;` as a superuser/rds_superuser to enable it."
         )
     con.execute(SCHEMA)
+    # Migrate: add spatial columns to ingest_log if missing (pre-#35 databases).
+    con.execute("""
+        ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
+        ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
+        ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS radius_km DOUBLE PRECISION;
+    """)
     return con
 
 
@@ -272,14 +282,27 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
     return len(rows)
 
 
-def record_ingest(con: psycopg.Connection, key: str, row_count: int) -> None:
+def record_ingest(
+    con: psycopg.Connection,
+    key: str,
+    row_count: int,
+    *,
+    lat: float | None = None,
+    lng: float | None = None,
+    radius_km: float | None = None,
+) -> None:
     con.execute(
         """
-        INSERT INTO ingest_log (key, fetched_at, row_count)
-        VALUES (%s, now(), %s)
-        ON CONFLICT (key) DO UPDATE SET fetched_at = now(), row_count = EXCLUDED.row_count
+        INSERT INTO ingest_log (key, fetched_at, row_count, lat, lng, radius_km)
+        VALUES (%s, now(), %s, %s, %s, %s)
+        ON CONFLICT (key) DO UPDATE SET
+            fetched_at = now(),
+            row_count = EXCLUDED.row_count,
+            lat = EXCLUDED.lat,
+            lng = EXCLUDED.lng,
+            radius_km = EXCLUDED.radius_km
         """,
-        [key, row_count],
+        [key, row_count, lat, lng, radius_km],
     )
 
 
@@ -293,14 +316,50 @@ def is_ingested(con: psycopg.Connection, key: str) -> bool:
     return row is not None
 
 
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    earth_radius_km = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lng2 - lng1)
+    inner = (
+        math.sin(delta_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    )
+    return 2 * earth_radius_km * math.asin(math.sqrt(inner))
+
+
+def is_area_covered(
+    con: psycopg.Connection, prefix: str, lat: float, lng: float, radius_km: float
+) -> bool:
+    """Check if any previously ingested disk (matching prefix) fully contains the requested disk."""
+    rows = con.execute(
+        "SELECT lat, lng, radius_km FROM ingest_log WHERE key LIKE %s AND lat IS NOT NULL",
+        [f"{prefix}%"],
+    ).fetchall()
+    for row_lat, row_lng, row_radius in rows:
+        dist = _haversine_km(row_lat, row_lng, lat, lng)
+        if dist + radius_km <= row_radius:
+            return True
+    return False
+
+
 def latest_obs_date(
     con: psycopg.Connection, taxon_id: int, lat: float, lng: float, radius_km: float
 ) -> str | None:
-    prefix = f"obs:{taxon_id}:{lat}:{lng}:{radius_km}:%"
-    rows = con.execute("SELECT key FROM ingest_log WHERE key LIKE %s", [prefix]).fetchall()
+    rows = con.execute(
+        "SELECT key, lat AS rlat, lng AS rlng, radius_km AS rr FROM ingest_log "
+        "WHERE key LIKE %s AND lat IS NOT NULL",
+        [f"obs:{taxon_id}:%"],
+    ).fetchall()
     if not rows:
         return None
-    dates = [row[0].split(":")[-1] for row in rows]
+    dates: list[str] = []
+    for key, rlat, rlng, rr in rows:
+        dist = _haversine_km(rlat, rlng, lat, lng)
+        if dist + radius_km <= rr:
+            dates.append(key.split(":")[-1])
+    if not dates:
+        return None
     return max(dates)
 
 

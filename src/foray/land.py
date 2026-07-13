@@ -32,7 +32,7 @@ from typing import Any
 import httpx
 import psycopg
 
-from foray.cache import connect, is_ingested, record_ingest, upsert_public_land
+from foray.cache import connect, is_area_covered, record_ingest, upsert_public_land
 from foray.config import Config
 
 logger = logging.getLogger(__name__)
@@ -263,8 +263,7 @@ def ingest_public_land(
     own_con = con is None
     database = con if con is not None else connect()
     home = cfg.home
-    key = f"land:{home.lat}:{home.lng}:{home.radius_km}"
-    if is_ingested(database, key):
+    if is_area_covered(database, "land:", home.lat, home.lng, home.radius_km):
         logger.info("land: already ingested for this area, skipping")
         if progress_cb:
             progress_cb("Public land already cached, skipping…", 100.0)
@@ -283,7 +282,9 @@ def ingest_public_land(
         )
         upsert_public_land(database, rows)
         key = f"land:{home.lat}:{home.lng}:{home.radius_km}"
-        record_ingest(database, key, len(rows))
+        record_ingest(
+            database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km
+        )
         logger.info("land: cached %d public-land units", len(rows))
         return len(rows)
     finally:

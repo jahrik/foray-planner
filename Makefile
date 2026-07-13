@@ -1,4 +1,4 @@
-.PHONY: db install lint test check frontend dev dev-frontend docker clean
+.PHONY: db install lint test check frontend dev start stop restart clean
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
@@ -31,14 +31,20 @@ check: lint test
 frontend:
 	cd frontend && npm run build
 
+start:
+	docker compose up -d --build
+
+stop:
+	docker compose stop app
+
+restart:
+	docker compose up -d --build app
+
 dev: db frontend
 	uv run foray serve
 
 dev-frontend:
 	cd frontend && npm run dev
-
-docker:
-	docker build -t local/foray-planner:dev .
 
 clean:
 	docker compose down -v

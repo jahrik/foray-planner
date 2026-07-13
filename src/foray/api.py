@@ -23,7 +23,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 from foray import camps, dispersed, geocode, land, scoring, trails
-from foray.cache import _ENABLE_POSTGIS, SCHEMA
+from foray.cache import _ENABLE_POSTGIS, SCHEMA, is_area_covered
 from foray.cache import load_location as db_load_location
 from foray.cache import save_location as db_save_location
 from foray.config import Config, Home, load_config
@@ -440,12 +440,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             state["cfg"] = cfg.model_copy(update={"home": home})
 
             try:
-                # The core data is mushrooms; check if we've ingested observations for this area.
-                key_pattern = f"obs:%:{home.lat}:{home.lng}:{home.radius_km}:%"
-                row = conn.execute(
-                    "SELECT 1 FROM ingest_log WHERE key LIKE %s", [key_pattern]
-                ).fetchone()
-                has_obs = row is not None
+                has_obs = is_area_covered(conn, "obs:", home.lat, home.lng, home.radius_km)
                 phenology_row = conn.execute("SELECT 1 FROM phenology LIMIT 1").fetchone()
                 has_phenology = phenology_row is not None
                 needs_refresh = not (has_obs and has_phenology)
