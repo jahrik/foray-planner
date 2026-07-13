@@ -75,7 +75,7 @@ class Settings(BaseSettings):
             path = self.species_file
             if not path.is_absolute():
                 path = Path(__file__).resolve().parents[2] / path
-            raw = json.loads(path.read_text())
+            raw = json.loads(path.read_text(encoding="utf-8"))
             species_list = raw if isinstance(raw, list) else raw.get("species", [])
             object.__setattr__(self, "species", [Species(**entry) for entry in species_list])
         return self
