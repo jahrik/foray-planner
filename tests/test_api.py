@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from foray.api import create_app
-from foray.config import Config, Home, Species
+from foray.config import Home, Settings, Species
 from foray.scoring import build_phenology
 
 CELL = 0.5
@@ -19,7 +19,7 @@ HOME_LAT, HOME_LNG = 47.6, -122.3
 
 
 @pytest.fixture
-def cfg(con: psycopg.Connection) -> Config:
+def cfg(con: psycopg.Connection) -> Settings:
     with con.cursor() as cur:
         cur.executemany(
             "INSERT INTO taxa VALUES (%s, %s, %s, %s)",
@@ -38,18 +38,18 @@ def cfg(con: psycopg.Connection) -> Config:
         )
     build_phenology(con, CELL)
 
-    return Config(
+    from foray.config import Ingest
+
+    return Settings(
         home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=200),
         cell_deg=CELL,
-        since_year=2015,
-        quality_grade="research",
-        recent_weeks=8,
+        ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=8),
         species=[Species(taxon_id=MOREL, name="Morchella", common_name="Morels", rank="genus")],
     )
 
 
 @pytest.fixture
-def client(cfg: Config) -> Iterator[TestClient]:
+def client(cfg: Settings) -> Iterator[TestClient]:
     with TestClient(create_app(cfg)) as client:
         yield client
 

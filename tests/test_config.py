@@ -1,20 +1,74 @@
-"""Guard the real config.yaml + species_seed.yaml actually parse and are well-formed."""
+"""Validate pydantic-settings configuration loading and validation rules."""
 
 from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
 
-from foray.config import Config, Home, Species, load_config
+from foray.config import CoverageRegion, Home, Settings, Species
 
 
-def test_real_config_and_seed_parse() -> None:
-    # Regression: the seed file must parse (colons in notes must be quoted).
-    cfg = load_config()
-    assert cfg.home.radius_km > 0
-    assert cfg.cell_deg > 0
+def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FORAY_HOME__NAME", "TestHome")
+    monkeypatch.setenv("FORAY_HOME__LAT", "45.0")
+    monkeypatch.setenv("FORAY_HOME__LNG", "-120.0")
+    monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
+    monkeypatch.setenv("FORAY_CELL_DEG", "0.5")
+    monkeypatch.setenv("FORAY_INGEST__SINCE_YEAR", "2020")
+    monkeypatch.setenv("FORAY_INGEST__QUALITY_GRADE", "research")
+    monkeypatch.setenv("FORAY_INGEST__RECENT_WEEKS", "2")
+    monkeypatch.delenv("FORAY_SPECIES_FILE", raising=False)
+    monkeypatch.delenv("FORAY_SPECIES", raising=False)
+    cfg = Settings()
+    assert cfg.home.name == "TestHome"
+    assert cfg.home.lat == 45.0
+    assert cfg.home.lng == -120.0
+    assert cfg.home.radius_km == 200
+    assert cfg.cell_deg == 0.5
+    assert cfg.since_year == 2020
+    assert cfg.quality_grade == "research"
+    assert cfg.recent_weeks == 2
+
+
+def test_settings_loads_species_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    species_file = tmp_path / "species.json"
+    species_file.write_text(
+        '[{"taxon_id": 1, "name": "Foo", "common_name": "Bar", "rank": "genus"}]'
+    )
+    monkeypatch.setenv("FORAY_SPECIES_FILE", str(species_file))
+    monkeypatch.delenv("FORAY_SPECIES", raising=False)
+    cfg = Settings()
+    assert len(cfg.species) == 1
+    assert cfg.species[0].taxon_id == 1
+    assert cfg.taxon_ids == [1]
+
+
+def test_settings_loads_species_inline_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "FORAY_SPECIES",
+        '[{"taxon_id": 99, "name": "X", "common_name": "Y", "rank": "species"}]',
+    )
+    monkeypatch.delenv("FORAY_SPECIES_FILE", raising=False)
+    cfg = Settings()
+    assert len(cfg.species) == 1
+    assert cfg.species[0].taxon_id == 99
+
+
+def test_settings_loads_coverage_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "FORAY_COVERAGE",
+        '[{"name": "Washington", "place_id": 46}]',
+    )
+    monkeypatch.delenv("FORAY_SPECIES_FILE", raising=False)
+    monkeypatch.delenv("FORAY_SPECIES", raising=False)
+    cfg = Settings()
+    assert len(cfg.coverage) == 1
+    assert cfg.coverage[0].place_id == 46
+
+
+def test_real_species_seed_parses() -> None:
+    cfg = Settings()
     assert cfg.species, "seed list should not be empty"
-
     taxon_ids = [species.taxon_id for species in cfg.species]
     assert len(taxon_ids) == len(set(taxon_ids)), "duplicate taxon_ids in seed"
     for species in cfg.species:
@@ -36,22 +90,20 @@ def test_home_rejects_nonpositive_radius() -> None:
 
 
 def test_species_forbids_unknown_fields() -> None:
-    # Guards against silent typos in the seed file. model_validate takes a mapping, so the
-    # deliberately bad field is validated at runtime rather than flagged by the type checker.
     with pytest.raises(ValidationError):
         Species.model_validate(
             {"taxon_id": 1, "name": "a", "common_name": "b", "rank": "species", "note": "x"}
         )
 
 
-def test_config_rejects_bad_quality_grade() -> None:
+def test_config_rejects_bad_quality_grade(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FORAY_INGEST__QUALITY_GRADE", "bogus")
+    monkeypatch.delenv("FORAY_SPECIES_FILE", raising=False)
+    monkeypatch.delenv("FORAY_SPECIES", raising=False)
     with pytest.raises(ValidationError):
-        Config.model_validate(
-            {
-                "home": {"name": "somewhere", "lat": 0, "lng": 0, "radius_km": 100},
-                "cell_deg": 0.5,
-                "since_year": 2015,
-                "quality_grade": "bogus",
-                "recent_weeks": 4,
-            }
-        )
+        Settings()
+
+
+def test_coverage_region_rejects_nonpositive_place_id() -> None:
+    with pytest.raises(ValidationError):
+        CoverageRegion(name="x", place_id=0)

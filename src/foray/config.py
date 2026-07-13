@@ -1,19 +1,17 @@
-"""Configuration + species-seed loading.
+"""Configuration via pydantic-settings.
 
-Config, Home, and Species are pydantic models: config.yaml is a hand-editable trust
-boundary, so values are range-validated on load with clear errors. Internal scoring types
-stay plain dataclasses - pydantic is only for the file boundary. The runtime home-location
-override (set from the UI) lives in Postgres (``foray.cache.load_location``/``save_location``),
-not here - loading it requires a DB connection, which this module doesn't have.
+All settings come from environment variables (prefix ``FORAY_``, nested delimiter ``__``)
+or a ``.env`` file. Complex types (species list, coverage regions) are JSON-encoded env vars.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
-import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 QualityGrade = Literal["research", "needs_id", "casual"]
 
@@ -21,10 +19,18 @@ QualityGrade = Literal["research", "needs_id", "casual"]
 class Home(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    name: str
+    name: str = "Home"
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
     radius_km: float = Field(gt=0, le=20000)
+
+
+class Ingest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    since_year: int = Field(ge=1900, le=2100, default=2015)
+    quality_grade: QualityGrade = "research"
+    recent_weeks: int = Field(gt=0, le=520, default=4)
 
 
 class Species(BaseModel):
@@ -37,62 +43,59 @@ class Species(BaseModel):
 
     @property
     def inat_url(self) -> str:
-        """Link to the taxon's iNaturalist page - the source of any descriptive info."""
         return f"https://www.inaturalist.org/taxa/{self.taxon_id}"
 
 
-class Config(BaseModel):
-    model_config = ConfigDict(frozen=True)
+class CoverageRegion(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    home: Home
-    cell_deg: float = Field(gt=0, le=10)
-    since_year: int = Field(ge=1900, le=2100)
-    quality_grade: QualityGrade
-    recent_weeks: int = Field(gt=0, le=520)
+    name: str
+    place_id: int = Field(gt=0)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="FORAY_",
+        env_nested_delimiter="__",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    home: Home = Home(lat=47.6062, lng=-122.3321, radius_km=150)
+    cell_deg: float = Field(gt=0, le=10, default=0.25)
+    ingest: Ingest = Ingest()
     species: list[Species] = Field(default_factory=list)
+    species_file: Path | None = Path("data/species_seed.json")
+    coverage: list[CoverageRegion] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _load_species_file(self) -> Settings:
+        if not self.species and self.species_file is not None:
+            path = self.species_file
+            if not path.is_absolute():
+                path = Path(__file__).resolve().parents[2] / path
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            species_list = raw if isinstance(raw, list) else raw.get("species", [])
+            object.__setattr__(self, "species", [Species(**entry) for entry in species_list])
+        return self
+
+    @property
+    def since_year(self) -> int:
+        return self.ingest.since_year
+
+    @property
+    def quality_grade(self) -> QualityGrade:
+        return self.ingest.quality_grade
+
+    @property
+    def recent_weeks(self) -> int:
+        return self.ingest.recent_weeks
 
     @property
     def taxon_ids(self) -> list[int]:
         return [species.taxon_id for species in self.species]
 
 
-def _project_root() -> Path:
-    # src/foray/config.py -> project root is three parents up.
-    return Path(__file__).resolve().parents[2]
-
-
-def _resolve(root: Path, value: str) -> Path:
-    resolved = Path(value)
-    return resolved if resolved.is_absolute() else root / resolved
-
-
-def load_config(path: str | Path = "config.yaml") -> Config:
-    root = _project_root()
-    cfg_path = _resolve(root, str(path))
-    raw: dict[str, Any] = yaml.safe_load(cfg_path.read_text())
-
-    try:
-        paths = raw["paths"]
-        ingest = raw["ingest"]
-        species = load_species(_resolve(root, paths["species_seed"]))
-
-        return Config(
-            home=Home(**raw["home"]),
-            cell_deg=raw["regions"]["cell_deg"],
-            since_year=ingest["since_year"],
-            quality_grade=ingest["quality_grade"],
-            recent_weeks=ingest["recent_weeks"],
-            species=species,
-        )
-    except KeyError as error:
-        raise ValueError(f"missing key {error} in configuration ({cfg_path})") from error
-    except ValidationError as error:
-        raise ValueError(f"invalid configuration ({cfg_path}):\n{error}") from error
-
-
-def load_species(path: str | Path) -> list[Species]:
-    raw = yaml.safe_load(Path(path).read_text())
-    try:
-        return [Species(**entry) for entry in raw["species"]]
-    except ValidationError as error:
-        raise ValueError(f"invalid species seed ({path}):\n{error}") from error
+# Backwards-compatible alias so callers can still use `Config` type annotations.
+Config = Settings

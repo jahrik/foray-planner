@@ -42,9 +42,12 @@ FROM python:3.13-slim-bookworm AS runtime
 
 # No local volume needed: the DB is Postgres, reached via the standard PGHOST/PGPORT/PGUSER/
 # PGPASSWORD/PGDATABASE env vars (never baked into the image); the curated species seed stays
-# baked into the image at /app/data/species_seed.yaml.
+# baked into the image at /app/data/species_seed.json.
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    FORAY_HOME__RADIUS_KM=400 \
+    FORAY_CELL_DEG=0.5 \
+    FORAY_SPECIES_FILE=data/species_seed.json
 
 RUN useradd --uid 1000 --create-home foray
 
@@ -62,5 +65,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 # Refresh runs as a separate one-off against the same Postgres, concurrently with the live
 # server (no DuckDB-style single-writer lock to work around):
-#   docker run --rm -e PGHOST=... <image> foray --config config.docker.yaml refresh
-CMD ["foray", "--config", "config.docker.yaml", "serve", "--host", "0.0.0.0", "--port", "8000"]
+#   docker run --rm -e PGHOST=... <image> foray refresh
+CMD ["foray", "serve", "--host", "0.0.0.0", "--port", "8000"]
