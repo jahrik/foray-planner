@@ -78,7 +78,8 @@ prepends the nvm Node path automatically.
 make install            # uv sync + frontend npm ci
 make db                 # start Postgres+PostGIS
 make ingest             # one-shot all-regions ingest + phenology rebuild
-make start              # http://localhost:8000 (app + scheduler + postgres)
+make start              # http://localhost:8000 (app + postgres)
+make scheduler          # optional: start the background ingest/refresh loop
 ```
 
 ### Makefile targets
@@ -91,8 +92,9 @@ make start              # http://localhost:8000 (app + scheduler + postgres)
 | `make test` | Start Postgres if needed, then `pytest` |
 | `make check` | `lint` + `test` (the full local CI gate) |
 | `make frontend` | Build the Vite/TypeScript client bundle |
-| `make start` | Build + start the full stack (app + scheduler + postgres) |
-| `make stop` | Stop all containers |
+| `make start` | Build + start app + postgres |
+| `make scheduler` | Start the background scheduler (observation + layer refresh loops) |
+| `make stop` | Stop all containers (including scheduler if running) |
 | `make ingest` | One-shot all-regions ingest |
 | `make clean` | Tear down containers + volumes |
 

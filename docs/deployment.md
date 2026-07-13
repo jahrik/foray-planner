@@ -48,12 +48,21 @@ The health check polls `GET /api/config` every 30 seconds.
 
 ## docker-compose stack (local dev)
 
-`make start` brings up three services:
+`make start` brings up two services:
 
 | Service | Role |
 |---|---|
 | `postgres` | PostGIS 16, health-checked |
 | `app` | FastAPI server on port 8000 |
+
+The **scheduler** is behind a docker-compose profile and only starts on demand:
+
+```bash
+make scheduler          # starts the background ingest/refresh loop
+```
+
+| Service | Role |
+|---|---|
 | `scheduler` | Background loop: observation ingest every 24h, layers refresh every 168h |
 
 The scheduler runs `scripts/scheduler.sh` which calls `foray ingest --all-regions` and

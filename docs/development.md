@@ -21,7 +21,8 @@ make db                 # start Postgres+PostGIS (docker compose)
 echo "RIDB_API_KEY=your_key_here" > .env   # omit to skip campground ingest
 
 make ingest             # one-shot all-regions observation ingest + phenology rebuild
-make start              # start the full stack (http://localhost:8000)
+make start              # start app + postgres (http://localhost:8000)
+make scheduler          # optional: start background ingest/refresh loop
 ```
 
 The Makefile exports `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` and prepends
@@ -92,7 +93,7 @@ ArcGIS BLM/USFS          Nominatim (geocoding)
 
 Search/scoring is **read-only** against cached data. Data ingestion happens independently:
 
-- **Scheduler service** (`scripts/scheduler.sh`): runs alongside the app in docker-compose, pulls observations every 24h and refreshes layers (camps/land/dispersed/trails) every 168h
+- **Scheduler service** (`scripts/scheduler.sh`): opt-in via `make scheduler` (docker-compose profile), pulls observations every 24h and refreshes layers (camps/land/dispersed/trails) every 168h
 - **Coverage regions**: state-level ingest using iNat `place_id` for exact administrative boundaries (WA, OR, ID by default)
 - **`make ingest`**: one-shot manual ingest for all regions
 - **UI Refresh button**: triggers an in-process refresh for the current home radius
