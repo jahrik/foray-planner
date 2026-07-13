@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # The client is a Vite/TypeScript app (see frontend/); `npm run build` emits its bundle
 # here. Absent only when the frontend hasn't been built (e.g. a fresh checkout running the
-# API directly) — `/` then shows a hint instead of 500-ing so `foray openapi` still works.
+# API directly) - `/` then shows a hint instead of 500-ing so `foray openapi` still works.
 _WEB = Path(__file__).parent / "web"
 _DIST = _WEB / "dist"
 
@@ -90,7 +90,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     def require_idle() -> None:
         if state["refreshing"]:
-            raise HTTPException(409, "refreshing data for this area — try again shortly")
+            raise HTTPException(409, "refreshing data for this area - try again shortly")
 
     def parse_months(months: str) -> list[int]:
         try:
@@ -240,7 +240,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 recent_weeks=cfg.recent_weeks,
             )
         except duckdb.CatalogException:
-            raise HTTPException(409, "no data for this area yet — click Fetch data") from None
+            raise HTTPException(409, "no data for this area yet - click Fetch data") from None
         finally:
             cursor.close()
         return JSONResponse([asdict(region) for region in ranked])
@@ -254,7 +254,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 cursor, region_id=region_id, taxon_ids=parse_species(species)
             )
         except duckdb.CatalogException:
-            raise HTTPException(409, "no data for this area yet — click Fetch data") from None
+            raise HTTPException(409, "no data for this area yet - click Fetch data") from None
         finally:
             cursor.close()
         return calendar
@@ -387,7 +387,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 require_free_camp=require_free_camp,
             )
         except duckdb.CatalogException:
-            raise HTTPException(409, "no data for this area yet — click Fetch data") from None
+            raise HTTPException(409, "no data for this area yet - click Fetch data") from None
         finally:
             cursor.close()
         return JSONResponse(asdict(trip))
@@ -502,7 +502,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> Any:
-        # The SPA fetches /api/config on load, so no server-side templating is needed —
+        # The SPA fetches /api/config on load, so no server-side templating is needed -
         # just hand back the built entry point.
         if (_DIST / "index.html").is_file():
             return FileResponse(_DIST / "index.html")

@@ -1,6 +1,6 @@
 """Resolve a place name (or a raw ``lat,lng`` string) to coordinates.
 
-Uses OpenStreetMap Nominatim for name lookups — free, no key, but capped at ~1 req/s and
+Uses OpenStreetMap Nominatim for name lookups - free, no key, but capped at ~1 req/s and
 requires a descriptive User-Agent. Location changes are occasional, so this stays polite.
 """
 
@@ -14,7 +14,7 @@ import httpx
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
 
-# "43.37, -124.22" or "43.37 -124.22" — a raw coordinate pair.
+# "43.37, -124.22" or "43.37 -124.22" - a raw coordinate pair.
 _COORDS = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$")
 
 

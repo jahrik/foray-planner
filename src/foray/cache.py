@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS campsites (
 -- Public-land ownership polygons (BLM Surface Management Agency + USFS admin forest
 -- boundaries, via ArcGIS REST). Keyed by "{source}:{source_id}" so re-ingesting the same
 -- area is a no-op. Geometry is stored as GeoJSON *text* and the bounding box as plain
--- columns, so the read/map path needs no DuckDB spatial extension — a cheap bbox filter
+-- columns, so the read/map path needs no DuckDB spatial extension - a cheap bbox filter
 -- serves the "land near here" query. Informational only: this shows ownership and links the
 -- official source; it never asserts camping legality (see AGENTS.md).
 CREATE TABLE IF NOT EXISTS public_land (

@@ -2,7 +2,7 @@
 
 Config, Home, and Species are pydantic models: config.yaml and location.json are
 hand-editable trust boundaries, so values are range-validated on load with clear errors.
-Internal scoring types stay plain dataclasses — pydantic is only for the file boundary.
+Internal scoring types stay plain dataclasses - pydantic is only for the file boundary.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ class Species(BaseModel):
 
     @property
     def inat_url(self) -> str:
-        """Link to the taxon's iNaturalist page — the source of any descriptive info."""
+        """Link to the taxon's iNaturalist page - the source of any descriptive info."""
         return f"https://www.inaturalist.org/taxa/{self.taxon_id}"
 
 

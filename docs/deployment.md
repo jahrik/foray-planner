@@ -27,7 +27,7 @@ docker pull ghcr.io/jahrik/foray-planner:latest
 # Create a persistent volume for the DuckDB cache + runtime location.json
 docker volume create foray-data
 
-# One-off: initial data refresh (populates /data/foray.duckdb — takes a few minutes)
+# One-off: initial data refresh (populates /data/foray.duckdb - takes a few minutes)
 docker run --rm \
   -v foray-data:/data \
   -e RIDB_API_KEY=$RIDB_API_KEY \
@@ -52,16 +52,16 @@ The health check polls `GET /api/config` every 30 seconds.
 
 > **DuckDB single-writer constraint:** DuckDB allows only one read-write connection per file
 > per process. The running server holds that connection. A separate `foray refresh` process
-> cannot open the same file read-write simultaneously — it will get a lock error.
+> cannot open the same file read-write simultaneously - it will get a lock error.
 
 ### Safe patterns
 
-**Option A — UI Refresh button (recommended for normal use)**
+**Option A - UI Refresh button (recommended for normal use)**
 
 The "Refresh data" button in the UI triggers an in-process refresh (same DuckDB connection,
 same process). This is always safe while the server is running and requires no shell access.
 
-**Option B — Stop → refresh → restart**
+**Option B - Stop → refresh → restart**
 
 ```bash
 docker stop foray-planner
@@ -73,7 +73,7 @@ docker run --rm \
 docker start foray-planner
 ```
 
-**Option C — Snapshot-and-swap (future)**
+**Option C - Snapshot-and-swap (future)**
 
 The refresh worker writes to `foray.build.duckdb`, then atomically renames it over the live
 file. The server reopens the file after the swap. This isolates the writer and produces a
@@ -91,13 +91,13 @@ or container restart needed.
 
 ## Planned Lightsail setup
 
-1. **Create a Lightsail Linux instance** — start at 1 GB RAM; the DuckDB spatial extension
+1. **Create a Lightsail Linux instance** - start at 1 GB RAM; the DuckDB spatial extension
    needs ~512 MB during dispersed-camping ingest. Size up to 2 GB if refresh is slow.
-2. **Attach a persistent disk** — mount at `/data`. The DuckDB cache survives instance
+2. **Attach a persistent disk** - mount at `/data`. The DuckDB cache survives instance
    restarts and is the only stateful piece.
 3. **Install Docker** on the instance.
 4. **Pull and run** the GHCR image as shown above.
-5. **Set `RIDB_API_KEY`** as an instance environment variable — never committed to the repo.
+5. **Set `RIDB_API_KEY`** as an instance environment variable - never committed to the repo.
 6. **Cloudflare in front:**
    - Proxy DNS + TLS termination
    - Cloudflare Access (email or Google auth) = private app with no app-level auth code
@@ -137,6 +137,6 @@ The Dockerfile uses a three-stage build:
 | `builder` | `ghcr.io/astral-sh/uv:python3.13-bookworm-slim` | `uv sync --frozen --no-dev` → self-contained `.venv` |
 | `runtime` | `python:3.13-slim-bookworm` | Copies app + venv + bundle; runs as non-root `foray` user |
 
-Volume: `/data` — DuckDB cache + runtime `location.json`.
+Volume: `/data` - DuckDB cache + runtime `location.json`.
 Port: `8000`.
 Default command: `foray --config config.docker.yaml serve --host 0.0.0.0 --port 8000`.

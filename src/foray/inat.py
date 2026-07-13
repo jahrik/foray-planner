@@ -24,7 +24,7 @@ USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahr
 _PAGE_SIZE = 200
 
 # Transient network failures (DNS blips, timeouts, dropped connections) should not abort a
-# long ingest — retry with backoff before giving up.
+# long ingest - retry with backoff before giving up.
 _TRANSIENT = (
     requests.exceptions.ConnectionError,
     requests.exceptions.Timeout,
@@ -120,7 +120,7 @@ def monthly_histogram(
     radius_km: float,
     quality_grade: str = "research",
 ) -> dict[int, int]:
-    """Return {month(1-12): observation_count} — the seasonality curve for a taxon+place."""
+    """Return {month(1-12): observation_count} - the seasonality curve for a taxon+place."""
     resp = get_observation_histogram(
         taxon_id=taxon_id,
         lat=lat,

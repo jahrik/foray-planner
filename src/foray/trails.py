@@ -4,28 +4,28 @@ Epic 3's question is "shortest walk from where I can park to where they're fruit
 module pulls the walkable network near home from OSM and caches it as ``trails`` rows the map and
 scoring read directly. One ODbL-licensed Overpass query gathers three element classes:
 
-* **Paths** (``kind='path'``) — backcountry/trail ways (``highway=path``), cached as a
+* **Paths** (``kind='path'``) - backcountry/trail ways (``highway=path``), cached as a
   ``LineString`` polyline. We deliberately *exclude* ``highway=footway``: it is dominated by urban
-  sidewalks (measured ~6x the row count over a wide radius — e.g. 44.7k vs 7.4k ways at 200 km),
+  sidewalks (measured ~6x the row count over a wide radius - e.g. 44.7k vs 7.4k ways at 200 km),
   which is noise for a mushroom-trail planner and heavy enough to time the full-radius query out
   on public Overpass. ``highway=path`` is the tag that actually maps forest trails.
-* **Hiking routes** (``kind='route'``) — named long trails (``route=hiking`` relations), cached as
+* **Hiking routes** (``kind='route'``) - named long trails (``route=hiking`` relations), cached as
   a ``MultiLineString`` stitched from their member ways.
-* **Trailheads** (``kind='trailhead'``) — where you actually start walking (``highway=trailhead``
+* **Trailheads** (``kind='trailhead'``) - where you actually start walking (``highway=trailhead``
   nodes), cached as a ``Point``.
 
 Geometry is stored as GeoJSON *text* with a bounding box + a representative center point (see
-``cache.trails``), so the field/offline read path never needs the DuckDB spatial extension — a
+``cache.trails``), so the field/offline read path never needs the DuckDB spatial extension - a
 cheap bbox filter + haversine on the center serves "trails near here". Each way's vertices are
 thinned to keep the cached polylines light enough for a phone map.
 
 Like the campground, land, and dispersed ingests, this is best-effort: a failing Overpass request
-is logged and skipped rather than aborting the whole refresh. It is informational only — it links
+is logged and skipped rather than aborting the whole refresh. It is informational only - it links
 the OSM source and makes no legal-access claim (see AGENTS.md, "No claims").
 
 Scale note: even ``highway=path`` alone grows with radius (~7.4k ways at 200 km around Coos Bay,
 ~15k at the full 400 km), but stays inside Overpass's server budget as a single query. If a future
-radius pushes past that, tile the home disk into sub-queries the way ``camps.py`` does — the read
+radius pushes past that, tile the home disk into sub-queries the way ``camps.py`` does - the read
 path (bbox + haversine to the hotspot) is unaffected either way.
 """
 
@@ -240,7 +240,7 @@ def fetch_trails(
         logger.info("trails: %d trails/routes/trailheads", len(rows))
         return rows
     except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
-        logger.warning("trails: query failed (%s) — skipping", error)
+        logger.warning("trails: query failed (%s) - skipping", error)
         return []
     finally:
         if owns:

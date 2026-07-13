@@ -3,24 +3,24 @@
 Two ODbL-licensed signals, both cached as ``campsites`` rows so they flow through the existing
 ``camps_near`` scoring and ``/api/camps`` plumbing untouched:
 
-* **Reported campsites** (``kind='reported'``) — places actually tagged in OSM as somewhere to
+* **Reported campsites** (``kind='reported'``) - places actually tagged in OSM as somewhere to
   camp (``tourism=camp_site`` / ``camp_pitch``, ``backcountry=yes``). Real spots, but coverage is
   only wherever a mapper has added one.
-* **Dispersed-legal proxy** (``kind='dispersed'``) — there is *no* authoritative dataset of legal
+* **Dispersed-legal proxy** (``kind='dispersed'``) - there is *no* authoritative dataset of legal
   dispersed sites, so we approximate: a drivable track (``highway=track`` / ``unclassified``)
   whose geometry falls inside cached BLM/USFS ``public_land`` becomes a candidate "likely
   dispersed-legal" point. This is the piece that uses the DuckDB **spatial** extension
-  (point-in-polygon), and only on the *ingest* (write) path — the served rows are plain lat/lng,
+  (point-in-polygon), and only on the *ingest* (write) path - the served rows are plain lat/lng,
   so the field/offline read path never loads spatial.
 
 Neither signal is a promise: dispersed camping is labelled *likely* legal and always links the
-OSM source — verify with the managing district (see AGENTS.md, "No claims"). ``free`` is TRUE on
+OSM source - verify with the managing district (see AGENTS.md, "No claims"). ``free`` is TRUE on
 the proxy points because dispersed camping on public land is free of charge; the *legality*
 caveat rides on ``kind`` and the UI label, not on the cost flag.
 
 Commercial camping apps (iOverlander, The Dyrt) are deliberately *not* used: iOverlander's terms
 license its content for personal, non-commercial use only (no redistribution/storage), and The
-Dyrt exposes no open API — so OSM is the only source we can legally cache and re-serve.
+Dyrt exposes no open API - so OSM is the only source we can legally cache and re-serve.
 
 Like the campground and land ingests, a failing Overpass request is skipped rather than aborting
 the whole refresh; the reported-sites and track queries are issued separately so a heavy-track
@@ -113,7 +113,7 @@ def _post_overpass(
 
 
 def _element_point(element: dict[str, Any]) -> tuple[float, float] | None:
-    """(lat, lng) of an Overpass element — its own coords (node) or its `center` (way/rel)."""
+    """(lat, lng) of an Overpass element - its own coords (node) or its `center` (way/rel)."""
     if element.get("lat") is not None and element.get("lon") is not None:
         return float(element["lat"]), float(element["lon"])
     center = element.get("center") or {}
@@ -215,7 +215,7 @@ def fetch_dispersed_sources(
     """Fetch OSM reported campsites + drivable tracks near home. Each query is best-effort.
 
     Returns ``(reported_rows, roads)``. The two Overpass queries are independent so a heavy-track
-    timeout still yields the reported sites — a failing query is logged and skipped, never fatal.
+    timeout still yields the reported sites - a failing query is logged and skipped, never fatal.
     """
     owns = client is None
     client = client or httpx.Client(timeout=180.0)
@@ -230,7 +230,7 @@ def fetch_dispersed_sources(
             reported = _parse_reported(payload)
             logger.info("dispersed: %d reported OSM campsites", len(reported))
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
-            logger.warning("dispersed: reported-sites query failed (%s) — skipping", error)
+            logger.warning("dispersed: reported-sites query failed (%s) - skipping", error)
         if min_interval > 0:
             time.sleep(min_interval)
         try:
@@ -240,7 +240,7 @@ def fetch_dispersed_sources(
             roads = _parse_tracks(payload)
             logger.info("dispersed: %d drivable tracks", len(roads))
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
-            logger.warning("dispersed: tracks query failed (%s) — skipping", error)
+            logger.warning("dispersed: tracks query failed (%s) - skipping", error)
     finally:
         if owns:
             client.close()
@@ -254,14 +254,14 @@ def dispersed_proxy_rows(
 
     One representative point per way (its first vertex inside any BLM/USFS polygon) becomes a
     ``kind='dispersed'`` campsite. Uses the DuckDB spatial extension for the point-in-polygon
-    test — this is the only place it's needed, and only at ingest time. Yields ``[]`` when there
+    test - this is the only place it's needed, and only at ingest time. Yields ``[]`` when there
     are no roads or no cached public land to intersect against.
     """
     if not roads:
         return []
     land_count = con.execute("SELECT count(*) FROM public_land").fetchone()
     if not land_count or not land_count[0]:
-        logger.info("dispersed: no public_land cached — skipping road proxy")
+        logger.info("dispersed: no public_land cached - skipping road proxy")
         return []
 
     try:

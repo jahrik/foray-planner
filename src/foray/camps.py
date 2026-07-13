@@ -1,7 +1,7 @@
 """Developed-campground ingest from the Recreation.gov RIDB API.
 
 RIDB (https://ridb.recreation.gov/) is the authoritative dataset for *developed*
-campgrounds — named sites with facilities. It needs a free API key, read from the
+campgrounds - named sites with facilities. It needs a free API key, read from the
 ``RIDB_API_KEY`` environment variable (never committed; a gitignored ``.env`` locally, a
 container/systemd env var on the server). If the key is absent, camps ingest is skipped
 so the iNaturalist refresh still works.
@@ -11,7 +11,7 @@ is covered by *tiling*: query circles laid on a grid dense enough to cover the w
 then facilities are deduped by id and clipped to the true home radius with ``haversine_km``.
 
 Dispersed (free, undeveloped) camping has no authoritative dataset and is a separate,
-proxy-based layer (Epic 2, follow-up) — this module only handles developed campgrounds.
+proxy-based layer (Epic 2, follow-up) - this module only handles developed campgrounds.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ _KM_PER_DEG_LAT = 111.0
 _MIN_REQUEST_INTERVAL = 60.0 / 45.0
 
 # Fee descriptions that explicitly signal no charge. We only ever *assert* free on one of
-# these; anything else stays unknown (NULL) rather than guessing paid — see AGENTS.md.
+# these; anything else stays unknown (NULL) rather than guessing paid - see AGENTS.md.
 _FREE_MARKERS = ("no fee", "no charge", "free of charge", "fee: none", "$0", "$0.00")
 
 _TAG = re.compile(r"<[^>]+>")
@@ -57,7 +57,7 @@ _WHITESPACE = re.compile(r"\s+")
 
 
 def _clean_text(text: str | None) -> str | None:
-    """Strip HTML tags/entities and collapse whitespace — RIDB fee fields ship raw markup."""
+    """Strip HTML tags/entities and collapse whitespace - RIDB fee fields ship raw markup."""
     if not text:
         return None
     stripped = _WHITESPACE.sub(" ", html.unescape(_TAG.sub(" ", text))).strip()
@@ -249,7 +249,7 @@ def ingest_campgrounds(
     """Ingest developed campgrounds into the cache. Returns rows upserted (0 if no key)."""
     api_key = api_key or os.getenv("RIDB_API_KEY")
     if not api_key:
-        logger.info("camps: RIDB_API_KEY unset — skipping campground ingest")
+        logger.info("camps: RIDB_API_KEY unset - skipping campground ingest")
         return 0
     own_con = con is None
     database = con if con is not None else connect(cfg.db_path)

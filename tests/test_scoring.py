@@ -1,4 +1,4 @@
-"""Scoring tests on hand-built fixtures — no network (per python skill: hermetic)."""
+"""Scoring tests on hand-built fixtures - no network (per python skill: hermetic)."""
 
 from __future__ import annotations
 

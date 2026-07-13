@@ -1,5 +1,5 @@
 ---
-# Local quality gate — runs the same checks CI does before a commit lands.
+# Local quality gate - runs the same checks CI does before a commit lands.
 # ruff/ty are driven through `uv run` so their versions come from uv.lock
 # (single source of truth); no separately pinned hook revs to drift.
 repos:

@@ -3,17 +3,17 @@
 For the free-camping question ("can I sleep near here for free"), the first thing to know is
 *who owns the ground*. **BLM** and **USFS** are the two agencies the dispersed-camping proxy
 (slice 2b) will consider, so this module pulls those two ownership layers as GeoJSON and caches
-the polygons for the map. It reports ownership and links the official source — nothing more; it
+the polygons for the map. It reports ownership and links the official source - nothing more; it
 makes no claim about whether camping is permitted anywhere (see AGENTS.md).
 
 Two authoritative ArcGIS layers, queried with an envelope around home:
 
-* **BLM Surface Management Agency** — national ownership layer; filtered to the BLM-managed
+* **BLM Surface Management Agency** - national ownership layer; filtered to the BLM-managed
   polygons (``ADMIN_AGENCY_CODE='BLM'``).
-* **USFS Administrative Forest Boundaries** — national forest units (good ``FORESTNAME``).
+* **USFS Administrative Forest Boundaries** - national forest units (good ``FORESTNAME``).
 
 Geometry is generalized server-side (``maxAllowableOffset``) so the cached polygons stay light
-enough for the field map, and stored as GeoJSON text (see ``cache.public_land``) — the read
+enough for the field map, and stored as GeoJSON text (see ``cache.public_land``) - the read
 path never needs the DuckDB spatial extension. This is **ownership only**: it never asserts
 that camping is legal, just shows the land and links the official source (see AGENTS.md).
 
@@ -93,7 +93,7 @@ SOURCES: tuple[LandSource, ...] = (
 
 
 def _envelope(lat: float, lng: float, radius_km: float) -> tuple[float, float, float, float]:
-    """(xmin, ymin, xmax, ymax) lon/lat box enclosing the home disk — the ArcGIS query bbox."""
+    """(xmin, ymin, xmax, ymax) lon/lat box enclosing the home disk - the ArcGIS query bbox."""
     dlat = radius_km / _KM_PER_DEG_LAT
     km_per_deg_lng = _KM_PER_DEG_LAT * max(abs(_cos(lat)), 0.01)
     dlng = radius_km / km_per_deg_lng
@@ -107,7 +107,7 @@ def _cos(deg: float) -> float:
 
 
 def _get(props: dict[str, Any], field: str) -> Any:
-    """Case-insensitive property lookup — ArcGIS geojson lowercases requested field names."""
+    """Case-insensitive property lookup - ArcGIS geojson lowercases requested field names."""
     if field in props:
         return props[field]
     lowered = field.lower()
@@ -217,10 +217,10 @@ def fetch_public_land(
 ) -> list[tuple[Any, ...]]:
     """Fetch ownership polygons near home from each source, deduped by id.
 
-    A source that fails is skipped so the others still ingest — ownership is best-effort
+    A source that fails is skipped so the others still ingest - ownership is best-effort
     context, never a hard dependency of the refresh. "Fails" covers both transport errors
     (``httpx.HTTPError``) and a service returning something other than well-formed GeoJSON
-    (a decode error — ``ValueError`` — or an unexpected shape — ``KeyError``/``TypeError``).
+    (a decode error - ``ValueError`` - or an unexpected shape - ``KeyError``/``TypeError``).
     """
     owns = client is None
     client = client or httpx.Client(timeout=60.0)
@@ -242,7 +242,7 @@ def fetch_public_land(
                     if row is not None:
                         by_id[row[0]] = row
             except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
-                logger.warning("land: source %s failed (%s) — skipping", source.key, error)
+                logger.warning("land: source %s failed (%s) - skipping", source.key, error)
                 continue  # skip this source; keep whatever the others returned
             logger.info("land: %s returned %d units", source.key, len(by_id) - before)
     finally:

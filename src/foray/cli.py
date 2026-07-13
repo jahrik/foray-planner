@@ -60,7 +60,7 @@ def camps_cmd(ctx: click.Context) -> None:
     if count:
         click.echo(f"Cached {count} campgrounds within {cfg.home.radius_km} km of home.")
     else:
-        click.echo("No campgrounds ingested — set RIDB_API_KEY to enable camp data.")
+        click.echo("No campgrounds ingested - set RIDB_API_KEY to enable camp data.")
     con.close()
 
 
@@ -164,14 +164,14 @@ def plan_cmd(
     )
     con.close()
     if not trip.stops:
-        click.echo("No viable stops found — try a wider radius, more months, or --any-camp.")
+        click.echo("No viable stops found - try a wider radius, more months, or --any-camp.")
         return
     click.echo(
-        f"Trip from {cfg.home.name} — months {selected}, {trip.n_stops} stops, "
+        f"Trip from {cfg.home.name} - months {selected}, {trip.n_stops} stops, "
         f"{trip.total_drive_km:.0f} km total drive:"
     )
     for stop in trip.stops:
-        top = ", ".join(hit.common_name for hit in stop.species[:3]) or "—"
+        top = ", ".join(hit.common_name for hit in stop.species[:3]) or "-"
         camp = (
             "no camp"
             if stop.camp is None
@@ -185,7 +185,7 @@ def plan_cmd(
             f"score {stop.score_norm:.2f}  {stop.n_species} spp [{top}]  camp: {camp}"
         )
     if trip.skipped_unreachable:
-        click.echo(f"  ({trip.skipped_unreachable} viable stop(s) skipped — beyond max drive.)")
+        click.echo(f"  ({trip.skipped_unreachable} viable stop(s) skipped - beyond max drive.)")
 
 
 @cli.command()

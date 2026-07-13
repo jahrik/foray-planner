@@ -3,10 +3,10 @@
 Regions are uniform lat/lng grid cells (``cell_deg`` wide). All scoring is built from
 three primitives per (taxon, region, month):
 
-* **w_pheno** — share of that taxon's regional observations that fall in the target
+* **w_pheno** - share of that taxon's regional observations that fall in the target
   month(s): "is it in season here?" (0..1)
-* **abundance** — log-scaled observation count: "how reliably does it show up here?"
-* **recency** — this-year observations in a trailing window: "is it going off now?"
+* **abundance** - log-scaled observation count: "how reliably does it show up here?"
+* **recency** - this-year observations in a trailing window: "is it going off now?"
 
 Fix the month axis -> rank regions (destinations). Fix the region -> rank months
 (calendar). Fix species + recency -> alerts.
@@ -277,7 +277,7 @@ def land_near(
     """Public-land ownership polygons whose bounding box overlaps the home disk.
 
     Filtering is a cheap bbox-vs-envelope overlap in SQL (the stored geometry needs no spatial
-    extension); it's coarse on purpose — the map just shades approximate ownership. Missing
+    extension); it's coarse on purpose - the map just shades approximate ownership. Missing
     table (no land ingested yet) yields an empty list, mirroring ``camps_near``.
     """
     dlat = radius_km / 111.0
@@ -412,7 +412,7 @@ def alerts(
     cell_deg: float,
     weeks: int = 4,
 ) -> list[dict[str, Any]]:
-    """Regions with fresh (trailing ``weeks``) observations of target species — 'fruiting now'."""
+    """Regions with fresh (trailing ``weeks``) observations of target species - 'fruiting now'."""
     cutoff = (dt.date.today() - dt.timedelta(weeks=weeks)).isoformat()
     binned = _BINNED.format(cell=cell_deg)
     rows = con.execute(
@@ -506,11 +506,11 @@ def plan_route(
 
     Two passes, both built on the existing primitives (no new geography):
 
-    1. **Select** — take ``rank_destinations`` (already score-desc), annotate each with its nearest
-       campsite via ``camps_near`` (free-first), drop regions below ``min_score_norm`` or — when
-       ``require_free_camp`` — without a free camp inside ``camp_radius_km``, then keep the top
+    1. **Select** - take ``rank_destinations`` (already score-desc), annotate each with its nearest
+       campsite via ``camps_near`` (free-first), drop regions below ``min_score_norm`` or - when
+       ``require_free_camp`` - without a free camp inside ``camp_radius_km``, then keep the top
        ``max_stops`` by score. These are the "worth the drive" stops.
-    2. **Order** — nearest-neighbour from home: repeatedly hop to the closest remaining stop,
+    2. **Order** - nearest-neighbour from home: repeatedly hop to the closest remaining stop,
        accumulating ``haversine_km`` legs. Once the closest remaining stop is past ``max_drive_km``
        from the current position everything left is farther still, so the rest are reported as
        ``skipped_unreachable`` rather than forcing an implausible leg. Great-circle distance stands
@@ -530,13 +530,13 @@ def plan_route(
         recent_weeks=recent_weeks,
     )
 
-    # Pass 1 — annotate + filter, preserving the score-desc order rank_destinations returns.
+    # Pass 1 - annotate + filter, preserving the score-desc order rank_destinations returns.
     candidates: list[tuple[RegionScore, CampSite | None, bool]] = []
     for region in ranked:
         if region.score_norm < min_score_norm:
             continue
         # camps_near ranks free-first, so its nearest result is the nearest *free* camp when one
-        # is in range, else the nearest of any kind — one query answers both cases.
+        # is in range, else the nearest of any kind - one query answers both cases.
         nearby = camps_near(
             con, lat=region.center_lat, lng=region.center_lng, radius_km=camp_radius_km
         )
@@ -548,7 +548,7 @@ def plan_route(
         if len(candidates) >= max_stops:
             break
 
-    # Pass 2 — nearest-neighbour ordering from home.
+    # Pass 2 - nearest-neighbour ordering from home.
     remaining = candidates[:]
     cur_lat, cur_lng = home_lat, home_lng
     stops: list[Stop] = []
