@@ -451,7 +451,10 @@ def alerts(
                    AVG(lat)::double precision AS center_lat,
                    AVG(lng)::double precision AS center_lng,
                    taxon_id, count(*) AS cnt,
-                   max(observed_on) AS last_seen
+                   max(observed_on) AS last_seen,
+                   (array_agg(place_guess ORDER BY observed_on DESC))[1] AS place_guess,
+                   (array_agg(uri ORDER BY observed_on DESC))[1] AS uri,
+                   (array_agg(obscured ORDER BY observed_on DESC))[1] AS obscured
             FROM ({binned})
             WHERE observed_on >= %s AND taxon_id IN ({_in(taxon_ids)})
             GROUP BY region_id, taxon_id
@@ -462,7 +465,7 @@ def alerts(
     names = dict(con.execute("SELECT taxon_id, common_name FROM taxa").fetchall())
 
     by_region: dict[str, dict[str, Any]] = {}
-    for region_id, clat, clng, taxon_id, cnt, last_seen in rows:
+    for region_id, clat, clng, taxon_id, cnt, last_seen, place_guess, uri, obscured in rows:
         dist = haversine_km(home_lat, home_lng, clat, clng)
         if dist > radius_km:
             continue
@@ -484,6 +487,9 @@ def alerts(
                 "common_name": names.get(taxon_id, str(taxon_id)),
                 "count": cnt,
                 "last_seen": str(last_seen),
+                "place_guess": place_guess,
+                "uri": uri,
+                "obscured": obscured or False,
             }
         )
     results = list(by_region.values())

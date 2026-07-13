@@ -1,7 +1,7 @@
 import L from "leaflet";
 
 import type { Home } from "./api/types";
-import { qs, state } from "./state";
+import { dist, qs, state } from "./state";
 
 // Marker palette - bright/neon so it pops on the dark basemap (the default), while still
 // reading over the lighter OSM terrain in light mode. Deliberately non-green vs the terrain.
@@ -86,7 +86,7 @@ export function updateHome(home: Home): void {
   state.home = home;
   qs("#home-name").textContent = home.name;
   qs("#home-coords").textContent = `${home.lat.toFixed(3)}, ${home.lng.toFixed(3)}`;
-  qs("#home-radius").textContent = String(Math.round(home.radius_km));
+  qs("#home-radius").textContent = dist(home.radius_km);
   if (homeMarker) {
     homeMarker.setLatLng([home.lat, home.lng]).bindPopup("Location: " + home.name);
     map.setView([home.lat, home.lng], 8);

@@ -61,6 +61,9 @@ export interface AlertHit {
   common_name: string;
   count: number;
   last_seen: string;
+  place_guess: string | null;
+  uri: string | null;
+  obscured: boolean;
 }
 
 /** A region with recent activity (`GET /api/alerts`). */
@@ -140,6 +143,14 @@ export interface TripPlan {
 
 export interface LocationResponse {
   home: Home;
+}
+
+/** A configured coverage region with ingest freshness info (`GET /api/coverage`). */
+export interface CoverageRegion {
+  name: string;
+  place_id: number;
+  last_ingest: string | null;
+  taxa_ingested: number;
 }
 
 /** FastAPI's error envelope (`{ "detail": ... }`). */

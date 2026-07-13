@@ -31,10 +31,11 @@
         </form>
         <span class="loc-current" id="home-line">
           <strong id="home-name">…</strong>
-          <span class="loc-meta">(<span id="home-coords">…</span>) · <span id="home-radius">…</span> km</span>
+          <span class="loc-meta">(<span id="home-coords">…</span>) · <span id="home-radius">…</span></span>
         </span>
       </div>
       <div class="header-actions">
+        <button type="button" id="units-toggle" class="theme-toggle" aria-label="Toggle units">mi</button>
         <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">🌙</button>
       </div>
     </header>
@@ -68,6 +69,7 @@
         <div class="field action-status" style="align-self:flex-end">
           <span id="status"></span>
           <progress id="refresh-progress" value="0" max="100" style="display: none;" aria-label="Refresh Progress"></progress>
+          <span id="coverage-indicator" class="coverage-indicator"></span>
         </div>
       </div>
       <div class="row plan-row" id="plan-row" style="display:none">

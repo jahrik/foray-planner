@@ -23,7 +23,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 from foray import camps, dispersed, geocode, land, scoring, trails
-from foray.cache import _ENABLE_POSTGIS, SCHEMA, is_area_covered
+from foray.cache import _ENABLE_POSTGIS, SCHEMA
 from foray.cache import load_location as db_load_location
 from foray.cache import save_location as db_save_location
 from foray.config import Config, Home, Settings
@@ -248,6 +248,33 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             {**species.model_dump(), "inat_url": species.inat_url} for species in current().species
         ]
 
+    @app.get("/api/coverage")
+    def get_coverage() -> list[dict[str, Any]]:
+        """Coverage regions with their latest ingest timestamps."""
+        cfg = current()
+        with pool.connection() as conn:
+            results = []
+            for region in cfg.coverage:
+                row = conn.execute(
+                    "SELECT max(fetched_at) FROM ingest_log WHERE key LIKE %s",
+                    [f"obs:%:place:{region.place_id}:%"],
+                ).fetchone()
+                last_ingest = row[0].isoformat() if row and row[0] else None
+                count_row = conn.execute(
+                    "SELECT count(DISTINCT split_part(key, ':', 2)) "
+                    "FROM ingest_log WHERE key LIKE %s",
+                    [f"obs:%:place:{region.place_id}:%"],
+                ).fetchone()
+                results.append(
+                    {
+                        "name": region.name,
+                        "place_id": region.place_id,
+                        "last_ingest": last_ingest,
+                        "taxa_ingested": count_row[0] if count_row else 0,
+                    }
+                )
+        return results
+
     @app.get("/api/destinations")
     def destinations(
         months: str | None = Query(None),
@@ -432,22 +459,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         else:
             raise HTTPException(400, "provide `query` or both `lat` and `lng`")
 
-        needs_refresh = True
         with pool.connection() as conn:
             db_save_location(
                 conn, name=home.name, lat=home.lat, lng=home.lng, radius_km=home.radius_km
             )
             state["cfg"] = cfg.model_copy(update={"home": home})
 
-            try:
-                has_obs = is_area_covered(conn, "obs:", home.lat, home.lng, home.radius_km)
-                phenology_row = conn.execute("SELECT 1 FROM phenology LIMIT 1").fetchone()
-                has_phenology = phenology_row is not None
-                needs_refresh = not (has_obs and has_phenology)
-            except psycopg.errors.UndefinedTable:
-                needs_refresh = True
-
-        return {"home": home.model_dump(), "needs_refresh": needs_refresh}
+        return {"home": home.model_dump()}
 
     _VALID_REFRESH_TARGETS = frozenset({"all", "mushrooms", "camps", "land", "dispersed", "trails"})
 

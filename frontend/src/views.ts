@@ -2,7 +2,7 @@ import { getJson } from "./api/client";
 import type { AlertRegion, Calendar, RegionScore, Species } from "./api/types";
 import { focusRegion } from "./layers";
 import { clearMarkers, HEAT_RGB, map, plot } from "./map";
-import { errorDetail, escapeHtml, inatUrl, MONTHS, qs, setStatus, state } from "./state";
+import { dist, errorDetail, escapeHtml, inatUrl, MONTHS, qs, setStatus, state } from "./state";
 
 export function initMonths(): void {
   const box = qs("#months");
@@ -84,13 +84,13 @@ export async function runDestinations(): Promise<void> {
       region.center_lat,
       region.center_lng,
       region.score_norm,
-      `<b>#${rank + 1}</b> ${region.distance_km} km<br>${region.species.map((hit) => escapeHtml(hit.common_name)).join(", ")}`,
+      `<b>#${rank + 1}</b> ${dist(region.distance_km)}<br>${region.species.map((hit) => escapeHtml(hit.common_name)).join(", ")}`,
       region.recent_count > 0,
     );
     const card = document.createElement("div");
     card.className = "rank";
     card.innerHTML = `
-      <h3><span>#${rank + 1} · ${region.distance_km} km</span><span>${region.n_species} spp</span></h3>
+      <h3><span>#${rank + 1} · ${dist(region.distance_km)}</span><span>${region.n_species} spp</span></h3>
       <div class="bar"><span style="width:${(region.score_norm * 100).toFixed(0)}%"></span></div>
       <div class="meta">score ${region.score_norm.toFixed(2)}${region.recent_count ? ` · ${region.recent_count} seen recently` : ""}</div>
       <div class="chips">${region.species
@@ -159,14 +159,27 @@ export async function runAlerts(): Promise<void> {
       region.center_lat,
       region.center_lng,
       Math.min(1, region.total / 10),
-      `${region.distance_km} km · ${region.total} recent`,
+      `${dist(region.distance_km)} · ${region.total} recent`,
       true,
     );
     const card = document.createElement("div");
     card.className = "rank";
-    card.innerHTML = `<h3><span>${region.distance_km} km</span><span>${region.total} recent</span></h3>
+
+    const placeText = region.species[0]?.place_guess
+      ? ` · ${escapeHtml(region.species[0].place_guess)}`
+      : "";
+    card.innerHTML = `<h3><span>${dist(region.distance_km)}${placeText}</span><span>${region.total} recent</span></h3>
       <div class="chips">${region.species
-        .map((hit) => speciesChip({ ...hit, label: hit.count + " · " + hit.last_seen }, "live"))
+        .map((hit) => {
+          const label = hit.count + " · " + hit.last_seen + (hit.obscured ? " ⚠ fuzzy" : "");
+          const safeUri = hit.uri?.startsWith("https://") ? hit.uri : null;
+          if (safeUri) {
+            return `<a class="chip live" href="${escapeHtml(safeUri)}"
+              target="_blank" rel="noopener" onclick="event.stopPropagation()"
+              >${escapeHtml(hit.common_name)} · ${escapeHtml(label)}</a>`;
+          }
+          return speciesChip({ ...hit, label }, "live");
+        })
         .join("")}</div>`;
     card.onclick = () => {
       map.setView([region.center_lat, region.center_lng], 9);

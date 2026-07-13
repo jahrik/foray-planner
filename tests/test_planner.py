@@ -34,7 +34,9 @@ def _seed(con: psycopg.Connection) -> None:
             obs_id += 1
     with con.cursor() as cur:
         cur.executemany(
-            "INSERT INTO observations VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", rows
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            rows,
         )
     build_phenology(con, CELL)
 

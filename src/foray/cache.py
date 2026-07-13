@@ -47,7 +47,10 @@ CREATE TABLE IF NOT EXISTS observations (
     month               SMALLINT,
     year                SMALLINT,
     quality_grade       TEXT,
-    positional_accuracy INTEGER
+    positional_accuracy INTEGER,
+    place_guess         TEXT,
+    uri                 TEXT,
+    obscured            BOOLEAN
 );
 
 CREATE TABLE IF NOT EXISTS ingest_log (
@@ -128,6 +131,8 @@ CREATE TABLE IF NOT EXISTS app_location (
     lng       DOUBLE PRECISION NOT NULL,
     radius_km DOUBLE PRECISION NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS ix_observations_lat_lng ON observations (lat, lng);
 """
 
 
@@ -153,6 +158,9 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION")
     con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION")
     con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS radius_km DOUBLE PRECISION")
+    con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS place_guess TEXT")
+    con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS uri TEXT")
+    con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS obscured BOOLEAN")
     return con
 
 
@@ -172,7 +180,7 @@ def upsert_taxa(con: psycopg.Connection, rows: Iterable[dict[str, Any]]) -> None
 
 
 def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
-    """Insert observation tuples, ignoring ones already present. Returns rows attempted."""
+    """Insert observation tuples, backfilling metadata on conflict. Returns rows attempted."""
     if not rows:
         return 0
     with con.cursor() as cur:
@@ -180,9 +188,12 @@ def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
             """
             INSERT INTO observations
                 (id, taxon_id, lat, lng, observed_on, month, year, quality_grade,
-                 positional_accuracy)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO NOTHING
+                 positional_accuracy, place_guess, uri, obscured)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                place_guess = COALESCE(EXCLUDED.place_guess, observations.place_guess),
+                uri = COALESCE(EXCLUDED.uri, observations.uri),
+                obscured = COALESCE(EXCLUDED.obscured, observations.obscured)
             """,
             rows,
         )
@@ -358,6 +369,17 @@ def latest_obs_date(
     if not dates:
         return None
     return max(dates)
+
+
+def latest_obs_date_by_place(con: psycopg.Connection, taxon_id: int, place_id: int) -> str | None:
+    """Return the latest end-date from ingest_log for a place_id-based pull, or None."""
+    row = con.execute(
+        "SELECT max(split_part(key, ':', 6)) FROM ingest_log WHERE key LIKE %s",
+        [f"obs:{taxon_id}:place:{place_id}:%"],
+    ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return row[0]
 
 
 def load_location(con: psycopg.Connection) -> dict[str, Any] | None:

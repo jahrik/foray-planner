@@ -15,7 +15,7 @@ import {
   map,
   TRAIL,
 } from "./map";
-import { errorDetail, qs, setStatus, state } from "./state";
+import { dist, errorDetail, qs, setStatus, state } from "./state";
 
 export const campsOn = (): boolean => qs<HTMLInputElement>("#show-camps").checked;
 export const dispersedOn = (): boolean => qs<HTMLInputElement>("#show-dispersed").checked;
@@ -87,7 +87,7 @@ function campPopup(site: CampSite): HTMLElement {
   root.append(
     title,
     document.createElement("br"),
-    document.createTextNode(`${site.distance_km} km · ${detail}`),
+    document.createTextNode(`${dist(site.distance_km)} · ${detail}`),
     document.createElement("br"),
     link,
   );
@@ -197,7 +197,7 @@ function trailPopup(trail: Trail): HTMLElement {
   const title = document.createElement("b");
   title.textContent = trail.name;
   const camp =
-    trail.camp_distance_km != null ? ` · nearest camp ${trail.camp_distance_km} km` : "";
+    trail.camp_distance_km != null ? ` · nearest camp ${dist(trail.camp_distance_km)}` : "";
   const link = document.createElement("a");
   link.href = trail.url;
   link.target = "_blank";
@@ -206,7 +206,7 @@ function trailPopup(trail: Trail): HTMLElement {
   root.append(
     title,
     document.createElement("br"),
-    document.createTextNode(`${trail.kind} · ${trail.distance_km} km away${camp}`),
+    document.createTextNode(`${trail.kind} · ${dist(trail.distance_km)} away${camp}`),
     document.createElement("br"),
     link,
   );
