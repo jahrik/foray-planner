@@ -53,6 +53,5 @@ def test_config_rejects_bad_quality_grade() -> None:
                 "since_year": 2015,
                 "quality_grade": "bogus",
                 "recent_weeks": 4,
-                "db_path": "/tmp/x.duckdb",
             }
         )

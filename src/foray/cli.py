@@ -41,7 +41,7 @@ def cli(ctx: click.Context, config_path: str) -> None:
 def ingest_cmd(ctx: click.Context) -> None:
     """Pull observations for all seed species within the home radius into the cache."""
     cfg = ctx.obj["cfg"]
-    con = connect(cfg.db_path)
+    con = connect()
     click.echo(f"Ingesting {len(cfg.species)} species within {cfg.home.radius_km} km of home…")
     counts = ingest(cfg, con)
     for species in cfg.species:
@@ -55,7 +55,7 @@ def ingest_cmd(ctx: click.Context) -> None:
 def camps_cmd(ctx: click.Context) -> None:
     """Ingest developed campgrounds (Recreation.gov RIDB) within the home radius."""
     cfg = ctx.obj["cfg"]
-    con = connect(cfg.db_path)
+    con = connect()
     count = ingest_campgrounds(cfg, con)
     if count:
         click.echo(f"Cached {count} campgrounds within {cfg.home.radius_km} km of home.")
@@ -69,7 +69,7 @@ def camps_cmd(ctx: click.Context) -> None:
 def land_cmd(ctx: click.Context) -> None:
     """Ingest public-land ownership (BLM + USFS) polygons within the home radius."""
     cfg = ctx.obj["cfg"]
-    con = connect(cfg.db_path)
+    con = connect()
     count = ingest_public_land(cfg, con)
     click.echo(f"Cached {count} public-land units within {cfg.home.radius_km} km of home.")
     con.close()
@@ -80,7 +80,7 @@ def land_cmd(ctx: click.Context) -> None:
 def dispersed_cmd(ctx: click.Context) -> None:
     """Ingest OSM dispersed camping (reported sites + road∩public-land proxy) near home."""
     cfg = ctx.obj["cfg"]
-    con = connect(cfg.db_path)
+    con = connect()
     count = ingest_dispersed(cfg, con)
     click.echo(f"Cached {count} dispersed/reported sites within {cfg.home.radius_km} km of home.")
     con.close()
@@ -91,7 +91,7 @@ def dispersed_cmd(ctx: click.Context) -> None:
 def trails_cmd(ctx: click.Context) -> None:
     """Ingest OSM trails (paths, hiking routes, trailheads) near home."""
     cfg = ctx.obj["cfg"]
-    con = connect(cfg.db_path)
+    con = connect()
     count = ingest_trails(cfg, con)
     click.echo(f"Cached {count} trails within {cfg.home.radius_km} km of home.")
     con.close()
@@ -128,7 +128,7 @@ def refresh(ctx: click.Context, with_: str) -> None:
     """Ingest observations + campgrounds + land + dispersed + trails, then (re)build phenology."""
     cfg = ctx.obj["cfg"]
     targets = _parse_targets(with_)
-    con = connect(cfg.db_path)
+    con = connect()
     if "mushrooms" in targets:
         ingest(cfg, con)
     if "camps" in targets:
@@ -183,7 +183,7 @@ def plan_cmd(
     """Sequence the top destinations into a greedy, low-backtrack trip itinerary."""
     cfg = ctx.obj["cfg"]
     selected = _parse_months(months) or [dt.date.today().month]
-    con = connect(cfg.db_path)
+    con = connect()
     trip = plan_route(
         con,
         months=selected,

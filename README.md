@@ -105,7 +105,7 @@ directly to its iNaturalist page for photos, range maps, and community notes.
 
 - [Development guide](docs/development.md) - setup, config, CLI, architecture, scoring formula, adding species, testing
 - [Data sources](docs/data-sources.md) - iNaturalist, RIDB, OSM/Overpass, ArcGIS BLM/USFS, Nominatim - licenses, rate limits, what's off-limits
-- [Deployment](docs/deployment.md) - Docker, planned Lightsail + Cloudflare setup, refresh patterns
+- [Deployment](docs/deployment.md) - Docker, Postgres/RDS + Cloudflare setup, refresh patterns
 
 ---
 

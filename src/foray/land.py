@@ -14,7 +14,7 @@ Two authoritative ArcGIS layers, queried with an envelope around home:
 
 Geometry is generalized server-side (``maxAllowableOffset``) so the cached polygons stay light
 enough for the field map, and stored as GeoJSON text (see ``cache.public_land``) - the read
-path never needs the DuckDB spatial extension. This is **ownership only**: it never asserts
+path never needs PostGIS geometry types. This is **ownership only**: it never asserts
 that camping is legal, just shows the land and links the official source (see AGENTS.md).
 
 No API key is needed. Like the campground ingest, a single source being unreachable is skipped
@@ -29,8 +29,8 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
-import duckdb
 import httpx
+import psycopg
 
 from foray.cache import connect, is_ingested, record_ingest, upsert_public_land
 from foray.config import Config
@@ -253,7 +253,7 @@ def fetch_public_land(
 
 def ingest_public_land(
     cfg: Config,
-    con: duckdb.DuckDBPyConnection | None = None,
+    con: psycopg.Connection | None = None,
     *,
     client: httpx.Client | None = None,
     sources: Iterable[LandSource] = SOURCES,
@@ -261,7 +261,7 @@ def ingest_public_land(
 ) -> int:
     """Ingest public-land ownership polygons into the cache. Returns rows upserted."""
     own_con = con is None
-    database = con if con is not None else connect(cfg.db_path)
+    database = con if con is not None else connect()
     home = cfg.home
     key = f"land:{home.lat}:{home.lng}:{home.radius_km}"
     if is_ingested(database, key):

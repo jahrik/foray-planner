@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import duckdb
 import httpx
+import psycopg
 import pytest
 
-from foray.cache import SCHEMA, upsert_campsites
+from foray.cache import upsert_campsites
 from foray.camps import (
     _clean_text,
     _free_from_fee,
@@ -17,13 +17,6 @@ from foray.camps import (
 from foray.scoring import camps_near
 
 HOME_LAT, HOME_LNG = 47.6, -122.3
-
-
-@pytest.fixture
-def con() -> duckdb.DuckDBPyConnection:
-    conn = duckdb.connect(":memory:")
-    conn.execute(SCHEMA)
-    return conn
 
 
 def test_free_from_fee_only_asserts_on_explicit_signal() -> None:
@@ -164,7 +157,7 @@ def test_fetch_campsites_retries_on_429(monkeypatch: pytest.MonkeyPatch) -> None
     assert [row[0] for row in rows] == ["ridb:1"]
 
 
-def test_camps_near_ranks_free_first_then_distance(con: duckdb.DuckDBPyConnection) -> None:
+def test_camps_near_ranks_free_first_then_distance(con: psycopg.Connection) -> None:
     upsert_campsites(
         con,
         [
@@ -185,7 +178,7 @@ def test_camps_near_ranks_free_first_then_distance(con: duckdb.DuckDBPyConnectio
     assert [site.name for site in free] == ["Free Close", "Free Far"]
 
 
-def test_camps_near_ranks_by_true_distance_not_rounded(con: duckdb.DuckDBPyConnection) -> None:
+def test_camps_near_ranks_by_true_distance_not_rounded(con: psycopg.Connection) -> None:
     # Two sites whose distances both round to 2.2 km but differ slightly. The farther one is
     # inserted first, so sorting by the *rounded* key (a tie) would leave it mis-ordered via a
     # stable sort; only sorting by true distance puts the nearer one first.
@@ -201,6 +194,5 @@ def test_camps_near_ranks_by_true_distance_not_rounded(con: duckdb.DuckDBPyConne
     assert [site.name for site in sites] == ["Near", "Far"]  # ordered by true distance
 
 
-def test_camps_near_missing_table_returns_empty() -> None:
-    conn = duckdb.connect(":memory:")  # no schema → no campsites table
-    assert camps_near(conn, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0) == []
+def test_camps_near_no_rows_ingested_returns_empty(con: psycopg.Connection) -> None:
+    assert camps_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0) == []

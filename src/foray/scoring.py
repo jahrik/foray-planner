@@ -18,9 +18,9 @@ import datetime as dt
 import json
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, LiteralString, cast
 
-import duckdb
+import psycopg
 
 # Grid-cell id and center, derived from lat/lng and a cell size (degrees).
 # Kept as a reusable SQL fragment so binning is defined once.
@@ -29,37 +29,49 @@ SELECT
     o.*,
     CAST(floor(o.lat / {cell}) AS INTEGER) AS ilat,
     CAST(floor(o.lng / {cell}) AS INTEGER) AS ilng,
-    CAST((CAST(floor(o.lat / {cell}) AS INTEGER) + 0.5) * {cell} AS DOUBLE) AS center_lat,
-    CAST((CAST(floor(o.lng / {cell}) AS INTEGER) + 0.5) * {cell} AS DOUBLE) AS center_lng,
-    printf('%d_%d', CAST(floor(o.lat / {cell}) AS INTEGER),
-                    CAST(floor(o.lng / {cell}) AS INTEGER)) AS region_id
+    CAST((CAST(floor(o.lat / {cell}) AS INTEGER) + 0.5) * {cell} AS DOUBLE PRECISION) AS center_lat,
+    CAST((CAST(floor(o.lng / {cell}) AS INTEGER) + 0.5) * {cell} AS DOUBLE PRECISION) AS center_lng,
+    (CAST(floor(o.lat / {cell}) AS INTEGER))::text || '_' ||
+        (CAST(floor(o.lng / {cell}) AS INTEGER))::text AS region_id
 FROM observations o
 """
 
 
-def build_phenology(con: duckdb.DuckDBPyConnection, cell_deg: float) -> None:
-    """(Re)materialize the ``regions`` and ``phenology`` tables from ``observations``."""
+def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
+    """(Re)materialize the ``regions`` and ``phenology`` tables from ``observations``.
+
+    Wrapped in one transaction (the connection otherwise runs autocommit) so a concurrent
+    reader never sees a mid-rebuild state where the tables are dropped but not yet
+    recreated.
+    """
     binned = _BINNED.format(cell=cell_deg)
-    con.execute("DROP TABLE IF EXISTS phenology")
-    con.execute("DROP TABLE IF EXISTS regions")
-    con.execute(
-        f"""
-        CREATE TABLE phenology AS
-        SELECT region_id, center_lat, center_lng, taxon_id, month, count(*) AS cnt
-        FROM ({binned})
-        GROUP BY region_id, center_lat, center_lng, taxon_id, month
-        """
-    )
-    con.execute(
-        f"""
-        CREATE TABLE regions AS
-        SELECT region_id, center_lat, center_lng,
-               count(*) AS n_obs,
-               count(DISTINCT taxon_id) AS n_taxa
-        FROM ({binned})
-        GROUP BY region_id, center_lat, center_lng
-        """
-    )
+    with con.transaction():
+        con.execute("DROP TABLE IF EXISTS phenology")
+        con.execute("DROP TABLE IF EXISTS regions")
+        con.execute(
+            cast(
+                LiteralString,
+                f"""
+                CREATE TABLE phenology AS
+                SELECT region_id, center_lat, center_lng, taxon_id, month, count(*) AS cnt
+                FROM ({binned})
+                GROUP BY region_id, center_lat, center_lng, taxon_id, month
+                """,
+            )
+        )
+        con.execute(
+            cast(
+                LiteralString,
+                f"""
+                CREATE TABLE regions AS
+                SELECT region_id, center_lat, center_lng,
+                       count(*) AS n_obs,
+                       count(DISTINCT taxon_id) AS n_taxa
+                FROM ({binned})
+                GROUP BY region_id, center_lat, center_lng
+                """,
+            )
+        )
 
 
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -97,28 +109,33 @@ class RegionScore:
 
 
 def _recent_counts(
-    con: duckdb.DuckDBPyConnection, cell_deg: float, taxon_ids: list[int], weeks: int
+    con: psycopg.Connection, cell_deg: float, taxon_ids: list[int], weeks: int
 ) -> dict[str, int]:
     cutoff = (dt.date.today() - dt.timedelta(weeks=weeks)).isoformat()
     binned = _BINNED.format(cell=cell_deg)
+    # cast: the query is built from a fixed template + `_in()`'s placeholder-count text
+    # (never user data), but psycopg's LiteralString typing can't verify that statically.
     rows = con.execute(
-        f"""
-        SELECT region_id, count(*) AS cnt
-        FROM ({binned})
-        WHERE observed_on >= ? AND taxon_id IN ({_in(taxon_ids)})
-        GROUP BY region_id
-        """,
+        cast(
+            LiteralString,
+            f"""
+            SELECT region_id, count(*) AS cnt
+            FROM ({binned})
+            WHERE observed_on >= %s AND taxon_id IN ({_in(taxon_ids)})
+            GROUP BY region_id
+            """,
+        ),
         [cutoff, *taxon_ids],
     ).fetchall()
     return dict(rows)
 
 
 def _in(ids: list[int]) -> str:
-    return ",".join("?" for _ in ids)
+    return ",".join("%s" for _ in ids)
 
 
 def rank_destinations(
-    con: duckdb.DuckDBPyConnection,
+    con: psycopg.Connection,
     *,
     months: list[int],
     taxon_ids: list[int],
@@ -131,24 +148,28 @@ def rank_destinations(
     """Rank grid regions within radius by expected choice-fungi activity in ``months``."""
     # Per (region, taxon): observations in the target months vs. all months.
     rows = con.execute(
-        f"""
-        WITH tot AS (
-            SELECT region_id, center_lat, center_lng, taxon_id, sum(cnt) AS total_cnt
-            FROM phenology
-            WHERE taxon_id IN ({_in(taxon_ids)})
-            GROUP BY region_id, center_lat, center_lng, taxon_id
+        cast(
+            LiteralString,
+            f"""
+            WITH tot AS (
+                SELECT region_id, center_lat, center_lng, taxon_id,
+                       sum(cnt)::bigint AS total_cnt
+                FROM phenology
+                WHERE taxon_id IN ({_in(taxon_ids)})
+                GROUP BY region_id, center_lat, center_lng, taxon_id
+            ),
+            win AS (
+                SELECT region_id, taxon_id, sum(cnt)::bigint AS month_cnt
+                FROM phenology
+                WHERE taxon_id IN ({_in(taxon_ids)}) AND month IN ({_in(months)})
+                GROUP BY region_id, taxon_id
+            )
+            SELECT tot.region_id, tot.center_lat, tot.center_lng, tot.taxon_id,
+                   COALESCE(win.month_cnt, 0) AS month_cnt, tot.total_cnt
+            FROM tot LEFT JOIN win USING (region_id, taxon_id)
+            WHERE COALESCE(win.month_cnt, 0) > 0
+            """,
         ),
-        win AS (
-            SELECT region_id, taxon_id, sum(cnt) AS month_cnt
-            FROM phenology
-            WHERE taxon_id IN ({_in(taxon_ids)}) AND month IN ({_in(months)})
-            GROUP BY region_id, taxon_id
-        )
-        SELECT tot.region_id, tot.center_lat, tot.center_lng, tot.taxon_id,
-               COALESCE(win.month_cnt, 0) AS month_cnt, tot.total_cnt
-        FROM tot LEFT JOIN win USING (region_id, taxon_id)
-        WHERE COALESCE(win.month_cnt, 0) > 0
-        """,
         [*taxon_ids, *taxon_ids, *months],
     ).fetchall()
 
@@ -214,7 +235,7 @@ class CampSite:
 
 
 def camps_near(
-    con: duckdb.DuckDBPyConnection,
+    con: psycopg.Connection,
     *,
     lat: float,
     lng: float,
@@ -224,15 +245,12 @@ def camps_near(
     """Campsites within ``radius_km`` of a point, ranked free-first then by distance.
 
     ``free`` is only TRUE where the source explicitly said so; ``free_only`` therefore
-    keeps just those (it never guesses that an unpriced site is free). Missing table
-    (no camps ingested yet) yields an empty list, mirroring the other modes.
+    keeps just those (it never guesses that an unpriced site is free). No rows ingested
+    yet yields an empty list, mirroring the other modes.
     """
-    try:
-        rows = con.execute(
-            "SELECT id, name, kind, fee, free, lat, lng, source, url FROM campsites"
-        ).fetchall()
-    except duckdb.CatalogException:
-        return []
+    rows = con.execute(
+        "SELECT id, name, kind, fee, free, lat, lng, source, url FROM campsites"
+    ).fetchall()
 
     # Keep the unrounded distance alongside each site so ranking is exact; distance_km is
     # only rounded for display and must not be the sort key (near-equal sites would tie).
@@ -272,26 +290,23 @@ class LandUnit:
 
 
 def land_near(
-    con: duckdb.DuckDBPyConnection, *, lat: float, lng: float, radius_km: float
+    con: psycopg.Connection, *, lat: float, lng: float, radius_km: float
 ) -> list[LandUnit]:
     """Public-land ownership polygons whose bounding box overlaps the home disk.
 
     Filtering is a cheap bbox-vs-envelope overlap in SQL (the stored geometry needs no spatial
-    extension); it's coarse on purpose - the map just shades approximate ownership. Missing
-    table (no land ingested yet) yields an empty list, mirroring ``camps_near``.
+    types); it's coarse on purpose - the map just shades approximate ownership. No rows
+    ingested yet yields an empty list, mirroring ``camps_near``.
     """
     dlat = radius_km / 111.0
     dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
-    try:
-        rows = con.execute(
-            """
-            SELECT id, agency, unit, source, url, geojson FROM public_land
-            WHERE min_lat <= ? AND max_lat >= ? AND min_lng <= ? AND max_lng >= ?
-            """,
-            [lat + dlat, lat - dlat, lng + dlng, lng - dlng],
-        ).fetchall()
-    except duckdb.CatalogException:
-        return []
+    rows = con.execute(
+        """
+        SELECT id, agency, unit, source, url, geojson FROM public_land
+        WHERE min_lat <= %s AND max_lat >= %s AND min_lng <= %s AND max_lng >= %s
+        """,
+        [lat + dlat, lat - dlat, lng + dlng, lng - dlng],
+    ).fetchall()
     return [
         LandUnit(
             id=land_id,
@@ -320,33 +335,27 @@ class Trail:
 
 
 def trails_near(
-    con: duckdb.DuckDBPyConnection, *, lat: float, lng: float, radius_km: float
+    con: psycopg.Connection, *, lat: float, lng: float, radius_km: float
 ) -> list[Trail]:
     """Trails whose representative point is within ``radius_km`` of a hotspot, nearest first.
 
-    A cheap bbox-vs-envelope prefilter in SQL (the stored geometry needs no spatial extension)
+    A cheap bbox-vs-envelope prefilter in SQL (the stored geometry needs no spatial types)
     narrows candidates; the exact cut and ordering use ``haversine_km`` on each trail's stored
     center. Each trail is annotated with the distance to the nearest cached campsite so the UI can
-    show the "park → hike → fungi" chain. Missing table (no trails ingested yet) yields an empty
-    list, mirroring ``camps_near`` / ``land_near``.
+    show the "park → hike → fungi" chain. No rows ingested yet yields an empty list, mirroring
+    ``camps_near`` / ``land_near``.
     """
     dlat = radius_km / 111.0
     dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
-    try:
-        rows = con.execute(
-            """
-            SELECT id, name, kind, source, url, center_lat, center_lng, geojson FROM trails
-            WHERE min_lat <= ? AND max_lat >= ? AND min_lng <= ? AND max_lng >= ?
-            """,
-            [lat + dlat, lat - dlat, lng + dlng, lng - dlng],
-        ).fetchall()
-    except duckdb.CatalogException:
-        return []
+    rows = con.execute(
+        """
+        SELECT id, name, kind, source, url, center_lat, center_lng, geojson FROM trails
+        WHERE min_lat <= %s AND max_lat >= %s AND min_lng <= %s AND max_lng >= %s
+        """,
+        [lat + dlat, lat - dlat, lng + dlng, lng - dlng],
+    ).fetchall()
     # Nearest-campsite distance is a per-trail annotation; fetch the camp points once and reuse.
-    try:
-        camps = con.execute("SELECT lat, lng FROM campsites").fetchall()
-    except duckdb.CatalogException:
-        camps = []
+    camps = con.execute("SELECT lat, lng FROM campsites").fetchall()
 
     scored: list[tuple[float, Trail]] = []
     for trail_id, name, kind, source, url, clat, clng, geojson in rows:
@@ -381,14 +390,17 @@ def trails_near(
 
 
 def place_calendar(
-    con: duckdb.DuckDBPyConnection, *, region_id: str, taxon_ids: list[int]
+    con: psycopg.Connection, *, region_id: str, taxon_ids: list[int]
 ) -> dict[int, dict[str, Any]]:
     """12-month activity for a region: total count + per-species breakdown per month."""
     rows = con.execute(
-        f"""
-        SELECT month, taxon_id, cnt FROM phenology
-        WHERE region_id = ? AND taxon_id IN ({_in(taxon_ids)})
-        """,
+        cast(
+            LiteralString,
+            f"""
+            SELECT month, taxon_id, cnt FROM phenology
+            WHERE region_id = %s AND taxon_id IN ({_in(taxon_ids)})
+            """,
+        ),
         [region_id, *taxon_ids],
     ).fetchall()
     names = dict(con.execute("SELECT taxon_id, common_name FROM taxa").fetchall())
@@ -403,7 +415,7 @@ def place_calendar(
 
 
 def alerts(
-    con: duckdb.DuckDBPyConnection,
+    con: psycopg.Connection,
     *,
     taxon_ids: list[int],
     home_lat: float,
@@ -416,13 +428,16 @@ def alerts(
     cutoff = (dt.date.today() - dt.timedelta(weeks=weeks)).isoformat()
     binned = _BINNED.format(cell=cell_deg)
     rows = con.execute(
-        f"""
-        SELECT region_id, center_lat, center_lng, taxon_id, count(*) AS cnt,
-               max(observed_on) AS last_seen
-        FROM ({binned})
-        WHERE observed_on >= ? AND taxon_id IN ({_in(taxon_ids)})
-        GROUP BY region_id, center_lat, center_lng, taxon_id
-        """,
+        cast(
+            LiteralString,
+            f"""
+            SELECT region_id, center_lat, center_lng, taxon_id, count(*) AS cnt,
+                   max(observed_on) AS last_seen
+            FROM ({binned})
+            WHERE observed_on >= %s AND taxon_id IN ({_in(taxon_ids)})
+            GROUP BY region_id, center_lat, center_lng, taxon_id
+            """,
+        ),
         [cutoff, *taxon_ids],
     ).fetchall()
     names = dict(con.execute("SELECT taxon_id, common_name FROM taxa").fetchall())
@@ -487,7 +502,7 @@ class TripPlan:
 
 
 def plan_route(
-    con: duckdb.DuckDBPyConnection,
+    con: psycopg.Connection,
     *,
     months: list[int],
     taxon_ids: list[int],

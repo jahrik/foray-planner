@@ -1,20 +1,16 @@
-"""Dispersed-camping ingest + proxy tests - no network (mocked Overpass transport).
-
-The point-in-polygon proxy needs the DuckDB spatial extension; those tests are skipped where it
-can't be loaded (e.g. a first offline run), so the suite stays green everywhere while still
-exercising the join wherever spatial is available (CI, or once installed locally).
+"""Dispersed-camping ingest + proxy tests - no network beyond the local/CI test Postgres
+(mocked Overpass transport). The point-in-polygon proxy uses PostGIS, enabled once by
+``cache.SCHEMA`` on every connection, so it's always available wherever the test Postgres is.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import duckdb
 import httpx
+import psycopg
 import pytest
 from tests.test_land import BLM  # a LandSource fixture with a small polygon helper
 
-from foray.cache import SCHEMA, upsert_public_land
+from foray.cache import upsert_public_land
 from foray.config import Config, Home
 from foray.dispersed import (
     Road,
@@ -29,36 +25,6 @@ from foray.land import _parse_feature
 from foray.scoring import camps_near
 
 HOME_LAT, HOME_LNG = 47.6, -122.3
-
-
-def _spatial_ready() -> bool:
-    """Return True only if the spatial extension is already installed (LOAD-only check).
-
-    We deliberately do *not* run INSTALL here - that can attempt a network download at
-    test-collection time, violating the file's no-network guarantee and making the suite
-    flaky in offline/locked-down environments. If the extension isn't present yet, CI or
-    local setup should install it separately (``duckdb -c "INSTALL spatial"``).
-    """
-    conn = duckdb.connect()
-    try:
-        conn.execute("LOAD spatial")
-        return True
-    except (duckdb.Error, OSError):
-        return False
-    finally:
-        conn.close()
-
-
-spatial_required = pytest.mark.skipif(
-    not _spatial_ready(), reason="DuckDB spatial extension unavailable (offline)"
-)
-
-
-@pytest.fixture
-def con() -> duckdb.DuckDBPyConnection:
-    conn = duckdb.connect(":memory:")
-    conn.execute(SCHEMA)
-    return conn
 
 
 def _polygon(lat: float, lng: float, size: float = 0.1) -> dict:
@@ -203,7 +169,7 @@ def test_fetch_dispersed_sources_retries_on_overpass_throttle(
 
 
 def test_dispersed_proxy_rows_empty_without_roads_or_land(
-    con: duckdb.DuckDBPyConnection,
+    con: psycopg.Connection,
 ) -> None:
     assert dispersed_proxy_rows(con, []) == []  # no roads
     # A road but no cached public land → nothing to intersect, and spatial is never touched.
@@ -211,9 +177,8 @@ def test_dispersed_proxy_rows_empty_without_roads_or_land(
     assert dispersed_proxy_rows(con, [road]) == []
 
 
-@spatial_required
 def test_dispersed_proxy_rows_keeps_only_tracks_on_public_land(
-    con: duckdb.DuckDBPyConnection,
+    con: psycopg.Connection,
 ) -> None:
     land = _parse_feature(BLM, {"properties": {"OBJECTID": 1}, "geometry": _polygon(47.6, -122.3)})
     assert land is not None
@@ -232,7 +197,7 @@ def test_dispersed_proxy_rows_keeps_only_tracks_on_public_land(
 
 
 def test_ingest_dispersed_upserts_reported_sites(
-    con: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("foray.dispersed.time.sleep", lambda _seconds: None)
 
@@ -263,7 +228,6 @@ def test_ingest_dispersed_upserts_reported_sites(
         since_year=2015,
         quality_grade="research",
         recent_weeks=4,
-        db_path=Path("unused.duckdb"),  # a caller-supplied `con` is used instead
     )
 
     # No public_land cached → the proxy is skipped, reported sites still land in `campsites`.

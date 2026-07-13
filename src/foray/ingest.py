@@ -1,4 +1,4 @@
-"""Incremental ingestion: iNat observations -> DuckDB cache.
+"""Incremental ingestion: iNat observations -> Postgres cache.
 
 Ingests one seed taxon at a time and tags every observation with that *seed* taxon_id
 (not the leaf species), so phenology curves are per foraging target. Idempotent: the
@@ -14,9 +14,9 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-import duckdb
+import psycopg
 
-from foray.cache import connect, latest_obs_date, record_ingest, upsert_observations, upsert_taxa
+from foray.cache import latest_obs_date, record_ingest, upsert_observations, upsert_taxa
 from foray.config import Config
 from foray.inat import iter_observations
 
@@ -72,13 +72,11 @@ def _to_row(obs: dict[str, Any], seed_taxon_id: int) -> tuple[Any, ...] | None:
 
 def ingest(
     cfg: Config,
-    database: duckdb.DuckDBPyConnection | str,
+    db: psycopg.Connection,
     progress_cb: Callable[[str, float], None] | None = None,
     abort_event: threading.Event | None = None,
 ) -> dict[int, int]:
     """Pull observations for every seed taxon within the home radius. Returns {taxon_id: rows}."""
-    own_con = isinstance(database, str)
-    db = connect(database) if own_con else database
     upsert_taxa(
         db,
         [
@@ -157,7 +155,4 @@ def ingest(
         )
 
     logger.info("ingest: done - %d observations across %d taxa", sum(counts.values()), total)
-
-    if own_con:
-        db.close()
     return counts

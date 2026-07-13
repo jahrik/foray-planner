@@ -15,9 +15,9 @@ scoring read directly. One ODbL-licensed Overpass query gathers three element cl
   nodes), cached as a ``Point``.
 
 Geometry is stored as GeoJSON *text* with a bounding box + a representative center point (see
-``cache.trails``), so the field/offline read path never needs the DuckDB spatial extension - a
-cheap bbox filter + haversine on the center serves "trails near here". Each way's vertices are
-thinned to keep the cached polylines light enough for a phone map.
+``cache.trails``), so the read path never needs PostGIS geometry types - a cheap bbox filter +
+haversine on the center serves "trails near here". Each way's vertices are thinned to keep the
+cached polylines light enough for a phone map.
 
 Like the campground, land, and dispersed ingests, this is best-effort: a failing Overpass request
 is logged and skipped rather than aborting the whole refresh. It is informational only - it links
@@ -37,8 +37,8 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
-import duckdb
 import httpx
+import psycopg
 
 from foray.cache import connect, is_ingested, record_ingest, upsert_trails
 from foray.config import Config
@@ -249,14 +249,14 @@ def fetch_trails(
 
 def ingest_trails(
     cfg: Config,
-    con: duckdb.DuckDBPyConnection | None = None,
+    con: psycopg.Connection | None = None,
     *,
     client: httpx.Client | None = None,
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest the OSM trail network near home into ``trails``. Returns rows upserted."""
     own_con = con is None
-    database = con if con is not None else connect(cfg.db_path)
+    database = con if con is not None else connect()
     home = cfg.home
     key = f"trails:{home.lat}:{home.lng}:{home.radius_km}"
     if is_ingested(database, key):

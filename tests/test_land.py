@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 
-import duckdb
 import httpx
+import psycopg
 import pytest
 
-from foray.cache import SCHEMA, upsert_public_land
+from foray.cache import upsert_public_land
 from foray.land import (
     LandSource,
     _bounds,
@@ -53,13 +53,6 @@ def _polygon(lat: float, lng: float, size: float = 0.1) -> dict:
             ]
         ],
     }
-
-
-@pytest.fixture
-def con() -> duckdb.DuckDBPyConnection:
-    conn = duckdb.connect(":memory:")
-    conn.execute(SCHEMA)
-    return conn
 
 
 def test_get_is_case_insensitive() -> None:
@@ -203,7 +196,7 @@ def test_fetch_public_land_pages_until_transfer_limit_clears() -> None:
     assert len(ids) == 1001
 
 
-def test_land_near_filters_by_bbox_and_returns_geometry(con: duckdb.DuckDBPyConnection) -> None:
+def test_land_near_filters_by_bbox_and_returns_geometry(con: psycopg.Connection) -> None:
     near = _parse_feature(
         BLM, {"properties": {"OBJECTID": 1}, "geometry": _polygon(47.65, -122.35)}
     )
@@ -223,6 +216,5 @@ def test_land_near_filters_by_bbox_and_returns_geometry(con: duckdb.DuckDBPyConn
     assert units[0].geometry["type"] == "Polygon"  # geojson parsed back to a dict
 
 
-def test_land_near_missing_table_returns_empty() -> None:
-    conn = duckdb.connect(":memory:")  # no schema → no public_land table
-    assert land_near(conn, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0) == []
+def test_land_near_no_rows_ingested_returns_empty(con: psycopg.Connection) -> None:
+    assert land_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0) == []

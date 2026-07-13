@@ -1,13 +1,14 @@
 """Configuration + species-seed loading.
 
-Config, Home, and Species are pydantic models: config.yaml and location.json are
-hand-editable trust boundaries, so values are range-validated on load with clear errors.
-Internal scoring types stay plain dataclasses - pydantic is only for the file boundary.
+Config, Home, and Species are pydantic models: config.yaml is a hand-editable trust
+boundary, so values are range-validated on load with clear errors. Internal scoring types
+stay plain dataclasses - pydantic is only for the file boundary. The runtime home-location
+override (set from the UI) lives in Postgres (``foray.cache.load_location``/``save_location``),
+not here - loading it requires a DB connection, which this module doesn't have.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Literal
 
@@ -48,7 +49,6 @@ class Config(BaseModel):
     since_year: int = Field(ge=1900, le=2100)
     quality_grade: QualityGrade
     recent_weeks: int = Field(gt=0, le=520)
-    db_path: Path
     species: list[Species] = Field(default_factory=list)
 
     @property
@@ -74,20 +74,14 @@ def load_config(path: str | Path = "config.yaml") -> Config:
     try:
         paths = raw["paths"]
         ingest = raw["ingest"]
-        db_path = _resolve(root, paths["db"])
         species = load_species(_resolve(root, paths["species_seed"]))
 
-        # A runtime location override (set from the UI) wins over config.yaml, so the
-        # commented defaults file stays pristine.
-        home = load_location(location_path(db_path)) or Home(**raw["home"])
-
         return Config(
-            home=home,
+            home=Home(**raw["home"]),
             cell_deg=raw["regions"]["cell_deg"],
             since_year=ingest["since_year"],
             quality_grade=ingest["quality_grade"],
             recent_weeks=ingest["recent_weeks"],
-            db_path=db_path,
             species=species,
         )
     except KeyError as error:
@@ -102,22 +96,3 @@ def load_species(path: str | Path) -> list[Species]:
         return [Species(**entry) for entry in raw["species"]]
     except ValidationError as error:
         raise ValueError(f"invalid species seed ({path}):\n{error}") from error
-
-
-def location_path(db_path: Path) -> Path:
-    """Where the runtime home-location override lives (next to the cache DB)."""
-    return db_path.parent / "location.json"
-
-
-def load_location(path: Path) -> Home | None:
-    if not path.exists():
-        return None
-    try:
-        return Home(**json.loads(path.read_text()))
-    except ValidationError as error:
-        raise ValueError(f"invalid location override ({path}):\n{error}") from error
-
-
-def save_location(path: Path, home: Home) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(home.model_dump(), indent=2))

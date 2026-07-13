@@ -6,14 +6,17 @@ phenology. Public repo: [jahrik/foray-planner](https://github.com/jahrik/foray-p
 ## Layout
 
 - `src/foray/config.py` - pydantic models (`Config`, `Home`, `Species`) with range
-  validation; loads `config.yaml`, applies the `location.json` override, saves locations.
-  Config is the file-boundary trust layer - internal scoring types stay dataclasses.
+  validation; loads `config.yaml`. Config is the file-boundary trust layer - internal scoring
+  types stay dataclasses. The runtime location override lives in Postgres now (`app_location`
+  table, `foray.cache.load_location`/`save_location`), not a file - no DB connection here.
 - `src/foray/inat.py` - throttled pyinaturalist wrapper (observations, species_counts,
   monthly histogram). Descriptive User-Agent; deep-paginates via `id_above`; `_with_retries`
   backs off on transient network errors so one blip doesn't abort a long ingest.
 - `src/foray/geocode.py` - resolve a place name (OpenStreetMap Nominatim) or raw `lat,lng`
   to coordinates. Network-mocked in tests.
-- `src/foray/cache.py` - DuckDB schema + idempotent upserts (`ON CONFLICT`), ingest log.
+- `src/foray/cache.py` - Postgres+PostGIS schema (extension + tables created eagerly on every
+  `connect()`) + idempotent upserts (`ON CONFLICT`), ingest log. `connect()` takes no DSN by
+  default - reads the standard `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` env vars.
 - `src/foray/ingest.py` - pulls per seed taxon within the home radius; tags each obs with
   the **seed** taxon_id (not leaf species) so phenology is per foraging target.
 - `src/foray/camps.py` - developed-campground ingest from the Recreation.gov **RIDB API**
@@ -24,8 +27,8 @@ phenology. Public repo: [jahrik/foray-planner](https://github.com/jahrik/foray-p
 - `src/foray/dispersed.py` - dispersed-camping layer from OSM **Overpass** (httpx, no key). Two
   ODbL signals, both cached as `campsites`: reported sites (`kind='reported'` - `tourism=camp_site`
   /`camp_pitch`, `backcountry=yes`) and a proxy (`kind='dispersed'` - `highway=track`/`unclassified`
-  ∩ cached `public_land`, via the DuckDB **spatial** extension's point-in-polygon, ingest-side only
-  so the read path stays spatial-free). `free=TRUE` on proxy points (public-land camping is free of
+  ∩ cached `public_land`, via **PostGIS**'s point-in-polygon, ingest-side only so the read path
+  stays spatial-free). `free=TRUE` on proxy points (public-land camping is free of
   charge); the *legality* caveat rides on `kind`+UI label, never asserted. Best-effort like camps/
   land. iOverlander/The Dyrt are **not** usable (personal-use-only license / no open API).
 - `src/foray/trails.py` - trail layer from OSM **Overpass** (httpx, no key). One ODbL query pulls
@@ -47,9 +50,12 @@ phenology. Public repo: [jahrik/foray-planner](https://github.com/jahrik/foray-p
   trails,plan,location,refresh}` + `/` (serves the built client). `/api/camps` takes a `region_id`
   or a `lat`/`lng` plus `radius_km` + `free_only`; `/api/land` and `/api/trails` take a `region_id`
   or `lat`/`lng` + `radius_km`; `/api/plan` takes `months`/`species` + `max_stops`, `max_drive_km`,
-  `camp_radius_km`, `require_free_camp`. One shared DuckDB connection handing out per-request
-  cursors; live config is mutable app state; `refresh` runs in a background thread with reads
-  guarded while it rebuilds. `destinations`/`plan` default to the current month when none is given.
+  `camp_radius_km`, `require_free_camp`. A `psycopg_pool.ConnectionPool` opened/closed via
+  FastAPI `lifespan`, one pooled connection per request; live config is mutable app state;
+  `refresh` runs in a background thread on its own pooled connection for the duration, with
+  reads guarded while it rebuilds (Postgres MVCC handles the actual read/write concurrency -
+  no DuckDB-style single-writer serialization needed). `destinations`/`plan` default to the
+  current month when none is given.
 - `src/foray/cli.py` - `foray ingest | camps | land | dispersed | trails | plan | refresh | serve |
   openapi` (`refresh` does obs + camps + land + dispersed + trails + phenology; `plan` prints a
   greedy itinerary; `openapi` dumps the schema that feeds the frontend type generator).
@@ -139,10 +145,11 @@ cd frontend && npm run build   # tsc --noEmit + vite build
 - Only `quality_grade=research` counts toward scoring.
 - Regions are uniform lat/lng grid cells (`cell_deg`), id = `"{ilat}_{ilng}"`, derived in
   SQL - never stored redundantly. Change `cell_deg` → re-run `foray refresh`.
-- Location is per-area: changing it (UI `POST /api/location` or editing `location.json`)
-  requires a `refresh` to fetch iNat data for the new radius. `location.json` overrides
-  `config.yaml`'s home.
-- The cache DB (`data/foray.duckdb`) is gitignored and fully rebuildable via `foray refresh`.
+- Location is per-area: changing it (UI `POST /api/location`) requires a `refresh` to fetch
+  iNat data for the new radius. The saved override (`app_location` table in Postgres) wins
+  over `config.yaml`'s home and survives restarts.
+- The Postgres database is fully rebuildable via `foray refresh`; connection info comes from
+  `PG*` env vars, never `config.yaml` (see `src/foray/cache.py`).
 - `campsites` (developed campgrounds) is keyed by `"{source}:{source_id}"` and upserted
   idempotently. Needs `RIDB_API_KEY` (gitignored `.env` locally; env var in prod) - absent,
   camps ingest is a no-op. `free` is nullable: TRUE only on an explicit no-fee signal, else

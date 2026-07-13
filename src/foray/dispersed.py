@@ -9,9 +9,9 @@ Two ODbL-licensed signals, both cached as ``campsites`` rows so they flow throug
 * **Dispersed-legal proxy** (``kind='dispersed'``) - there is *no* authoritative dataset of legal
   dispersed sites, so we approximate: a drivable track (``highway=track`` / ``unclassified``)
   whose geometry falls inside cached BLM/USFS ``public_land`` becomes a candidate "likely
-  dispersed-legal" point. This is the piece that uses the DuckDB **spatial** extension
-  (point-in-polygon), and only on the *ingest* (write) path - the served rows are plain lat/lng,
-  so the field/offline read path never loads spatial.
+  dispersed-legal" point. This is the piece that uses **PostGIS** (point-in-polygon), and only
+  on the *ingest* (write) path - the served rows are plain lat/lng, so the read path never
+  touches spatial types.
 
 Neither signal is a promise: dispersed camping is labelled *likely* legal and always links the
 OSM source - verify with the managing district (see AGENTS.md, "No claims"). ``free`` is TRUE on
@@ -35,8 +35,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-import duckdb
 import httpx
+import psycopg
 
 from foray.cache import connect, is_ingested, record_ingest, upsert_campsites
 from foray.config import Config
@@ -247,15 +247,14 @@ def fetch_dispersed_sources(
     return reported, roads
 
 
-def dispersed_proxy_rows(
-    con: duckdb.DuckDBPyConnection, roads: Sequence[Road]
-) -> list[tuple[Any, ...]]:
+def dispersed_proxy_rows(con: psycopg.Connection, roads: Sequence[Road]) -> list[tuple[Any, ...]]:
     """Tracks whose geometry falls inside cached public land -> 'likely dispersed-legal' points.
 
     One representative point per way (its first vertex inside any BLM/USFS polygon) becomes a
-    ``kind='dispersed'`` campsite. Uses the DuckDB spatial extension for the point-in-polygon
-    test - this is the only place it's needed, and only at ingest time. Yields ``[]`` when there
-    are no roads or no cached public land to intersect against.
+    ``kind='dispersed'`` campsite. Uses PostGIS for the point-in-polygon test - this is the only
+    place it's needed, and only at ingest time (the ``postgis`` extension is enabled once by
+    ``cache.SCHEMA``, not per-call). Yields ``[]`` when there are no roads or no cached public
+    land to intersect against.
     """
     if not roads:
         return []
@@ -264,24 +263,21 @@ def dispersed_proxy_rows(
         logger.info("dispersed: no public_land cached - skipping road proxy")
         return []
 
-    try:
-        con.execute("LOAD spatial")
-    except duckdb.Error:
-        con.execute("INSTALL spatial")
-        con.execute("LOAD spatial")
     # ArcGIS polygons are server-generalized and can be slightly self-intersecting; ST_MakeValid
     # keeps a bad ring from aborting the whole join.
+    con.execute("DROP TABLE IF EXISTS _land_geom")
     con.execute(
         """
-        CREATE OR REPLACE TEMP TABLE _land_geom AS
+        CREATE TEMP TABLE _land_geom AS
         SELECT ST_MakeValid(ST_GeomFromGeoJSON(geojson)) AS geom,
                min_lat, min_lng, max_lat, max_lng
         FROM public_land
         """
     )
+    con.execute("DROP TABLE IF EXISTS _road_pts")
     con.execute(
-        "CREATE OR REPLACE TEMP TABLE _road_pts "
-        "(way_id BIGINT, name VARCHAR, lat DOUBLE, lng DOUBLE)"
+        "CREATE TEMP TABLE _road_pts "
+        "(way_id BIGINT, name TEXT, lat DOUBLE PRECISION, lng DOUBLE PRECISION)"
     )
     point_rows = []
     for road in roads:
@@ -290,7 +286,8 @@ def dispersed_proxy_rows(
         lat, lng = road.coords[len(road.coords) // 2]
         point_rows.append((road.way_id, road.name, lat, lng))
 
-    con.executemany("INSERT INTO _road_pts VALUES (?, ?, ?, ?)", point_rows)
+    with con.cursor() as cur:
+        cur.executemany("INSERT INTO _road_pts VALUES (%s, %s, %s, %s)", point_rows)
     # Cheap bbox pre-filter gates the expensive ST_Contains.
     # We only check the midpoint of each road to massively speed up the spatial join.
     inside = con.execute(
@@ -300,7 +297,7 @@ def dispersed_proxy_rows(
         JOIN _land_geom l
           ON p.lat BETWEEN l.min_lat AND l.max_lat
          AND p.lng BETWEEN l.min_lng AND l.max_lng
-         AND ST_Contains(l.geom, ST_Point(p.lng, p.lat))
+         AND ST_Contains(l.geom, ST_SetSRID(ST_Point(p.lng, p.lat), 4326))
         """
     ).fetchall()
     con.execute("DROP TABLE IF EXISTS _road_pts")
@@ -323,7 +320,7 @@ def dispersed_proxy_rows(
 
 def ingest_dispersed(
     cfg: Config,
-    con: duckdb.DuckDBPyConnection | None = None,
+    con: psycopg.Connection | None = None,
     *,
     client: httpx.Client | None = None,
     progress_cb: Callable[[str, float], None] | None = None,
@@ -331,10 +328,10 @@ def ingest_dispersed(
     """Ingest OSM reported campsites + the road∩public-land proxy into ``campsites``.
 
     Returns rows upserted. The road proxy is best-effort on top of the fetch: if the spatial
-    extension can't load (e.g. offline first run) the reported sites still ingest.
+    join fails for any reason, the reported sites still ingest.
     """
     own_con = con is None
-    database = con if con is not None else connect(cfg.db_path)
+    database = con if con is not None else connect()
     home = cfg.home
     key = f"dispersed:{home.lat}:{home.lng}:{home.radius_km}"
     if is_ingested(database, key):
@@ -358,7 +355,7 @@ def ingest_dispersed(
         try:
             proxy = dispersed_proxy_rows(database, roads)
             logger.info("dispersed: %d road∩public-land proxy zones", len(proxy))
-        except (duckdb.Error, OSError, ValueError) as error:
+        except (psycopg.Error, OSError, ValueError) as error:
             logger.warning("dispersed: road proxy skipped (%s)", error)
             proxy = []
         rows = reported + proxy

@@ -1,14 +1,15 @@
-"""FastAPI route tests over a hermetic fixture DB (no network, per python skill)."""
+"""FastAPI route tests over the shared test Postgres (no network beyond it, per python skill)."""
 
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterator
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
 from foray.api import create_app
-from foray.cache import connect
 from foray.config import Config, Home, Species
 from foray.scoring import build_phenology
 
@@ -18,25 +19,24 @@ HOME_LAT, HOME_LNG = 47.6, -122.3
 
 
 @pytest.fixture
-def cfg(tmp_path) -> Config:
-    db_path = tmp_path / "foray.duckdb"
-    con = connect(db_path)
-    con.executemany(
-        "INSERT INTO taxa VALUES (?, ?, ?, ?)",
-        [(MOREL, "Morchella", "Morels", "genus")],
-    )
+def cfg(con: psycopg.Connection) -> Config:
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO taxa VALUES (%s, %s, %s, %s)",
+            [(MOREL, "Morchella", "Morels", "genus")],
+        )
     rows = [
         (obs_id, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", 10)
         for obs_id in range(1, 21)
     ]
-    con.executemany(
-        "INSERT INTO observations "
-        "(id, taxon_id, lat, lng, observed_on, month, year, quality_grade, positional_accuracy) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        rows,
-    )
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO observations "
+            "(id, taxon_id, lat, lng, observed_on, month, year, quality_grade, "
+            "positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            rows,
+        )
     build_phenology(con, CELL)
-    con.close()
 
     return Config(
         home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=200),
@@ -44,14 +44,14 @@ def cfg(tmp_path) -> Config:
         since_year=2015,
         quality_grade="research",
         recent_weeks=8,
-        db_path=db_path,
         species=[Species(taxon_id=MOREL, name="Morchella", common_name="Morels", rank="genus")],
     )
 
 
 @pytest.fixture
-def client(cfg: Config) -> TestClient:
-    return TestClient(create_app(cfg))
+def client(cfg: Config) -> Iterator[TestClient]:
+    with TestClient(create_app(cfg)) as client:
+        yield client
 
 
 def test_get_config(client: TestClient) -> None:
