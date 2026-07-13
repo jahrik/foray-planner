@@ -2,7 +2,6 @@ import { setLocation } from "./refresh";
 import { qs } from "./state";
 
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
-const USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)";
 const DEBOUNCE_MS = 300;
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -17,9 +16,7 @@ interface NominatimResult {
 async function fetchSuggestions(query: string): Promise<NominatimResult[]> {
   if (query.length < 2) return [];
   const params = new URLSearchParams({ q: query, format: "json", limit: "5" });
-  const resp = await fetch(`${NOMINATIM}?${params}`, {
-    headers: { "User-Agent": USER_AGENT },
-  });
+  const resp = await fetch(`${NOMINATIM}?${params}`);
   if (!resp.ok) return [];
   return resp.json();
 }

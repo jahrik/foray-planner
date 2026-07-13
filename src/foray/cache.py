@@ -150,12 +150,9 @@ def connect(conninfo: str = "") -> psycopg.Connection:
             "Run `CREATE EXTENSION postgis;` as a superuser/rds_superuser to enable it."
         )
     con.execute(SCHEMA)
-    # Migrate: add spatial columns to ingest_log if missing (pre-#35 databases).
-    con.execute("""
-        ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
-        ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
-        ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS radius_km DOUBLE PRECISION;
-    """)
+    con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION")
+    con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION")
+    con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS radius_km DOUBLE PRECISION")
     return con
 
 

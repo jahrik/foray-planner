@@ -35,7 +35,7 @@ start:
 	docker compose up -d --build
 
 stop:
-	docker compose stop app
+	docker compose stop
 
 restart:
 	docker compose up -d --build app

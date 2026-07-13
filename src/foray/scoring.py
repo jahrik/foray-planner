@@ -158,8 +158,8 @@ def rank_destinations(
             f"""
             WITH tot AS (
                 SELECT region_id, taxon_id,
-                       AVG(center_lat)::double precision AS center_lat,
-                       AVG(center_lng)::double precision AS center_lng,
+                       (sum(center_lat * cnt) / sum(cnt))::double precision AS center_lat,
+                       (sum(center_lng * cnt) / sum(cnt))::double precision AS center_lng,
                        sum(cnt)::bigint AS total_cnt
                 FROM phenology
                 WHERE taxon_id IN ({_in(taxon_ids)})
