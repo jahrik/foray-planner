@@ -101,6 +101,19 @@ directly to its iNaturalist page for photos, range maps, and community notes.
 
 ---
 
+## Quick start
+
+```bash
+make install && make db
+uv run foray refresh
+make dev                # http://127.0.0.1:8000
+```
+
+Run `make check` before pushing (lint + type-check + tests). See the
+[development guide](docs/development.md) for full details and all Makefile targets.
+
+---
+
 ## Docs
 
 - [Development guide](docs/development.md) - setup, config, CLI, architecture, scoring formula, adding species, testing

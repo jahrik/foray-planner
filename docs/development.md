@@ -14,22 +14,18 @@
 ## Quick start
 
 ```bash
-uv sync
-
-# Node is managed by nvm, not on PATH by default:
-export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH"
-cd frontend && npm ci && npm run build && cd ..
-
-# Postgres+PostGIS for local dev (same image CI uses)
-docker compose up -d postgres
-export PGHOST=localhost PGPORT=5432 PGUSER=foray PGPASSWORD=foray PGDATABASE=foray
+make install            # uv sync + frontend npm ci
+make db                 # start Postgres+PostGIS (docker compose)
 
 # Optional: create a .env file with your RIDB key
 echo "RIDB_API_KEY=your_key_here" > .env   # omit to skip campground ingest
 
 uv run foray refresh    # pull iNat data + build phenology (minutes; hits the network)
-uv run foray serve      # http://127.0.0.1:8000
+make dev                # start the API server (http://127.0.0.1:8000)
 ```
+
+The Makefile exports `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` and prepends
+the nvm Node path automatically, so you never need to set them manually.
 
 ---
 
@@ -87,19 +83,17 @@ Run the backend and the Vite dev server together for live development:
 
 ```bash
 # Terminal 1 - backend
-uv run foray serve
+make dev
 
-# Terminal 2 - frontend
-export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH"
-cd frontend && npm ci
-npm run dev        # Vite on :5173, proxies /api/* to uvicorn on :8000
+# Terminal 2 - frontend (Vite on :5173, proxies /api/* to uvicorn on :8000)
+make dev-frontend
 ```
 
 Other frontend commands:
 
 ```bash
-npm run build      # tsc --noEmit + vite build (the CI gate)
-npm run gen:api    # regenerate src/api/schema.ts from the live OpenAPI schema
+make frontend      # tsc --noEmit + vite build (the CI gate)
+npm run gen:api    # regenerate src/api/schema.ts from the live OpenAPI schema (from frontend/)
 ```
 
 Rerun `npm run gen:api` after changing any `/api/*` route signature.
@@ -203,18 +197,18 @@ After editing, run `foray refresh` to re-ingest.
 
 ## Linting and testing
 
-Tests need the local Postgres running (`docker compose up -d postgres`) and the `PG*` env vars
-exported (see Quick start above). Gate before every PR:
+The full local CI gate (starts Postgres if needed, runs lint + type-check + tests):
 
 ```bash
-uv run ruff format . && uv run ruff check . && uv run ty check && uv run pytest
+make check
 ```
 
-Frontend gate (run after any frontend or API change):
+Or run pieces individually:
 
 ```bash
-export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH"
-cd frontend && npm run build
+make lint          # ruff format + ruff check + ty check
+make test          # pytest (starts Postgres automatically)
+make frontend      # frontend type-check + bundle (after frontend or API changes)
 ```
 
 Focused test runs:
@@ -236,8 +230,7 @@ with `httpx.MockTransport`.
 ## Docker build
 
 ```bash
-# Build locally
-docker build -t local/foray-planner:dev .
+make docker        # builds local/foray-planner:dev
 
 # One-off: initial data refresh (needs a reachable Postgres - see docker-compose.yml)
 docker run --rm \
