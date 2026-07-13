@@ -14,13 +14,7 @@ from foray.cli import cli
 
 
 @pytest.fixture
-def env_config(tmp_path, con: psycopg.Connection, monkeypatch):
-    species_file = tmp_path / "species.json"
-    species_file.write_text(
-        json.dumps(
-            [{"taxon_id": 111, "name": "Morchella", "common_name": "Morels", "rank": "genus"}]
-        )
-    )
+def env_config(con: psycopg.Connection, monkeypatch):
     monkeypatch.setenv("FORAY_HOME__NAME", "Home")
     monkeypatch.setenv("FORAY_HOME__LAT", "47.6")
     monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
@@ -29,7 +23,12 @@ def env_config(tmp_path, con: psycopg.Connection, monkeypatch):
     monkeypatch.setenv("FORAY_INGEST__SINCE_YEAR", "2015")
     monkeypatch.setenv("FORAY_INGEST__QUALITY_GRADE", "research")
     monkeypatch.setenv("FORAY_INGEST__RECENT_WEEKS", "4")
-    monkeypatch.setenv("FORAY_SPECIES_FILE", str(species_file))
+    monkeypatch.setenv(
+        "FORAY_SPECIES",
+        json.dumps(
+            [{"taxon_id": 111, "name": "Morchella", "common_name": "Morels", "rank": "genus"}]
+        ),
+    )
 
 
 @pytest.fixture

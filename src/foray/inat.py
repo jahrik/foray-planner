@@ -47,9 +47,10 @@ def _with_retries[T](fn: Callable[[], T], *, attempts: int = 5, base_delay: floa
 def iter_observations(
     *,
     taxon_id: int | list[int],
-    lat: float,
-    lng: float,
-    radius_km: float,
+    lat: float | None = None,
+    lng: float | None = None,
+    radius_km: float | None = None,
+    place_id: int | None = None,
     d1: str,
     d2: str,
     quality_grade: str = "research",
@@ -57,16 +58,22 @@ def iter_observations(
     """Yield every observation matching the geo + date + taxon filter.
 
     Walks pages by ascending id using ``id_above`` so it is not bounded by iNat's
-    ~10k deep-paging limit.
+    ~10k deep-paging limit. Supports either point+radius or place_id for geo filtering.
     """
+    geo_kwargs: dict[str, Any] = {}
+    if place_id is not None:
+        geo_kwargs["place_id"] = place_id
+    else:
+        geo_kwargs["lat"] = lat
+        geo_kwargs["lng"] = lng
+        geo_kwargs["radius"] = radius_km
+
     id_above = 0
     while True:
         page = _with_retries(
             lambda: get_observations(
                 taxon_id=taxon_id,
-                lat=lat,
-                lng=lng,
-                radius=radius_km,
+                **geo_kwargs,
                 d1=d1,
                 d2=d2,
                 quality_grade=quality_grade,

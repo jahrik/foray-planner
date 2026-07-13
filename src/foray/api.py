@@ -23,7 +23,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 from foray import camps, dispersed, geocode, land, scoring, trails
-from foray.cache import _ENABLE_POSTGIS, SCHEMA, is_area_covered
+from foray.cache import _ENABLE_POSTGIS, SCHEMA, has_observations_in_area, is_area_covered
 from foray.cache import load_location as db_load_location
 from foray.cache import save_location as db_save_location
 from foray.config import Config, Home, Settings
@@ -161,12 +161,22 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             # via MVCC, unlike the DuckDB-era single-writer-file model this replaced.
             with pool.connection() as db:
                 if target in ("all", "mushrooms") and not state["abort_event"].is_set():
-                    ingest(
-                        current(),
-                        db,
-                        progress_cb=make_cb(0.0, 90.0 if target == "mushrooms" else 50.0),
-                        abort_event=state["abort_event"],
+                    cfg = current()
+                    skip_obs = has_observations_in_area(
+                        db, cfg.home.lat, cfg.home.lng, cfg.home.radius_km
                     )
+                    if skip_obs:
+                        logger.info(
+                            "refresh: observations already cover %s, skipping ingest",
+                            cfg.home.name,
+                        )
+                    else:
+                        ingest(
+                            cfg,
+                            db,
+                            progress_cb=make_cb(0.0, 90.0 if target == "mushrooms" else 50.0),
+                            abort_event=state["abort_event"],
+                        )
                 if target in ("all", "camps") and not state["abort_event"].is_set():
                     camps.ingest_campgrounds(
                         current(),
@@ -440,7 +450,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             state["cfg"] = cfg.model_copy(update={"home": home})
 
             try:
-                has_obs = is_area_covered(conn, "obs:", home.lat, home.lng, home.radius_km)
+                has_obs = is_area_covered(
+                    conn, "obs:", home.lat, home.lng, home.radius_km
+                ) or has_observations_in_area(conn, home.lat, home.lng, home.radius_km)
                 phenology_row = conn.execute("SELECT 1 FROM phenology LIMIT 1").fetchone()
                 has_phenology = phenology_row is not None
                 needs_refresh = not (has_obs and has_phenology)

@@ -11,7 +11,7 @@ from foray.cache import connect, load_location, observation_count
 from foray.camps import ingest_campgrounds
 from foray.config import Home, Settings
 from foray.dispersed import ingest_dispersed
-from foray.ingest import ingest
+from foray.ingest import ingest, ingest_region
 from foray.land import ingest_public_land
 from foray.scoring import build_phenology, plan_route
 from foray.trails import ingest_trails
@@ -36,15 +36,52 @@ def cli(ctx: click.Context) -> None:
 
 
 @cli.command("ingest")
+@click.option(
+    "--region",
+    "region_name",
+    default=None,
+    help="Named coverage region to ingest (from FORAY_COVERAGE).",
+)
+@click.option(
+    "--all-regions", "all_regions", is_flag=True, help="Ingest all configured coverage regions."
+)
 @click.pass_context
-def ingest_cmd(ctx: click.Context) -> None:
-    """Pull observations for all seed species within the home radius into the cache."""
+def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool) -> None:
+    """Pull observations into the cache (home radius, or --region/--all-regions for place_id)."""
     cfg = ctx.obj["cfg"]
     con = connect()
-    click.echo(f"Ingesting {len(cfg.species)} species within {cfg.home.radius_km} km of home…")
-    counts = ingest(cfg, con)
-    for species in cfg.species:
-        click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
+
+    rebuild_phenology = False
+    if all_regions:
+        if not cfg.coverage:
+            raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
+        for region in cfg.coverage:
+            click.echo(f"Ingesting {region.name} (place_id={region.place_id})…")
+            counts = ingest_region(cfg, con, region)
+            for species in cfg.species:
+                click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
+        rebuild_phenology = True
+    elif region_name:
+        region = next((r for r in cfg.coverage if r.name.lower() == region_name.lower()), None)
+        if region is None:
+            available = ", ".join(r.name for r in cfg.coverage) or "(none configured)"
+            raise click.UsageError(f"Unknown region {region_name!r}. Available: {available}")
+        click.echo(f"Ingesting {region.name} (place_id={region.place_id})…")
+        counts = ingest_region(cfg, con, region)
+        for species in cfg.species:
+            click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
+        rebuild_phenology = True
+    else:
+        click.echo(f"Ingesting {len(cfg.species)} species within {cfg.home.radius_km} km of home…")
+        counts = ingest(cfg, con)
+        for species in cfg.species:
+            click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
+        rebuild_phenology = True
+
+    if rebuild_phenology:
+        click.echo("Rebuilding phenology…")
+        build_phenology(con, cfg.cell_deg)
+
     click.echo(f"Total observations cached: {observation_count(con)}")
     con.close()
 

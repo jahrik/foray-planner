@@ -15,6 +15,8 @@ from foray.scoring import build_phenology
 
 CELL = 0.5
 MOREL = 111
+CHANT = 222
+BOLET = 333
 HOME_LAT, HOME_LNG = 47.6, -122.3
 
 
@@ -23,11 +25,21 @@ def cfg(con: psycopg.Connection) -> Settings:
     with con.cursor() as cur:
         cur.executemany(
             "INSERT INTO taxa VALUES (%s, %s, %s, %s)",
-            [(MOREL, "Morchella", "Morels", "genus")],
+            [
+                (MOREL, "Morchella", "Morels", "genus"),
+                (CHANT, "Cantharellus", "Chanterelles", "genus"),
+                (BOLET, "Boletus", "King Boletes", "genus"),
+            ],
         )
     rows = [
         (obs_id, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", 10)
-        for obs_id in range(1, 21)
+        for obs_id in range(1, 11)
+    ] + [
+        (obs_id, CHANT, HOME_LAT, HOME_LNG, dt.date(2022, 7, 10), 7, 2022, "research", 10)
+        for obs_id in range(11, 16)
+    ] + [
+        (obs_id, BOLET, HOME_LAT, HOME_LNG, dt.date(2022, 9, 5), 9, 2022, "research", 10)
+        for obs_id in range(16, 21)
     ]
     with con.cursor() as cur:
         cur.executemany(
@@ -102,7 +114,7 @@ def test_calendar_for_ranked_region(client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert "4" in body
-    assert body["4"]["species"]["Morels"] == 20
+    assert body["4"]["species"]["Morels"] == 10
 
 
 def test_alerts_empty_when_no_recent_observations(client: TestClient) -> None:
@@ -155,6 +167,15 @@ def test_set_location_by_latlng(client: TestClient) -> None:
     body = response.json()
     assert body["home"]["lat"] == 40.0
     assert body["needs_refresh"] is True  # no ingested data for the new area yet
+
+
+def test_set_location_covered_by_region_data(client: TestClient) -> None:
+    response = client.post(
+        "/api/location", json={"lat": HOME_LAT, "lng": HOME_LNG, "radius_km": 50}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["needs_refresh"] is False
 
 
 def test_set_location_requires_query_or_latlng(client: TestClient) -> None:

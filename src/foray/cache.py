@@ -340,6 +340,21 @@ def is_area_covered(
     return False
 
 
+def has_observations_in_area(
+    con: psycopg.Connection, lat: float, lng: float, radius_km: float, min_taxa: int = 3
+) -> bool:
+    """Check if observations exist in the bounding box with sufficient taxonomic diversity."""
+    dlat = radius_km / 111.0
+    dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
+    row = con.execute(
+        "SELECT count(DISTINCT taxon_id) FROM observations "
+        "WHERE lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s",
+        [lat - dlat, lat + dlat, lng - dlng, lng + dlng],
+    ).fetchone()
+    assert row is not None
+    return row[0] >= min_taxa
+
+
 def latest_obs_date(
     con: psycopg.Connection, taxon_id: int, lat: float, lng: float, radius_km: float
 ) -> str | None:
@@ -358,6 +373,20 @@ def latest_obs_date(
     if not dates:
         return None
     return max(dates)
+
+
+def latest_obs_date_by_place(con: psycopg.Connection, taxon_id: int, place_id: int) -> str | None:
+    """Return the latest end-date from ingest_log for a place_id-based pull, or None."""
+    rows = con.execute(
+        "SELECT key FROM ingest_log WHERE key LIKE %s",
+        [f"obs:{taxon_id}:place:{place_id}:%"],
+    ).fetchall()
+    if not rows:
+        return None
+    dates: list[str] = []
+    for (key,) in rows:
+        dates.append(key.rsplit(":", 1)[-1])
+    return max(dates) if dates else None
 
 
 def load_location(con: psycopg.Connection) -> dict[str, Any] | None:
