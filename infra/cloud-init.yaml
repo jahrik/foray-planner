@@ -1,0 +1,74 @@
+#cloud-config
+# Bootstraps a fresh Lightsail instance: Docker + the attached persistent disk mounted at
+# /data + a systemd unit that runs the foray-planner container. Passed as --user-data to
+# `aws lightsail create-instances` by deploy.sh; runs once on first boot.
+#
+# The attached disk's device path varies by instance/blueprint generation (commonly
+# /dev/xvdf on older Lightsail Linux images, /dev/nvme1n1 on newer nitro-based ones).
+# `disk_setup`/`fs_setup`/mounts below target /dev/xvdf; if `lsblk` on the box shows a
+# different secondary device, edit this file and re-run deploy.sh before first boot, or
+# SSH in and adjust /etc/fstab + remount by hand after the fact.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - docker.io
+
+disk_setup:
+  /dev/xvdf:
+    table_type: gpt
+    layout: true
+    overwrite: false
+
+fs_setup:
+  - label: forydata
+    filesystem: ext4
+    device: /dev/xvdf
+    partition: auto
+    overwrite: false
+
+mounts:
+  - ["/dev/xvdf", "/data", "ext4", "defaults,nofail", "0", "2"]
+
+write_files:
+  - path: /etc/foray/env
+    owner: root:root
+    permissions: "0600"
+    content: |
+      # RIDB_API_KEY=replace-me
+      # Set the real value by hand over SSH, then:
+      #   sudo systemctl restart foray-planner
+      # Never put the real key in this cloud-init file - it is visible via the
+      # Lightsail/EC2 instance metadata API to anyone with describe-instance access.
+
+  - path: /etc/systemd/system/foray-planner.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Foray Planner (foray-planner container)
+      After=docker.service network-online.target
+      Requires=docker.service
+      Wants=network-online.target
+
+      [Service]
+      EnvironmentFile=/etc/foray/env
+      ExecStartPre=-/usr/bin/docker rm -f foray-planner
+      ExecStartPre=/usr/bin/docker pull ghcr.io/jahrik/foray-planner:latest
+      ExecStart=/usr/bin/docker run --rm --name foray-planner -p 80:8000 -v /data:/data --env-file /etc/foray/env ghcr.io/jahrik/foray-planner:latest
+      ExecStop=/usr/bin/docker stop foray-planner
+      Restart=always
+      RestartSec=5
+      TimeoutStartSec=120
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - systemctl enable --now docker
+  - chown 1000:1000 /data
+  - systemctl daemon-reload
+  - systemctl enable foray-planner.service
+  # Not `start`-ed here: RIDB_API_KEY still needs to be set by hand over SSH first
+  # (see /etc/foray/env). `deploy.sh` prints that as the next step after this boots.

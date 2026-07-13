@@ -1,7 +1,9 @@
 # Deployment
 
-Planned production target: **AWS Lightsail** with Cloudflare in front.
-The CD pipeline already builds and publishes the image on every push to `main`.
+Production target: **AWS Lightsail** with Cloudflare in front. The CD pipeline already builds
+and publishes the image on every push to `main`; `infra/` scripts the Lightsail side (see
+below). Provisioning itself is a deliberate, billed, one-off action - not run automatically
+by CI - so it's a manual `./infra/deploy.sh` invocation, not a workflow.
 
 ---
 
@@ -89,21 +91,46 @@ or container restart needed.
 
 ---
 
-## Planned Lightsail setup
+## Lightsail setup (`infra/`)
 
-1. **Create a Lightsail Linux instance** - start at 1 GB RAM; the DuckDB spatial extension
-   needs ~512 MB during dispersed-camping ingest. Size up to 2 GB if refresh is slow.
-2. **Attach a persistent disk** - mount at `/data`. The DuckDB cache survives instance
-   restarts and is the only stateful piece.
-3. **Install Docker** on the instance.
-4. **Pull and run** the GHCR image as shown above.
-5. **Set `RIDB_API_KEY`** as an instance environment variable - never committed to the repo.
-6. **Cloudflare in front:**
-   - Proxy DNS + TLS termination
-   - Cloudflare Access (email or Google auth) = private app with no app-level auth code
-   - Static IP on the Lightsail instance so the DNS record stays stable
+`infra/deploy.sh` scripts the AWS side end to end and is idempotent (safe to re-run):
 
-### Planned architecture
+```bash
+cd infra
+./deploy.sh          # override REGION, BUNDLE_ID, etc. via env vars - see the script header
+```
+
+It creates (or reuses, if already present) a Lightsail instance, a static IP, and a
+persistent block-storage disk attached at `/dev/xvdf`; `infra/cloud-init.yaml` runs on first
+boot to install Docker, partition + mount that disk at `/data`, and install (but not yet
+start) the `foray-planner` systemd unit (`infra/foray-planner.service`).
+
+The API key is deliberately **not** part of the automated flow - Lightsail/EC2 instance
+user-data is visible to anyone with `describe-instance` access on the account, so it's not a
+safe place for a real secret. `deploy.sh` prints the exact next steps at the end:
+
+1. SSH in (`ssh ubuntu@<static-ip>`), edit `/etc/foray/env`, set the real `RIDB_API_KEY`.
+2. `sudo systemctl start foray-planner` (and `enable`, already done by cloud-init).
+3. `curl http://<static-ip>/api/config` to confirm it's serving.
+
+Re-running `deploy.sh` after editing `BUNDLE_ID`/`DISK_SIZE_GB`/etc. only touches what
+changed - it checks each resource's existence before creating it.
+
+### Cloudflare in front
+
+- Proxy DNS + TLS termination. `infra/cloudflare-dns.sh` can create/update the proxied `A`
+  record via the Cloudflare API (needs a `Zone:DNS:Edit`-scoped token); or do it by hand in
+  the dashboard - same result.
+- **Cloudflare Access** (Zero Trust -> Access -> Applications): add an application for the
+  hostname, policy = your email or Google login. This is what makes the app private with no
+  app-level auth code. Dashboard-only step - not scripted (policy choices are a one-time
+  judgment call, not worth automating for a single box).
+- SSL/TLS mode **Flexible** works out of the box (origin serves plain HTTP on `:80`, exactly
+  what `foray-planner.service` publishes). Move to **Full (strict)** later if TLS gets added
+  on the box directly.
+- Domain via Cloudflare Registrar (or point an existing domain's nameservers at Cloudflare).
+
+### Architecture
 
 ```
 Browser → Cloudflare (TLS + Access) → Lightsail static IP

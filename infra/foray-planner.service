@@ -1,0 +1,22 @@
+[Unit]
+Description=Foray Planner (foray-planner container)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/foray/env
+ExecStartPre=-/usr/bin/docker rm -f foray-planner
+ExecStartPre=/usr/bin/docker pull ghcr.io/jahrik/foray-planner:latest
+ExecStart=/usr/bin/docker run --rm --name foray-planner \
+  -p 80:8000 \
+  -v /data:/data \
+  --env-file /etc/foray/env \
+  ghcr.io/jahrik/foray-planner:latest
+ExecStop=/usr/bin/docker stop foray-planner
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
