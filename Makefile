@@ -31,7 +31,7 @@ check: lint test
 frontend:
 	cd frontend && npm run build
 
-dev: db
+dev: db frontend
 	uv run foray serve
 
 dev-frontend:
