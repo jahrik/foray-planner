@@ -55,8 +55,6 @@ services:
       postgres:
         condition: service_healthy
     command: ["sh", "scripts/scheduler.sh"]
-    profiles:
-      - scheduler
 
 volumes:
   foray-postgres-data:
