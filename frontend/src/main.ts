@@ -2,7 +2,7 @@ import "leaflet/dist/leaflet.css";
 import "./style.css";
 
 import { getJson } from "./api/client";
-import type { Config } from "./api/types";
+import type { Config, CoverageRegion } from "./api/types";
 import { loadCamps, loadLand, loadTrails } from "./layers";
 import { initLocationAutocomplete } from "./location";
 import { clearPlanRoute, currentTheme, initMap, setTiles, updateHome } from "./map";
@@ -132,12 +132,44 @@ async function main(): Promise<void> {
     else { cancelLayerRefresh("trails"); loadTrails(); }
   };
   initLocationAutocomplete();
+  loadCoverage();
   // If a refresh is already running (e.g. page reload mid-fetch), reflect it.
   if (config.refreshing) {
     startRefresh("Fetching data…").then((succeeded) => {
       if (succeeded) runDestinations();
     });
   }
+}
+
+function formatAge(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const hours = Math.floor(diff / 3600000);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+async function loadCoverage(): Promise<void> {
+  const el = document.getElementById("coverage-indicator");
+  if (!el) return;
+  let regions: CoverageRegion[];
+  try {
+    regions = await getJson<CoverageRegion[]>("/api/coverage");
+  } catch {
+    return;
+  }
+  if (!regions.length) {
+    el.textContent = "No coverage regions";
+    return;
+  }
+  const parts = regions.map((r) => {
+    const age = r.last_ingest ? formatAge(r.last_ingest) : "never";
+    return `${r.name}: ${age}`;
+  });
+  el.textContent = parts.join(" · ");
+  el.title = regions
+    .map((r) => `${r.name}: ${r.taxa_ingested} taxa, last ingest ${r.last_ingest ?? "never"}`)
+    .join("\n");
 }
 
 main();

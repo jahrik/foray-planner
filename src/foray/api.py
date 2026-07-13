@@ -248,6 +248,32 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             {**species.model_dump(), "inat_url": species.inat_url} for species in current().species
         ]
 
+    @app.get("/api/coverage")
+    def get_coverage() -> list[dict[str, Any]]:
+        """Coverage regions with their latest ingest timestamps."""
+        cfg = current()
+        with pool.connection() as conn:
+            results = []
+            for region in cfg.coverage:
+                row = conn.execute(
+                    "SELECT max(fetched_at) FROM ingest_log WHERE key LIKE %s",
+                    [f"obs:%:place:{region.place_id}:%"],
+                ).fetchone()
+                last_ingest = row[0].isoformat() if row and row[0] else None
+                count_row = conn.execute(
+                    "SELECT count(*) FROM ingest_log WHERE key LIKE %s",
+                    [f"obs:%:place:{region.place_id}:%"],
+                ).fetchone()
+                results.append(
+                    {
+                        "name": region.name,
+                        "place_id": region.place_id,
+                        "last_ingest": last_ingest,
+                        "taxa_ingested": count_row[0] if count_row else 0,
+                    }
+                )
+        return results
+
     @app.get("/api/destinations")
     def destinations(
         months: str | None = Query(None),

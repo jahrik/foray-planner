@@ -88,11 +88,7 @@ export async function setLocation(query: string): Promise<void> {
   updateHome(response.home);
 
   if (response.needs_refresh) {
-    const succeeded = await startRefresh(
-      `Fetching iNaturalist data around ${response.home.name}… (a few minutes)`,
-      "mushrooms"
-    );
-    if (succeeded) runDestinations();
+    setStatus("No data for this area yet. Click Refresh to fetch.");
   } else {
     runDestinations();
   }

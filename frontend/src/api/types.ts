@@ -145,6 +145,14 @@ export interface LocationResponse {
   home: Home;
 }
 
+/** A configured coverage region with ingest freshness info (`GET /api/coverage`). */
+export interface CoverageRegion {
+  name: string;
+  place_id: number;
+  last_ingest: string | null;
+  taxa_ingested: number;
+}
+
 /** FastAPI's error envelope (`{ "detail": ... }`). */
 export interface ApiError {
   detail?: string;
