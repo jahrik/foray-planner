@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     cell_deg: float = Field(gt=0, le=10, default=0.25)
     ingest: Ingest = Ingest()
     species: list[Species] = Field(default_factory=list)
-    species_file: Path | None = None
+    species_file: Path | None = Path("data/species_seed.json")
     coverage: list[CoverageRegion] = Field(default_factory=list)
 
     @model_validator(mode="after")
