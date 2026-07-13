@@ -31,16 +31,20 @@ def cfg(con: psycopg.Connection) -> Settings:
                 (BOLET, "Boletus", "King Boletes", "genus"),
             ],
         )
-    rows = [
-        (obs_id, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", 10)
-        for obs_id in range(1, 11)
-    ] + [
-        (obs_id, CHANT, HOME_LAT, HOME_LNG, dt.date(2022, 7, 10), 7, 2022, "research", 10)
-        for obs_id in range(11, 16)
-    ] + [
-        (obs_id, BOLET, HOME_LAT, HOME_LNG, dt.date(2022, 9, 5), 9, 2022, "research", 10)
-        for obs_id in range(16, 21)
-    ]
+    rows = (
+        [
+            (obs_id, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", 10)
+            for obs_id in range(1, 11)
+        ]
+        + [
+            (obs_id, CHANT, HOME_LAT, HOME_LNG, dt.date(2022, 7, 10), 7, 2022, "research", 10)
+            for obs_id in range(11, 16)
+        ]
+        + [
+            (obs_id, BOLET, HOME_LAT, HOME_LNG, dt.date(2022, 9, 5), 9, 2022, "research", 10)
+            for obs_id in range(16, 21)
+        ]
+    )
     with con.cursor() as cur:
         cur.executemany(
             "INSERT INTO observations "
