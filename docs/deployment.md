@@ -1,14 +1,7 @@
 # Deployment
 
-Production target: **AWS ECS Fargate + RDS Postgres** via CDK, with Cloudflare in front (the
-`infra/cdk/` app + the full rewrite of the setup steps below land in a follow-up PR - this one
-covers the Postgres/PostGIS migration the deploy depends on). The CD pipeline already builds and
-publishes the image on every push to `main`.
-
-> The "Planned Lightsail setup" section below is stale (superseded by the CDK/ECS/RDS direction
-> above) and will be replaced wholesale in the infra PR - the DuckDB-specific details in it
-> (spatial extension RAM sizing, `/data` volume, `location.json`) no longer apply after this
-> migration either way.
+Production target: **AWS ECS Fargate + RDS Postgres** via CDK, with Cloudflare in front.
+The CD pipeline builds and publishes the image on every push to `main`.
 
 ---
 
@@ -38,10 +31,10 @@ docker pull ghcr.io/jahrik/foray-planner:latest
 
 PG_ENV="-e PGHOST=... -e PGPORT=5432 -e PGUSER=... -e PGPASSWORD=... -e PGDATABASE=foray"
 
-# One-off: initial data refresh (takes a few minutes)
-docker run --rm $PG_ENV -e RIDB_API_KEY=$RIDB_API_KEY \
+# One-off: initial data ingest (takes a few minutes)
+docker run --rm $PG_ENV \
   ghcr.io/jahrik/foray-planner:latest \
-  foray --config config.docker.yaml refresh
+  foray ingest --all-regions
 
 # Start the server
 docker run -d --name foray-planner -p 8000:8000 $PG_ENV -e RIDB_API_KEY=$RIDB_API_KEY \
@@ -53,64 +46,60 @@ The health check polls `GET /api/config` every 30 seconds.
 
 ---
 
-## Refreshing data in production
+## docker-compose stack (local dev)
 
-Postgres has no DuckDB-style single-writer-file constraint, so a standalone `foray refresh`
-process can run **concurrently** with the live server against the same database - no
-stop/restart dance needed.
+`make start` brings up three services:
 
-**Option A - UI Refresh button (recommended for normal use)**
+| Service | Role |
+|---|---|
+| `postgres` | PostGIS 16, health-checked |
+| `app` | FastAPI server on port 8000 |
+| `scheduler` | Background loop: observation ingest every 24h, layers refresh every 168h |
 
-The "Refresh data" button in the UI triggers an in-process refresh. Always safe, no shell
-access needed.
+The scheduler runs `scripts/scheduler.sh` which calls `foray ingest --all-regions` and
+`foray refresh --with camps,land,dispersed,trails` on configurable intervals. Both intervals
+are set via env vars (`FORAY_INGEST_INTERVAL_HOURS`, `FORAY_LAYERS_INTERVAL_HOURS`).
 
-**Option B - Standalone `foray refresh`**
+---
+
+## Data refresh in production
+
+The data pipeline is fully decoupled from search. Search/scoring is read-only against cached
+data and never triggers network calls. Data stays fresh via:
+
+**Option A - Background scheduler (recommended)**
+
+The scheduler service handles this automatically. In production (AWS), use an ECS Scheduled
+Task (EventBridge rule triggering a Fargate task) that runs `foray ingest --all-regions`.
+Same image, same DB, no long-running container - spins up, ingests, exits.
+
+**Option B - UI Refresh button**
+
+The "Refresh data" button in the UI triggers an in-process refresh for the current home radius.
+Runs in a background thread; progress streams via SSE.
+
+**Option C - One-off CLI**
 
 ```bash
-docker run --rm $PG_ENV -e RIDB_API_KEY=$RIDB_API_KEY \
+docker run --rm $PG_ENV \
   ghcr.io/jahrik/foray-planner:latest \
-  foray --config config.docker.yaml refresh
+  foray ingest --all-regions
 ```
 
-Runs as a one-off against the same Postgres instance the live server is using; no need to stop
-the server first.
+Runs as a one-off against the same Postgres instance the live server is using; safe to run
+concurrently (Postgres MVCC handles read/write isolation).
 
 ---
 
 ## Changing location in production
 
 Use the UI's **Set location** bar. It posts to `/api/location`, which upserts the override into
-the `app_location` table (see `docs/development.md`) and triggers an in-process refresh
-automatically. No shell access or container restart needed - and the override survives restarts,
-unlike the old file-based approach.
+the `app_location` table (see `docs/development.md`) and immediately runs scoring against
+existing cached data. No shell access or container restart needed. The override survives
+restarts.
 
----
-
-## Planned Lightsail setup
-
-1. **Create a Lightsail Linux instance** - start at 1 GB RAM; the DuckDB spatial extension
-   needs ~512 MB during dispersed-camping ingest. Size up to 2 GB if refresh is slow.
-2. **Attach a persistent disk** - mount at `/data`. The DuckDB cache survives instance
-   restarts and is the only stateful piece.
-3. **Install Docker** on the instance.
-4. **Pull and run** the GHCR image as shown above.
-5. **Set `RIDB_API_KEY`** as an instance environment variable - never committed to the repo.
-6. **Cloudflare in front:**
-   - Proxy DNS + TLS termination
-   - Cloudflare Access (email or Google auth) = private app with no app-level auth code
-   - Static IP on the Lightsail instance so the DNS record stays stable
-
-### Planned architecture
-
-```
-Browser → Cloudflare (TLS + Access) → Lightsail static IP
-                                              │
-                                    Docker: foray-planner
-                                              │
-                                    /data (persistent disk)
-                                     └─ foray.duckdb
-                                     └─ location.json
-```
+If the new area has no data, use the Refresh button or wait for the scheduler to pick it up
+on its next cycle.
 
 ---
 
@@ -120,6 +109,10 @@ Browser → Cloudflare (TLS + Access) → Lightsail static IP
 |---|---|---|
 | `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` | Yes | Postgres connection - read natively by `psycopg`/libpq, never a config file key. |
 | `RIDB_API_KEY` | No | Recreation.gov API key for campground ingest. Absent = camps step is a no-op. |
+| `FORAY_HOME__LAT` / `FORAY_HOME__LNG` / `FORAY_HOME__RADIUS_KM` | No | Default home location (overridden by `app_location` table if set via UI). |
+| `FORAY_COVERAGE` | No | JSON array of `{name, place_id}` for state-level ingest regions. Defaults to WA/OR/ID. |
+| `FORAY_INGEST_INTERVAL_HOURS` | No | Scheduler: hours between observation ingests (default: 24). |
+| `FORAY_LAYERS_INTERVAL_HOURS` | No | Scheduler: hours between layer refreshes (default: 168). |
 
 Secrets go in the instance environment, Secrets Manager, or a gitignored `.env` file locally.
 **Never commit them.**
@@ -132,10 +125,10 @@ The Dockerfile uses a three-stage build:
 
 | Stage | Base | What it does |
 |---|---|---|
-| `frontend` | `node:22-slim` | `npm ci` + `npm run build` → emits the Vite/TS bundle |
-| `builder` | `ghcr.io/astral-sh/uv:python3.13-bookworm-slim` | `uv sync --frozen --no-dev` → self-contained `.venv` |
+| `frontend` | `node:22-slim` | `npm ci` + `npm run build` -> emits the Vite/TS bundle |
+| `builder` | `ghcr.io/astral-sh/uv:python3.13-bookworm-slim` | `uv sync --frozen --no-dev` -> self-contained `.venv` |
 | `runtime` | `python:3.13-slim-bookworm` | Copies app + venv + bundle; runs as non-root `foray` user |
 
 No local volume - the database is Postgres, reached entirely via env vars.
 Port: `8000`.
-Default command: `foray --config config.docker.yaml serve --host 0.0.0.0 --port 8000`.
+Default command: `foray serve --host 0.0.0.0 --port 8000`.

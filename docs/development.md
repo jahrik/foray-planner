@@ -20,7 +20,7 @@ make db                 # start Postgres+PostGIS (docker compose)
 # Optional: create a .env file with your RIDB key
 echo "RIDB_API_KEY=your_key_here" > .env   # omit to skip campground ingest
 
-uv run foray refresh    # pull iNat data + build phenology (minutes; hits the network)
+make ingest             # one-shot all-regions observation ingest + phenology rebuild
 make start              # start the full stack (http://localhost:8000)
 ```
 
@@ -44,6 +44,8 @@ All settings come from environment variables (prefix `FORAY_`, nested delimiter 
 | `FORAY_INGEST__RECENT_WEEKS` | `4` | Trailing window for the "Fruiting now" live signal |
 | `FORAY_SPECIES` | (built-in defaults in `src/foray/defaults.py`) | Curated target taxa list (JSON array) |
 | `FORAY_COVERAGE` | (built-in: WA, OR, ID) | Coverage regions for state-level ingest (JSON array) |
+| `FORAY_INGEST_INTERVAL_HOURS` | `24` | Scheduler: hours between observation ingests |
+| `FORAY_LAYERS_INTERVAL_HOURS` | `168` | Scheduler: hours between layer refreshes (camps/land/dispersed/trails) |
 
 **Database connection** comes from the standard libpq env vars
 (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`), read natively by `psycopg`. Credentials
@@ -57,24 +59,70 @@ that table.
 
 ---
 
+## Architecture overview
+
+```
+FORAY_* env vars (pydantic-settings) + PG* env vars (DB connection)
+         |
+         v
+    Config (pydantic)
+         |
+    +----+-------------------------------------+
+    |                                          |
+iNaturalist API          Recreation.gov RIDB API
+(pyinaturalist)          OSM Overpass API
+ArcGIS BLM/USFS          Nominatim (geocoding)
+    |                                          |
+    +------------------+-----------------------+
+                       |
+              Postgres + PostGIS
+           (observations, campsites,
+            public_land, trails,
+            ingest_log, app_location)
+                       |
+            phenology + regions
+            (materialized in SQL)
+                       |
+                FastAPI /api/*
+                       |
+           Leaflet + TypeScript client
+```
+
+### Data pipeline (decoupled)
+
+Search/scoring is **read-only** against cached data. Data ingestion happens independently:
+
+- **Scheduler service** (`scripts/scheduler.sh`): runs alongside the app in docker-compose, pulls observations every 24h and refreshes layers (camps/land/dispersed/trails) every 168h
+- **Coverage regions**: state-level ingest using iNat `place_id` for exact administrative boundaries (WA, OR, ID by default)
+- **`make ingest`**: one-shot manual ingest for all regions
+- **UI Refresh button**: triggers an in-process refresh for the current home radius
+
+The UI's "Set Location" never triggers data fetching. It updates the home coordinates and immediately runs scoring against whatever is already in the database.
+
+---
+
 ## CLI reference
 
 ```bash
-uv run foray ingest      # pull iNat observations only (no phenology rebuild)
-uv run foray camps       # ingest Recreation.gov campgrounds (needs RIDB_API_KEY)
-uv run foray land        # ingest BLM/USFS ownership boundaries (ArcGIS, no key)
-uv run foray dispersed   # ingest OSM dispersed-camping layer (Overpass, no key)
-uv run foray trails      # ingest OSM trails: paths, hiking routes, trailheads (Overpass, no key)
-uv run foray refresh     # all of the above + rebuild phenology/regions tables
-uv run foray plan        # print a greedy multi-stop trip itinerary (--months, --max-stops,
-                         #   --max-drive-km, --any-camp)
-uv run foray serve       # start the FastAPI server (--host / --port to override)
-uv run foray openapi     # dump OpenAPI schema (feeds npm run gen:api)
+uv run foray ingest              # pull observations for home radius
+uv run foray ingest --all-regions  # pull observations for all coverage regions (state-level)
+uv run foray ingest --region "Oregon"  # pull observations for a single region
+uv run foray camps               # ingest Recreation.gov campgrounds (needs RIDB_API_KEY)
+uv run foray land                # ingest BLM/USFS ownership boundaries (ArcGIS, no key)
+uv run foray dispersed           # ingest OSM dispersed-camping layer (Overpass, no key)
+uv run foray trails              # ingest OSM trails: paths, hiking routes, trailheads (Overpass, no key)
+uv run foray refresh             # all of the above + rebuild phenology/regions tables
+uv run foray refresh --with camps,trails  # refresh only specific layers
+uv run foray plan                # print a greedy multi-stop trip itinerary
+uv run foray serve               # start the FastAPI server (--host / --port to override)
+uv run foray openapi             # dump OpenAPI schema (feeds npm run gen:api)
 ```
 
-`refresh` is the normal daily/weekly operation: it runs ingest → camps → land → dispersed →
-trails → phenology in sequence, logging progress per stage. `plan` reads the already-refreshed
-cache and does no network I/O.
+`ingest --all-regions` is what the scheduler runs. It uses iNat's `place_id` parameter for
+state-level boundaries (no tiling needed) and rebuilds phenology after ingest.
+
+`refresh` is for manual/ad-hoc use: it runs ingest (home radius) + camps + land + dispersed +
+trails + phenology in sequence. `plan` reads the already-cached data and does no network I/O.
 
 ---
 
@@ -101,37 +149,6 @@ Rerun `npm run gen:api` after changing any `/api/*` route signature.
 
 ---
 
-## Architecture overview
-
-```
-FORAY_* env vars (pydantic-settings) + PG* env vars (DB connection)
-         │
-         ▼
-    Config (pydantic)
-         │
-    ┌────┴─────────────────────────────────┐
-    │                                      │
-iNaturalist API          Recreation.gov RIDB API
-(pyinaturalist)          OSM Overpass API
-ArcGIS BLM/USFS          Nominatim (geocoding)
-    │                                      │
-    └────────────────┬─────────────────────┘
-                     │
-            Postgres + PostGIS
-         (observations, campsites,
-          public_land, ingest_log,
-          app_location)
-                     │
-          phenology + regions
-          (materialized in SQL)
-                     │
-              FastAPI /api/*
-                     │
-         Leaflet + TypeScript client
-```
-
----
-
 ## Scoring
 
 Three primitives drive all three views:
@@ -145,9 +162,9 @@ Three primitives drive all three views:
 **Final score per region** (summed over all target species in the selected months):
 
 ```
-score = Σ species [ w_pheno × log1p(month_count) ]
-      × (1 + 0.1 × (n_species − 1))   ← diversity bonus
-      × (1 + log1p(recent_count))      ← recency boost
+score = S species [ w_pheno x log1p(month_count) ]
+      x (1 + 0.1 x (n_species - 1))   <- diversity bonus
+      x (1 + log1p(recent_count))      <- recency boost
 ```
 
 Scores are normalized 0..1 against the top region. The calendar view fixes the region axis and
@@ -159,8 +176,8 @@ shows per-month totals. The alerts view fixes species + recency, ignoring the mo
 
 | Table | Key | Contents |
 |---|---|---|
-| `observations` | `(id)` | Raw iNat research-grade observations: lat, lng, observed_on, taxon_id |
-| `taxa` | `taxon_id` | taxon_id → name/common_name mapping |
+| `observations` | `(id)` | Raw iNat research-grade observations: lat, lng, observed_on, taxon_id, place_guess, uri, obscured |
+| `taxa` | `taxon_id` | taxon_id -> name/common_name mapping |
 | `phenology` | `(region_id, taxon_id, month)` | Materialized per-(region, taxon, month) observation counts |
 | `regions` | `region_id` | Grid cell summaries: center coords, total obs count, distinct taxa |
 | `campsites` | `id` (`"{source}:{source_id}"`) | Developed campgrounds (RIDB) + OSM reported/dispersed sites |
@@ -169,11 +186,11 @@ shows per-month totals. The alerts view fixes species + recency, ignoring the mo
 | `ingest_log` | - | Per-run progress records for refresh stages |
 | `app_location` | single row | The UI's "Set location" override |
 
-`phenology`/`regions` are dynamically (re)materialized by `foray refresh`; every other table is
-created by `foray.cache.SCHEMA` (which also enables the `postgis` extension, used only by the
-dispersed-camping ingest's point-in-polygon join - the read path never needs PostGIS geometry
-types). The database is fully rebuildable with `foray refresh`. Change `FORAY_CELL_DEG`
-and re-run refresh to rebuild with a different grid resolution.
+`phenology`/`regions` are dynamically (re)materialized by `foray ingest` and `foray refresh`;
+every other table is created by `foray.cache.SCHEMA` (which also enables the `postgis` extension,
+used only by the dispersed-camping ingest's point-in-polygon join - the read path never needs
+PostGIS geometry types). The database is fully rebuildable with `foray refresh`. Change
+`FORAY_CELL_DEG` and re-run refresh to rebuild with a different grid resolution.
 
 ---
 
@@ -192,7 +209,7 @@ Taxon IDs come from iNaturalist - look them up on the website or via
 **Hard rule:** no authored descriptions, edibility claims, or lookalike text anywhere in this
 codebase. The UI links each taxon to its iNaturalist page. Keep it that way.
 
-After editing, run `foray refresh` to re-ingest.
+After editing, run `make ingest` to re-ingest.
 
 ---
 
@@ -231,19 +248,15 @@ with `httpx.MockTransport`.
 ## Docker build
 
 ```bash
-make docker        # builds local/foray-planner:dev
+docker build -t local/foray-planner:dev .
+```
 
-# One-off: initial data refresh (needs a reachable Postgres - see docker-compose.yml)
-docker run --rm \
-  -e PGHOST=host.docker.internal -e PGUSER=foray -e PGPASSWORD=foray -e PGDATABASE=foray \
-  -e RIDB_API_KEY=$RIDB_API_KEY \
-  local/foray-planner:dev \
-  foray --config config.docker.yaml refresh
+Or use the full stack:
 
-# Serve
-docker run -p 8000:8000 \
-  -e PGHOST=host.docker.internal -e PGUSER=foray -e PGPASSWORD=foray -e PGDATABASE=foray \
-  local/foray-planner:dev
+```bash
+make start         # builds + starts app + scheduler + postgres
+make stop          # stop all containers
+make clean         # tear down containers + volumes
 ```
 
 The Dockerfile uses a three-stage build:

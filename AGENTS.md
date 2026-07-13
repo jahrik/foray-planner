@@ -5,10 +5,12 @@ phenology. Public repo: [jahrik/foray-planner](https://github.com/jahrik/foray-p
 
 ## Layout
 
-- `src/foray/config.py` - pydantic models (`Config`, `Home`, `Species`) with range
-  validation; loads `config.yaml`. Config is the file-boundary trust layer - internal scoring
-  types stay dataclasses. The runtime location override lives in Postgres now (`app_location`
-  table, `foray.cache.load_location`/`save_location`), not a file - no DB connection here.
+- `src/foray/config.py` - pydantic-settings (`Settings(BaseSettings)`) with `Home`, `Ingest`,
+  `Species`, `CoverageRegion` models. All config comes from env vars (prefix `FORAY_`, nested
+  delimiter `__`) or `.env` file. The runtime location override lives in Postgres
+  (`app_location` table, `foray.cache.load_location`/`save_location`), not a file.
+- `src/foray/defaults.py` - built-in species list (21 genera) and coverage regions (WA/OR/ID).
+  Overridden via `FORAY_SPECIES` or `FORAY_COVERAGE` env vars.
 - `src/foray/inat.py` - throttled pyinaturalist wrapper (observations, species_counts,
   monthly histogram). Descriptive User-Agent; deep-paginates via `id_above`; `_with_retries`
   backs off on transient network errors so one blip doesn't abort a long ingest.
@@ -17,62 +19,47 @@ phenology. Public repo: [jahrik/foray-planner](https://github.com/jahrik/foray-p
 - `src/foray/cache.py` - Postgres+PostGIS schema (extension + tables created eagerly on every
   `connect()`) + idempotent upserts (`ON CONFLICT`), ingest log. `connect()` takes no DSN by
   default - reads the standard `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` env vars.
-- `src/foray/ingest.py` - pulls per seed taxon within the home radius; tags each obs with
-  the **seed** taxon_id (not leaf species) so phenology is per foraging target.
+- `src/foray/ingest.py` - pulls per seed taxon within the home radius or by coverage region
+  (`place_id`). Tags each obs with the **seed** taxon_id (not leaf species) so phenology is
+  per foraging target. Region ingest uses chunked inserts (5000 rows) for bounded memory.
 - `src/foray/camps.py` - developed-campground ingest from the Recreation.gov **RIDB API**
-  (httpx, key from env `RIDB_API_KEY`). Tiles the home radius into ≤50-mi query circles,
+  (httpx, key from env `RIDB_API_KEY`). Tiles the home radius into <=50-mi query circles,
   dedupes facilities, clips to the true radius with `haversine_km`. Skipped (no-op) when the
   key is unset, so the iNat refresh still works. `free` is only asserted on an explicit
   no-fee signal - never guessed.
 - `src/foray/dispersed.py` - dispersed-camping layer from OSM **Overpass** (httpx, no key). Two
   ODbL signals, both cached as `campsites`: reported sites (`kind='reported'` - `tourism=camp_site`
   /`camp_pitch`, `backcountry=yes`) and a proxy (`kind='dispersed'` - `highway=track`/`unclassified`
-  ∩ cached `public_land`, via **PostGIS**'s point-in-polygon, ingest-side only so the read path
+  within cached `public_land`, via **PostGIS**'s point-in-polygon, ingest-side only so the read path
   stays spatial-free). `free=TRUE` on proxy points (public-land camping is free of
-  charge); the *legality* caveat rides on `kind`+UI label, never asserted. Best-effort like camps/
-  land. iOverlander/The Dyrt are **not** usable (personal-use-only license / no open API).
+  charge); the *legality* caveat rides on `kind`+UI label, never asserted.
 - `src/foray/trails.py` - trail layer from OSM **Overpass** (httpx, no key). One ODbL query pulls
-  backcountry paths (`highway=path` → `kind='path'`, LineString; `footway` is **excluded** - it's
-  mostly urban sidewalks, ~6x the volume and irrelevant here), named hiking routes
-  (`route=hiking` relations → `kind='route'`, MultiLineString stitched from member ways), and
-  trailheads (`highway=trailhead` nodes → `kind='trailhead'`, Point). Geometry is cached as
-  GeoJSON *text* + bbox + a representative center in `trails`, so the read path stays spatial-free
-  (bbox filter + `haversine_km`); way vertices are thinned. Best-effort like the other OSM/ArcGIS
-  ingests; informational only (links the OSM source, no legal-access claim).
+  backcountry paths (`highway=path` -> `kind='path'`, LineString; `footway` is **excluded** - it's
+  mostly urban sidewalks), named hiking routes (`route=hiking` relations -> `kind='route'`,
+  MultiLineString), and trailheads (`highway=trailhead` nodes -> `kind='trailhead'`, Point).
+  Geometry is cached as GeoJSON *text* + bbox + a representative center in `trails`.
 - `src/foray/scoring.py` - `build_phenology` (materializes `regions` + `phenology`) and the
-  scoring modes: `rank_destinations`, `place_calendar`, `alerts`, `camps_near` (campsites
-  near a point, free-first by distance), `trails_near` (trails near a hotspot, nearest first,
-  each annotated with the distance to the closest campsite - "park → hike → fungi"), and
-  `plan_route` (greedy multi-stop itinerary: pick the top destinations that have a nearby free
-  camp, then order them nearest-neighbour from home under a per-leg drive cap). Grid binning
-  is one reusable SQL fragment (`_BINNED`).
+  scoring modes: `rank_destinations`, `place_calendar`, `alerts`, `camps_near`, `trails_near`,
+  and `plan_route` (greedy multi-stop itinerary). Grid binning is one reusable SQL fragment
+  (`_BINNED`). `alerts` includes `place_guess`, `uri`, and `obscured` per observation.
 - `src/foray/api.py` - FastAPI: `/api/{config,species,destinations,calendar,alerts,camps,land,
-  trails,plan,location,refresh}` + `/` (serves the built client). `/api/camps` takes a `region_id`
-  or a `lat`/`lng` plus `radius_km` + `free_only`; `/api/land` and `/api/trails` take a `region_id`
-  or `lat`/`lng` + `radius_km`; `/api/plan` takes `months`/`species` + `max_stops`, `max_drive_km`,
-  `camp_radius_km`, `require_free_camp`. A `psycopg_pool.ConnectionPool` opened/closed via
-  FastAPI `lifespan`, one pooled connection per request; live config is mutable app state;
-  `refresh` runs in a background thread on its own pooled connection for the duration, with
-  reads guarded while it rebuilds (Postgres MVCC handles the actual read/write concurrency -
-  no DuckDB-style single-writer serialization needed). `destinations`/`plan` default to the
-  current month when none is given.
-- `src/foray/cli.py` - `foray ingest | camps | land | dispersed | trails | plan | refresh | serve |
-  openapi` (`refresh` does obs + camps + land + dispersed + trails + phenology; `plan` prints a
-  greedy itinerary; `openapi` dumps the schema that feeds the frontend type generator).
-- `src/foray/web/dist/` - the built client bundle (gitignored; emitted by the frontend build
-  and served by FastAPI as static assets at `/assets` + `/`).
+  trails,plan,location,refresh,coverage}` + `/` (serves the built client). Search is **read-only**
+  against cached data. `set_location` does not trigger refresh. A `psycopg_pool.ConnectionPool`
+  opened/closed via FastAPI `lifespan`; `refresh` runs in a background thread with SSE progress.
+- `src/foray/cli.py` - Click CLI: `foray ingest | camps | land | dispersed | trails | refresh |
+  plan | serve | openapi`. `ingest --all-regions` is what the scheduler runs.
+- `scripts/scheduler.sh` - shell loop running observation ingest (all regions) every N hours
+  and layer refresh every M hours. Configurable via `FORAY_INGEST_INTERVAL_HOURS` (default 24)
+  and `FORAY_LAYERS_INTERVAL_HOURS` (default 168).
 - `frontend/` - the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern:
   `src/state.ts` (shared `State`, DOM `qs()`/`setStatus()` helpers), `src/map.ts` (Leaflet init,
   theme/tile switching, marker palette, `clear*()` layer helpers), `src/layers.ts` (camps/land/
   trails fetch + render + popups), `src/views.ts` (destinations/calendar/alerts tabs),
   `src/plan.ts` (route planning UI + GPX/JSON export), `src/refresh.ts` (SSE refresh + set-location),
-  and `src/main.ts` (DOM wiring/orchestration only - kept small on purpose so new features don't
-  pile back into one file). `src/api/` holds the typed client + `schema.ts` generated from the
-  backend's OpenAPI via `openapi-typescript`, `src/style.css` is the stylesheet. Builds into
-  `../src/foray/web/dist`. Marker palette is bright/neon and deliberately non-green (hot magenta =
-  strength, electric cyan = recent) so it reads on both basemaps. A **light/dark theme toggle**
-  (🌙/☀️, header) is `data-theme`-driven with a `localStorage` preference (default **dark**), set
-  before first paint by an inline `<head>` script; the basemap follows it (CARTO dark / OSM light).
+  and `src/main.ts` (DOM wiring/orchestration + coverage indicator). `src/api/` holds the typed
+  client + `schema.ts` generated from the backend's OpenAPI via `openapi-typescript`. Builds into
+  `../src/foray/web/dist`. A **light/dark theme toggle** is `data-theme`-driven with a
+  `localStorage` preference (default **dark**); the basemap follows it (CARTO dark / OSM light).
 
 ## Conventions
 
@@ -90,7 +77,7 @@ prepends the nvm Node path automatically.
 ```bash
 make install            # uv sync + frontend npm ci
 make db                 # start Postgres+PostGIS
-uv run foray refresh    # pull iNat obs + build phenology (first run hits the network)
+make ingest             # one-shot all-regions ingest + phenology rebuild
 make start              # http://localhost:8000 (app + scheduler + postgres)
 ```
 
@@ -112,8 +99,8 @@ make start              # http://localhost:8000 (app + scheduler + postgres)
 ### Backend CLI
 
 ```bash
-uv run foray ingest      # pull observations only
-uv run foray refresh     # ingest + rebuild phenology/regions (obs + camps + land + dispersed)
+uv run foray ingest --all-regions  # pull observations for all coverage regions
+uv run foray refresh               # ingest + rebuild phenology/regions (all layers)
 uv run foray serve --host 0.0.0.0 --port 8000
 ```
 
@@ -155,18 +142,20 @@ make frontend
 
 - Only `quality_grade=research` counts toward scoring.
 - Regions are uniform lat/lng grid cells (`cell_deg`), id = `"{ilat}_{ilng}"`, derived in
-  SQL - never stored redundantly. Change `cell_deg` → re-run `foray refresh`.
-- Location is per-area: changing it (UI `POST /api/location`) requires a `refresh` to fetch
-  iNat data for the new radius. The saved override (`app_location` table in Postgres) wins
-  over `config.yaml`'s home and survives restarts.
+  SQL - never stored redundantly. Change `cell_deg` -> re-run `foray refresh`.
+- Location is per-area: changing it (UI `POST /api/location`) immediately runs scoring against
+  cached data. The saved override (`app_location` table in Postgres) wins over the env var
+  defaults and survives restarts.
 - The Postgres database is fully rebuildable via `foray refresh`; connection info comes from
-  `PG*` env vars, never `config.yaml` (see `src/foray/cache.py`).
+  `PG*` env vars (see `src/foray/cache.py`).
 - `campsites` (developed campgrounds) is keyed by `"{source}:{source_id}"` and upserted
   idempotently. Needs `RIDB_API_KEY` (gitignored `.env` locally; env var in prod) - absent,
   camps ingest is a no-op. `free` is nullable: TRUE only on an explicit no-fee signal, else
-  NULL (unknown). No legality/claims - surface ownership + link the source, never assert.
-- Adding species: edit `src/foray/defaults.py` (resolve taxon_ids via `get_taxa`) or set
-  `FORAY_SPECIES` env var (JSON array), then refresh.
+  NULL (unknown).
+- `observations` includes `place_guess`, `uri`, and `obscured` columns enriched from iNat
+  during ingest. Existing rows backfill via ON CONFLICT DO UPDATE with COALESCE on next ingest.
+- Adding species: edit `src/foray/defaults.py` or set `FORAY_SPECIES` env var (JSON array),
+  then run `make ingest`.
 
 ## Not in scope
 
