@@ -8,21 +8,25 @@ import json
 import logging
 import queue
 import threading
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-import duckdb
 import httpx
+import psycopg
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 from foray import camps, dispersed, geocode, land, scoring, trails
-from foray.cache import connect
-from foray.config import Config, Home, load_config, location_path, save_location
+from foray.cache import _ENABLE_POSTGIS, SCHEMA
+from foray.cache import load_location as db_load_location
+from foray.cache import save_location as db_save_location
+from foray.config import Config, Home, load_config
 from foray.ingest import ingest
 
 logger = logging.getLogger(__name__)
@@ -43,17 +47,15 @@ class LocationBody(BaseModel):
 
 
 def create_app(cfg: Config | None = None) -> FastAPI:
-    """Wire up the API, starting the shared DuckDB connection and config state."""
+    """Wire up the API: a Postgres connection pool + config state, opened/closed via lifespan."""
     cfg = cfg or load_config()
-    app = FastAPI(title="Foray Planner API")
-    app.add_middleware(GZipMiddleware, minimum_size=1000)
-    if (_DIST / "assets").is_dir():
-        app.mount("/assets", StaticFiles(directory=str(_DIST / "assets")), name="assets")
 
-    # One shared read-write connection for the whole app. Per-request cursors are
-    # thread-safe, and a background refresh writing through the same connection avoids
-    # the file-lock conflict that separate connections would hit.
-    db = connect(cfg.db_path)
+    # Pool connections carry PG* env vars by default (see cache.connect's docstring) - no
+    # DSN-building code needed. `open=False` defers the actual connections until the
+    # lifespan's `pool.open()`, matching psycopg_pool's recommended startup pattern.
+    pool = ConnectionPool(
+        conninfo="", min_size=1, max_size=5, open=False, kwargs={"autocommit": True}
+    )
     state: dict[str, Any] = {
         "cfg": cfg,
         "refreshing": False,
@@ -64,6 +66,31 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         "abort_event": threading.Event(),
         "http_client": None,
     }
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        pool.open()
+        with pool.connection() as conn:
+            try:
+                conn.execute(_ENABLE_POSTGIS)
+            except psycopg.Error:
+                logger.warning(
+                    "api: could not enable postgis (missing extension or insufficient privilege); "
+                    "the dispersed-camping proxy will be skipped."
+                )
+            conn.execute(SCHEMA)
+            override = db_load_location(conn)
+        if override is not None:
+            state["cfg"] = state["cfg"].model_copy(update={"home": Home(**override)})
+        try:
+            yield
+        finally:
+            pool.close()
+
+    app = FastAPI(title="Foray Planner API", lifespan=lifespan)
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
+    if (_DIST / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_DIST / "assets")), name="assets")
 
     def broadcast(msg: dict[str, Any]) -> None:
         state["last_progress"] = msg
@@ -129,54 +156,58 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             broadcast({"step": "Starting refresh…", "progress": 0.0})
             logger.info("refresh: starting for %s (target=%s)", current().home.name, target)
 
-            if target in ("all", "mushrooms") and not state["abort_event"].is_set():
-                ingest(
-                    current(),
-                    db,
-                    progress_cb=make_cb(0.0, 90.0 if target == "mushrooms" else 50.0),
-                    abort_event=state["abort_event"],
-                )
-            if target in ("all", "camps") and not state["abort_event"].is_set():
-                camps.ingest_campgrounds(
-                    current(),
-                    db,
-                    client=state["http_client"],
-                    progress_cb=make_cb(
-                        50.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
-                    ),
-                )
-            if target in ("all", "land") and not state["abort_event"].is_set():
-                land.ingest_public_land(
-                    current(),
-                    db,
-                    client=state["http_client"],
-                    progress_cb=make_cb(
-                        60.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
-                    ),
-                )
-            if target in ("all", "dispersed") and not state["abort_event"].is_set():
-                dispersed.ingest_dispersed(
-                    current(),
-                    db,
-                    client=state["http_client"],
-                    progress_cb=make_cb(
-                        70.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
-                    ),
-                )
-            if target in ("all", "trails") and not state["abort_event"].is_set():
-                trails.ingest_trails(
-                    current(),
-                    db,
-                    client=state["http_client"],
-                    progress_cb=make_cb(
-                        80.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
-                    ),
-                )
+            # One pooled connection checked out for the whole refresh - Postgres handles
+            # concurrent readers (other requests borrowing their own connections) natively
+            # via MVCC, unlike the DuckDB-era single-writer-file model this replaced.
+            with pool.connection() as db:
+                if target in ("all", "mushrooms") and not state["abort_event"].is_set():
+                    ingest(
+                        current(),
+                        db,
+                        progress_cb=make_cb(0.0, 90.0 if target == "mushrooms" else 50.0),
+                        abort_event=state["abort_event"],
+                    )
+                if target in ("all", "camps") and not state["abort_event"].is_set():
+                    camps.ingest_campgrounds(
+                        current(),
+                        db,
+                        client=state["http_client"],
+                        progress_cb=make_cb(
+                            50.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
+                        ),
+                    )
+                if target in ("all", "land") and not state["abort_event"].is_set():
+                    land.ingest_public_land(
+                        current(),
+                        db,
+                        client=state["http_client"],
+                        progress_cb=make_cb(
+                            60.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
+                        ),
+                    )
+                if target in ("all", "dispersed") and not state["abort_event"].is_set():
+                    dispersed.ingest_dispersed(
+                        current(),
+                        db,
+                        client=state["http_client"],
+                        progress_cb=make_cb(
+                            70.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
+                        ),
+                    )
+                if target in ("all", "trails") and not state["abort_event"].is_set():
+                    trails.ingest_trails(
+                        current(),
+                        db,
+                        client=state["http_client"],
+                        progress_cb=make_cb(
+                            80.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
+                        ),
+                    )
 
-            if target in ("all", "mushrooms") and not state["abort_event"].is_set():
-                broadcast({"step": "Building phenology…", "progress": 90.0})
-                logger.info("refresh: building phenology…")
-                scoring.build_phenology(db, current().cell_deg)
+                if target in ("all", "mushrooms") and not state["abort_event"].is_set():
+                    broadcast({"step": "Building phenology…", "progress": 90.0})
+                    logger.info("refresh: building phenology…")
+                    scoring.build_phenology(db, current().cell_deg)
 
             if state["abort_event"].is_set():
                 logger.info("refresh: cancelled by user")
@@ -227,36 +258,32 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         cfg = current()
         # No months given -> default to the current calendar month.
         selected_months = parse_months(months) if months is not None else [dt.date.today().month]
-        cursor = db.cursor()
         try:
-            ranked = scoring.rank_destinations(
-                cursor,
-                months=selected_months,
-                taxon_ids=parse_species(species),
-                home_lat=cfg.home.lat,
-                home_lng=cfg.home.lng,
-                radius_km=radius_km or cfg.home.radius_km,
-                cell_deg=cfg.cell_deg,
-                recent_weeks=cfg.recent_weeks,
-            )
-        except duckdb.CatalogException:
+            with pool.connection() as conn:
+                ranked = scoring.rank_destinations(
+                    conn,
+                    months=selected_months,
+                    taxon_ids=parse_species(species),
+                    home_lat=cfg.home.lat,
+                    home_lng=cfg.home.lng,
+                    radius_km=radius_km or cfg.home.radius_km,
+                    cell_deg=cfg.cell_deg,
+                    recent_weeks=cfg.recent_weeks,
+                )
+        except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
-        finally:
-            cursor.close()
         return JSONResponse([asdict(region) for region in ranked])
 
     @app.get("/api/calendar")
     def calendar(region_id: str, species: str = Query("all")) -> dict[int, Any]:
         require_idle()
-        cursor = db.cursor()
         try:
-            calendar = scoring.place_calendar(
-                cursor, region_id=region_id, taxon_ids=parse_species(species)
-            )
-        except duckdb.CatalogException:
+            with pool.connection() as conn:
+                calendar = scoring.place_calendar(
+                    conn, region_id=region_id, taxon_ids=parse_species(species)
+                )
+        except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
-        finally:
-            cursor.close()
         return calendar
 
     @app.get("/api/alerts")
@@ -267,21 +294,19 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     ) -> list[dict[str, Any]]:
         require_idle()
         cfg = current()
-        cursor = db.cursor()
         try:
-            return scoring.alerts(
-                cursor,
-                taxon_ids=parse_species(species),
-                home_lat=cfg.home.lat,
-                home_lng=cfg.home.lng,
-                radius_km=radius_km or cfg.home.radius_km,
-                cell_deg=cfg.cell_deg,
-                weeks=weeks or cfg.recent_weeks,
-            )
-        except duckdb.CatalogException:
+            with pool.connection() as conn:
+                return scoring.alerts(
+                    conn,
+                    taxon_ids=parse_species(species),
+                    home_lat=cfg.home.lat,
+                    home_lng=cfg.home.lng,
+                    radius_km=radius_km or cfg.home.radius_km,
+                    cell_deg=cfg.cell_deg,
+                    weeks=weeks or cfg.recent_weeks,
+                )
+        except psycopg.errors.UndefinedTable:
             return []
-        finally:
-            cursor.close()
 
     @app.get("/api/camps")
     def get_camps(
@@ -299,17 +324,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             center_lat, center_lng = lat, lng
         else:
             raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
-        cursor = db.cursor()
-        try:
+        with pool.connection() as conn:
             sites = scoring.camps_near(
-                cursor,
+                conn,
                 lat=center_lat,
                 lng=center_lng,
                 radius_km=radius_km,
                 free_only=free_only,
             )
-        finally:
-            cursor.close()
         return JSONResponse([asdict(site) for site in sites])
 
     @app.get("/api/land")
@@ -327,11 +349,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             center_lat, center_lng = lat, lng
         else:
             raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
-        cursor = db.cursor()
-        try:
-            units = scoring.land_near(cursor, lat=center_lat, lng=center_lng, radius_km=radius_km)
-        finally:
-            cursor.close()
+        with pool.connection() as conn:
+            units = scoring.land_near(conn, lat=center_lat, lng=center_lng, radius_km=radius_km)
         return JSONResponse([asdict(unit) for unit in units])
 
     @app.get("/api/trails")
@@ -349,11 +368,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             center_lat, center_lng = lat, lng
         else:
             raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
-        cursor = db.cursor()
-        try:
-            found = scoring.trails_near(cursor, lat=center_lat, lng=center_lng, radius_km=radius_km)
-        finally:
-            cursor.close()
+        with pool.connection() as conn:
+            found = scoring.trails_near(conn, lat=center_lat, lng=center_lng, radius_km=radius_km)
         return JSONResponse([asdict(trail) for trail in found])
 
     @app.get("/api/plan")
@@ -370,26 +386,24 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         require_idle()
         cfg = current()
         selected_months = parse_months(months) if months is not None else [dt.date.today().month]
-        cursor = db.cursor()
         try:
-            trip = scoring.plan_route(
-                cursor,
-                months=selected_months,
-                taxon_ids=parse_species(species),
-                home_lat=cfg.home.lat,
-                home_lng=cfg.home.lng,
-                radius_km=radius_km or cfg.home.radius_km,
-                cell_deg=cfg.cell_deg,
-                recent_weeks=cfg.recent_weeks,
-                max_stops=max_stops,
-                max_drive_km=max_drive_km,
-                camp_radius_km=camp_radius_km,
-                require_free_camp=require_free_camp,
-            )
-        except duckdb.CatalogException:
+            with pool.connection() as conn:
+                trip = scoring.plan_route(
+                    conn,
+                    months=selected_months,
+                    taxon_ids=parse_species(species),
+                    home_lat=cfg.home.lat,
+                    home_lng=cfg.home.lng,
+                    radius_km=radius_km or cfg.home.radius_km,
+                    cell_deg=cfg.cell_deg,
+                    recent_weeks=cfg.recent_weeks,
+                    max_stops=max_stops,
+                    max_drive_km=max_drive_km,
+                    camp_radius_km=camp_radius_km,
+                    require_free_camp=require_free_camp,
+                )
+        except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
-        finally:
-            cursor.close()
         return JSONResponse(asdict(trip))
 
     @app.post("/api/location")
@@ -418,27 +432,25 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         else:
             raise HTTPException(400, "provide `query` or both `lat` and `lng`")
 
-        save_location(location_path(cfg.db_path), home)
-        state["cfg"] = cfg.model_copy(update={"home": home})
-
         needs_refresh = True
-        cursor = None
-        try:
-            cursor = db.cursor()
-            # The core data is mushrooms; check if we've ingested observations for this area.
-            key_pattern = f"obs:%:{home.lat}:{home.lng}:{home.radius_km}:%"
-            row = cursor.execute(
-                "SELECT 1 FROM ingest_log WHERE key LIKE ?", [key_pattern]
-            ).fetchone()
-            has_obs = row is not None
-            phenology_row = cursor.execute("SELECT 1 FROM phenology LIMIT 1").fetchone()
-            has_phenology = phenology_row is not None
-            needs_refresh = not (has_obs and has_phenology)
-        except duckdb.CatalogException:
-            needs_refresh = True
-        finally:
-            if cursor is not None:
-                cursor.close()
+        with pool.connection() as conn:
+            db_save_location(
+                conn, name=home.name, lat=home.lat, lng=home.lng, radius_km=home.radius_km
+            )
+            state["cfg"] = cfg.model_copy(update={"home": home})
+
+            try:
+                # The core data is mushrooms; check if we've ingested observations for this area.
+                key_pattern = f"obs:%:{home.lat}:{home.lng}:{home.radius_km}:%"
+                row = conn.execute(
+                    "SELECT 1 FROM ingest_log WHERE key LIKE %s", [key_pattern]
+                ).fetchone()
+                has_obs = row is not None
+                phenology_row = conn.execute("SELECT 1 FROM phenology LIMIT 1").fetchone()
+                has_phenology = phenology_row is not None
+                needs_refresh = not (has_obs and has_phenology)
+            except psycopg.errors.UndefinedTable:
+                needs_refresh = True
 
         return {"home": home.model_dump(), "needs_refresh": needs_refresh}
 

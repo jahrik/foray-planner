@@ -19,5 +19,9 @@ ingest:
   recent_weeks: 4           # trailing window for the "fruiting now" live signal
 
 paths:
-  db: data/foray.duckdb
   species_seed: data/species_seed.yaml
+
+# Database connection comes from the standard libpq env vars (PGHOST/PGPORT/PGUSER/
+# PGPASSWORD/PGDATABASE), not this file - see docker-compose.yml for local dev and
+# docs/deployment.md for how ECS injects them from Secrets Manager. Never put credentials
+# in a committed YAML file.

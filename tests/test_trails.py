@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-import duckdb
 import httpx
+import psycopg
 import pytest
 
-from foray.cache import SCHEMA, upsert_campsites, upsert_trails
+from foray.cache import upsert_campsites, upsert_trails
 from foray.config import Config, Home
 from foray.scoring import trails_near
 from foray.trails import (
@@ -21,13 +20,6 @@ from foray.trails import (
 )
 
 HOME_LAT, HOME_LNG = 47.6, -122.3
-
-
-@pytest.fixture
-def con() -> duckdb.DuckDBPyConnection:
-    conn = duckdb.connect(":memory:")
-    conn.execute(SCHEMA)
-    return conn
 
 
 def test_parse_element_reads_a_path_way() -> None:
@@ -164,7 +156,7 @@ def test_fetch_trails_parses_a_response() -> None:
 
 
 def test_trails_near_filters_by_radius_and_ranks_nearest_first(
-    con: duckdb.DuckDBPyConnection,
+    con: psycopg.Connection,
 ) -> None:
     near = _parse_element(
         {
@@ -199,7 +191,7 @@ def test_trails_near_filters_by_radius_and_ranks_nearest_first(
     assert trails[0].camp_distance_km is None  # no campsites cached yet
 
 
-def test_trails_near_annotates_nearest_campsite(con: duckdb.DuckDBPyConnection) -> None:
+def test_trails_near_annotates_nearest_campsite(con: psycopg.Connection) -> None:
     trail = _parse_element(
         {
             "type": "way",
@@ -219,12 +211,11 @@ def test_trails_near_annotates_nearest_campsite(con: duckdb.DuckDBPyConnection) 
     assert trails[0].camp_distance_km < 5.0  # the campsite sits right on the trail's center
 
 
-def test_trails_near_missing_table_returns_empty() -> None:
-    conn = duckdb.connect(":memory:")  # no schema → no trails table
-    assert trails_near(conn, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0) == []
+def test_trails_near_no_rows_ingested_returns_empty(con: psycopg.Connection) -> None:
+    assert trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0) == []
 
 
-def test_ingest_trails_upserts_into_cache(con: duckdb.DuckDBPyConnection) -> None:
+def test_ingest_trails_upserts_into_cache(con: psycopg.Connection) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -250,7 +241,6 @@ def test_ingest_trails_upserts_into_cache(con: duckdb.DuckDBPyConnection) -> Non
         since_year=2015,
         quality_grade="research",
         recent_weeks=4,
-        db_path=Path("unused.duckdb"),  # a caller-supplied `con` is used instead
     )
     count = ingest_trails(cfg, con, client=client)
     assert count == 1

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-import duckdb
+import psycopg
 import pytest
 
-from foray.cache import SCHEMA
 from foray.scoring import (
     alerts,
     build_phenology,
@@ -26,17 +25,16 @@ APR_LAT, APR_LNG = 47.6, -122.3
 OCT_LAT, OCT_LNG = 44.0, -121.0
 
 
-@pytest.fixture
-def con() -> duckdb.DuckDBPyConnection:
-    conn = duckdb.connect(":memory:")
-    conn.execute(SCHEMA)
-    conn.executemany(
-        "INSERT INTO taxa VALUES (?, ?, ?, ?)",
-        [
-            (MOREL, "Morchella", "Morels", "genus"),
-            (CHANTERELLE, "Cantharellus", "Chanterelles", "genus"),
-        ],
-    )
+@pytest.fixture(autouse=True)
+def _seed(con: psycopg.Connection) -> None:
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO taxa VALUES (%s, %s, %s, %s)",
+            [
+                (MOREL, "Morchella", "Morels", "genus"),
+                (CHANTERELLE, "Cantharellus", "Chanterelles", "genus"),
+            ],
+        )
     rows: list[tuple] = []
     obs_id = 1
     # 20 morel obs in the APR region, all in April.
@@ -55,12 +53,14 @@ def con() -> duckdb.DuckDBPyConnection:
     for _ in range(2):
         rows.append((obs_id, MOREL, OCT_LAT, OCT_LNG, dt.date(2022, 7, 1), 7, 2022, "research", 10))
         obs_id += 1
-    conn.executemany("INSERT INTO observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
-    build_phenology(conn, CELL)
-    return conn
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO observations VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", rows
+        )
+    build_phenology(con, CELL)
 
 
-def test_april_ranks_morel_region_first(con: duckdb.DuckDBPyConnection) -> None:
+def test_april_ranks_morel_region_first(con: psycopg.Connection) -> None:
     ranked = rank_destinations(
         con,
         months=[4],
@@ -77,7 +77,7 @@ def test_april_ranks_morel_region_first(con: duckdb.DuckDBPyConnection) -> None:
     assert top.score_norm == 1.0
 
 
-def test_october_ranks_chanterelle_region_first(con: duckdb.DuckDBPyConnection) -> None:
+def test_october_ranks_chanterelle_region_first(con: psycopg.Connection) -> None:
     ranked = rank_destinations(
         con,
         months=[10],
@@ -92,7 +92,7 @@ def test_october_ranks_chanterelle_region_first(con: duckdb.DuckDBPyConnection) 
     assert top.species[0].common_name == "Chanterelles"
 
 
-def test_radius_filters_far_regions(con: duckdb.DuckDBPyConnection) -> None:
+def test_radius_filters_far_regions(con: psycopg.Connection) -> None:
     # Home right on the APR region, tiny radius -> OCT region excluded.
     ranked = rank_destinations(
         con,
@@ -106,10 +106,10 @@ def test_radius_filters_far_regions(con: duckdb.DuckDBPyConnection) -> None:
     assert all(abs(region.center_lat - APR_LAT) < CELL for region in ranked)
 
 
-def test_place_calendar_peaks_in_expected_month(con: duckdb.DuckDBPyConnection) -> None:
+def test_place_calendar_peaks_in_expected_month(con: psycopg.Connection) -> None:
     # Find the OCT region id via the regions table.
     row = con.execute(
-        "SELECT region_id FROM regions ORDER BY abs(center_lat - ?) LIMIT 1", [OCT_LAT]
+        "SELECT region_id FROM regions ORDER BY abs(center_lat - %s) LIMIT 1", [OCT_LAT]
     ).fetchone()
     assert row is not None
     region_id = row[0]
@@ -119,7 +119,7 @@ def test_place_calendar_peaks_in_expected_month(con: duckdb.DuckDBPyConnection) 
     assert calendar[10]["species"]["Chanterelles"] == 30
 
 
-def test_alerts_only_recent(con: duckdb.DuckDBPyConnection) -> None:
+def test_alerts_only_recent(con: psycopg.Connection) -> None:
     # Fixture observations are from 2022 -> nothing within the trailing window.
     active = alerts(
         con,

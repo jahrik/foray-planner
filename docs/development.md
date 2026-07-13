@@ -4,27 +4,28 @@
 
 - **Python 3.13+** and **[uv](https://docs.astral.sh/uv/)** - uv manages the venv and lockfile
 - **Node 22+** via [nvm](https://github.com/nvm-sh/nvm) - not on `PATH` by default, see below
+- **Docker / Podman** - runs the local Postgres+PostGIS instance (`docker-compose.yml`); also
+  used for the container workflow
 - **RIDB_API_KEY** *(optional)* - free key from [Recreation.gov](https://ridb.recreation.gov/landing)
   for campground data; without it the camps ingest step is a no-op and everything else still works
-- **Docker / Podman** *(optional)* - for the container workflow
 
 ---
 
 ## Quick start
 
 ```bash
-uv sync
-
-# Node is managed by nvm, not on PATH by default:
-export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH"
-cd frontend && npm ci && npm run build && cd ..
+make install            # uv sync + frontend npm ci
+make db                 # start Postgres+PostGIS (docker compose)
 
 # Optional: create a .env file with your RIDB key
 echo "RIDB_API_KEY=your_key_here" > .env   # omit to skip campground ingest
 
 uv run foray refresh    # pull iNat data + build phenology (minutes; hits the network)
-uv run foray serve      # http://127.0.0.1:8000
+make dev                # start the API server (http://127.0.0.1:8000)
 ```
+
+The Makefile exports `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` and prepends
+the nvm Node path automatically, so you never need to set them manually.
 
 ---
 
@@ -41,11 +42,17 @@ uv run foray serve      # http://127.0.0.1:8000
 | `ingest.since_year` | `2015` | How far back to pull iNat observations |
 | `ingest.quality_grade` | `research` | iNat quality filter - `research` only (verifier-confirmed, mapped coordinates) |
 | `ingest.recent_weeks` | `4` | Trailing window for the "Fruiting now" live signal |
-| `paths.db` | `data/foray.duckdb` | DuckDB cache path (gitignored; fully rebuildable) |
 | `paths.species_seed` | `data/species_seed.yaml` | Curated target taxa list |
 
-**`data/location.json`** - written by the UI's Set Location form; overrides `home.*` at runtime.
-Delete it to fall back to `config.yaml` defaults. Do not commit it.
+**Database connection** is *not* a config.yaml key - it comes from the standard libpq env vars
+(`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`), read natively by `psycopg`. Credentials
+never belong in a committed YAML file. `docker-compose.yml` + the export above cover local dev;
+production gets them injected from AWS Secrets Manager (see `docs/deployment.md`).
+
+**The home-location override** (written by the UI's Set Location form) lives in Postgres now, in
+the single-row `app_location` table - not a `location.json` file. It survives `foray refresh`
+and container restarts automatically; there's nothing to delete to reset it besides truncating
+that table.
 
 ---
 
@@ -76,19 +83,17 @@ Run the backend and the Vite dev server together for live development:
 
 ```bash
 # Terminal 1 - backend
-uv run foray serve
+make dev
 
-# Terminal 2 - frontend
-export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH"
-cd frontend && npm ci
-npm run dev        # Vite on :5173, proxies /api/* to uvicorn on :8000
+# Terminal 2 - frontend (Vite on :5173, proxies /api/* to uvicorn on :8000)
+make dev-frontend
 ```
 
 Other frontend commands:
 
 ```bash
-npm run build      # tsc --noEmit + vite build (the CI gate)
-npm run gen:api    # regenerate src/api/schema.ts from the live OpenAPI schema
+make frontend      # tsc --noEmit + vite build (the CI gate)
+npm run gen:api    # regenerate src/api/schema.ts from the live OpenAPI schema (from frontend/)
 ```
 
 Rerun `npm run gen:api` after changing any `/api/*` route signature.
@@ -98,7 +103,7 @@ Rerun `npm run gen:api` after changing any `/api/*` route signature.
 ## Architecture overview
 
 ```
-config.yaml / data/location.json
+config.yaml (static settings) + PG* env vars (DB connection)
          │
          ▼
     Config (pydantic)
@@ -111,9 +116,10 @@ ArcGIS BLM/USFS          Nominatim (geocoding)
     │                                      │
     └────────────────┬─────────────────────┘
                      │
-               DuckDB cache
+            Postgres + PostGIS
          (observations, campsites,
-          public_land, ingest_log)
+          public_land, ingest_log,
+          app_location)
                      │
           phenology + regions
           (materialized in SQL)
@@ -148,7 +154,7 @@ shows per-month totals. The alerts view fixes species + recency, ignoring the mo
 
 ---
 
-## DuckDB schema
+## Postgres schema
 
 | Table | Key | Contents |
 |---|---|---|
@@ -158,9 +164,14 @@ shows per-month totals. The alerts view fixes species + recency, ignoring the mo
 | `regions` | `region_id` | Grid cell summaries: center coords, total obs count, distinct taxa |
 | `campsites` | `id` (`"{source}:{source_id}"`) | Developed campgrounds (RIDB) + OSM reported/dispersed sites |
 | `public_land` | `id` (`"{source}:{source_id}"`) | BLM/USFS ownership polygons - GeoJSON text + bbox columns |
+| `trails` | `id` (`"{source}:{osm_type}/{osm_id}"`) | OSM trails/routes/trailheads - GeoJSON text + bbox columns |
 | `ingest_log` | - | Per-run progress records for refresh stages |
+| `app_location` | single row | The UI's "Set location" override |
 
-The cache is gitignored and fully rebuildable with `foray refresh`. Change `cell_deg` in
+`phenology`/`regions` are dynamically (re)materialized by `foray refresh`; every other table is
+created by `foray.cache.SCHEMA` (which also enables the `postgis` extension, used only by the
+dispersed-camping ingest's point-in-polygon join - the read path never needs PostGIS geometry
+types). The database is fully rebuildable with `foray refresh`. Change `cell_deg` in
 `config.yaml` and re-run refresh to rebuild with a different grid resolution.
 
 ---
@@ -186,59 +197,58 @@ After editing, run `foray refresh` to re-ingest.
 
 ## Linting and testing
 
-Gate before every PR:
+The full local CI gate (starts Postgres if needed, runs lint + type-check + tests):
 
 ```bash
-uv run ruff format . && uv run ruff check . && uv run ty check && uv run python -m pytest
+make check
 ```
 
-Frontend gate (run after any frontend or API change):
+Or run pieces individually:
 
 ```bash
-export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH"
-cd frontend && npm run build
+make lint          # ruff format + ruff check + ty check
+make test          # pytest (starts Postgres automatically)
+make frontend      # frontend type-check + bundle (after frontend or API changes)
 ```
 
 Focused test runs:
 
 ```bash
-uv run python -m pytest tests/test_scoring.py
-uv run python -m pytest tests/test_scoring.py::test_april_ranks_morel_region_first
-uv run python -m pytest -k haversine
+uv run pytest tests/test_scoring.py
+uv run pytest tests/test_scoring.py::test_april_ranks_morel_region_first
+uv run pytest -k haversine
 ```
 
-Tests are hermetic - they never hit the network. Scoring tests use hand-built DuckDB fixtures;
-geocoding and HTTP calls are mocked with `httpx.MockTransport`.
-
-> **Note:** `uv run pytest` fails locally because the venv console-script shebangs still point
-> at the old repo name (`inat-foray-planner`). Use `uv run python -m pytest` instead.
-> `uv sync --reinstall` would fix the shebangs permanently. CI is unaffected.
+Tests hit no network beyond the local/CI Postgres service container - the same boundary the
+suite already accepted as "hermetic" before this moved off DuckDB. Isolation is a shared
+connection + `TRUNCATE`-before-each-test (see `tests/conftest.py`), not per-test rollback or a
+fresh schema per test - see the fixture's docstring for why. Geocoding and HTTP calls are mocked
+with `httpx.MockTransport`.
 
 ---
 
 ## Docker build
 
 ```bash
-# Build locally
-docker build -t local/foray-planner:dev .
+make docker        # builds local/foray-planner:dev
 
-# Create a persistent volume for the DuckDB cache
-docker volume create foray-data
-
-# One-off: initial data refresh
+# One-off: initial data refresh (needs a reachable Postgres - see docker-compose.yml)
 docker run --rm \
-  -v foray-data:/data \
+  -e PGHOST=host.docker.internal -e PGUSER=foray -e PGPASSWORD=foray -e PGDATABASE=foray \
   -e RIDB_API_KEY=$RIDB_API_KEY \
   local/foray-planner:dev \
   foray --config config.docker.yaml refresh
 
 # Serve
-docker run -p 8000:8000 -v foray-data:/data local/foray-planner:dev
+docker run -p 8000:8000 \
+  -e PGHOST=host.docker.internal -e PGUSER=foray -e PGPASSWORD=foray -e PGDATABASE=foray \
+  local/foray-planner:dev
 ```
 
 The Dockerfile uses a three-stage build:
 1. `node:22-slim` - builds the Vite/TypeScript client bundle
 2. `ghcr.io/astral-sh/uv:python3.13-bookworm-slim` - installs Python deps with uv
-3. `python:3.13-slim-bookworm` - lean runtime, non-root `foray` user, `/data` volume
+3. `python:3.13-slim-bookworm` - lean runtime, non-root `foray` user, no local volume (DB is
+   Postgres, reached via env vars)
 
 See [deployment.md](deployment.md) for production details.

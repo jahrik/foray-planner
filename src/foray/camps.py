@@ -25,8 +25,8 @@ import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
-import duckdb
 import httpx
+import psycopg
 
 from foray.cache import connect, is_ingested, record_ingest, upsert_campsites
 from foray.config import Config
@@ -240,7 +240,7 @@ def fetch_campsites(
 
 def ingest_campgrounds(
     cfg: Config,
-    con: duckdb.DuckDBPyConnection | None = None,
+    con: psycopg.Connection | None = None,
     *,
     api_key: str | None = None,
     client: httpx.Client | None = None,
@@ -252,7 +252,7 @@ def ingest_campgrounds(
         logger.info("camps: RIDB_API_KEY unset - skipping campground ingest")
         return 0
     own_con = con is None
-    database = con if con is not None else connect(cfg.db_path)
+    database = con if con is not None else connect()
     home = cfg.home
     key = f"camps:ridb:{home.lat}:{home.lng}:{home.radius_km}"
     if is_ingested(database, key):

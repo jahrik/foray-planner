@@ -1,20 +1,18 @@
-"""CLI tests - no network (ingest/build functions monkeypatched to record calls)."""
+"""CLI tests - no network beyond the local/CI test Postgres (ingest/build functions
+monkeypatched to record calls)."""
 
 from __future__ import annotations
 
-import duckdb
+import psycopg
 import pytest
 from click.testing import CliRunner
 
 import foray.cli as cli_module
-from foray.cache import SCHEMA
 from foray.cli import cli
 
 
 @pytest.fixture
-def config_file(tmp_path):
-    db_path = tmp_path / "foray.duckdb"
-    duckdb.connect(str(db_path)).execute(SCHEMA)
+def config_file(tmp_path, con: psycopg.Connection):
     species_seed = tmp_path / "species_seed.yaml"
     species_seed.write_text(
         """
@@ -40,7 +38,6 @@ ingest:
   quality_grade: research
   recent_weeks: 4
 paths:
-  db: {db_path}
   species_seed: {species_seed}
 """
     )

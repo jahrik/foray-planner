@@ -40,14 +40,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---- runtime: slim image, non-root, app + venv only ----
 FROM python:3.13-slim-bookworm AS runtime
 
-# /data is the persistent volume (DuckDB cache + runtime location.json); the curated
-# species seed stays baked into the image at /app/data/species_seed.yaml.
+# No local volume needed: the DB is Postgres, reached via the standard PGHOST/PGPORT/PGUSER/
+# PGPASSWORD/PGDATABASE env vars (never baked into the image); the curated species seed stays
+# baked into the image at /app/data/species_seed.yaml.
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
 
-RUN useradd --uid 1000 --create-home foray \
-    && mkdir -p /data \
-    && chown -R foray:foray /data
+RUN useradd --uid 1000 --create-home foray
 
 WORKDIR /app
 COPY --from=builder --chown=foray:foray /app /app
@@ -55,14 +54,13 @@ COPY --from=builder --chown=foray:foray /app /app
 COPY --from=frontend --chown=foray:foray /app/src/foray/web/dist /app/src/foray/web/dist
 
 USER foray
-VOLUME ["/data"]
 EXPOSE 8000
 
 # Liveness: config endpoint returns 200 once the app is up (no curl in slim image).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/config', timeout=4).status==200 else 1)"]
 
-# config.docker.yaml points the DuckDB path at the /data volume; everything else matches
-# config.yaml. Refresh runs as a separate one-off (see README / compose):
-#   docker run --rm -v foray-data:/data <image> foray --config config.docker.yaml refresh
+# Refresh runs as a separate one-off against the same Postgres, concurrently with the live
+# server (no DuckDB-style single-writer lock to work around):
+#   docker run --rm -e PGHOST=... <image> foray --config config.docker.yaml refresh
 CMD ["foray", "--config", "config.docker.yaml", "serve", "--host", "0.0.0.0", "--port", "8000"]

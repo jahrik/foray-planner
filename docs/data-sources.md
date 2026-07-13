@@ -1,7 +1,7 @@
 # Data sources
 
-All data is fetched at ingest time and cached locally in DuckDB. The app runs queries against
-the local cache - no live network calls happen during normal use.
+All data is fetched at ingest time and cached in Postgres. The app runs queries against the
+cache - no live network calls happen during normal use.
 
 ---
 
@@ -49,7 +49,7 @@ scoring.
 - **What we fetch:**
   - `tourism=camp_site`, `tourism=camp_pitch`, `backcountry=yes` → `kind='reported'` campsites
   - `highway=track`, `highway=unclassified` → candidate roads for the dispersed proxy
-    (kept only where they fall on BLM/USFS land via DuckDB spatial point-in-polygon)
+    (kept only where they fall on BLM/USFS land via PostGIS point-in-polygon)
 - **License:** [ODbL](https://opendatacommons.org/licenses/odbl/) - data must be attributed
   and any derivative databases shared under ODbL
 - **Attribution required:** "© OpenStreetMap contributors" in any UI showing this data
@@ -77,10 +77,9 @@ spots" value without the license problem. Do not add iOverlander or The Dyrt.
 - **API:** ArcGIS REST FeatureServer `query?f=geojson` - paginated, server-side generalized
   (reduces geometry complexity before transfer)
 - **No key required**
-- **Storage:** GeoJSON stored as text + bounding-box columns in DuckDB. No spatial extension
-  needed on the read/map path - bbox overlap in SQL is sufficient for the "land near here" query.
-  The DuckDB spatial extension is only used at ingest time for the dispersed-camping
-  point-in-polygon join.
+- **Storage:** GeoJSON stored as text + bounding-box columns. No PostGIS geometry types needed
+  on the read/map path - bbox overlap in SQL is sufficient for the "land near here" query.
+  PostGIS is only used at ingest time for the dispersed-camping point-in-polygon join.
 - **Attribution:** BLM and USFS are US federal agencies; data is public domain.
 - **PAD-US** (USGS national ownership layer) is a documented backstop if the ArcGIS sources
   change or go offline.
