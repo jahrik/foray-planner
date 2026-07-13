@@ -131,7 +131,11 @@ def _recent_counts(
 
 
 def _in(ids: list[int]) -> str:
-    return ",".join("%s" for _ in ids)
+    """SQL fragment for ``IN (...)``. An empty list becomes the literal ``NULL`` (matches
+    nothing, valid SQL) rather than an empty ``IN ()``, which Postgres rejects as a syntax
+    error - e.g. when ``Config.species`` is empty and ``taxon_ids`` comes back ``[]``.
+    """
+    return ",".join("%s" for _ in ids) if ids else "NULL"
 
 
 def rank_destinations(
@@ -245,11 +249,20 @@ def camps_near(
     """Campsites within ``radius_km`` of a point, ranked free-first then by distance.
 
     ``free`` is only TRUE where the source explicitly said so; ``free_only`` therefore
-    keeps just those (it never guesses that an unpriced site is free). No rows ingested
-    yet yields an empty list, mirroring the other modes.
+    keeps just those (it never guesses that an unpriced site is free). A cheap bbox
+    prefilter in SQL (same technique as ``land_near``/``trails_near``) narrows candidates
+    before the exact ``haversine_km`` cut in Python - `campsites` has no bbox columns of its
+    own (it's points, not polygons), so the filter is directly against `lat`/`lng`. No rows
+    ingested yet yields an empty list, mirroring the other modes.
     """
+    dlat = radius_km / 111.0
+    dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
     rows = con.execute(
-        "SELECT id, name, kind, fee, free, lat, lng, source, url FROM campsites"
+        """
+        SELECT id, name, kind, fee, free, lat, lng, source, url FROM campsites
+        WHERE lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s
+        """,
+        [lat - dlat, lat + dlat, lng - dlng, lng + dlng],
     ).fetchall()
 
     # Keep the unrounded distance alongside each site so ranking is exact; distance_km is

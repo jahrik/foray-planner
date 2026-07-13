@@ -13,14 +13,23 @@ transactions for) - callers that need atomicity across statements (e.g.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
 from typing import Any
 
 import psycopg
 
-SCHEMA = """
-CREATE EXTENSION IF NOT EXISTS postgis;
+logger = logging.getLogger(__name__)
 
+# Split from SCHEMA (rather than its first statement) because a managed Postgres app role
+# (e.g. on RDS, if it isn't the master/rds_superuser account) may lack CREATE EXTENSION
+# privilege - failing this alone shouldn't take the whole schema bootstrap down with it, nor
+# surface as an opaque low-level DB error. PostGIS is only needed by the dispersed-camping
+# ingest's point-in-polygon proxy (see dispersed.py), which already degrades gracefully
+# (best-effort, catches psycopg.Error) when it's unavailable.
+_ENABLE_POSTGIS = "CREATE EXTENSION IF NOT EXISTS postgis;"
+
+SCHEMA = """
 CREATE TABLE IF NOT EXISTS taxa (
     taxon_id     BIGINT PRIMARY KEY,
     name         TEXT,
@@ -128,6 +137,14 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     string instead.
     """
     con = psycopg.connect(conninfo, autocommit=True)
+    try:
+        con.execute(_ENABLE_POSTGIS)
+    except psycopg.errors.InsufficientPrivilege:
+        logger.warning(
+            "cache: app role lacks CREATE EXTENSION privilege - postgis not enabled; "
+            "the dispersed-camping proxy will be skipped (everything else still works). "
+            "Run `CREATE EXTENSION postgis;` as a superuser/rds_superuser to enable it."
+        )
     con.execute(SCHEMA)
     return con
 
