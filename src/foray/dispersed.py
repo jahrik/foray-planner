@@ -269,7 +269,7 @@ def dispersed_proxy_rows(con: psycopg.Connection, roads: Sequence[Road]) -> list
     con.execute(
         """
         CREATE TEMP TABLE _land_geom AS
-        SELECT ST_MakeValid(ST_GeomFromGeoJSON(geojson)) AS geom,
+        SELECT ST_SetSRID(ST_MakeValid(ST_GeomFromGeoJSON(geojson)), 4326) AS geom,
                min_lat, min_lng, max_lat, max_lng
         FROM public_land
         """

@@ -73,9 +73,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         with pool.connection() as conn:
             try:
                 conn.execute(_ENABLE_POSTGIS)
-            except psycopg.errors.InsufficientPrivilege:
+            except psycopg.Error:
                 logger.warning(
-                    "api: app role lacks CREATE EXTENSION privilege - postgis not enabled; "
+                    "api: could not enable postgis (missing extension or insufficient privilege); "
                     "the dispersed-camping proxy will be skipped."
                 )
             conn.execute(SCHEMA)

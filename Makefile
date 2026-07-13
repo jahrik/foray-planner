@@ -11,7 +11,7 @@ export PGDATABASE ?= foray
 db:
 	docker compose up -d postgres
 	@echo "Waiting for Postgres…"
-	@until docker compose exec postgres pg_isready -U foray -q 2>/dev/null; do sleep 0.5; done
+	@until docker compose exec -T postgres pg_isready -U foray -q 2>/dev/null; do sleep 0.5; done
 	@echo "Postgres ready."
 
 install:

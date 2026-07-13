@@ -7,9 +7,9 @@ import logging
 
 import click
 
-from foray.cache import connect, observation_count
+from foray.cache import connect, load_location, observation_count
 from foray.camps import ingest_campgrounds
-from foray.config import load_config
+from foray.config import Home, load_config
 from foray.dispersed import ingest_dispersed
 from foray.ingest import ingest
 from foray.land import ingest_public_land
@@ -129,6 +129,9 @@ def refresh(ctx: click.Context, with_: str) -> None:
     cfg = ctx.obj["cfg"]
     targets = _parse_targets(with_)
     con = connect()
+    override = load_location(con)
+    if override is not None:
+        cfg = cfg.model_copy(update={"home": Home(**override)})
     if "mushrooms" in targets:
         ingest(cfg, con)
     if "camps" in targets:

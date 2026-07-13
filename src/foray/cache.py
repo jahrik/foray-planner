@@ -139,9 +139,9 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     con = psycopg.connect(conninfo, autocommit=True)
     try:
         con.execute(_ENABLE_POSTGIS)
-    except psycopg.errors.InsufficientPrivilege:
+    except psycopg.Error:
         logger.warning(
-            "cache: app role lacks CREATE EXTENSION privilege - postgis not enabled; "
+            "cache: could not enable postgis (missing extension or insufficient privilege); "
             "the dispersed-camping proxy will be skipped (everything else still works). "
             "Run `CREATE EXTENSION postgis;` as a superuser/rds_superuser to enable it."
         )
