@@ -37,9 +37,6 @@ start:
 stop:
 	docker compose stop
 
-restart:
-	docker compose up -d --build app
-
 ingest: db
 	docker compose run --rm app foray ingest --all-regions
 

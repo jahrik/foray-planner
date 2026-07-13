@@ -23,7 +23,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel
 
 from foray import camps, dispersed, geocode, land, scoring, trails
-from foray.cache import _ENABLE_POSTGIS, SCHEMA, has_observations_in_area, is_area_covered
+from foray.cache import _ENABLE_POSTGIS, SCHEMA
 from foray.cache import load_location as db_load_location
 from foray.cache import save_location as db_save_location
 from foray.config import Config, Home, Settings
@@ -458,24 +458,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         else:
             raise HTTPException(400, "provide `query` or both `lat` and `lng`")
 
-        needs_refresh = True
         with pool.connection() as conn:
             db_save_location(
                 conn, name=home.name, lat=home.lat, lng=home.lng, radius_km=home.radius_km
             )
             state["cfg"] = cfg.model_copy(update={"home": home})
 
-            try:
-                has_obs = is_area_covered(
-                    conn, "obs:", home.lat, home.lng, home.radius_km
-                ) or has_observations_in_area(conn, home.lat, home.lng, home.radius_km)
-                phenology_row = conn.execute("SELECT 1 FROM phenology LIMIT 1").fetchone()
-                has_phenology = phenology_row is not None
-                needs_refresh = not (has_obs and has_phenology)
-            except psycopg.errors.UndefinedTable:
-                needs_refresh = True
-
-        return {"home": home.model_dump(), "needs_refresh": needs_refresh}
+        return {"home": home.model_dump()}
 
     _VALID_REFRESH_TARGETS = frozenset({"all", "mushrooms", "camps", "land", "dispersed", "trails"})
 

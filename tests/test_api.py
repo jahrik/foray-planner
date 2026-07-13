@@ -170,16 +170,17 @@ def test_set_location_by_latlng(client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["home"]["lat"] == 40.0
-    assert body["needs_refresh"] is True  # no ingested data for the new area yet
+    assert "needs_refresh" not in body
 
 
-def test_set_location_covered_by_region_data(client: TestClient) -> None:
+def test_set_location_returns_home(client: TestClient) -> None:
     response = client.post(
         "/api/location", json={"lat": HOME_LAT, "lng": HOME_LNG, "radius_km": 50}
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["needs_refresh"] is False
+    assert body["home"]["lat"] == HOME_LAT
+    assert "needs_refresh" not in body
 
 
 def test_set_location_requires_query_or_latlng(client: TestClient) -> None:

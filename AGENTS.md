@@ -106,7 +106,6 @@ make start              # http://localhost:8000 (app + scheduler + postgres)
 | `make frontend` | Build the Vite/TypeScript client bundle |
 | `make start` | Build + start the full stack (app + scheduler + postgres) |
 | `make stop` | Stop all containers |
-| `make restart` | Rebuild + restart the app container |
 | `make ingest` | One-shot all-regions ingest |
 | `make clean` | Tear down containers + volumes |
 
