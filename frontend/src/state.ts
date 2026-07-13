@@ -43,6 +43,16 @@ export const errorDetail = (error: unknown): string => (error as ApiError)?.deta
 
 export const inatUrl = (taxonId: number): string => `https://www.inaturalist.org/taxa/${taxonId}`;
 
+/** Escape text destined for an HTML string template (innerHTML / Leaflet popup strings). */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function setStatus(text: string): void {
   qs("#status").textContent = text;
 }

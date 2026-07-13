@@ -2,7 +2,7 @@ import { getJson } from "./api/client";
 import type { AlertRegion, Calendar, RegionScore, Species } from "./api/types";
 import { focusRegion } from "./layers";
 import { clearMarkers, HEAT_RGB, map, plot } from "./map";
-import { errorDetail, inatUrl, MONTHS, qs, setStatus, state } from "./state";
+import { errorDetail, escapeHtml, inatUrl, MONTHS, qs, setStatus, state } from "./state";
 
 export function initMonths(): void {
   const box = qs("#months");
@@ -52,10 +52,12 @@ interface ChipData {
   label?: string;
 }
 
+// common_name/label ultimately come from iNaturalist (user-editable), so escape before
+// interpolating into an HTML string template.
 const speciesChip = (hit: ChipData, extraClass?: string): string =>
   `<a class="chip${extraClass ? " " + extraClass : ""}" href="${inatUrl(hit.taxon_id)}"
       target="_blank" rel="noopener" onclick="event.stopPropagation()"
-   >${hit.common_name}${hit.label ? " · " + hit.label : ""}</a>`;
+   >${escapeHtml(hit.common_name)}${hit.label ? " · " + escapeHtml(hit.label) : ""}</a>`;
 
 export async function runDestinations(): Promise<void> {
   setStatus("Ranking…");
@@ -82,7 +84,7 @@ export async function runDestinations(): Promise<void> {
       region.center_lat,
       region.center_lng,
       region.score_norm,
-      `<b>#${rank + 1}</b> ${region.distance_km} km<br>${region.species.map((hit) => hit.common_name).join(", ")}`,
+      `<b>#${rank + 1}</b> ${region.distance_km} km<br>${region.species.map((hit) => escapeHtml(hit.common_name)).join(", ")}`,
       region.recent_count > 0,
     );
     const card = document.createElement("div");
@@ -118,7 +120,7 @@ export async function loadCalendar(regionId: string): Promise<void> {
     const fraction = bucket.total / peak;
     const background = `rgba(${HEAT_RGB},${fraction.toFixed(2)})`;
     const speciesText = Object.entries(bucket.species)
-      .map(([name, count]) => `${name}: ${count}`)
+      .map(([name, count]) => `${escapeHtml(name)}: ${count}`)
       .join(", ");
     rows += `<tr><td>${MONTHS[month - 1]}</td>
       <td class="heat" style="background:${background}">${bucket.total || ""}</td>

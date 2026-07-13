@@ -135,7 +135,7 @@ def test_trails_by_latlng_empty(client: TestClient) -> None:
     assert response.json() == []
 
 
-def test_plan_bad_region_id_is_400(client: TestClient) -> None:
+def test_camps_bad_region_id_is_400(client: TestClient) -> None:
     response = client.get("/api/camps", params={"region_id": "not-a-region-id"})
     assert response.status_code == 400
 

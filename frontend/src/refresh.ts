@@ -12,7 +12,20 @@ export async function startRefresh(message: string, target: string = "mushrooms"
   progress.style.display = "inline-block";
   progress.value = 0;
 
-  await fetch(`/api/refresh?target=${target}`, { method: "POST" });
+  const started = await fetch(`/api/refresh?target=${target}`, { method: "POST" });
+  if (!started.ok) {
+    let detail = `refresh failed to start (${started.status})`;
+    try {
+      const body = await started.json();
+      if (body?.detail) detail = body.detail;
+    } catch {
+      // body wasn't JSON; fall back to the status-code message above
+    }
+    setStatus(detail);
+    qs<HTMLButtonElement>("#refresh").disabled = false;
+    progress.style.display = "none";
+    return false;
+  }
   return new Promise((resolve) => {
     const source = new EventSource("/api/refresh/stream");
 
