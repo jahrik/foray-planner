@@ -97,22 +97,57 @@ def trails_cmd(ctx: click.Context) -> None:
     con.close()
 
 
+_REFRESH_TARGETS = ("mushrooms", "camps", "land", "dispersed", "trails")
+
+
+def _parse_targets(with_: str) -> tuple[str, ...]:
+    """Parse a comma-separated `--with` list, raising on unknown targets."""
+    if not with_.strip():
+        return _REFRESH_TARGETS
+    values = tuple(token.strip() for token in with_.split(",") if token.strip())
+    unknown = [v for v in values if v not in _REFRESH_TARGETS]
+    if unknown:
+        raise click.BadParameter(
+            f"unknown target(s) {unknown} - choose from {', '.join(_REFRESH_TARGETS)}"
+        )
+    return values
+
+
 @cli.command()
+@click.option(
+    "--with",
+    "with_",
+    default="",
+    help=(
+        "Comma-separated subset to warm: mushrooms,camps,land,dispersed,trails "
+        "(default: all). e.g. --with camps,trails to prefetch offline layers only."
+    ),
+)
 @click.pass_context
-def refresh(ctx: click.Context) -> None:
+def refresh(ctx: click.Context, with_: str) -> None:
     """Ingest observations + campgrounds + land + dispersed + trails, then (re)build phenology."""
     cfg = ctx.obj["cfg"]
+    targets = _parse_targets(with_)
     con = connect(cfg.db_path)
-    ingest(cfg, con)
-    ingest_campgrounds(cfg, con)
-    ingest_public_land(cfg, con)
-    ingest_dispersed(cfg, con)
-    ingest_trails(cfg, con)
-    build_phenology(con, cfg.cell_deg)
-    region_count = (con.execute("SELECT count(*) FROM regions").fetchone() or (0,))[0]
-    click.echo(
-        f"Phenology rebuilt across {region_count} regions ({observation_count(con)} observations)."
-    )
+    if "mushrooms" in targets:
+        ingest(cfg, con)
+    if "camps" in targets:
+        ingest_campgrounds(cfg, con)
+    if "land" in targets:
+        ingest_public_land(cfg, con)
+    if "dispersed" in targets:
+        ingest_dispersed(cfg, con)
+    if "trails" in targets:
+        ingest_trails(cfg, con)
+    if "mushrooms" in targets:
+        build_phenology(con, cfg.cell_deg)
+        region_count = (con.execute("SELECT count(*) FROM regions").fetchone() or (0,))[0]
+        click.echo(
+            f"Phenology rebuilt across {region_count} regions "
+            f"({observation_count(con)} observations)."
+        )
+    else:
+        click.echo(f"Warmed: {', '.join(targets)}.")
     con.close()
 
 
