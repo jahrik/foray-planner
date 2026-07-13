@@ -18,26 +18,25 @@
   </head>
   <body>
     <header>
-      <div class="topline">
-        <h1>🍄 Foray Planner</h1>
-        <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">
-          🌙
-        </button>
+      <h1>🍄 Foray Planner</h1>
+      <div class="locbar" id="locform-wrap">
+        <form id="locform" autocomplete="off">
+          <input
+            id="loc"
+            type="text"
+            placeholder="Search location…"
+            autocomplete="off"
+          />
+          <ul id="loc-suggestions" class="loc-suggestions"></ul>
+        </form>
+        <span class="loc-current" id="home-line">
+          <strong id="home-name">…</strong>
+          <span class="loc-meta">(<span id="home-coords">…</span>) · <span id="home-radius">…</span> km</span>
+        </span>
       </div>
-      <p class="home" id="home-line">
-        Location: <strong id="home-name">…</strong>
-        (<span id="home-coords">…</span>) · radius <span id="home-radius">…</span> km
-      </p>
-      <form class="locbar" id="locform">
-        <input
-          id="loc"
-          type="text"
-          placeholder="Set location - place name or lat,lng (e.g. Coos Bay, OR)"
-          autocomplete="off"
-        />
-        <button type="submit" class="primary">Set location</button>
-        <span class="loc-hint">Changing location re-fetches iNaturalist data for the new area.</span>
-      </form>
+      <div class="header-actions">
+        <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">🌙</button>
+      </div>
     </header>
 
     <section class="controls">
@@ -47,22 +46,28 @@
           <div id="months" class="months"></div>
         </div>
         <div class="field">
-          <label for="species">Target species</label>
-          <select id="species" multiple size="4"></select>
-          <small>Ctrl/Cmd-click for multiple · none = all</small>
+          <label for="species">Species</label>
+          <select id="species" multiple size="3"></select>
         </div>
-      </div>
-
-      <div class="row">
         <div class="field">
-          <label>Map Layers</label>
+          <label>Layers</label>
           <div class="toggle-group">
-            <label class="toggle-btn"><input type="checkbox" id="show-camps" /> <span>🏕️ Campgrounds</span></label>
-            <label class="toggle-btn"><input type="checkbox" id="show-dispersed" /> <span>🚐 Dispersed (OSM)</span></label>
-            <label class="toggle-btn"><input type="checkbox" id="free-camps" /> <span>🆓 Free Camps Only</span></label>
-            <label class="toggle-btn"><input type="checkbox" id="show-land" /> <span>🌲 Public Land</span></label>
-            <label class="toggle-btn"><input type="checkbox" id="show-trails" /> <span>🥾 Trails</span></label>
+            <label class="toggle-btn"><input type="checkbox" id="show-camps" /> <span>Campgrounds</span></label>
+            <label class="toggle-btn"><input type="checkbox" id="show-dispersed" /> <span>Dispersed</span></label>
+            <label class="toggle-btn"><input type="checkbox" id="free-camps" /> <span>Free only</span></label>
+            <label class="toggle-btn"><input type="checkbox" id="show-land" /> <span>Public land</span></label>
+            <label class="toggle-btn"><input type="checkbox" id="show-trails" /> <span>Trails</span></label>
           </div>
+        </div>
+        <div class="field" style="align-self:flex-end">
+          <button id="run" class="primary">Rank destinations</button>
+        </div>
+        <div class="field" style="align-self:flex-end">
+          <button id="refresh">Refresh</button>
+        </div>
+        <div class="field action-status" style="align-self:flex-end">
+          <span id="status"></span>
+          <progress id="refresh-progress" value="0" max="100" style="display: none;" aria-label="Refresh Progress"></progress>
         </div>
       </div>
       <div class="row plan-row" id="plan-row" style="display:none">
@@ -77,15 +82,9 @@
         <div class="field" style="justify-content:flex-end">
           <label class="toggle-btn">
             <input type="checkbox" id="plan-free-camp" checked />
-            <span>🆓 Require free camp</span>
+            <span>Free camp</span>
           </label>
         </div>
-      </div>
-      <div class="field actions centered">
-        <button id="run" class="primary">Rank destinations</button>
-        <button id="refresh">Refresh data</button>
-        <span id="status"></span>
-        <progress id="refresh-progress" value="0" max="100" style="display: none;" aria-label="Refresh Progress"></progress>
       </div>
     </section>
 

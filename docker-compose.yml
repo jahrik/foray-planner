@@ -1,6 +1,4 @@
-# Local dev Postgres+PostGIS - matches the CI service container and the RDS engine version
-# (see .github/workflows/ci.yml and infra/cdk/). Not used in production; ECS gets its DB from
-# RDS via Secrets Manager-injected env vars.
+# Local dev stack. Production uses ECS + RDS (see infra/cdk/).
 services:
   postgres:
     image: postgis/postgis:16-3.4
@@ -17,6 +15,29 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  app:
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "8000:8000"
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: foray
+      PGPASSWORD: ${POSTGRES_PASSWORD:-foray}
+      PGDATABASE: foray
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["foray", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/config', timeout=4).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
 
 volumes:
   foray-postgres-data:

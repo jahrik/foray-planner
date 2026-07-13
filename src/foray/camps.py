@@ -28,7 +28,7 @@ from typing import Any
 import httpx
 import psycopg
 
-from foray.cache import connect, is_ingested, record_ingest, upsert_campsites
+from foray.cache import connect, is_area_covered, record_ingest, upsert_campsites
 from foray.config import Config
 from foray.scoring import haversine_km
 
@@ -254,8 +254,7 @@ def ingest_campgrounds(
     own_con = con is None
     database = con if con is not None else connect()
     home = cfg.home
-    key = f"camps:ridb:{home.lat}:{home.lng}:{home.radius_km}"
-    if is_ingested(database, key):
+    if is_area_covered(database, "camps:ridb:", home.lat, home.lng, home.radius_km):
         logger.info("camps: already ingested for this area, skipping")
         if progress_cb:
             progress_cb("Campgrounds already cached, skipping…", 100.0)
@@ -274,7 +273,9 @@ def ingest_campgrounds(
         )
         upsert_campsites(database, rows)
         key = f"camps:ridb:{home.lat}:{home.lng}:{home.radius_km}"
-        record_ingest(database, key, len(rows))
+        record_ingest(
+            database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km
+        )
         logger.info("camps: cached %d campgrounds", len(rows))
         return len(rows)
     finally:

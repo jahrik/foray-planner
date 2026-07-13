@@ -148,7 +148,7 @@ def ingest(
             f"obs:{species.taxon_id}:{home.lat}:{home.lng}:"
             f"{home.radius_km}:{species_start}:{end_date}"
         )
-        record_ingest(db, key, len(rows))
+        record_ingest(db, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
         counts[species.taxon_id] = len(rows)
         logger.info(
             "ingest [%d/%d] %s: %d observations", index, total, species.common_name, len(rows)

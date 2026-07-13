@@ -49,9 +49,28 @@ export function setTiles(theme: "dark" | "light"): void {
   tileLayer = L.tileLayer(tiles.url, { attribution: tiles.attribution, maxZoom: 14 }).addTo(map);
 }
 
+function addLegend(): void {
+  const legend = new L.Control({ position: "bottomright" });
+  legend.onAdd = () => {
+    const div = L.DomUtil.create("div", "map-legend");
+    div.innerHTML = [
+      `<b>Legend</b>`,
+      `<i style="background:${CAMP_FREE}"></i> Free campground`,
+      `<i style="background:${CAMP_PAID}"></i> Paid / unknown campground`,
+      `<i style="background:${CAMP_OSM}"></i> Reported campsite (OSM)`,
+      `<i style="background:${TRAIL}"></i> Trail / trailhead`,
+      `<i style="background:${HEAT}"></i> Destination (historical)`,
+      `<i style="background:${LIVE}"></i> Recently observed`,
+    ].join("<br>");
+    return div;
+  };
+  legend.addTo(map);
+}
+
 export function initMap(home: Home): void {
   map = L.map("map").setView([home.lat, home.lng], 7);
   setTiles(currentTheme());
+  addLegend();
   homeMarker = L.circleMarker([home.lat, home.lng], {
     radius: 7,
     color: HOME_RING,

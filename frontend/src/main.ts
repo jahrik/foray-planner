@@ -4,9 +4,10 @@ import "./style.css";
 import { getJson } from "./api/client";
 import type { Config } from "./api/types";
 import { loadCamps, loadLand, loadTrails } from "./layers";
+import { initLocationAutocomplete } from "./location";
 import { clearPlanRoute, currentTheme, initMap, setTiles, updateHome } from "./map";
 import { runPlan } from "./plan";
-import { setLocation, startRefresh } from "./refresh";
+import { startRefresh } from "./refresh";
 import { qs, state, type View } from "./state";
 import { initMonths, initSpecies, runAlerts, runDestinations } from "./views";
 
@@ -113,11 +114,7 @@ async function main(): Promise<void> {
     if ((e.target as HTMLInputElement).checked) { currentRefreshTarget = "trails"; ensureLayer("trails", "Fetching trails…"); }
     else { cancelLayerRefresh("trails"); loadTrails(); }
   };
-  qs<HTMLFormElement>("#locform").onsubmit = (event) => {
-    event.preventDefault();
-    const query = qs<HTMLInputElement>("#loc").value.trim();
-    if (query) setLocation(query);
-  };
+  initLocationAutocomplete();
   // If a refresh is already running (e.g. page reload mid-fetch), reflect it.
   if (config.refreshing) {
     startRefresh("Fetching data…").then((succeeded) => {

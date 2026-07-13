@@ -34,6 +34,10 @@ export async function startRefresh(message: string, target: string = "mushrooms"
     progress.style.display = "none";
     return false;
   }
+  const body = await started.json();
+  if (body?.status === "already running") {
+    setStatus("Another refresh is running, showing progress…");
+  }
   return new Promise((resolve) => {
     const source = new EventSource("/api/refresh/stream");
 

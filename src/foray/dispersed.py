@@ -25,7 +25,7 @@ from typing import Any
 import httpx
 import psycopg
 
-from foray.cache import connect, is_ingested, record_ingest, upsert_campsites
+from foray.cache import connect, is_area_covered, record_ingest, upsert_campsites
 from foray.config import Config
 
 logger = logging.getLogger(__name__)
@@ -170,8 +170,7 @@ def ingest_dispersed(
     own_con = con is None
     database = con if con is not None else connect()
     home = cfg.home
-    key = f"dispersed:{home.lat}:{home.lng}:{home.radius_km}"
-    if is_ingested(database, key):
+    if is_area_covered(database, "dispersed:", home.lat, home.lng, home.radius_km):
         logger.info("dispersed: already ingested for this area, skipping")
         if progress_cb:
             progress_cb("Dispersed camping already cached, skipping…", 100.0)
@@ -190,7 +189,10 @@ def ingest_dispersed(
             progress_cb=progress_cb,
         )
         upsert_campsites(database, rows)
-        record_ingest(database, key, len(rows))
+        key = f"dispersed:{home.lat}:{home.lng}:{home.radius_km}"
+        record_ingest(
+            database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km
+        )
         logger.info("dispersed: cached %d reported sites", len(rows))
         return len(rows)
     finally:
