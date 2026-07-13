@@ -4,8 +4,8 @@ Fetches OSM-tagged campable places (``tourism=camp_site`` / ``camp_pitch``, ``ba
 and caches them as ``campsites`` rows (``kind='reported'``) so they flow through the existing
 ``camps_near`` scoring and ``/api/camps`` plumbing untouched.
 
-Neither signal is a promise: dispersed camping is labelled *likely* legal and always links the
-OSM source - verify with the managing district (see AGENTS.md, "No claims").
+These are user-contributed OSM points, not a legal guarantee. Always verify with the managing
+agency before camping (see AGENTS.md, "No claims").
 
 Commercial camping apps (iOverlander, The Dyrt) are deliberately *not* used: iOverlander's terms
 license its content for personal, non-commercial use only (no redistribution/storage), and The
@@ -23,6 +23,7 @@ from collections.abc import Callable
 from typing import Any
 
 import httpx
+import psycopg
 
 from foray.cache import connect, is_ingested, record_ingest, upsert_campsites
 from foray.config import Config
@@ -160,7 +161,7 @@ def fetch_reported_campsites(
 
 def ingest_dispersed(
     cfg: Config,
-    con=None,
+    con: psycopg.Connection | None = None,
     *,
     client: httpx.Client | None = None,
     progress_cb: Callable[[str, float], None] | None = None,
