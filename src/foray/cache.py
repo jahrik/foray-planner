@@ -347,9 +347,12 @@ def has_observations_in_area(
     dlat = radius_km / 111.0
     dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
     row = con.execute(
-        "SELECT count(DISTINCT taxon_id) FROM observations "
-        "WHERE lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s",
-        [lat - dlat, lat + dlat, lng - dlng, lng + dlng],
+        "SELECT count(*) FROM ("
+        "  SELECT DISTINCT taxon_id FROM observations"
+        "  WHERE lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s"
+        "  LIMIT %s"
+        ") sub",
+        [lat - dlat, lat + dlat, lng - dlng, lng + dlng, min_taxa],
     ).fetchone()
     assert row is not None
     return row[0] >= min_taxa

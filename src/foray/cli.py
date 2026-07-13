@@ -51,12 +51,20 @@ def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool) -
     cfg = ctx.obj["cfg"]
     if region_name and all_regions:
         raise click.UsageError("Use --region or --all-regions, not both.")
+    if all_regions and not cfg.coverage:
+        raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
+    if region_name:
+        resolved_region = next(
+            (r for r in cfg.coverage if r.name.lower() == region_name.lower()), None
+        )
+        if resolved_region is None:
+            available = ", ".join(r.name for r in cfg.coverage) or "(none configured)"
+            raise click.UsageError(f"Unknown region {region_name!r}. Available: {available}")
+
     con = connect()
 
     rebuild_phenology = False
     if all_regions:
-        if not cfg.coverage:
-            raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
         for region in cfg.coverage:
             click.echo(f"Ingesting {region.name} (place_id={region.place_id})…")
             counts = ingest_region(cfg, con, region)
@@ -64,12 +72,8 @@ def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool) -
                 click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
         rebuild_phenology = True
     elif region_name:
-        region = next((r for r in cfg.coverage if r.name.lower() == region_name.lower()), None)
-        if region is None:
-            available = ", ".join(r.name for r in cfg.coverage) or "(none configured)"
-            raise click.UsageError(f"Unknown region {region_name!r}. Available: {available}")
-        click.echo(f"Ingesting {region.name} (place_id={region.place_id})…")
-        counts = ingest_region(cfg, con, region)
+        click.echo(f"Ingesting {resolved_region.name} (place_id={resolved_region.place_id})…")
+        counts = ingest_region(cfg, con, resolved_region)
         for species in cfg.species:
             click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
         rebuild_phenology = True
