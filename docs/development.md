@@ -21,7 +21,7 @@ make db                 # start Postgres+PostGIS (docker compose)
 echo "RIDB_API_KEY=your_key_here" > .env   # omit to skip campground ingest
 
 uv run foray refresh    # pull iNat data + build phenology (minutes; hits the network)
-make dev                # start the API server (http://127.0.0.1:8000)
+make start              # start the full stack (http://localhost:8000)
 ```
 
 The Makefile exports `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` and prepends
@@ -31,22 +31,23 @@ the nvm Node path automatically, so you never need to set them manually.
 
 ## Configuration
 
-**`config.yaml`** - default settings. Edit this to change your home base.
+All settings come from environment variables (prefix `FORAY_`, nested delimiter `__`) or a `.env` file via pydantic-settings.
 
-| Key | Default | What it does |
+| Env var | Default | What it does |
 |---|---|---|
-| `home.name` | `"Home"` | Display name for your home location |
-| `home.lat` / `home.lng` | 47.6, -122.3 (Seattle) | Home base coordinates - the map centers here and destinations are ranked relative to it |
-| `home.radius_km` | `400` | How far out to search for destinations |
-| `regions.cell_deg` | `0.5` | Grid cell size in degrees (~55 km at mid-latitudes); changing this requires a full `foray refresh` |
-| `ingest.since_year` | `2015` | How far back to pull iNat observations |
-| `ingest.quality_grade` | `research` | iNat quality filter - `research` only (verifier-confirmed, mapped coordinates) |
-| `ingest.recent_weeks` | `4` | Trailing window for the "Fruiting now" live signal |
-| `paths.species_seed` | `data/species_seed.yaml` | Curated target taxa list |
+| `FORAY_HOME__NAME` | `"Home"` | Display name for your home location |
+| `FORAY_HOME__LAT` / `FORAY_HOME__LNG` | 47.6, -122.3 (Seattle) | Home base coordinates |
+| `FORAY_HOME__RADIUS_KM` | `150` | How far out to search for destinations |
+| `FORAY_CELL_DEG` | `0.25` | Grid cell size in degrees; changing requires a full `foray refresh` |
+| `FORAY_INGEST__SINCE_YEAR` | `2015` | How far back to pull iNat observations |
+| `FORAY_INGEST__QUALITY_GRADE` | `research` | iNat quality filter |
+| `FORAY_INGEST__RECENT_WEEKS` | `4` | Trailing window for the "Fruiting now" live signal |
+| `FORAY_SPECIES` | (built-in defaults in `src/foray/defaults.py`) | Curated target taxa list (JSON array) |
+| `FORAY_COVERAGE` | (built-in: WA, OR, ID) | Coverage regions for state-level ingest (JSON array) |
 
-**Database connection** is *not* a config.yaml key - it comes from the standard libpq env vars
+**Database connection** comes from the standard libpq env vars
 (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`), read natively by `psycopg`. Credentials
-never belong in a committed YAML file. `docker-compose.yml` + the export above cover local dev;
+never belong in a committed file. `docker-compose.yml` + the Makefile export cover local dev;
 production gets them injected from AWS Secrets Manager (see `docs/deployment.md`).
 
 **The home-location override** (written by the UI's Set Location form) lives in Postgres now, in
@@ -83,10 +84,10 @@ Run the backend and the Vite dev server together for live development:
 
 ```bash
 # Terminal 1 - backend
-make dev
+make db && uv run foray serve
 
 # Terminal 2 - frontend (Vite on :5173, proxies /api/* to uvicorn on :8000)
-make dev-frontend
+cd frontend && npm run dev
 ```
 
 Other frontend commands:
@@ -103,7 +104,7 @@ Rerun `npm run gen:api` after changing any `/api/*` route signature.
 ## Architecture overview
 
 ```
-config.yaml (static settings) + PG* env vars (DB connection)
+FORAY_* env vars (pydantic-settings) + PG* env vars (DB connection)
          │
          ▼
     Config (pydantic)
@@ -171,17 +172,17 @@ shows per-month totals. The alerts view fixes species + recency, ignoring the mo
 `phenology`/`regions` are dynamically (re)materialized by `foray refresh`; every other table is
 created by `foray.cache.SCHEMA` (which also enables the `postgis` extension, used only by the
 dispersed-camping ingest's point-in-polygon join - the read path never needs PostGIS geometry
-types). The database is fully rebuildable with `foray refresh`. Change `cell_deg` in
-`config.yaml` and re-run refresh to rebuild with a different grid resolution.
+types). The database is fully rebuildable with `foray refresh`. Change `FORAY_CELL_DEG`
+and re-run refresh to rebuild with a different grid resolution.
 
 ---
 
 ## Adding or changing target species
 
-Edit [`data/species_seed.yaml`](../data/species_seed.yaml). Each entry needs:
+Edit `src/foray/defaults.py` or override via the `FORAY_SPECIES` env var (JSON array). Each entry needs:
 
-```yaml
-- { taxon_id: 56830, name: Morchella, common_name: Morels, rank: genus }
+```json
+{"taxon_id": 56830, "name": "Morchella", "common_name": "Morels", "rank": "genus"}
 ```
 
 Taxon IDs come from iNaturalist - look them up on the website or via

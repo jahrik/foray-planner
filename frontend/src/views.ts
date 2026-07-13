@@ -172,8 +172,9 @@ export async function runAlerts(): Promise<void> {
       <div class="chips">${region.species
         .map((hit) => {
           const label = hit.count + " · " + hit.last_seen + (hit.obscured ? " ⚠ fuzzy" : "");
-          if (hit.uri) {
-            return `<a class="chip live" href="${escapeHtml(hit.uri)}"
+          const safeUri = hit.uri?.startsWith("https://") ? hit.uri : null;
+          if (safeUri) {
+            return `<a class="chip live" href="${escapeHtml(safeUri)}"
               target="_blank" rel="noopener" onclick="event.stopPropagation()"
               >${escapeHtml(hit.common_name)} · ${escapeHtml(label)}</a>`;
           }

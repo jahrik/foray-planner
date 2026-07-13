@@ -28,6 +28,8 @@ from foray.inat import iter_observations
 
 logger = logging.getLogger(__name__)
 
+_CHUNK_SIZE = 5000
+
 
 def _coords(obs: dict[str, Any]) -> tuple[float | None, float | None]:
     geo = obs.get("geojson") or {}
@@ -222,7 +224,8 @@ def ingest_region(
             region.name,
             species_start,
         )
-        rows: list[tuple[Any, ...]] = []
+        chunk: list[tuple[Any, ...]] = []
+        total_rows = 0
         for obs in iter_observations(
             taxon_id=species.taxon_id,
             place_id=region.place_id,
@@ -234,21 +237,27 @@ def ingest_region(
                 break
             row = _to_row(obs, species.taxon_id)
             if row is not None:
-                rows.append(row)
+                chunk.append(row)
+                if len(chunk) >= _CHUNK_SIZE:
+                    upsert_observations(db, chunk)
+                    total_rows += len(chunk)
+                    chunk = []
 
         if abort_event and abort_event.is_set():
             logger.info("ingest_region: cancelled during %s", species.common_name)
             break
-        upsert_observations(db, rows)
+        if chunk:
+            upsert_observations(db, chunk)
+            total_rows += len(chunk)
         key = f"obs:{species.taxon_id}:place:{region.place_id}:{species_start}:{end_date}"
-        record_ingest(db, key, len(rows))
-        counts[species.taxon_id] = len(rows)
+        record_ingest(db, key, total_rows)
+        counts[species.taxon_id] = total_rows
         logger.info(
             "ingest_region [%d/%d] %s: %d observations",
             index,
             total,
             species.common_name,
-            len(rows),
+            total_rows,
         )
 
     logger.info(

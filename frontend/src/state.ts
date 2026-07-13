@@ -34,7 +34,10 @@ export const state: State = {
   planRouteLayer: null,
   planTrip: null,
   focused: null,
-  units: (localStorage.getItem("foray-units") as Units) || "mi",
+  units: ((): Units => {
+    const stored = localStorage.getItem("foray-units");
+    return stored === "km" || stored === "mi" ? stored : "mi";
+  })(),
 };
 
 const KM_TO_MI = 0.621371;

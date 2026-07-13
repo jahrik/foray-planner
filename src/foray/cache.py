@@ -180,7 +180,7 @@ def upsert_taxa(con: psycopg.Connection, rows: Iterable[dict[str, Any]]) -> None
 
 
 def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
-    """Insert observation tuples, ignoring ones already present. Returns rows attempted."""
+    """Insert observation tuples, backfilling metadata on conflict. Returns rows attempted."""
     if not rows:
         return 0
     with con.cursor() as cur:
@@ -190,7 +190,10 @@ def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
                 (id, taxon_id, lat, lng, observed_on, month, year, quality_grade,
                  positional_accuracy, place_guess, uri, obscured)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO NOTHING
+            ON CONFLICT (id) DO UPDATE SET
+                place_guess = COALESCE(EXCLUDED.place_guess, observations.place_guess),
+                uri = COALESCE(EXCLUDED.uri, observations.uri),
+                obscured = COALESCE(EXCLUDED.obscured, observations.obscured)
             """,
             rows,
         )
@@ -389,7 +392,7 @@ def latest_obs_date(
 def latest_obs_date_by_place(con: psycopg.Connection, taxon_id: int, place_id: int) -> str | None:
     """Return the latest end-date from ingest_log for a place_id-based pull, or None."""
     row = con.execute(
-        "SELECT max(split_part(key, ':', -1)) FROM ingest_log WHERE key LIKE %s",
+        "SELECT max(split_part(key, ':', 6)) FROM ingest_log WHERE key LIKE %s",
         [f"obs:{taxon_id}:place:{place_id}:%"],
     ).fetchone()
     if row is None or row[0] is None:

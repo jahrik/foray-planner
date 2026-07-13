@@ -96,8 +96,8 @@ home to keep the driving down. A map-based itinerary view is coming; for now see
 
 The app tracks a curated list of 21 genera - morels, chanterelles, king
 boletes, hedgehogs, lobster mushrooms, and more. The full list is in
-[`data/species_seed.yaml`](data/species_seed.yaml). Each species chip in the UI links
-directly to its iNaturalist page for photos, range maps, and community notes.
+`src/foray/defaults.py` (or override via the `FORAY_SPECIES` env var).
+Each species chip in the UI links directly to its iNaturalist page for photos, range maps, and community notes.
 
 ---
 
@@ -106,7 +106,7 @@ directly to its iNaturalist page for photos, range maps, and community notes.
 ```bash
 make install && make db
 uv run foray refresh
-make dev                # http://127.0.0.1:8000
+make start              # http://localhost:8000
 ```
 
 Run `make check` before pushing (lint + type-check + tests). See the

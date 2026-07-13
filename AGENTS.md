@@ -91,7 +91,7 @@ prepends the nvm Node path automatically.
 make install            # uv sync + frontend npm ci
 make db                 # start Postgres+PostGIS
 uv run foray refresh    # pull iNat obs + build phenology (first run hits the network)
-make dev                # http://127.0.0.1:8000
+make start              # http://localhost:8000 (app + scheduler + postgres)
 ```
 
 ### Makefile targets
@@ -104,9 +104,10 @@ make dev                # http://127.0.0.1:8000
 | `make test` | Start Postgres if needed, then `pytest` |
 | `make check` | `lint` + `test` (the full local CI gate) |
 | `make frontend` | Build the Vite/TypeScript client bundle |
-| `make dev` | Start Postgres + the FastAPI server |
-| `make dev-frontend` | Vite hot-reload on :5173 (proxies /api to :8000) |
-| `make docker` | Build `local/foray-planner:dev` image |
+| `make start` | Build + start the full stack (app + scheduler + postgres) |
+| `make stop` | Stop all containers |
+| `make restart` | Rebuild + restart the app container |
+| `make ingest` | One-shot all-regions ingest |
 | `make clean` | Tear down containers + volumes |
 
 ### Backend CLI
@@ -120,11 +121,11 @@ uv run foray serve --host 0.0.0.0 --port 8000
 ### Frontend dev (hot-reload)
 
 ```bash
-# Terminal 1
-make dev
+# Terminal 1 - backend
+make db && uv run foray serve
 
-# Terminal 2
-make dev-frontend
+# Terminal 2 - frontend (Vite on :5173, proxies /api/* to uvicorn on :8000)
+cd frontend && npm run dev
 ```
 
 Rerun `npm run gen:api` (from `frontend/`) after changing any `/api/*` route.
@@ -165,8 +166,8 @@ make frontend
   idempotently. Needs `RIDB_API_KEY` (gitignored `.env` locally; env var in prod) - absent,
   camps ingest is a no-op. `free` is nullable: TRUE only on an explicit no-fee signal, else
   NULL (unknown). No legality/claims - surface ownership + link the source, never assert.
-- Adding species: edit `data/species_seed.yaml` (resolve taxon_ids via `get_taxa`) then
-  refresh.
+- Adding species: edit `src/foray/defaults.py` (resolve taxon_ids via `get_taxa`) or set
+  `FORAY_SPECIES` env var (JSON array), then refresh.
 
 ## Not in scope
 
