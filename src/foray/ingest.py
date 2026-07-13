@@ -73,6 +73,9 @@ def _to_row(obs: dict[str, Any], seed_taxon_id: int) -> tuple[Any, ...] | None:
         day.year,
         obs.get("quality_grade"),
         obs.get("positional_accuracy"),
+        obs.get("place_guess"),
+        obs.get("uri"),
+        obs.get("obscured"),
     )
 
 

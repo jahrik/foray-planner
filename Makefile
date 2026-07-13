@@ -1,4 +1,4 @@
-.PHONY: db install lint test check frontend dev start stop restart clean
+.PHONY: db install lint test check frontend start stop restart clean ingest scheduler
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
@@ -40,11 +40,11 @@ stop:
 restart:
 	docker compose up -d --build app
 
-dev: db frontend
-	uv run foray serve
+ingest: db
+	docker compose run --rm app foray ingest --all-regions
 
-dev-frontend:
-	cd frontend && npm run dev
+scheduler:
+	docker compose --profile scheduler up -d scheduler
 
 clean:
-	docker compose down -v
+	docker compose --profile scheduler down -v

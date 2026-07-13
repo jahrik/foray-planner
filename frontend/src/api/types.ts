@@ -61,6 +61,9 @@ export interface AlertHit {
   common_name: string;
   count: number;
   last_seen: string;
+  place_guess: string | null;
+  uri: string | null;
+  obscured: boolean;
 }
 
 /** A region with recent activity (`GET /api/alerts`). */

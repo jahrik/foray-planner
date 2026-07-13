@@ -39,5 +39,24 @@ services:
       start_period: 15s
       retries: 3
 
+  scheduler:
+    build:
+      context: .
+      target: runtime
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: foray
+      PGPASSWORD: ${POSTGRES_PASSWORD:-foray}
+      PGDATABASE: foray
+      FORAY_INGEST_INTERVAL_HOURS: "${FORAY_INGEST_INTERVAL_HOURS:-24}"
+      FORAY_LAYERS_INTERVAL_HOURS: "${FORAY_LAYERS_INTERVAL_HOURS:-168}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["sh", "scripts/scheduler.sh"]
+    profiles:
+      - scheduler
+
 volumes:
   foray-postgres-data:

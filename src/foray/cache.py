@@ -47,7 +47,10 @@ CREATE TABLE IF NOT EXISTS observations (
     month               SMALLINT,
     year                SMALLINT,
     quality_grade       TEXT,
-    positional_accuracy INTEGER
+    positional_accuracy INTEGER,
+    place_guess         TEXT,
+    uri                 TEXT,
+    obscured            BOOLEAN
 );
 
 CREATE TABLE IF NOT EXISTS ingest_log (
@@ -153,6 +156,9 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION")
     con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION")
     con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS radius_km DOUBLE PRECISION")
+    con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS place_guess TEXT")
+    con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS uri TEXT")
+    con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS obscured BOOLEAN")
     return con
 
 
@@ -180,8 +186,8 @@ def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
             """
             INSERT INTO observations
                 (id, taxon_id, lat, lng, observed_on, month, year, quality_grade,
-                 positional_accuracy)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 positional_accuracy, place_guess, uri, obscured)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO NOTHING
             """,
             rows,

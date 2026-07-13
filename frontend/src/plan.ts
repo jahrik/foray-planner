@@ -4,7 +4,7 @@ import { getJson } from "./api/client";
 import type { Stop, TripPlan } from "./api/types";
 import { focusRegion } from "./layers";
 import { clearMarkers, map, PLAN_STOP } from "./map";
-import { errorDetail, inatUrl, MONTHS, qs, setStatus, state } from "./state";
+import { dist, errorDetail, inatUrl, MONTHS, qs, setStatus, state } from "./state";
 import { monthsParam, selectedSpecies } from "./views";
 
 export async function runPlan(): Promise<void> {
@@ -57,7 +57,7 @@ export async function runPlan(): Promise<void> {
     const popupEl = document.createElement("div");
     const title = document.createElement("b");
     title.textContent = `Stop ${stop.order}`;
-    const drive = document.createTextNode(` · ${stop.drive_km_from_prev} km leg`);
+    const drive = document.createTextNode(` · ${dist(stop.drive_km_from_prev)} leg`);
     const br = document.createElement("br");
     const names = document.createTextNode(
       stop.species.slice(0, 3).map((hit) => hit.common_name).join(", "),
@@ -86,7 +86,7 @@ export async function runPlan(): Promise<void> {
   panel.innerHTML = `
     <div class="plan-header">
       <div class="plan-summary">
-        <strong>${trip.n_stops} stops</strong> · ${trip.total_drive_km} km total · ${monthNames}${skippedNote}
+        <strong>${trip.n_stops} stops</strong> · ${dist(trip.total_drive_km)} total · ${monthNames}${skippedNote}
       </div>
       <div class="plan-export">
         <button id="export-gpx" class="primary">⬇ GPX</button>
@@ -100,7 +100,7 @@ export async function runPlan(): Promise<void> {
   document.getElementById("export-gpx")!.onclick = () => exportGpx(trip);
   document.getElementById("export-json")!.onclick = () => exportJson(trip);
 
-  setStatus(`${trip.n_stops} stops · ${trip.total_drive_km} km`);
+  setStatus(`${trip.n_stops} stops · ${dist(trip.total_drive_km)}`);
 }
 
 /** Build a per-stop card using DOM methods so user-controlled text is never injected as HTML. */
@@ -116,7 +116,7 @@ function buildStopCard(stop: Stop): HTMLElement {
   numEl.textContent = `Stop ${stop.order}`;
   const driveEl = document.createElement("span");
   driveEl.className = "stop-drive";
-  driveEl.textContent = `${stop.drive_km_from_prev} km leg · ${stop.cumulative_drive_km} km total`;
+  driveEl.textContent = `${dist(stop.drive_km_from_prev)} leg · ${dist(stop.cumulative_drive_km)} total`;
   head.append(numEl, driveEl);
   card.appendChild(head);
 
@@ -162,7 +162,7 @@ function buildStopCard(stop: Stop): HTMLElement {
       : stop.camp.fee
         ? stop.camp.fee
         : "cost unknown";
-    campEl.append("🏕️ ", campName, ` · ${stop.camp.distance_km} km · ${costText}`);
+    campEl.append("🏕️ ", campName, ` · ${dist(stop.camp.distance_km)} · ${costText}`);
   } else {
     campEl.textContent = "No camp in range";
   }
@@ -188,7 +188,7 @@ function exportGpx(trip: TripPlan): void {
       const desc = `${stop.species
         .slice(0, 3)
         .map((hit) => hit.common_name)
-        .join(", ")} · ${stop.drive_km_from_prev} km leg`;
+        .join(", ")} · ${dist(stop.drive_km_from_prev)} leg`;
       return `  <wpt lat="${lat.toFixed(6)}" lon="${lng.toFixed(6)}">\n    <name>${escXml(name)}</name>\n    <desc>${escXml(desc)}</desc>\n  </wpt>`;
     })
     .join("\n");
@@ -197,7 +197,7 @@ function exportGpx(trip: TripPlan): void {
 <gpx version="1.1" creator="Foray Planner" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata>
     <name>${escXml(`Foray Trip ${monthNames}`)}</name>
-    <desc>${escXml(`${trip.n_stops} stops, ${trip.total_drive_km} km`)}</desc>
+    <desc>${escXml(`${trip.n_stops} stops, ${dist(trip.total_drive_km)}`)}</desc>
   </metadata>
 ${wpts}
 </gpx>`;

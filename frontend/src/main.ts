@@ -8,7 +8,7 @@ import { initLocationAutocomplete } from "./location";
 import { clearPlanRoute, currentTheme, initMap, setTiles, updateHome } from "./map";
 import { runPlan } from "./plan";
 import { startRefresh } from "./refresh";
-import { qs, state, type View } from "./state";
+import { qs, state, type Units, type View } from "./state";
 import { initMonths, initSpecies, runAlerts, runDestinations } from "./views";
 
 function initTabs(): void {
@@ -62,10 +62,27 @@ function initTheme(): void {
   };
 }
 
+function initUnits(): void {
+  const toggle = qs<HTMLButtonElement>("#units-toggle");
+  const apply = (units: Units): void => {
+    state.units = units;
+    toggle.textContent = units;
+    toggle.title = units === "mi" ? "Switch to kilometers" : "Switch to miles";
+    if (state.home) updateHome(state.home);
+  };
+  apply(state.units);
+  toggle.onclick = () => {
+    const next: Units = state.units === "mi" ? "km" : "mi";
+    localStorage.setItem("foray-units", next);
+    apply(next);
+  };
+}
+
 async function main(): Promise<void> {
   const config = await getJson<Config>("/api/config");
   state.home = config.home;
   initTheme();
+  initUnits();
   initMonths();
   await initSpecies();
   initMap(config.home);
