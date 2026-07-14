@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#12140f"/>
+  <!-- Simple mushroom silhouette (not an emoji glyph - not every render environment has a
+       color-emoji font, and a monochrome emoji fallback reads as a near-invisible blob). -->
+  <path d="M256 96c-97 0-176 61-176 146h352c0-85-79-146-176-146z" fill="#d9a441"/>
+  <rect x="222" y="242" width="68" height="180" rx="30" fill="#eef0e6"/>
+</svg>
