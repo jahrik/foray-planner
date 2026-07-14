@@ -1,15 +1,32 @@
 import "leaflet/dist/leaflet.css";
 import "./style.css";
 
-import { getJson } from "./api/client";
-import type { Config, CoverageRegion } from "./api/types";
+import { getJson, postJson } from "./api/client";
+import type { Config, CoverageRegion, Home } from "./api/types";
 import { loadCamps, loadLand, loadTrails } from "./layers";
 import { initLocationAutocomplete } from "./location";
 import { clearPlanRoute, currentTheme, initMap, setTiles, updateHome } from "./map";
 import { runPlan } from "./plan";
 import { startRefresh } from "./refresh";
-import { qs, state, type Units, type View } from "./state";
-import { initMonths, initSpecies, runAlerts, runDestinations } from "./views";
+import { errorDetail, qs, setStatus, state, type Units, type View } from "./state";
+import { initMonths, runAlerts, runDestinations } from "./views";
+
+// Destinations rank automatically now (no manual trigger needed); calendar has no re-runnable
+// action either. Alerts/plan still depend on inputs the user might change after the initial
+// run, so they keep a manual re-run button. Called both on tab switches and once on initial
+// load, since the page starts on the destinations tab and the button's static HTML label
+// ("Rank destinations") would otherwise sit there as a stale, non-functional no-op until the
+// user switched tabs at least once.
+function updateRunButton(): void {
+  const runBtn = qs<HTMLButtonElement>("#run");
+  if (state.view === "calendar" || state.view === "destinations") {
+    runBtn.style.display = "none";
+  } else {
+    runBtn.style.display = "";
+    if (state.view === "alerts") runBtn.textContent = "Check alerts";
+    else if (state.view === "plan") runBtn.textContent = "Plan route";
+  }
+}
 
 function initTabs(): void {
   document.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((button) => {
@@ -22,17 +39,7 @@ function initTabs(): void {
       const planRow = document.getElementById("plan-row");
       if (planRow) planRow.style.display = state.view === "plan" ? "flex" : "none";
 
-      // The run button is only meaningful on destinations / alerts / plan.
-      // Hide it on the calendar tab (no re-runnable action there).
-      const runBtn = qs<HTMLButtonElement>("#run");
-      if (state.view === "calendar") {
-        runBtn.style.display = "none";
-      } else {
-        runBtn.style.display = "";
-        if (state.view === "destinations") runBtn.textContent = "Rank destinations";
-        else if (state.view === "alerts") runBtn.textContent = "Check alerts";
-        else if (state.view === "plan") runBtn.textContent = "Plan route";
-      }
+      updateRunButton();
 
       if (state.view === "destinations") runDestinations();
       else if (state.view === "alerts") runAlerts();
@@ -84,13 +91,13 @@ async function main(): Promise<void> {
   initTheme();
   initUnits();
   initMonths();
-  await initSpecies();
   initMap(config.home);
   updateHome(config.home);
   initTabs();
+  updateRunButton();
+  initRadiusPresets();
   qs("#run").onclick = () => {
-    if (state.view === "destinations") runDestinations();
-    else if (state.view === "alerts") runAlerts();
+    if (state.view === "alerts") runAlerts();
     else if (state.view === "plan") runPlan();
   };
   qs("#refresh").onclick = () => startRefresh("Refreshing mushroom data…", "mushrooms");
@@ -138,7 +145,59 @@ async function main(): Promise<void> {
     startRefresh("Fetching data…").then((succeeded) => {
       if (succeeded) runDestinations();
     });
+  } else if (state.view === "destinations") {
+    runDestinations();
   }
+  initGeolocation();
+}
+
+// Auto-detect location on load so the destination flow needs no manual setup; the search box
+// (initLocationAutocomplete) stays available as an override/plan-ahead path, and denial/error
+// just leaves whatever location `/api/config` already gave us.
+function initGeolocation(): void {
+  if (!("geolocation" in navigator)) return;
+  navigator.geolocation.getCurrentPosition(
+    async (position) => {
+      let response: { home: Home };
+      try {
+        response = await postJson<{ home: Home }>("/api/location", {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        });
+      } catch {
+        return; // keep whatever location is already loaded
+      }
+      updateHome(response.home);
+      if (state.view === "destinations") runDestinations();
+    },
+    () => {
+      // denied/unavailable - fall back silently to the already-loaded location
+    },
+    { timeout: 8000 },
+  );
+}
+
+function initRadiusPresets(): void {
+  qs("#radius-presets").querySelectorAll<HTMLButtonElement>("button[data-km]").forEach((button) => {
+    button.onclick = async () => {
+      if (!state.home) return;
+      const radius_km = Number(button.dataset.km);
+      let response: { home: Home };
+      try {
+        response = await postJson<{ home: Home }>("/api/location", {
+          lat: state.home.lat,
+          lng: state.home.lng,
+          name: state.home.name,
+          radius_km,
+        });
+      } catch (error) {
+        setStatus(errorDetail(error));
+        return;
+      }
+      updateHome(response.home);
+      if (state.view === "destinations") runDestinations();
+    };
+  });
 }
 
 function formatAge(iso: string): string {
