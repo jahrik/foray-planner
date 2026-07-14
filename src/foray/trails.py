@@ -71,20 +71,14 @@ def _trails_query(lat: float, lng: float, radius_m: float) -> str:
     )
 
 
-def _post_overpass(
-    client: httpx.Client, query: str, *, attempts: int = 4, base_delay: float = 2.0
-) -> dict[str, Any]:
+def _post_overpass(client: httpx.Client, query: str, *, attempts: int = 4, base_delay: float = 2.0) -> dict[str, Any]:
     """POST a query, backing off on Overpass's throttle (429) / timeout (504) responses."""
     resp: httpx.Response | None = None
     for attempt in range(1, attempts + 1):
         resp = client.post(OVERPASS_URL, data={"data": query}, headers={"User-Agent": USER_AGENT})
         if resp.status_code in (429, 504) and attempt < attempts:
             retry_after = resp.headers.get("Retry-After", "")
-            delay = (
-                float(retry_after)
-                if retry_after.replace(".", "", 1).isdigit()
-                else base_delay * 2 ** (attempt - 1)
-            )
+            delay = float(retry_after) if retry_after.replace(".", "", 1).isdigit() else base_delay * 2 ** (attempt - 1)
             time.sleep(delay)
             continue
         break
@@ -196,8 +190,7 @@ def _parse_element(element: dict[str, Any]) -> tuple[Any, ...] | None:
         lines = [
             coords
             for member in element.get("members") or []
-            if member.get("type") == "way"
-            and (coords := _line_coords(member.get("geometry") or []))
+            if member.get("type") == "way" and (coords := _line_coords(member.get("geometry") or []))
         ]
         if not lines:
             return None
@@ -276,9 +269,7 @@ def ingest_trails(
         )
         upsert_trails(database, rows)
         key = f"trails:{home.lat}:{home.lng}:{home.radius_km}"
-        record_ingest(
-            database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km
-        )
+        record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
         logger.info("trails: cached %d trails", len(rows))
         return len(rows)
     finally:

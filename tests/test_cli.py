@@ -25,9 +25,7 @@ def env_config(con: psycopg.Connection, monkeypatch):
     monkeypatch.setenv("FORAY_INGEST__RECENT_WEEKS", "4")
     monkeypatch.setenv(
         "FORAY_SPECIES",
-        json.dumps(
-            [{"taxon_id": 111, "name": "Morchella", "common_name": "Morels", "rank": "genus"}]
-        ),
+        json.dumps([{"taxon_id": 111, "name": "Morchella", "common_name": "Morels", "rank": "genus"}]),
     )
 
 

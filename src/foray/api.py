@@ -53,9 +53,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     # Pool connections carry PG* env vars by default (see cache.connect's docstring) - no
     # DSN-building code needed. `open=False` defers the actual connections until the
     # lifespan's `pool.open()`, matching psycopg_pool's recommended startup pattern.
-    pool = ConnectionPool(
-        conninfo="", min_size=1, max_size=5, open=False, kwargs={"autocommit": True}
-    )
+    pool = ConnectionPool(conninfo="", min_size=1, max_size=5, open=False, kwargs={"autocommit": True})
     state: dict[str, Any] = {
         "cfg": cfg,
         "refreshing": False,
@@ -172,36 +170,28 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         current(),
                         db,
                         client=state["http_client"],
-                        progress_cb=make_cb(
-                            50.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
-                        ),
+                        progress_cb=make_cb(50.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
                     )
                 if target in ("all", "land") and not state["abort_event"].is_set():
                     land.ingest_public_land(
                         current(),
                         db,
                         client=state["http_client"],
-                        progress_cb=make_cb(
-                            60.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
-                        ),
+                        progress_cb=make_cb(60.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
                     )
                 if target in ("all", "dispersed") and not state["abort_event"].is_set():
                     dispersed.ingest_dispersed(
                         current(),
                         db,
                         client=state["http_client"],
-                        progress_cb=make_cb(
-                            70.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
-                        ),
+                        progress_cb=make_cb(70.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
                     )
                 if target in ("all", "trails") and not state["abort_event"].is_set():
                     trails.ingest_trails(
                         current(),
                         db,
                         client=state["http_client"],
-                        progress_cb=make_cb(
-                            80.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0
-                        ),
+                        progress_cb=make_cb(80.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
                     )
 
                 if target in ("all", "mushrooms") and not state["abort_event"].is_set():
@@ -244,9 +234,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/species")
     def get_species() -> list[dict[str, Any]]:
-        return [
-            {**species.model_dump(), "inat_url": species.inat_url} for species in current().species
-        ]
+        return [{**species.model_dump(), "inat_url": species.inat_url} for species in current().species]
 
     @app.get("/api/coverage")
     def get_coverage() -> list[dict[str, Any]]:
@@ -261,8 +249,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 ).fetchone()
                 last_ingest = row[0].isoformat() if row and row[0] else None
                 count_row = conn.execute(
-                    "SELECT count(DISTINCT split_part(key, ':', 2)) "
-                    "FROM ingest_log WHERE key LIKE %s",
+                    "SELECT count(DISTINCT split_part(key, ':', 2)) FROM ingest_log WHERE key LIKE %s",
                     [f"obs:%:place:{region.place_id}:%"],
                 ).fetchone()
                 results.append(
@@ -306,9 +293,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         require_idle()
         try:
             with pool.connection() as conn:
-                calendar = scoring.place_calendar(
-                    conn, region_id=region_id, taxon_ids=parse_species(species)
-                )
+                calendar = scoring.place_calendar(conn, region_id=region_id, taxon_ids=parse_species(species))
         except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
         return calendar
@@ -460,9 +445,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(400, "provide `query` or both `lat` and `lng`")
 
         with pool.connection() as conn:
-            db_save_location(
-                conn, name=home.name, lat=home.lat, lng=home.lng, radius_km=home.radius_km
-            )
+            db_save_location(conn, name=home.name, lat=home.lat, lng=home.lng, radius_km=home.radius_km)
             state["cfg"] = cfg.model_copy(update={"home": home})
 
         return {"home": home.model_dump()}
@@ -472,9 +455,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     @app.post("/api/refresh")
     def refresh(target: str = Query("mushrooms")) -> dict[str, Any]:
         if target not in _VALID_REFRESH_TARGETS:
-            raise HTTPException(
-                400, f"unknown target '{target}'; valid: {sorted(_VALID_REFRESH_TARGETS)}"
-            )
+            raise HTTPException(400, f"unknown target '{target}'; valid: {sorted(_VALID_REFRESH_TARGETS)}")
         if state["refreshing"]:
             return {"status": "already running"}
         state["refreshing"] = True

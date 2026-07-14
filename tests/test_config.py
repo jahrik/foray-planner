@@ -84,9 +84,7 @@ def test_home_rejects_nonpositive_radius() -> None:
 
 def test_species_forbids_unknown_fields() -> None:
     with pytest.raises(ValidationError):
-        Species.model_validate(
-            {"taxon_id": 1, "name": "a", "common_name": "b", "rank": "species", "note": "x"}
-        )
+        Species.model_validate({"taxon_id": 1, "name": "a", "common_name": "b", "rank": "species", "note": "x"})
 
 
 def test_config_rejects_bad_quality_grade(monkeypatch: pytest.MonkeyPatch) -> None:

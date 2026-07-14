@@ -80,10 +80,7 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     delta_phi = math.radians(lat2 - lat1)
     delta_lambda = math.radians(lng2 - lng1)
-    inner = (
-        math.sin(delta_phi / 2) ** 2
-        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
-    )
+    inner = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
     return 2 * earth_radius_km * math.asin(math.sqrt(inner))
 
 
@@ -109,9 +106,7 @@ class RegionScore:
     species: list[SpeciesHit]
 
 
-def _recent_counts(
-    con: psycopg.Connection, cell_deg: float, taxon_ids: list[int], weeks: int
-) -> dict[str, int]:
+def _recent_counts(con: psycopg.Connection, cell_deg: float, taxon_ids: list[int], weeks: int) -> dict[str, int]:
     cutoff = (dt.date.today() - dt.timedelta(weeks=weeks)).isoformat()
     binned = _BINNED.format(cell=cell_deg)
     # cast: the query is built from a fixed template + `_in()`'s placeholder-count text
@@ -195,9 +190,7 @@ def rank_destinations(
             {"clat": clat, "clng": clng, "dist": dist, "score": 0.0, "species": []},
         )
         agg["score"] += w_pheno * math.log1p(month_cnt)
-        agg["species"].append(
-            SpeciesHit(taxon_id, names.get(taxon_id, str(taxon_id)), month_cnt, total_cnt, w_pheno)
-        )
+        agg["species"].append(SpeciesHit(taxon_id, names.get(taxon_id, str(taxon_id)), month_cnt, total_cnt, w_pheno))
 
     results: list[RegionScore] = []
     for region_id, agg in regions.items():
@@ -305,9 +298,7 @@ class LandUnit:
     geometry: dict[str, Any]  # parsed GeoJSON geometry, ready for Leaflet
 
 
-def land_near(
-    con: psycopg.Connection, *, lat: float, lng: float, radius_km: float
-) -> list[LandUnit]:
+def land_near(con: psycopg.Connection, *, lat: float, lng: float, radius_km: float) -> list[LandUnit]:
     """Public-land ownership polygons whose bounding box overlaps the home disk.
 
     Filtering is a cheap bbox-vs-envelope overlap in SQL (the stored geometry needs no spatial
@@ -350,9 +341,7 @@ class Trail:
     geometry: dict[str, Any]  # parsed GeoJSON geometry, ready for Leaflet
 
 
-def trails_near(
-    con: psycopg.Connection, *, lat: float, lng: float, radius_km: float
-) -> list[Trail]:
+def trails_near(con: psycopg.Connection, *, lat: float, lng: float, radius_km: float) -> list[Trail]:
     """Trails whose representative point is within ``radius_km`` of a hotspot, nearest first.
 
     A cheap bbox-vs-envelope prefilter in SQL (the stored geometry needs no spatial types)
@@ -405,9 +394,7 @@ def trails_near(
     return [trail for _, trail in scored]
 
 
-def place_calendar(
-    con: psycopg.Connection, *, region_id: str, taxon_ids: list[int]
-) -> dict[int, dict[str, Any]]:
+def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[int]) -> dict[int, dict[str, Any]]:
     """12-month activity for a region: total count + per-species breakdown per month."""
     rows = con.execute(
         cast(
@@ -420,9 +407,7 @@ def place_calendar(
         [region_id, *taxon_ids],
     ).fetchall()
     names = dict(con.execute("SELECT taxon_id, common_name FROM taxa").fetchall())
-    calendar: dict[int, dict[str, Any]] = {
-        month: {"total": 0, "species": {}} for month in range(1, 13)
-    }
+    calendar: dict[int, dict[str, Any]] = {month: {"total": 0, "species": {}} for month in range(1, 13)}
     for month, taxon_id, cnt in rows:
         bucket = calendar[month]
         bucket["total"] += cnt
@@ -577,9 +562,7 @@ def plan_route(
             continue
         # camps_near ranks free-first, so its nearest result is the nearest *free* camp when one
         # is in range, else the nearest of any kind - one query answers both cases.
-        nearby = camps_near(
-            con, lat=region.center_lat, lng=region.center_lng, radius_km=camp_radius_km
-        )
+        nearby = camps_near(con, lat=region.center_lat, lng=region.center_lng, radius_km=camp_radius_km)
         camp = nearby[0] if nearby else None
         camp_is_free = camp is not None and camp.free is True
         if require_free_camp and not camp_is_free:
@@ -597,9 +580,7 @@ def plan_route(
     while remaining:
         nearest = min(
             range(len(remaining)),
-            key=lambda idx: haversine_km(
-                cur_lat, cur_lng, remaining[idx][0].center_lat, remaining[idx][0].center_lng
-            ),
+            key=lambda idx: haversine_km(cur_lat, cur_lng, remaining[idx][0].center_lat, remaining[idx][0].center_lng),
         )
         region, camp, camp_is_free = remaining[nearest]
         leg = haversine_km(cur_lat, cur_lng, region.center_lat, region.center_lng)

@@ -32,10 +32,7 @@ def cfg(con: psycopg.Connection) -> Settings:
             ],
         )
     rows = (
-        [
-            (obs_id, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", 10)
-            for obs_id in range(1, 11)
-        ]
+        [(obs_id, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", 10) for obs_id in range(1, 11)]
         + [
             (obs_id, CHANT, HOME_LAT, HOME_LNG, dt.date(2022, 7, 10), 7, 2022, "research", 10)
             for obs_id in range(11, 16)
@@ -157,9 +154,7 @@ def test_camps_bad_region_id_is_400(client: TestClient) -> None:
 
 
 def test_plan_route(client: TestClient) -> None:
-    response = client.get(
-        "/api/plan", params={"months": "4", "require_free_camp": "false", "max_stops": 1}
-    )
+    response = client.get("/api/plan", params={"months": "4", "require_free_camp": "false", "max_stops": 1})
     assert response.status_code == 200
     body = response.json()
     assert "stops" in body
@@ -174,9 +169,7 @@ def test_set_location_by_latlng(client: TestClient) -> None:
 
 
 def test_set_location_returns_home(client: TestClient) -> None:
-    response = client.post(
-        "/api/location", json={"lat": HOME_LAT, "lng": HOME_LNG, "radius_km": 50}
-    )
+    response = client.post("/api/location", json={"lat": HOME_LAT, "lng": HOME_LNG, "radius_km": 50})
     assert response.status_code == 200
     body = response.json()
     assert body["home"]["lat"] == HOME_LAT

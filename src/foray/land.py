@@ -70,10 +70,7 @@ SOURCES: tuple[LandSource, ...] = (
     LandSource(
         key="blm",
         agency="BLM",
-        query_url=(
-            "https://gis.blm.gov/arcgis/rest/services/lands/"
-            "BLM_Natl_SMA_LimitedScale/MapServer/1/query"
-        ),
+        query_url=("https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer/1/query"),
         where="ADMIN_AGENCY_CODE='BLM'",
         name_field="ADMIN_UNIT_NAME",
         fallback_name="BLM land",
@@ -81,10 +78,7 @@ SOURCES: tuple[LandSource, ...] = (
     LandSource(
         key="usfs",
         agency="USFS",
-        query_url=(
-            "https://apps.fs.usda.gov/arcx/rest/services/EDW/"
-            "EDW_ForestSystemBoundaries_01/MapServer/0/query"
-        ),
+        query_url=("https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_ForestSystemBoundaries_01/MapServer/0/query"),
         where="1=1",
         name_field="FORESTNAME",
         fallback_name="National Forest",
@@ -282,9 +276,7 @@ def ingest_public_land(
         )
         upsert_public_land(database, rows)
         key = f"land:{home.lat}:{home.lng}:{home.radius_km}"
-        record_ingest(
-            database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km
-        )
+        record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
         logger.info("land: cached %d public-land units", len(rows))
         return len(rows)
     finally:

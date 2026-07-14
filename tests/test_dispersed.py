@@ -96,9 +96,7 @@ def test_fetch_reported_campsites_retries_on_overpass_throttle(
     assert [row[0] for row in reported] == ["osm:node/7"]
 
 
-def test_ingest_dispersed_upserts_reported_sites(
-    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ingest_dispersed_upserts_reported_sites(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("foray.dispersed.time.sleep", lambda _seconds: None)
 
     def handler(request: httpx.Request) -> httpx.Response:

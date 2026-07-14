@@ -54,20 +54,14 @@ def _reported_query(lat: float, lng: float, radius_m: float) -> str:
     )
 
 
-def _post_overpass(
-    client: httpx.Client, query: str, *, attempts: int = 4, base_delay: float = 2.0
-) -> dict[str, Any]:
+def _post_overpass(client: httpx.Client, query: str, *, attempts: int = 4, base_delay: float = 2.0) -> dict[str, Any]:
     """POST a query, backing off on Overpass's throttle (429) / timeout (504) responses."""
     resp: httpx.Response | None = None
     for attempt in range(1, attempts + 1):
         resp = client.post(OVERPASS_URL, data={"data": query}, headers={"User-Agent": USER_AGENT})
         if resp.status_code in (429, 504) and attempt < attempts:
             retry_after = resp.headers.get("Retry-After", "")
-            delay = (
-                float(retry_after)
-                if retry_after.replace(".", "", 1).isdigit()
-                else base_delay * 2 ** (attempt - 1)
-            )
+            delay = float(retry_after) if retry_after.replace(".", "", 1).isdigit() else base_delay * 2 ** (attempt - 1)
             time.sleep(delay)
             continue
         break
@@ -178,9 +172,7 @@ def ingest_dispersed(
             database.close()
         return 0
     try:
-        logger.info(
-            "dispersed: fetching OSM camping layers within %.0f km of home…", home.radius_km
-        )
+        logger.info("dispersed: fetching OSM camping layers within %.0f km of home…", home.radius_km)
         rows = fetch_reported_campsites(
             lat=home.lat,
             lng=home.lng,
@@ -190,9 +182,7 @@ def ingest_dispersed(
         )
         upsert_campsites(database, rows)
         key = f"dispersed:{home.lat}:{home.lng}:{home.radius_km}"
-        record_ingest(
-            database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km
-        )
+        record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
         logger.info("dispersed: cached %d reported sites", len(rows))
         return len(rows)
     finally:
