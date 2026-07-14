@@ -1,4 +1,4 @@
-# Local dev stack. Production uses ECS + RDS (see infra/cdk/).
+# Local dev stack. Production uses DO managed Postgres (see infra/ansible/).
 x-postgres-env: &postgres-env
   PGHOST: postgres
   PGPORT: "5432"

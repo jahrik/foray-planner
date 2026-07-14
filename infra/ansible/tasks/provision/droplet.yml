@@ -1,0 +1,40 @@
+---
+- name: Create Droplet
+  community.digitalocean.digital_ocean_droplet:
+    oauth_token: "{{ foray_do_token }}"
+    state: present
+    name: "{{ foray_do_droplet_name }}"
+    size: "{{ foray_do_droplet_size }}"
+    image: "{{ foray_do_droplet_image }}"
+    region: "{{ foray_do_region }}"
+    ssh_keys:
+      - "{{ foray_do_ssh_key_name }}"
+    unique_name: true
+    wait: true
+    wait_timeout: 300
+  register: foray_droplet
+
+- name: Store droplet IP
+  ansible.builtin.set_fact:
+    foray_droplet_ip: "{{ foray_droplet.data.droplet.networks.v4 | selectattr('type', 'equalto', 'public') | map(attribute='ip_address') | first }}"
+  when: foray_droplet.data is defined
+
+- name: Add droplet to in-memory inventory with DB connection facts
+  ansible.builtin.add_host:
+    name: foray-prod
+    ansible_host: "{{ foray_droplet_ip }}"
+    ansible_user: root
+    groups: foray
+    foray_db_host: "{{ foray_db_host }}"
+    foray_db_port: "{{ foray_db_port }}"
+    foray_db_user: "{{ foray_db_user }}"
+    foray_db_password: "{{ foray_db_password }}"
+  when: foray_droplet_ip is defined
+
+- name: Wait for SSH to become available
+  ansible.builtin.wait_for:
+    host: "{{ foray_droplet_ip }}"
+    port: 22
+    delay: 10
+    timeout: 120
+  when: foray_droplet_ip is defined

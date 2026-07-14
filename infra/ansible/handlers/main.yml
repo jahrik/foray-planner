@@ -1,0 +1,18 @@
+---
+- name: Restart foray
+  community.docker.docker_container:
+    name: "{{ foray_app_container_name }}"
+    image: "{{ foray_app_image }}"
+    state: started
+    restart: true
+    restart_policy: unless-stopped
+    ports:
+      - "{{ foray_app_port }}:8000"
+    env_file: /opt/foray-planner/foray.env
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+  listen: restart foray

@@ -1,4 +1,5 @@
-.PHONY: db install lint test check frontend start restart stop scheduler clean ingest
+.PHONY: db install lint test check frontend start restart stop scheduler clean ingest \
+	ansible-install ansible-lint ansible-deploy ansible-provision
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
@@ -56,3 +57,31 @@ ingest: db
 
 clean:
 	docker compose --profile scheduler down -v
+
+# --- Ansible (Digital Ocean deployment) ---
+# Required env vars for provisioning: DO_API_TOKEN, FORAY_SSH_KEY_NAME, FORAY_SSH_ALLOWED_IPS
+# Required env vars for deploy-only: FORAY_DROPLET_IP (+ DB creds in /opt/foray-planner/foray.env)
+
+ANSIBLE_DIR := infra/ansible
+
+ansible-install:
+	cd $(ANSIBLE_DIR) && uv sync
+	cd $(ANSIBLE_DIR) && uv run ansible-galaxy collection install -r requirements.yml
+
+ansible-lint:
+	cd $(ANSIBLE_DIR) && uv run yamllint .
+	cd $(ANSIBLE_DIR) && uv run ansible-lint
+
+ansible-provision:
+	@test -n "$$DO_API_TOKEN" || (echo "ERROR: DO_API_TOKEN not set" && exit 1)
+	@test -n "$$FORAY_SSH_KEY_NAME" || (echo "ERROR: FORAY_SSH_KEY_NAME not set" && exit 1)
+	@test -n "$$FORAY_SSH_ALLOWED_IPS" || (echo "ERROR: FORAY_SSH_ALLOWED_IPS not set" && exit 1)
+	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:provision \
+		-e foray_do_ssh_key_name=$$FORAY_SSH_KEY_NAME \
+		-e '{"foray_ssh_allowed_ips": ["'"$$FORAY_SSH_ALLOWED_IPS"'"]}'
+
+ansible-deploy:
+	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
+	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:deploy \
+		-i inventory/hosts.yml \
+		-e foray_droplet_ip=$$FORAY_DROPLET_IP

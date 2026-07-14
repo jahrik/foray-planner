@@ -1,0 +1,28 @@
+---
+- name: Create managed Postgres cluster
+  community.digitalocean.digital_ocean_database:
+    oauth_token: "{{ foray_do_token }}"
+    state: present
+    name: "{{ foray_do_db_cluster_name }}"
+    engine: "{{ foray_do_db_engine }}"
+    version: "{{ foray_do_db_version }}"
+    size: "{{ foray_do_db_size }}"
+    region: "{{ foray_do_region }}"
+    num_nodes: 1
+  register: foray_db_cluster
+
+- name: Create application database within the cluster
+  community.digitalocean.digital_ocean_database:
+    oauth_token: "{{ foray_do_token }}"
+    state: present
+    name: "{{ foray_do_db_name }}"
+    database_id: "{{ foray_db_cluster.data.database.id }}"
+  when: foray_db_cluster.data is defined
+
+- name: Store database connection info
+  ansible.builtin.set_fact:
+    foray_db_host: "{{ foray_db_cluster.data.database.connection.host }}"
+    foray_db_port: "{{ foray_db_cluster.data.database.connection.port }}"
+    foray_db_user: "{{ foray_db_cluster.data.database.connection.user }}"
+    foray_db_password: "{{ foray_db_cluster.data.database.connection.password }}"
+  when: foray_db_cluster.data is defined

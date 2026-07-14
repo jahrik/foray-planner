@@ -1,0 +1,20 @@
+galaxy_info:
+  role_name: foray_planner
+  author: jahrik
+  namespace: jahrik
+  description: Deploy foray-planner to Digital Ocean (Droplet + managed Postgres)
+  issue_tracker_url: https://github.com/jahrik/foray-planner/issues
+  license: MIT
+  min_ansible_version: '2.16'
+  platforms:
+    - name: Ubuntu
+      versions:
+        - focal
+
+  galaxy_tags:
+    - docker
+    - digitalocean
+    - postgres
+    - deployment
+
+dependencies: []

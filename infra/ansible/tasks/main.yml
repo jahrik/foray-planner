@@ -1,0 +1,55 @@
+---
+- name: Provision Digital Ocean infrastructure
+  ansible.builtin.include_tasks:
+    file: provision/database.yml
+    apply:
+      tags:
+        - foray
+        - "foray:provision"
+  tags:
+    - foray
+    - "foray:provision"
+
+- name: Provision Droplet
+  ansible.builtin.include_tasks:
+    file: provision/droplet.yml
+    apply:
+      tags:
+        - foray
+        - "foray:provision"
+  tags:
+    - foray
+    - "foray:provision"
+
+- name: Provision firewall
+  ansible.builtin.include_tasks:
+    file: provision/firewall.yml
+    apply:
+      tags:
+        - foray
+        - "foray:provision"
+  tags:
+    - foray
+    - "foray:provision"
+
+- name: Deploy application
+  ansible.builtin.include_tasks:
+    file: deploy/app.yml
+    apply:
+      tags:
+        - foray
+        - "foray:deploy"
+  tags:
+    - foray
+    - "foray:deploy"
+
+- name: Configure cron jobs
+  ansible.builtin.include_tasks:
+    file: deploy/cron.yml
+    apply:
+      tags:
+        - foray
+        - "foray:cron"
+  tags:
+    - foray
+    - "foray:cron"

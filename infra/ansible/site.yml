@@ -1,0 +1,63 @@
+---
+- name: Provision Digital Ocean infrastructure
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - defaults/main.yml
+  tasks:
+    - name: Include database provisioning
+      ansible.builtin.include_tasks:
+        file: tasks/provision/database.yml
+      tags:
+        - foray
+        - "foray:provision"
+
+    - name: Include droplet provisioning
+      ansible.builtin.include_tasks:
+        file: tasks/provision/droplet.yml
+      tags:
+        - foray
+        - "foray:provision"
+
+    - name: Include firewall provisioning
+      ansible.builtin.include_tasks:
+        file: tasks/provision/firewall.yml
+      tags:
+        - foray
+        - "foray:provision"
+
+- name: Deploy foray-planner
+  hosts: foray
+  gather_facts: true
+  vars_files:
+    - defaults/main.yml
+  tasks:
+    - name: Create app directory
+      ansible.builtin.file:
+        path: /opt/foray-planner
+        state: directory
+        mode: "0700"
+      tags:
+        - foray
+        - "foray:deploy"
+        - "foray:cron"
+
+    - name: Include deploy tasks
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/app.yml
+      tags:
+        - foray
+        - "foray:deploy"
+
+    - name: Include cron tasks
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/cron.yml
+      tags:
+        - foray
+        - "foray:cron"
+
+  handlers:
+    - name: Include handlers
+      ansible.builtin.import_tasks:
+        file: handlers/main.yml
