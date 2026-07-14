@@ -5,7 +5,7 @@ import type { Stop, TripPlan } from "./api/types";
 import { focusRegion } from "./layers";
 import { clearMarkers, map, PLAN_STOP } from "./map";
 import { dist, errorDetail, inatUrl, MONTHS, qs, setStatus, state } from "./state";
-import { monthsParam, selectedSpecies } from "./views";
+import { monthsParam } from "./views";
 
 export async function runPlan(): Promise<void> {
   setStatus("Planning route…");
@@ -22,7 +22,7 @@ export async function runPlan(): Promise<void> {
   let trip: TripPlan;
   try {
     trip = await getJson<TripPlan>(
-      `/api/plan?months=${monthsParam()}&species=${selectedSpecies()}&max_stops=${maxStops}&max_drive_km=${maxDrive}&require_free_camp=${requireFree}`,
+      `/api/plan?months=${monthsParam()}&max_stops=${maxStops}&max_drive_km=${maxDrive}&require_free_camp=${requireFree}`,
     );
   } catch (error) {
     setStatus(errorDetail(error));
