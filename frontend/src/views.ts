@@ -3,7 +3,7 @@ import L from "leaflet";
 import { getJson } from "./api/client";
 import type { AlertRegion, Calendar, RegionScore } from "./api/types";
 import { focusRegion } from "./layers";
-import { clearMarkers, HEAT_RGB, map, plot } from "./map";
+import { clearMarkers, deselectSize, HEAT_RGB, map, plot, selectSize } from "./map";
 import { dist, errorDetail, escapeHtml, inatUrl, MONTHS, qs, setStatus, state } from "./state";
 
 export function initMonths(): void {
@@ -76,6 +76,9 @@ export async function runDestinations(): Promise<void> {
   // no longer reshuffles what's on screen above it.
   panel.innerHTML = `<div id="rank-list"></div>`;
   const rankList = qs("#rank-list");
+  // Only one region's marker shows its true real-world size at a time; selecting a new one
+  // reverts whichever marker held that spot back to its score-scaled preview size.
+  let selected: { marker: L.Circle; weight: number } | null = null;
   const markers = regions.map((region, rank) => {
     const marker = plot(region.center_lat, region.center_lng, region.score_norm, region.recent_count > 0);
     const card = document.createElement("div");
@@ -119,10 +122,15 @@ export async function runDestinations(): Promise<void> {
     // Selecting a region - from either its card or its map marker - highlights the card and
     // scrolls it into view instead of popping a bubble over the marker (which covered up the
     // very thing you were trying to look at). The card already shows everything the popup used to.
+    // Its marker also snaps to its true cell-footprint size (see selectSize in map.ts), with the
+    // previously selected marker (if any) reverting to its score-scaled preview size.
     const selectCard = () => {
       rankList.querySelectorAll(".rank").forEach((el) => el.classList.remove("active"));
       card.classList.add("active");
       card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      if (selected && selected.marker !== marker) deselectSize(selected.marker, selected.weight);
+      selectSize(marker);
+      selected = { marker, weight: region.score_norm };
     };
     card.onclick = () => {
       map.setView([region.center_lat, region.center_lng], 9);
@@ -158,6 +166,8 @@ export async function runDestinations(): Promise<void> {
   }
   focusRegion(top.center_lat, top.center_lng);
   rankList.querySelector(".rank")?.classList.add("active");
+  selectSize(markers[0]);
+  selected = { marker: markers[0], weight: top.score_norm };
 }
 
 // Fetches once per card (cached by the `calendarLoaded` flag at the call site) and renders
@@ -205,8 +215,10 @@ export async function runAlerts(): Promise<void> {
     return;
   }
   panel.innerHTML = "<h3 style='margin-top:0'>Fruiting now / recently</h3>";
+  let selected: { marker: L.Circle; weight: number } | null = null;
   regions.forEach((region) => {
-    const marker = plot(region.center_lat, region.center_lng, Math.min(1, region.total / 10), true);
+    const weight = Math.min(1, region.total / 10);
+    const marker = plot(region.center_lat, region.center_lng, weight, true);
     const card = document.createElement("div");
     card.className = "rank";
 
@@ -230,6 +242,9 @@ export async function runAlerts(): Promise<void> {
       panel.querySelectorAll(".rank").forEach((el) => el.classList.remove("active"));
       card.classList.add("active");
       card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      if (selected && selected.marker !== marker) deselectSize(selected.marker, selected.weight);
+      selectSize(marker);
+      selected = { marker, weight };
     };
     card.onclick = () => {
       map.setView([region.center_lat, region.center_lng], 9);

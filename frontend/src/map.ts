@@ -117,27 +117,56 @@ export function updateHome(home: Home): void {
 // scoring.py) to convert a region's cell_deg grid width into meters.
 const KM_PER_DEG = 111.0;
 
+// Per-marker sizing so a selected region can snap between its score size and its true
+// geographic footprint (see selectSize/deselectSize below) without re-plotting.
+const sizing = new WeakMap<L.Circle, { scoreRadius: number; trueRadius: number }>();
+
 // No popup bound here - a bubble hovering over the marker you're trying to look at was jarring,
 // and the same info (rank, distance, species) already lives on the matching card in the side
 // panel. Callers wire the marker's click to highlight/scroll to that card instead.
 //
-// Uses L.circle (a geographic radius in meters) instead of L.circleMarker (a fixed pixel radius)
-// so the drawn circle represents the region's actual cell_deg footprint at every zoom level,
-// rather than a constant screen size that reads as arbitrarily smaller than the real cell once
-// you zoom in. The radius only grows above that true-size floor with score (weight), never
-// shrinks below it.
+// Hue distinguishes category (magenta = historical destination, cyan = recently observed);
+// score is carried by size and fill opacity within that hue - a faint, small circle is a weak
+// match, a bold, larger one is a strong one. Uses L.circle (a geographic radius in meters, not
+// L.circleMarker's fixed pixel radius) so selecting a region can snap it to its true cell_deg
+// footprint (selectSize) - see the comment there for why - and so at any size the circle still
+// scales correctly with zoom instead of reading as an arbitrary screen-space blob.
 export function plot(lat: number, lng: number, weight: number, live: boolean): L.Circle {
-  const cellRadiusM = ((state.cellDeg * KM_PER_DEG) / 2) * 1000;
+  const trueRadius = ((state.cellDeg * KM_PER_DEG) / 2) * 1000;
+  const scoreRadius = trueRadius * (0.3 + weight);
   const marker = L.circle([lat, lng], {
-    radius: cellRadiusM * (1 + 0.5 * weight),
+    radius: scoreRadius,
     color: live ? LIVE : HEAT,
     fillColor: live ? LIVE : HEAT,
-    fillOpacity: 0.6,
+    fillOpacity: 0.15 + 0.45 * weight,
+    opacity: 0.4 + 0.5 * weight,
     weight: 1.5,
     bubblingMouseEvents: false,
   }).addTo(map);
+  sizing.set(marker, { scoreRadius, trueRadius });
   state.markers.push(marker);
   return marker;
+}
+
+// Selecting a region (marker or card click) snaps its circle from the score-sized preview to
+// its true real-world cell_deg footprint, computed from the same live config value as plot()
+// (never hard-coded), so the user can see exactly how much ground that dot actually represents.
+// Fill goes very transparent at this size so the map underneath - which the circle now likely
+// covers a large part of - stays readable.
+export function selectSize(marker: L.Circle): void {
+  const info = sizing.get(marker);
+  if (!info) return;
+  marker.setRadius(info.trueRadius);
+  marker.setStyle({ fillOpacity: 0.08 });
+}
+
+// Reverts a previously selected marker back to its score-scaled preview size/opacity - called
+// when a different region gets selected, so only one circle shows its true footprint at a time.
+export function deselectSize(marker: L.Circle, weight: number): void {
+  const info = sizing.get(marker);
+  if (!info) return;
+  marker.setRadius(info.scoreRadius);
+  marker.setStyle({ fillOpacity: 0.15 + 0.45 * weight });
 }
 
 export function clearMarkers(): void {
