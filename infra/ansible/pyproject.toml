@@ -2,7 +2,7 @@
 name = "foray-planner-ansible"
 version = "0.1.0"
 description = "Ansible role to deploy foray-planner to Digital Ocean"
-readme = "README.md"
+readme = "AGENTS.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "ansible-core>=2.16,<2.22",

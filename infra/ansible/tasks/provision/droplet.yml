@@ -19,12 +19,16 @@
     foray_droplet_ip: "{{ foray_droplet.data.droplet.networks.v4 | selectattr('type', 'equalto', 'public') | map(attribute='ip_address') | first }}"
   when: foray_droplet.data is defined
 
-- name: Add droplet to in-memory inventory
+- name: Add droplet to in-memory inventory with DB connection facts
   ansible.builtin.add_host:
-    name: "{{ foray_do_droplet_name }}"
+    name: foray-prod
     ansible_host: "{{ foray_droplet_ip }}"
     ansible_user: root
-    groups: foray_droplets
+    groups: foray
+    foray_db_host: "{{ foray_db_host }}"
+    foray_db_port: "{{ foray_db_port }}"
+    foray_db_user: "{{ foray_db_user }}"
+    foray_db_password: "{{ foray_db_password }}"
   when: foray_droplet_ip is defined
 
 - name: Wait for SSH to become available

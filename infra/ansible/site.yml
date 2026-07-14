@@ -3,22 +3,24 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  vars_files:
+    - defaults/main.yml
   tasks:
-    - name: Include provisioning tasks
+    - name: Include database provisioning
       ansible.builtin.include_tasks:
         file: tasks/provision/database.yml
       tags:
         - foray
         - "foray:provision"
 
-    - name: Include droplet tasks
+    - name: Include droplet provisioning
       ansible.builtin.include_tasks:
         file: tasks/provision/droplet.yml
       tags:
         - foray
         - "foray:provision"
 
-    - name: Include firewall tasks
+    - name: Include firewall provisioning
       ansible.builtin.include_tasks:
         file: tasks/provision/firewall.yml
       tags:
@@ -26,8 +28,10 @@
         - "foray:provision"
 
 - name: Deploy foray-planner
-  hosts: foray_droplets
+  hosts: foray
   gather_facts: true
+  vars_files:
+    - defaults/main.yml
   tasks:
     - name: Create app directory
       ansible.builtin.file:

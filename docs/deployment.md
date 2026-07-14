@@ -138,22 +138,25 @@ jobs for data refresh.
 ### Prerequisites
 
 - Digital Ocean API token (export as `DO_API_TOKEN`)
-- SSH key registered in DO (name passed as `foray_do_ssh_key_name`)
+- SSH key registered in DO (export name as `FORAY_SSH_KEY_NAME`)
+- SSH allowlist CIDR (export as `FORAY_SSH_ALLOWED_IPS`, e.g. your IP/VPN range)
 - Optional: `RIDB_API_KEY` for campground data, `GHCR_TOKEN` for private images
 
 ### First deploy
 
 ```bash
-cd infra/ansible
-uv sync
-uv run ansible-galaxy collection install -r requirements.yml
-uv run ansible-playbook site.yml -e foray_do_ssh_key_name=my-key
+export DO_API_TOKEN=dop_v1_...
+export FORAY_SSH_KEY_NAME=my-key
+export FORAY_SSH_ALLOWED_IPS=203.0.113.0/24
+make ansible-install
+make ansible-provision
 ```
 
 ### Subsequent deploys (app update only)
 
 ```bash
-uv run ansible-playbook site.yml --tags foray:deploy -e foray_do_ssh_key_name=my-key
+export FORAY_DROPLET_IP=<droplet-ip>
+make ansible-deploy
 ```
 
 ### Tags

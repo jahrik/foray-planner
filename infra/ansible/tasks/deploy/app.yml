@@ -12,6 +12,11 @@
     source: pull
     force_source: true
 
+- name: Check if env file exists
+  ansible.builtin.stat:
+    path: /opt/foray-planner/foray.env
+  register: foray_env_stat
+
 - name: Write environment file
   ansible.builtin.template:
     src: foray.env.j2
@@ -19,6 +24,7 @@
     mode: "0600"
     owner: root
     group: root
+  when: foray_db_host is defined or not foray_env_stat.stat.exists
   notify: restart foray
 
 - name: Run foray-planner container
