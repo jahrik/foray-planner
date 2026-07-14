@@ -28,10 +28,10 @@ body {
   flex-direction: column;
 }
 header {
-  display: flex; align-items: center; gap: 12px; flex: 0 0 auto;
-  padding: 6px 16px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+  padding: 4px 12px; border-bottom: 1px solid var(--border);
 }
-header h1 { margin: 0; font-size: 15px; white-space: nowrap; flex-shrink: 0; }
+header h1 { margin: 0; font-size: 13px; white-space: nowrap; flex-shrink: 0; }
 .theme-toggle { padding: 4px 8px; font-size: 14px; line-height: 1; flex: 0 0 auto; }
 .locbar { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .locbar form { position: relative; flex: 0 1 280px; min-width: 160px; }
@@ -69,8 +69,8 @@ header h1 { margin: 0; font-size: 15px; white-space: nowrap; flex-shrink: 0; }
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
-  gap: 8px;
-  padding: 6px 16px;
+  gap: 4px;
+  padding: 4px 12px;
   border-bottom: 1px solid var(--border);
 }
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
@@ -112,9 +112,9 @@ header h1 { margin: 0; font-size: 15px; white-space: nowrap; flex-shrink: 0; }
   border-color: var(--accent2);
   font-weight: 600;
 }
-.months { display: flex; flex-wrap: wrap; gap: 4px; max-width: 320px; }
+.months { display: flex; flex-wrap: wrap; gap: 4px; }
 .months button {
-  width: 38px; padding: 2px 0; border: 1px solid var(--border); font-size: 12px;
+  flex: 1 1 30px; min-width: 30px; padding: 2px 0; border: 1px solid var(--border); font-size: 12px;
   background: var(--panel); color: var(--ink); border-radius: 6px; cursor: pointer;
 }
 .months button.on { background: var(--accent); color: #241a05; border-color: var(--accent); font-weight: 600; }
@@ -136,7 +136,7 @@ progress::-webkit-progress-bar { background: var(--border); border-radius: 5px; 
 progress::-webkit-progress-value { background: var(--accent2); border-radius: 5px; }
 progress::-moz-progress-bar { background: var(--accent2); border-radius: 5px; }
 
-.tabs { display: flex; gap: 2px; padding: 4px 20px 0; flex: 0 0 auto; }
+.tabs { display: flex; gap: 2px; padding: 2px 12px 0; flex: 0 0 auto; }
 .tabs button { border-bottom: none; border-radius: 6px 6px 0 0; opacity: 0.6; }
 .tabs button.active { opacity: 1; background: var(--panel); border-color: var(--border); }
 
@@ -164,12 +164,15 @@ table.cal { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.cal td, table.cal th { padding: 4px 6px; text-align: left; }
 table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); font-weight: 600; }
 
+/* Collapsed to a one-line peek by default - full contents still there, just scroll within
+   the strip to see them, so it never eats map height on small screens. */
 .map-legend {
   flex: 0 0 auto;
   display: flex; flex-wrap: wrap; column-gap: 12px; row-gap: 2px;
-  background: var(--panel); color: var(--ink); padding: 6px 10px;
+  background: var(--panel); color: var(--ink); padding: 4px 10px;
   border-top: 1px solid var(--border);
   font-size: 11px; line-height: 1.4;
+  max-height: 22px; overflow-y: auto;
 }
 .legend-item { display: inline-flex; align-items: center; white-space: nowrap; }
 .map-legend i {
@@ -178,13 +181,18 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
 }
 
 @media (max-width: 780px) {
-  header { flex-wrap: wrap; row-gap: 6px; }
-  .controls { padding: 6px 12px; gap: 6px; }
-  .row { gap: 8px; }
+  header { flex-wrap: wrap; row-gap: 4px; }
+  .controls { padding: 4px 10px; gap: 4px; }
+  .row { gap: 6px; }
   main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-  .map-wrap { flex: 0 0 auto; }
-  #map { height: 240px; flex: none; }
-  #panel { flex: 1; min-height: 0; border-left: none; border-top: 1px solid var(--border); }
+  /* The map claims whatever's left after the capped panel below, instead of a hardcoded
+     height that stayed small no matter how much the header/controls shrank. */
+  .map-wrap { flex: 1; min-height: 0; }
+  #map { flex: 1; min-height: 0; }
+  #panel {
+    flex: 0 1 auto; max-height: 32vh; overflow-y: auto;
+    border-left: none; border-top: 1px solid var(--border);
+  }
 }
 
 /* ── Plan route ── */

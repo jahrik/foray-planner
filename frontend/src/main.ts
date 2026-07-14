@@ -5,7 +5,7 @@ import { getJson, postJson } from "./api/client";
 import type { Config, CoverageRegion, Home } from "./api/types";
 import { loadCamps, loadLand, loadTrails } from "./layers";
 import { initLocationAutocomplete } from "./location";
-import { clearPlanRoute, currentTheme, initMap, setTiles, updateHome } from "./map";
+import { currentTheme, initMap, setTiles, updateHome } from "./map";
 import { runPlan } from "./plan";
 import { startRefresh } from "./refresh";
 import { errorDetail, qs, setStatus, state, type Units, type View } from "./state";
@@ -19,7 +19,7 @@ import { initMonths, runAlerts, runDestinations } from "./views";
 // user switched tabs at least once.
 function updateRunButton(): void {
   const runBtn = qs<HTMLButtonElement>("#run");
-  if (state.view === "calendar" || state.view === "destinations") {
+  if (state.view === "destinations") {
     runBtn.style.display = "none";
   } else {
     runBtn.style.display = "";
@@ -44,11 +44,6 @@ function initTabs(): void {
       if (state.view === "destinations") runDestinations();
       else if (state.view === "alerts") runAlerts();
       else if (state.view === "plan") runPlan();
-      else {
-        clearPlanRoute();
-        qs("#panel").innerHTML =
-          "<p class='hint'>Click a ranked destination to see its 12-month calendar.</p>";
-      }
     };
   });
 }
