@@ -66,6 +66,28 @@ function initFiltersToggle(): void {
   };
 }
 
+// Small popover explaining the core flow for a first-time visitor - closes on outside click,
+// Escape, or toggling it again, same pattern as the mobile filters disclosure.
+function initHelp(): void {
+  const toggle = qs<HTMLButtonElement>("#help-toggle");
+  const popover = qs("#help-popover");
+  const close = () => {
+    popover.hidden = true;
+    toggle.setAttribute("aria-expanded", "false");
+  };
+  toggle.onclick = (e) => {
+    e.stopPropagation();
+    const open = popover.hidden;
+    popover.hidden = !open;
+    toggle.setAttribute("aria-expanded", String(open));
+  };
+  popover.onclick = (e) => e.stopPropagation();
+  document.addEventListener("click", close);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") close();
+  });
+}
+
 function initTheme(): void {
   const toggle = qs<HTMLButtonElement>("#theme-toggle");
   const apply = (theme: "dark" | "light"): void => {
@@ -78,6 +100,23 @@ function initTheme(): void {
   toggle.onclick = () => {
     const next = currentTheme() === "dark" ? "light" : "dark";
     localStorage.setItem("foray-theme", next);
+    apply(next);
+  };
+}
+
+// Persisted like theme/units - toggles a root data attribute that style.css uses to bump up
+// font sizes across the panel/cards/map controls for readability on a phone.
+function initTextSize(): void {
+  const toggle = qs<HTMLButtonElement>("#text-size-toggle");
+  const apply = (large: boolean): void => {
+    document.documentElement.dataset.textSize = large ? "large" : "normal";
+    toggle.setAttribute("aria-pressed", String(large));
+    toggle.title = large ? "Switch to normal text size" : "Switch to larger text";
+  };
+  apply(localStorage.getItem("foray-text-size") === "large");
+  toggle.onclick = () => {
+    const next = document.documentElement.dataset.textSize !== "large";
+    localStorage.setItem("foray-text-size", next ? "large" : "normal");
     apply(next);
   };
 }
@@ -103,6 +142,8 @@ async function main(): Promise<void> {
   state.home = config.home;
   initTheme();
   initUnits();
+  initTextSize();
+  initHelp();
   initFiltersToggle();
   initMonths();
   initMap(config.home);

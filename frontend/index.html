@@ -12,8 +12,11 @@
         try {
           document.documentElement.dataset.theme =
             localStorage.getItem("foray-theme") === "light" ? "light" : "dark";
+          document.documentElement.dataset.textSize =
+            localStorage.getItem("foray-text-size") === "large" ? "large" : "normal";
         } catch (e) {
           document.documentElement.dataset.theme = "dark";
+          document.documentElement.dataset.textSize = "normal";
         }
       })();
     </script>
@@ -43,6 +46,16 @@
         </div>
       </div>
       <div class="header-actions">
+        <div class="help-wrap">
+          <button type="button" id="help-toggle" class="theme-toggle" aria-label="Help" aria-expanded="false" aria-controls="help-popover">?</button>
+          <div id="help-popover" class="help-popover" hidden>
+            <p>Foray Planner auto-detects your location and ranks nearby regions by mushroom
+              activity. Click a destination card to see its species and 12-month calendar.
+              Use the tabs above to check recent activity alerts or plan a multi-stop route.</p>
+          </div>
+        </div>
+        <a href="https://github.com/jahrik/foray-planner" target="_blank" rel="noopener" class="theme-toggle" aria-label="View source on GitHub" title="View source on GitHub">🐙</a>
+        <button type="button" id="text-size-toggle" class="theme-toggle" aria-label="Toggle larger text">A+</button>
         <button type="button" id="units-toggle" class="theme-toggle" aria-label="Toggle units">mi</button>
         <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">🌙</button>
       </div>

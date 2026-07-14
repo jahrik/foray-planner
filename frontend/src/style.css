@@ -49,6 +49,14 @@ header h1 { margin: 0; font-size: 13px; white-space: nowrap; flex-shrink: 0; }
 }
 .radius-presets button:hover { border-color: var(--accent); color: var(--ink); }
 .header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto; }
+.help-wrap { position: relative; }
+.help-popover {
+  position: absolute; top: 100%; right: 0; z-index: 1000;
+  margin-top: 6px; width: 260px; padding: 12px 14px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.3); font-size: 13px; line-height: 1.5;
+}
+.help-popover p { margin: 0; }
 .action-status { gap: 4px !important; }
 .action-status #status { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .loc-suggestions {
@@ -250,3 +258,32 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
   background: var(--bg); border: 1px solid var(--border);
 }
 .stop-camp.muted { color: var(--muted); }
+
+/* Larger text mode (toggle next to mi/km and day/night in the header) - bumps font sizes across
+   the panel/cards/calendar/controls, which is the actual reading surface on a phone. Layout
+   (padding, radii, gaps) stays the same; only font-size changes, so existing flex-wrap absorbs
+   the extra width instead of needing separate large-text layout rules. */
+:root[data-text-size="large"] body { font-size: 17px; }
+:root[data-text-size="large"] header h1 { font-size: 15px; }
+:root[data-text-size="large"] .loc-current,
+:root[data-text-size="large"] .loc-meta { font-size: 14px; }
+:root[data-text-size="large"] .radius-presets button,
+:root[data-text-size="large"] .months button,
+:root[data-text-size="large"] .toggle-btn span { font-size: 14px; }
+:root[data-text-size="large"] .rank h3 { font-size: 18px; }
+:root[data-text-size="large"] .rank .meta,
+:root[data-text-size="large"] #status,
+:root[data-text-size="large"] .plan-summary,
+:root[data-text-size="large"] .stop-drive,
+:root[data-text-size="large"] .stop-camp { font-size: 14px; }
+:root[data-text-size="large"] .chip,
+:root[data-text-size="large"] .rank-tab { font-size: 13px; }
+:root[data-text-size="large"] table.cal,
+:root[data-text-size="large"] .rank-calendar table.cal { font-size: 15px; }
+:root[data-text-size="large"] .stop-num { font-size: 17px; }
+:root[data-text-size="large"] .map-legend { font-size: 13px; }
+/* Place-name/road labels on the map are pixels baked into the tile images themselves, not DOM
+   text, so no font-size rule can touch them - only the DOM controls Leaflet draws on top can
+   scale. */
+:root[data-text-size="large"] .leaflet-control-zoom a { font-size: 20px; line-height: 26px; }
+:root[data-text-size="large"] .leaflet-control-attribution { font-size: 12px; }
