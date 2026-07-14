@@ -38,10 +38,12 @@ start:
 # container that's already running. `--force-recreate` looks like the obvious tool for that,
 # but it fights podman-compose's shared-pod model (it tries to recreate one container while
 # its pod-mates are still up, which podman-compose can't sequence, and repeatedly corrupted
-# the pod's DNS in testing) - a full `down` first sidesteps that entirely.
+# the pod's DNS in testing) - a full `down` first sidesteps that entirely. Both commands include
+# `--profile scheduler` so the scheduler container (if it was up) comes back up too, rather than
+# staying torn down after a restart.
 restart:
 	docker compose --profile scheduler down
-	docker compose up -d --build
+	docker compose --profile scheduler up -d --build
 
 scheduler:
 	docker compose --profile scheduler up -d --build scheduler

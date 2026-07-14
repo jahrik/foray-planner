@@ -25,3 +25,6 @@ data/location.json
 
 # Personal planning notes (local only)
 TODO.md
+
+# playwright-mcp session output (snapshots/console logs from manual browser testing)
+.playwright-mcp/

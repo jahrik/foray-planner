@@ -48,6 +48,7 @@ export async function runPlan(): Promise<void> {
     weight: 2.5,
     opacity: 0.7,
     dashArray: "8 5",
+    bubblingMouseEvents: false,
   }).addTo(map);
 
   // Plot stop markers (reuse plot() then re-colour to gold). Build the popup
@@ -69,6 +70,7 @@ export async function runPlan(): Promise<void> {
       fillColor: PLAN_STOP,
       fillOpacity: 0.6,
       weight: 1.5,
+      bubblingMouseEvents: false,
     })
       .addTo(map)
       .bindPopup(popupEl);

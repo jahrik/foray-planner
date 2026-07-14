@@ -173,7 +173,7 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
   background: var(--panel); color: var(--ink); padding: 4px 10px;
   border-top: 1px solid var(--border);
   font-size: 11px; line-height: 1.4;
-  max-height: 22px; overflow-y: auto;
+  max-height: 28px; overflow-y: auto;
 }
 .legend-item { display: inline-flex; align-items: center; white-space: nowrap; }
 .map-legend i {

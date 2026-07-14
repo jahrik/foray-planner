@@ -5,9 +5,9 @@ import { getJson, postJson } from "./api/client";
 import type { Config, CoverageRegion, Home } from "./api/types";
 import { loadCamps, loadLand, loadTrails } from "./layers";
 import { initLocationAutocomplete } from "./location";
-import { currentTheme, initMap, setTiles, updateHome } from "./map";
+import { currentTheme, initMap, setMapClickHandler, setTiles, updateHome } from "./map";
 import { runPlan } from "./plan";
-import { startRefresh } from "./refresh";
+import { setLocationLatLng, startRefresh } from "./refresh";
 import { errorDetail, qs, setStatus, state, type Units, type View } from "./state";
 import { initMonths, runAlerts, runDestinations } from "./views";
 
@@ -87,7 +87,9 @@ async function main(): Promise<void> {
   initUnits();
   initMonths();
   initMap(config.home);
+  setMapClickHandler(setLocationLatLng);
   updateHome(config.home);
+  loadLand();
   initTabs();
   updateRunButton();
   initRadiusPresets();
@@ -163,6 +165,7 @@ function initGeolocation(): void {
         return; // keep whatever location is already loaded
       }
       updateHome(response.home);
+      loadLand();
       if (state.view === "destinations") runDestinations();
     },
     () => {
@@ -190,6 +193,7 @@ function initRadiusPresets(): void {
         return;
       }
       updateHome(response.home);
+      loadLand();
       if (state.view === "destinations") runDestinations();
     };
   });

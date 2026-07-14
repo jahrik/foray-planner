@@ -78,9 +78,23 @@ export function initMap(home: Home): void {
     weight: 3,
     fillColor: HOME_FILL,
     fillOpacity: 1,
+    bubblingMouseEvents: false,
   })
     .addTo(map)
     .bindPopup("Location: " + home.name);
+
+  // Clicking a city (or anywhere else) on the base map sets it as home, the same as searching
+  // for it. Markers/polygons set `bubblingMouseEvents: false` so clicking one (to open its
+  // popup) doesn't also fire this and stomp the location.
+  map.on("click", (e: L.LeafletMouseEvent) => {
+    onMapClick?.(e.latlng.lat, e.latlng.lng);
+  });
+}
+
+let onMapClick: ((lat: number, lng: number) => void) | null = null;
+
+export function setMapClickHandler(handler: (lat: number, lng: number) => void): void {
+  onMapClick = handler;
 }
 
 export function updateHome(home: Home): void {
@@ -107,6 +121,7 @@ export function plot(
     fillColor: live ? LIVE : HEAT,
     fillOpacity: 0.6,
     weight: 1.5,
+    bubblingMouseEvents: false,
   })
     .addTo(map)
     .bindPopup(popup);
