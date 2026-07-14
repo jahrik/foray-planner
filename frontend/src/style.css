@@ -145,7 +145,9 @@ progress::-moz-progress-bar { background: var(--accent2); border-radius: 5px; }
 main { display: grid; grid-template-columns: 1fr 380px; gap: 0; flex: 1; min-height: 0; }
 .map-wrap { display: flex; flex-direction: column; min-height: 0; }
 #map { flex: 1; min-height: 0; background: #0c0d09; }
-:root[data-theme="dark"] #map .leaflet-tile-pane { filter: brightness(4.0); }
+/* Inverts the standard (light) OSM tiles rather than brightening a separate dark tileset -
+   see the comment on TILE_URL in map.ts for why. */
+:root[data-theme="dark"] #map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg); }
 #panel { background: var(--panel); border-left: 1px solid var(--border); overflow-y: auto; padding: 14px 16px; }
 .hint { color: var(--muted); }
 

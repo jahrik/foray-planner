@@ -13,6 +13,7 @@ import {
   LAND_COLORS,
   LAND_DEFAULT,
   map,
+  renderLegend,
   TRAIL,
 } from "./map";
 import { dist, errorDetail, qs, setStatus, state } from "./state";
@@ -32,6 +33,7 @@ const isDispersed = (site: CampSite): boolean =>
 // when neither is on. Failures degrade quietly to a status line rather than throwing.
 export async function loadCamps(): Promise<void> {
   clearCamps();
+  renderLegend();
   if ((!campsOn() && !dispersedOn()) || !state.focused) return;
   const { lat, lng } = state.focused;
   let sites: CampSite[];
@@ -159,6 +161,7 @@ function landPopup(unit: LandUnit): HTMLElement {
 // above the land shading but below the observation/campground markers, and degrade quietly.
 export async function loadTrails(): Promise<void> {
   clearTrails();
+  renderLegend();
   if (!trailsOn() || !state.focused) return;
   const { lat, lng } = state.focused;
   let found: Trail[];
