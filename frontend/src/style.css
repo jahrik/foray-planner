@@ -144,9 +144,17 @@ progress::-webkit-progress-bar { background: var(--border); border-radius: 5px; 
 progress::-webkit-progress-value { background: var(--accent2); border-radius: 5px; }
 progress::-moz-progress-bar { background: var(--accent2); border-radius: 5px; }
 
-.tabs { display: flex; gap: 2px; padding: 2px 12px 0; flex: 0 0 auto; }
-.tabs button { border-bottom: none; border-radius: 6px 6px 0 0; opacity: 0.6; }
-.tabs button.active { opacity: 1; background: var(--panel); border-color: var(--border); }
+/* Underline-style tabs - the accent-colored border on .active is the primary "you are here"
+   cue (stronger than the old opacity-only treatment, which read as barely-there buttons). */
+.tabs { display: flex; gap: 4px; padding: 6px 12px 0; flex: 0 0 auto; border-bottom: 2px solid var(--border); }
+.tabs button {
+  border: none; border-bottom: 2px solid transparent; margin-bottom: -2px;
+  border-radius: 6px 6px 0 0; padding: 8px 18px; font-size: 13px; font-weight: 600;
+  color: var(--muted); background: transparent;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.tabs button:hover { color: var(--ink); background: var(--border); }
+.tabs button.active { color: var(--ink); background: var(--panel); border-bottom-color: var(--accent2); }
 
 /* main claims whatever vertical space header/controls/tabs don't use, instead of a hardcoded
    "100vh minus a magic number" that broke whenever the header's height changed. */
