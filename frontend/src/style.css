@@ -151,6 +151,7 @@ main { display: grid; grid-template-columns: 1fr 380px; gap: 0; flex: 1; min-hei
 
 .rank { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; cursor: pointer; }
 .rank:hover { border-color: var(--accent); }
+.rank.active { border-color: var(--accent); background: var(--bg); }
 .rank h3 { margin: 0 0 4px; font-size: 15px; display: flex; justify-content: space-between; }
 .rank .meta { color: var(--muted); font-size: 12px; }
 .bar { height: 6px; background: var(--border); border-radius: 3px; margin: 6px 0; overflow: hidden; }

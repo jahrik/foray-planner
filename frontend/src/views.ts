@@ -71,7 +71,11 @@ export async function runDestinations(): Promise<void> {
     setStatus("");
     return;
   }
-  panel.innerHTML = "";
+  // Calendar and rank list live in separate slots so picking a region updates its calendar
+  // in place instead of overwriting the whole panel (which used to wipe out the rank cards -
+  // and their click handlers - leaving nothing left to click to switch regions).
+  panel.innerHTML = `<div id="calendar-slot"></div><div id="rank-list"></div>`;
+  const rankList = qs("#rank-list");
   const markers = regions.map((region, rank) => {
     const marker = plot(
       region.center_lat,
@@ -95,8 +99,10 @@ export async function runDestinations(): Promise<void> {
       marker.openPopup();
       focusRegion(region.center_lat, region.center_lng);
       loadCalendar(region.region_id);
+      rankList.querySelectorAll(".rank").forEach((el) => el.classList.remove("active"));
+      card.classList.add("active");
     };
-    panel.appendChild(card);
+    rankList.appendChild(card);
     return marker;
   });
   setStatus(`${regions.length} regions`);
@@ -122,6 +128,7 @@ export async function runDestinations(): Promise<void> {
   }
   focusRegion(top.center_lat, top.center_lng);
   loadCalendar(top.region_id);
+  rankList.querySelector(".rank")?.classList.add("active");
 }
 
 export async function loadCalendar(regionId: string): Promise<void> {
@@ -132,6 +139,9 @@ export async function loadCalendar(regionId: string): Promise<void> {
     setStatus(errorDetail(error));
     return;
   }
+  // The rank list may have been replaced (tab switch, re-run) by the time this resolves.
+  const slot = document.getElementById("calendar-slot");
+  if (!slot) return;
   const peak = Math.max(1, ...Object.values(calendar).map((bucket) => bucket.total));
   let rows = "";
   for (let month = 1; month <= 12; month++) {
@@ -146,7 +156,7 @@ export async function loadCalendar(regionId: string): Promise<void> {
       <td class="heat" style="background:${background}">${bucket.total || ""}</td>
       <td class="meta">${speciesText}</td></tr>`;
   }
-  qs("#panel").innerHTML = `<h3 style="margin-top:0">Calendar · region ${regionId}</h3>
+  slot.innerHTML = `<h3 style="margin-top:0">Calendar · region ${regionId}</h3>
     <table class="cal"><tr><th>Month</th><th>Obs</th><th>Species</th></tr>${rows}</table>`;
   setStatus("");
 }
