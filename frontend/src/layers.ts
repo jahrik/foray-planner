@@ -94,15 +94,18 @@ function campPopup(site: CampSite): HTMLElement {
   return root;
 }
 
-// Fetch + shade public-land ownership around the focused region. No-op (just clears) when the
-// toggle is off. Polygons sit behind the observation/campground markers and degrade quietly.
+// Fetch + shade public-land ownership across the whole search radius (not just the focused
+// destination) - land ownership doesn't change per-destination, so show everywhere there's
+// ingested data instead of a tight circle around whichever result happens to be focused.
+// No-op (just clears) when the toggle is off. Polygons sit behind the observation/campground
+// markers and degrade quietly.
 export async function loadLand(): Promise<void> {
   clearLand();
-  if (!landOn() || !state.focused) return;
-  const { lat, lng } = state.focused;
+  if (!landOn() || !state.home) return;
+  const { lat, lng, radius_km } = state.home;
   let units: LandUnit[];
   try {
-    units = await getJson<LandUnit[]>(`/api/land?lat=${lat}&lng=${lng}`);
+    units = await getJson<LandUnit[]>(`/api/land?lat=${lat}&lng=${lng}&radius_km=${radius_km}`);
   } catch (error) {
     setStatus(errorDetail(error));
     return;
