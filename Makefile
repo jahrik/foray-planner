@@ -1,4 +1,4 @@
-.PHONY: db install lint test check frontend start stop scheduler clean ingest
+.PHONY: db install lint test check frontend start restart stop scheduler clean ingest
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
@@ -32,7 +32,16 @@ frontend:
 	cd frontend && npm run build
 
 start:
-	docker compose up -d --build --force-recreate
+	docker compose up -d --build
+
+# Full teardown + rebuild - use this (not `start`) when a code change needs to land in a
+# container that's already running. `--force-recreate` looks like the obvious tool for that,
+# but it fights podman-compose's shared-pod model (it tries to recreate one container while
+# its pod-mates are still up, which podman-compose can't sequence, and repeatedly corrupted
+# the pod's DNS in testing) - a full `down` first sidesteps that entirely.
+restart:
+	docker compose --profile scheduler down
+	docker compose up -d --build
 
 scheduler:
 	docker compose --profile scheduler up -d --build scheduler
