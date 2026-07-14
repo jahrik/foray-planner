@@ -28,6 +28,14 @@ function updateRunButton(): void {
   }
 }
 
+// Re-runs whichever view is currently open - used after a data refresh finishes so the new
+// data actually shows up without the user having to switch tabs back and forth to force it.
+function refreshCurrentView(): void {
+  if (state.view === "destinations") runDestinations();
+  else if (state.view === "alerts") runAlerts();
+  else if (state.view === "plan") runPlan();
+}
+
 function initTabs(): void {
   document.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((button) => {
     button.onclick = () => {
@@ -108,7 +116,10 @@ async function main(): Promise<void> {
     if (state.view === "alerts") runAlerts();
     else if (state.view === "plan") runPlan();
   };
-  qs("#refresh").onclick = () => startRefresh("Refreshing mushroom data…", "mushrooms");
+  qs("#refresh").onclick = async () => {
+    const succeeded = await startRefresh("Refreshing mushroom data…", "mushrooms");
+    if (succeeded) refreshCurrentView();
+  };
 
   let currentRefreshTarget: string | null = null;
 
@@ -150,7 +161,7 @@ async function main(): Promise<void> {
   // If a refresh is already running (e.g. page reload mid-fetch), reflect it.
   if (config.refreshing) {
     startRefresh("Fetching data…").then((succeeded) => {
-      if (succeeded) runDestinations();
+      if (succeeded) refreshCurrentView();
     });
   } else if (state.view === "destinations") {
     runDestinations();
