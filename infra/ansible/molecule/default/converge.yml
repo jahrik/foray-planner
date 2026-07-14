@@ -2,7 +2,7 @@
 - name: Converge
   hosts: all
   tasks:
-    - name: Include deploy tasks only (no DO provisioning in molecule)
+    - name: Include cron tasks (no DO provisioning or Docker in molecule)
       ansible.builtin.include_tasks:
         file: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}/tasks/deploy/cron.yml"
       vars:

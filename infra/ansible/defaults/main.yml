@@ -22,7 +22,7 @@ foray_do_db_name: foray
 # Container image (published by CD pipeline on every push to main)
 foray_app_image: ghcr.io/jahrik/foray-planner:latest
 foray_app_container_name: foray-planner
-foray_app_port: 8000
+foray_app_port: 80
 
 # RIDB API key — optional, campground ingest is skipped without it.
 # Pass via environment or --extra-vars; never commit.
@@ -42,7 +42,6 @@ foray_layers_cron_hour: "3"
 foray_layers_cron_minute: "0"
 foray_layers_cron_weekday: "0"
 
-# Firewall rules — Cloudflare IPs for HTTP, your IP for SSH
+# Firewall rules — restrict SSH to your IP/VPN CIDR (required, no default)
 foray_do_firewall_name: foray-planner-fw
-foray_ssh_allowed_ips:
-  - "0.0.0.0/0"
+foray_ssh_allowed_ips: []

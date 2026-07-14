@@ -1,4 +1,9 @@
 ---
+- name: Fail if SSH allowlist is empty
+  ansible.builtin.fail:
+    msg: "foray_ssh_allowed_ips must contain at least one CIDR (your IP or VPN range)"
+  when: foray_ssh_allowed_ips | length == 0
+
 - name: Create firewall
   community.digitalocean.digital_ocean_firewall:
     oauth_token: "{{ foray_do_token }}"

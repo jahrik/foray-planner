@@ -53,8 +53,8 @@ argument_specs:
         default: foray-planner
       foray_app_port:
         type: int
-        description: Port the container listens on
-        default: 8000
+        description: Host port mapped to the container's port 8000
+        default: 80
       foray_ridb_api_key:
         type: str
         description: Recreation.gov API key (optional, campground ingest skipped without it)
