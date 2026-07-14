@@ -6,6 +6,23 @@ import { focusRegion } from "./layers";
 import { clearMarkers, deselectSize, HEAT_RGB, map, plot, selectSize } from "./map";
 import { dist, errorDetail, escapeHtml, inatUrl, MONTHS, qs, setStatus, state } from "./state";
 
+// Cards act as buttons (selecting a region) but are plain <div>s for layout flexibility, so make
+// them keyboard-operable: focusable, and Enter/Space activates - but only when the key event's
+// target is the card itself, not a nested button/link (those already get native keyboard
+// activation, and re-triggering the card on top of that would double-fire).
+function makeActivatable(card: HTMLElement, activate: () => void): void {
+  card.tabIndex = 0;
+  card.setAttribute("role", "button");
+  card.onclick = activate;
+  card.onkeydown = (e) => {
+    if (e.target !== card) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      activate();
+    }
+  };
+}
+
 export function initMonths(): void {
   const box = qs("#months");
   MONTHS.forEach((label, index) => {
@@ -137,11 +154,11 @@ export async function runDestinations(): Promise<void> {
       selectSize(marker);
       selected = { marker, weight: region.score_norm };
     };
-    card.onclick = () => {
+    makeActivatable(card, () => {
       map.setView([region.center_lat, region.center_lng], 9);
       focusRegion(region.center_lat, region.center_lng);
       selectCard();
-    };
+    });
     marker.on("click", () => {
       focusRegion(region.center_lat, region.center_lng);
       selectCard();
@@ -253,11 +270,11 @@ export async function runAlerts(): Promise<void> {
       selectSize(marker);
       selected = { marker, weight };
     };
-    card.onclick = () => {
+    makeActivatable(card, () => {
       map.setView([region.center_lat, region.center_lng], 9);
       focusRegion(region.center_lat, region.center_lng);
       selectCard();
-    };
+    });
     marker.on("click", () => {
       focusRegion(region.center_lat, region.center_lng);
       selectCard();

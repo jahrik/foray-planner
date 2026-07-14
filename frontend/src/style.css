@@ -168,6 +168,7 @@ main { display: grid; grid-template-columns: 1fr 380px; gap: 0; flex: 1; min-hei
 .hint { color: var(--muted); }
 
 .rank { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; cursor: pointer; }
+.rank:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
 .rank:hover { border-color: var(--accent); }
 .rank.active { border-color: var(--accent); background: var(--bg); }
 .rank h3 { margin: 0 0 4px; font-size: 15px; display: flex; justify-content: space-between; }
