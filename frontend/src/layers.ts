@@ -55,6 +55,7 @@ export async function loadCamps(): Promise<void> {
       dashArray: proxy ? "3 3" : undefined, // dashed ring signals the low-confidence proxy
       fillColor: dispersed ? CAMP_OSM : isFree ? CAMP_FREE : CAMP_PAID,
       fillOpacity: proxy ? 0.35 : 0.9,
+      bubblingMouseEvents: false,
     })
       .addTo(map)
       .bindPopup(campPopup(site));
@@ -94,15 +95,18 @@ function campPopup(site: CampSite): HTMLElement {
   return root;
 }
 
-// Fetch + shade public-land ownership around the focused region. No-op (just clears) when the
-// toggle is off. Polygons sit behind the observation/campground markers and degrade quietly.
+// Fetch + shade public-land ownership across the whole search radius (not just the focused
+// destination) - land ownership doesn't change per-destination, so show everywhere there's
+// ingested data instead of a tight circle around whichever result happens to be focused.
+// No-op (just clears) when the toggle is off. Polygons sit behind the observation/campground
+// markers and degrade quietly.
 export async function loadLand(): Promise<void> {
   clearLand();
-  if (!landOn() || !state.focused) return;
-  const { lat, lng } = state.focused;
+  if (!landOn() || !state.home) return;
+  const { lat, lng, radius_km } = state.home;
   let units: LandUnit[];
   try {
-    units = await getJson<LandUnit[]>(`/api/land?lat=${lat}&lng=${lng}`);
+    units = await getJson<LandUnit[]>(`/api/land?lat=${lat}&lng=${lng}&radius_km=${radius_km}`);
   } catch (error) {
     setStatus(errorDetail(error));
     return;
@@ -111,7 +115,7 @@ export async function loadLand(): Promise<void> {
     style: (feature) => {
       const agency = (feature?.properties as LandUnit | undefined)?.agency ?? "";
       const color = LAND_COLORS[agency] ?? LAND_DEFAULT;
-      return { color, weight: 1, fillColor: color, fillOpacity: 0.18 };
+      return { color, weight: 1, fillColor: color, fillOpacity: 0.18, bubblingMouseEvents: false };
     },
     onEachFeature: (feature, lyr) => lyr.bindPopup(landPopup(feature.properties as LandUnit)),
   });
@@ -165,7 +169,7 @@ export async function loadTrails(): Promise<void> {
     return;
   }
   const layer = L.geoJSON(undefined, {
-    style: { color: TRAIL, weight: 2, opacity: 0.85 },
+    style: { color: TRAIL, weight: 2, opacity: 0.85, bubblingMouseEvents: false },
     // Trailheads come through as GeoJSON points; render them as small dots instead of pins.
     pointToLayer: (_feature, latlng) =>
       L.circleMarker(latlng, {
@@ -174,6 +178,7 @@ export async function loadTrails(): Promise<void> {
         weight: 1,
         fillColor: TRAIL,
         fillOpacity: 0.9,
+        bubblingMouseEvents: false,
       }),
     onEachFeature: (feature, lyr) => lyr.bindPopup(trailPopup(feature.properties as Trail)),
   });
@@ -213,9 +218,11 @@ function trailPopup(trail: Trail): HTMLElement {
   return root;
 }
 
+// Public land depends only on state.home (whole search radius), not the focused destination, so
+// it's loaded whenever home changes (see call sites of updateHome) rather than on every
+// focusRegion() call - otherwise every destination click/auto-focus re-fetches identical polygons.
 export function focusRegion(lat: number, lng: number): void {
   state.focused = { lat, lng };
   loadCamps();
-  loadLand();
   loadTrails();
 }

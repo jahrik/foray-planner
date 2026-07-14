@@ -57,9 +57,6 @@
         <div class="field">
           <label>Layers</label>
           <div class="toggle-group">
-            <label class="toggle-btn"><input type="checkbox" id="show-camps" /> <span>Campgrounds</span></label>
-            <label class="toggle-btn"><input type="checkbox" id="show-dispersed" /> <span>Dispersed</span></label>
-            <label class="toggle-btn"><input type="checkbox" id="free-camps" /> <span>Free only</span></label>
             <label class="toggle-btn"><input type="checkbox" id="show-land" /> <span>Public land</span></label>
             <label class="toggle-btn"><input type="checkbox" id="show-trails" /> <span>Trails</span></label>
           </div>
@@ -91,12 +88,19 @@
             <span>Free camp</span>
           </label>
         </div>
+        <div class="field">
+          <label>Camping</label>
+          <div class="toggle-group">
+            <label class="toggle-btn"><input type="checkbox" id="show-camps" /> <span>Campgrounds</span></label>
+            <label class="toggle-btn"><input type="checkbox" id="show-dispersed" /> <span>Dispersed</span></label>
+            <label class="toggle-btn"><input type="checkbox" id="free-camps" /> <span>Free only</span></label>
+          </div>
+        </div>
       </div>
     </section>
 
     <nav class="tabs">
       <button data-view="destinations" class="active">Destinations</button>
-      <button data-view="calendar">Place calendar</button>
       <button data-view="alerts">Fruiting now</button>
       <button data-view="plan">🗺️ Plan route</button>
     </nav>
