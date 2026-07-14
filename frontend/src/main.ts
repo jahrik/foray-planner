@@ -140,6 +140,7 @@ function initUnits(): void {
 async function main(): Promise<void> {
   const config = await getJson<Config>("/api/config");
   state.home = config.home;
+  state.cellDeg = config.cell_deg;
   initTheme();
   initUnits();
   initTextSize();

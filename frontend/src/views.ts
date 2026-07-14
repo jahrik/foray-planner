@@ -77,13 +77,7 @@ export async function runDestinations(): Promise<void> {
   panel.innerHTML = `<div id="rank-list"></div>`;
   const rankList = qs("#rank-list");
   const markers = regions.map((region, rank) => {
-    const marker = plot(
-      region.center_lat,
-      region.center_lng,
-      region.score_norm,
-      `<b>#${rank + 1}</b> ${dist(region.distance_km)}<br>${region.species.map((hit) => escapeHtml(hit.common_name)).join(", ")}`,
-      region.recent_count > 0,
-    );
+    const marker = plot(region.center_lat, region.center_lng, region.score_norm, region.recent_count > 0);
     const card = document.createElement("div");
     card.className = "rank";
     card.innerHTML = `
@@ -122,13 +116,23 @@ export async function runDestinations(): Promise<void> {
         loadCalendarInto(region.region_id, calendarBody);
       }
     };
-    card.onclick = () => {
-      map.setView([region.center_lat, region.center_lng], 9);
-      marker.openPopup();
-      focusRegion(region.center_lat, region.center_lng);
+    // Selecting a region - from either its card or its map marker - highlights the card and
+    // scrolls it into view instead of popping a bubble over the marker (which covered up the
+    // very thing you were trying to look at). The card already shows everything the popup used to.
+    const selectCard = () => {
       rankList.querySelectorAll(".rank").forEach((el) => el.classList.remove("active"));
       card.classList.add("active");
+      card.scrollIntoView({ block: "nearest", behavior: "smooth" });
     };
+    card.onclick = () => {
+      map.setView([region.center_lat, region.center_lng], 9);
+      focusRegion(region.center_lat, region.center_lng);
+      selectCard();
+    };
+    marker.on("click", () => {
+      focusRegion(region.center_lat, region.center_lng);
+      selectCard();
+    });
     rankList.appendChild(card);
     return marker;
   });
@@ -148,11 +152,9 @@ export async function runDestinations(): Promise<void> {
       pendingZoomIn = null;
       if (state.view !== "destinations") return; // user navigated away while we waited
       map.flyTo([top.center_lat, top.center_lng], 9);
-      markers[0].openPopup();
     }, 900);
   } else {
     map.flyTo([top.center_lat, top.center_lng], 9);
-    markers[0].openPopup();
   }
   focusRegion(top.center_lat, top.center_lng);
   rankList.querySelector(".rank")?.classList.add("active");
@@ -204,13 +206,7 @@ export async function runAlerts(): Promise<void> {
   }
   panel.innerHTML = "<h3 style='margin-top:0'>Fruiting now / recently</h3>";
   regions.forEach((region) => {
-    plot(
-      region.center_lat,
-      region.center_lng,
-      Math.min(1, region.total / 10),
-      `${dist(region.distance_km)} · ${region.total} recent`,
-      true,
-    );
+    const marker = plot(region.center_lat, region.center_lng, Math.min(1, region.total / 10), true);
     const card = document.createElement("div");
     card.className = "rank";
 
@@ -230,10 +226,20 @@ export async function runAlerts(): Promise<void> {
           return speciesChip({ ...hit, label }, "live");
         })
         .join("")}</div>`;
+    const selectCard = () => {
+      panel.querySelectorAll(".rank").forEach((el) => el.classList.remove("active"));
+      card.classList.add("active");
+      card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    };
     card.onclick = () => {
       map.setView([region.center_lat, region.center_lng], 9);
       focusRegion(region.center_lat, region.center_lng);
+      selectCard();
     };
+    marker.on("click", () => {
+      focusRegion(region.center_lat, region.center_lng);
+      selectCard();
+    });
     panel.appendChild(card);
   });
   setStatus(`${regions.length} active regions`);

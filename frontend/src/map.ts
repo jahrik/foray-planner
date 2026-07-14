@@ -113,23 +113,29 @@ export function updateHome(home: Home): void {
   }
 }
 
-export function plot(
-  lat: number,
-  lng: number,
-  weight: number,
-  popup: string,
-  live: boolean,
-): L.CircleMarker {
-  const marker = L.circleMarker([lat, lng], {
-    radius: 6 + 14 * weight,
+// Matches the same 111 km/degree approximation used backend-side (camps.py, land.py,
+// scoring.py) to convert a region's cell_deg grid width into meters.
+const KM_PER_DEG = 111.0;
+
+// No popup bound here - a bubble hovering over the marker you're trying to look at was jarring,
+// and the same info (rank, distance, species) already lives on the matching card in the side
+// panel. Callers wire the marker's click to highlight/scroll to that card instead.
+//
+// Uses L.circle (a geographic radius in meters) instead of L.circleMarker (a fixed pixel radius)
+// so the drawn circle represents the region's actual cell_deg footprint at every zoom level,
+// rather than a constant screen size that reads as arbitrarily smaller than the real cell once
+// you zoom in. The radius only grows above that true-size floor with score (weight), never
+// shrinks below it.
+export function plot(lat: number, lng: number, weight: number, live: boolean): L.Circle {
+  const cellRadiusM = ((state.cellDeg * KM_PER_DEG) / 2) * 1000;
+  const marker = L.circle([lat, lng], {
+    radius: cellRadiusM * (1 + 0.5 * weight),
     color: live ? LIVE : HEAT,
     fillColor: live ? LIVE : HEAT,
     fillOpacity: 0.6,
     weight: 1.5,
     bubblingMouseEvents: false,
-  })
-    .addTo(map)
-    .bindPopup(popup);
+  }).addTo(map);
   state.markers.push(marker);
   return marker;
 }
