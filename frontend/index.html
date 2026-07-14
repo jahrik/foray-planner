@@ -3,6 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#12140f" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>Foray Planner</title>
     <script>
       // Set the theme before first paint so light-mode users don't flash dark. Default = dark.
@@ -33,6 +35,12 @@
           <strong id="home-name">…</strong>
           <span class="loc-meta">(<span id="home-coords">…</span>) · <span id="home-radius">…</span></span>
         </span>
+        <div class="radius-presets" id="radius-presets">
+          <button type="button" data-km="50">50</button>
+          <button type="button" data-km="150">150</button>
+          <button type="button" data-km="300">300</button>
+          <button type="button" data-km="500">500</button>
+        </div>
       </div>
       <div class="header-actions">
         <button type="button" id="units-toggle" class="theme-toggle" aria-label="Toggle units">mi</button>
@@ -45,10 +53,6 @@
         <div class="field">
           <label>Months</label>
           <div id="months" class="months"></div>
-        </div>
-        <div class="field">
-          <label for="species">Species</label>
-          <select id="species" multiple size="3"></select>
         </div>
         <div class="field">
           <label>Layers</label>
@@ -98,9 +102,12 @@
     </nav>
 
     <main>
-      <div id="map"></div>
+      <div class="map-wrap">
+        <div id="map"></div>
+        <div id="legend" class="map-legend"></div>
+      </div>
       <aside id="panel">
-        <p class="hint">Pick months and click <em>Rank destinations</em>.</p>
+        <p class="hint">Finding your best destination…</p>
       </aside>
     </main>
 
