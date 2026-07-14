@@ -1,6 +1,11 @@
-"""Built-in default species and coverage region lists."""
+"""Built-in defaults: home location, region granularity, species, and coverage."""
 
 from __future__ import annotations
+
+HOME_LAT = 47.6062
+HOME_LNG = -122.3321
+HOME_RADIUS_KM = 150
+CELL_DEG = 0.25
 
 SPECIES = [
     {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "rank": "genus"},

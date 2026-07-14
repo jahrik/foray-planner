@@ -74,9 +74,7 @@ def _free_from_fee(fee: str | None) -> bool | None:
     return None
 
 
-def _query_centers(
-    lat: float, lng: float, radius_km: float, query_radius_km: float
-) -> list[tuple[float, float]]:
+def _query_centers(lat: float, lng: float, radius_km: float, query_radius_km: float) -> list[tuple[float, float]]:
     """Grid of query-circle centers covering the home disk.
 
     Circles of ``query_radius_km`` on a square grid of that same spacing fully tile the
@@ -223,9 +221,7 @@ def fetch_campsites(
                     f"Fetching campgrounds ({index + 1}/{total_centers})…",
                     ((index + 1) / total_centers) * 100.0 if total_centers else 100.0,
                 )
-            for record in _iter_facilities(
-                client, throttle, api_key, center_lat, center_lng, _QUERY_RADIUS_MI
-            ):
+            for record in _iter_facilities(client, throttle, api_key, center_lat, center_lng, _QUERY_RADIUS_MI):
                 row = _parse_facility(record)
                 if row is None:
                     continue
@@ -273,9 +269,7 @@ def ingest_campgrounds(
         )
         upsert_campsites(database, rows)
         key = f"camps:ridb:{home.lat}:{home.lng}:{home.radius_km}"
-        record_ingest(
-            database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km
-        )
+        record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
         logger.info("camps: cached %d campgrounds", len(rows))
         return len(rows)
     finally:

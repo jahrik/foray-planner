@@ -155,15 +155,10 @@ def ingest(
             logger.info("ingest: cancelled during %s", species.common_name)
             break
         upsert_observations(db, rows)
-        key = (
-            f"obs:{species.taxon_id}:{home.lat}:{home.lng}:"
-            f"{home.radius_km}:{species_start}:{end_date}"
-        )
+        key = f"obs:{species.taxon_id}:{home.lat}:{home.lng}:{home.radius_km}:{species_start}:{end_date}"
         record_ingest(db, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
         counts[species.taxon_id] = len(rows)
-        logger.info(
-            "ingest [%d/%d] %s: %d observations", index, total, species.common_name, len(rows)
-        )
+        logger.info("ingest [%d/%d] %s: %d observations", index, total, species.common_name, len(rows))
 
     logger.info("ingest: done - %d observations across %d taxa", sum(counts.values()), total)
     return counts
@@ -205,9 +200,7 @@ def ingest_region(
     )
     for index, species in enumerate(cfg.species, start=1):
         if progress_cb:
-            progress_cb(
-                f"Fetching {species.common_name} ({region.name})…", (index - 1) / total * 100.0
-            )
+            progress_cb(f"Fetching {species.common_name} ({region.name})…", (index - 1) / total * 100.0)
         latest = latest_obs_date_by_place(db, species.taxon_id, region.place_id)
         if latest:
             overlap = (dt.date.fromisoformat(latest) - dt.timedelta(days=7)).isoformat()

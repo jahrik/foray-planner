@@ -48,8 +48,6 @@ def test_geocodes_place_name_via_nominatim() -> None:
 
 
 def test_geocode_no_match_raises() -> None:
-    client = httpx.Client(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[]))
-    )
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[])))
     with pytest.raises(LookupError):
         resolve("asdfqwerzxcv nowhere", client=client)

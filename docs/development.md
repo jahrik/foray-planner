@@ -255,8 +255,9 @@ docker build -t local/foray-planner:dev .
 Or use the full stack:
 
 ```bash
-make start         # builds + starts app + scheduler + postgres
-make stop          # stop all containers
+make start         # builds + starts app + postgres
+make scheduler     # optional: starts the background ingest/refresh loop
+make stop          # stop all containers (including scheduler if running)
 make clean         # tear down containers + volumes
 ```
 

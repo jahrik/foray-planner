@@ -65,9 +65,7 @@ def test_parse_element_names_unnamed_way_from_ref_then_fallback() -> None:
 
 
 def test_parse_element_reads_a_trailhead_node() -> None:
-    row = _parse_element(
-        {"type": "node", "id": 9, "lat": 47.6, "lon": -122.3, "tags": {"highway": "trailhead"}}
-    )
+    row = _parse_element({"type": "node", "id": 9, "lat": 47.6, "lon": -122.3, "tags": {"highway": "trailhead"}})
     assert row is not None
     assert row[0] == "osm:node/9"
     assert row[1] == "Trailhead (OSM)"  # unnamed → fallback

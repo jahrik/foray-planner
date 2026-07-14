@@ -108,7 +108,8 @@ Each species chip in the UI links directly to its iNaturalist page for photos, r
 ```bash
 make install && make db
 make ingest             # pull iNat observations for all coverage regions
-make start              # http://localhost:8000 (app + scheduler + postgres)
+make start              # http://localhost:8000 (app + postgres)
+make scheduler          # optional: background ingest/refresh loop
 ```
 
 Run `make check` before pushing (lint + type-check + tests). See the

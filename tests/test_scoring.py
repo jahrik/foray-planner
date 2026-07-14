@@ -39,15 +39,11 @@ def _seed(con: psycopg.Connection) -> None:
     obs_id = 1
     # 20 morel obs in the APR region, all in April.
     for _ in range(20):
-        rows.append(
-            (obs_id, MOREL, APR_LAT, APR_LNG, dt.date(2022, 4, 15), 4, 2022, "research", 10)
-        )
+        rows.append((obs_id, MOREL, APR_LAT, APR_LNG, dt.date(2022, 4, 15), 4, 2022, "research", 10))
         obs_id += 1
     # 30 chanterelle obs in the OCT region, all in October.
     for _ in range(30):
-        rows.append(
-            (obs_id, CHANTERELLE, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, 2022, "research", 10)
-        )
+        rows.append((obs_id, CHANTERELLE, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, 2022, "research", 10))
         obs_id += 1
     # A couple stray off-season morels in the OCT region (noise).
     for _ in range(2):
@@ -110,9 +106,7 @@ def test_radius_filters_far_regions(con: psycopg.Connection) -> None:
 
 def test_place_calendar_peaks_in_expected_month(con: psycopg.Connection) -> None:
     # Find the OCT region id via the regions table.
-    row = con.execute(
-        "SELECT region_id FROM regions ORDER BY abs(center_lat - %s) LIMIT 1", [OCT_LAT]
-    ).fetchone()
+    row = con.execute("SELECT region_id FROM regions ORDER BY abs(center_lat - %s) LIMIT 1", [OCT_LAT]).fetchone()
     assert row is not None
     region_id = row[0]
     calendar = place_calendar(con, region_id=region_id, taxon_ids=[MOREL, CHANTERELLE])

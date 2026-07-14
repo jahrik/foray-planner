@@ -152,9 +152,7 @@ def test_fetch_public_land_skips_a_source_returning_malformed_payload() -> None:
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    rows = fetch_public_land(
-        lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, client=client, sources=(BLM, USFS)
-    )
+    rows = fetch_public_land(lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, client=client, sources=(BLM, USFS))
     assert [row[0] for row in rows] == ["blm:3"]  # BLM ingested; malformed USFS skipped
 
 
@@ -181,25 +179,19 @@ def test_fetch_public_land_pages_until_transfer_limit_clears() -> None:
             200,
             json={
                 "type": "FeatureCollection",
-                "features": [
-                    {"properties": {"OBJECTID": 1000}, "geometry": _polygon(47.7, -122.3)}
-                ],
+                "features": [{"properties": {"OBJECTID": 1000}, "geometry": _polygon(47.7, -122.3)}],
             },
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    rows = fetch_public_land(
-        lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, client=client, sources=(BLM,)
-    )
+    rows = fetch_public_land(lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, client=client, sources=(BLM,))
     ids = {row[0] for row in rows}
     assert "blm:1000" in ids  # the second page was fetched
     assert len(ids) == 1001
 
 
 def test_land_near_filters_by_bbox_and_returns_geometry(con: psycopg.Connection) -> None:
-    near = _parse_feature(
-        BLM, {"properties": {"OBJECTID": 1}, "geometry": _polygon(47.65, -122.35)}
-    )
+    near = _parse_feature(BLM, {"properties": {"OBJECTID": 1}, "geometry": _polygon(47.65, -122.35)})
     far = _parse_feature(
         USFS,
         {

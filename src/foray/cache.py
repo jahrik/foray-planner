@@ -329,16 +329,11 @@ def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     delta_phi = math.radians(lat2 - lat1)
     delta_lambda = math.radians(lng2 - lng1)
-    inner = (
-        math.sin(delta_phi / 2) ** 2
-        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
-    )
+    inner = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
     return 2 * earth_radius_km * math.asin(math.sqrt(inner))
 
 
-def is_area_covered(
-    con: psycopg.Connection, prefix: str, lat: float, lng: float, radius_km: float
-) -> bool:
+def is_area_covered(con: psycopg.Connection, prefix: str, lat: float, lng: float, radius_km: float) -> bool:
     """Check if any previously ingested disk (matching prefix) fully contains the requested disk."""
     rows = con.execute(
         "SELECT lat, lng, radius_km FROM ingest_log WHERE key LIKE %s AND lat IS NOT NULL",
@@ -351,12 +346,9 @@ def is_area_covered(
     return False
 
 
-def latest_obs_date(
-    con: psycopg.Connection, taxon_id: int, lat: float, lng: float, radius_km: float
-) -> str | None:
+def latest_obs_date(con: psycopg.Connection, taxon_id: int, lat: float, lng: float, radius_km: float) -> str | None:
     rows = con.execute(
-        "SELECT key, lat AS rlat, lng AS rlng, radius_km AS rr FROM ingest_log "
-        "WHERE key LIKE %s AND lat IS NOT NULL",
+        "SELECT key, lat AS rlat, lng AS rlng, radius_km AS rr FROM ingest_log WHERE key LIKE %s AND lat IS NOT NULL",
         [f"obs:{taxon_id}:%"],
     ).fetchall()
     if not rows:
@@ -384,18 +376,14 @@ def latest_obs_date_by_place(con: psycopg.Connection, taxon_id: int, place_id: i
 
 def load_location(con: psycopg.Connection) -> dict[str, Any] | None:
     """The UI's "Set location" override, if one has been saved. `None` = use config.yaml's."""
-    row = con.execute(
-        "SELECT name, lat, lng, radius_km FROM app_location WHERE id = true"
-    ).fetchone()
+    row = con.execute("SELECT name, lat, lng, radius_km FROM app_location WHERE id = true").fetchone()
     if row is None:
         return None
     name, lat, lng, radius_km = row
     return {"name": name, "lat": lat, "lng": lng, "radius_km": radius_km}
 
 
-def save_location(
-    con: psycopg.Connection, *, name: str, lat: float, lng: float, radius_km: float
-) -> None:
+def save_location(con: psycopg.Connection, *, name: str, lat: float, lng: float, radius_km: float) -> None:
     con.execute(
         """
         INSERT INTO app_location (id, name, lat, lng, radius_km)

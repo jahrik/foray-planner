@@ -12,7 +12,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from foray.defaults import CELL_DEG as _DEFAULT_CELL_DEG
 from foray.defaults import COVERAGE as _DEFAULT_COVERAGE
+from foray.defaults import HOME_LAT as _DEFAULT_HOME_LAT
+from foray.defaults import HOME_LNG as _DEFAULT_HOME_LNG
+from foray.defaults import HOME_RADIUS_KM as _DEFAULT_HOME_RADIUS_KM
 from foray.defaults import SPECIES as _DEFAULT_SPECIES
 
 QualityGrade = Literal["research", "needs_id", "casual"]
@@ -22,9 +26,9 @@ class Home(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str = "Home"
-    lat: float = Field(ge=-90, le=90)
-    lng: float = Field(ge=-180, le=180)
-    radius_km: float = Field(gt=0, le=20000)
+    lat: float = Field(ge=-90, le=90, default=_DEFAULT_HOME_LAT)
+    lng: float = Field(ge=-180, le=180, default=_DEFAULT_HOME_LNG)
+    radius_km: float = Field(gt=0, le=20000, default=_DEFAULT_HOME_RADIUS_KM)
 
 
 class Ingest(BaseModel):
@@ -64,8 +68,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    home: Home = Home(lat=47.6062, lng=-122.3321, radius_km=150)
-    cell_deg: float = Field(gt=0, le=10, default=0.25)
+    home: Home = Field(default_factory=Home)
+    cell_deg: float = Field(gt=0, le=10, default=_DEFAULT_CELL_DEG)
     ingest: Ingest = Ingest()
     species: list[Species] = Field(default_factory=list)
     coverage: list[CoverageRegion] = Field(default_factory=list)
@@ -73,9 +77,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _apply_defaults(self) -> Settings:
         if not self.species and "species" not in self.model_fields_set:
-            object.__setattr__(
-                self, "species", [Species.model_validate(entry) for entry in _DEFAULT_SPECIES]
-            )
+            object.__setattr__(self, "species", [Species.model_validate(entry) for entry in _DEFAULT_SPECIES])
         if not self.coverage and "coverage" not in self.model_fields_set:
             object.__setattr__(
                 self,

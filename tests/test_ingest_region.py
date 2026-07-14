@@ -27,9 +27,7 @@ def env_with_coverage(con: psycopg.Connection, monkeypatch):
     monkeypatch.setenv("FORAY_INGEST__RECENT_WEEKS", "4")
     monkeypatch.setenv(
         "FORAY_SPECIES",
-        json.dumps(
-            [{"taxon_id": 111, "name": "Morchella", "common_name": "Morels", "rank": "genus"}]
-        ),
+        json.dumps([{"taxon_id": 111, "name": "Morchella", "common_name": "Morels", "rank": "genus"}]),
     )
     monkeypatch.setenv(
         "FORAY_COVERAGE",
@@ -68,9 +66,7 @@ def test_ingest_region_uses_place_id(con: psycopg.Connection, env_with_coverage)
     assert row is not None
     assert row[0] == 2
 
-    log_row = con.execute(
-        "SELECT key FROM ingest_log WHERE key LIKE %s", ["obs:111:place:46:%"]
-    ).fetchone()
+    log_row = con.execute("SELECT key FROM ingest_log WHERE key LIKE %s", ["obs:111:place:46:%"]).fetchone()
     assert log_row is not None
 
 
@@ -132,9 +128,7 @@ def test_cli_ingest_all_regions_no_coverage(con, monkeypatch) -> None:
     monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
     monkeypatch.setenv(
         "FORAY_SPECIES",
-        json.dumps(
-            [{"taxon_id": 111, "name": "Morchella", "common_name": "Morels", "rank": "genus"}]
-        ),
+        json.dumps([{"taxon_id": 111, "name": "Morchella", "common_name": "Morels", "rank": "genus"}]),
     )
     monkeypatch.setenv("FORAY_COVERAGE", "[]")
 

@@ -51,10 +51,7 @@ def test_parse_facility_cleans_html_fee_and_keeps_free_signal() -> None:
 
 def test_parse_facility_skips_missing_and_zero_coords() -> None:
     assert _parse_facility({"FacilityID": "1", "FacilityName": "x"}) is None
-    assert (
-        _parse_facility({"FacilityID": "1", "FacilityLatitude": 0.0, "FacilityLongitude": 0.0})
-        is None
-    )
+    assert _parse_facility({"FacilityID": "1", "FacilityLatitude": 0.0, "FacilityLongitude": 0.0}) is None
     row = _parse_facility(
         {
             "FacilityID": "250018",

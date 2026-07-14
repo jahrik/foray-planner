@@ -42,9 +42,7 @@ def cli(ctx: click.Context) -> None:
     default=None,
     help="Named coverage region to ingest (from FORAY_COVERAGE).",
 )
-@click.option(
-    "--all-regions", "all_regions", is_flag=True, help="Ingest all configured coverage regions."
-)
+@click.option("--all-regions", "all_regions", is_flag=True, help="Ingest all configured coverage regions.")
 @click.pass_context
 def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool) -> None:
     """Pull observations into the cache (home radius, or --region/--all-regions for place_id)."""
@@ -54,9 +52,7 @@ def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool) -
     if all_regions and not cfg.coverage:
         raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
     if region_name:
-        resolved_region = next(
-            (r for r in cfg.coverage if r.name.lower() == region_name.lower()), None
-        )
+        resolved_region = next((r for r in cfg.coverage if r.name.lower() == region_name.lower()), None)
         if resolved_region is None:
             available = ", ".join(r.name for r in cfg.coverage) or "(none configured)"
             raise click.UsageError(f"Unknown region {region_name!r}. Available: {available}")
@@ -75,9 +71,7 @@ def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool) -
             for species in cfg.species:
                 click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
         else:
-            click.echo(
-                f"Ingesting {len(cfg.species)} species within {cfg.home.radius_km} km of home…"
-            )
+            click.echo(f"Ingesting {len(cfg.species)} species within {cfg.home.radius_km} km of home…")
             counts = ingest(cfg, con)
             for species in cfg.species:
                 click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
@@ -146,9 +140,7 @@ def _parse_targets(with_: str) -> tuple[str, ...]:
     values = tuple(token.strip() for token in with_.split(",") if token.strip())
     unknown = [v for v in values if v not in _REFRESH_TARGETS]
     if unknown:
-        raise click.BadParameter(
-            f"unknown target(s) {unknown} - choose from {', '.join(_REFRESH_TARGETS)}"
-        )
+        raise click.BadParameter(f"unknown target(s) {unknown} - choose from {', '.join(_REFRESH_TARGETS)}")
     return values
 
 
@@ -184,10 +176,7 @@ def refresh(ctx: click.Context, with_: str) -> None:
     if "mushrooms" in targets:
         build_phenology(con, cfg.cell_deg)
         region_count = (con.execute("SELECT count(*) FROM regions").fetchone() or (0,))[0]
-        click.echo(
-            f"Phenology rebuilt across {region_count} regions "
-            f"({observation_count(con)} observations)."
-        )
+        click.echo(f"Phenology rebuilt across {region_count} regions ({observation_count(con)} observations).")
     else:
         click.echo(f"Warmed: {', '.join(targets)}.")
     con.close()
@@ -205,12 +194,8 @@ def _parse_months(months: str) -> list[int]:
 
 
 @cli.command("plan")
-@click.option(
-    "--months", default="", help="Comma-separated months (1-12); default = current month."
-)
-@click.option(
-    "--max-stops", default=5, type=click.IntRange(min=1), help="Maximum stays in the itinerary."
-)
+@click.option("--months", default="", help="Comma-separated months (1-12); default = current month.")
+@click.option("--max-stops", default=5, type=click.IntRange(min=1), help="Maximum stays in the itinerary.")
 @click.option(
     "--max-drive-km",
     default=400.0,
@@ -219,9 +204,7 @@ def _parse_months(months: str) -> list[int]:
 )
 @click.option("--any-camp", is_flag=True, help="Allow stops whose nearest camp isn't free-tagged.")
 @click.pass_context
-def plan_cmd(
-    ctx: click.Context, months: str, max_stops: int, max_drive_km: float, any_camp: bool
-) -> None:
+def plan_cmd(ctx: click.Context, months: str, max_stops: int, max_drive_km: float, any_camp: bool) -> None:
     """Sequence the top destinations into a greedy, low-backtrack trip itinerary."""
     cfg = ctx.obj["cfg"]
     selected = _parse_months(months) or [dt.date.today().month]
@@ -252,10 +235,7 @@ def plan_cmd(
         camp = (
             "no camp"
             if stop.camp is None
-            else (
-                f"{'FREE ' if stop.camp_is_free else ''}{stop.camp.name} "
-                f"({stop.camp.distance_km:.0f} km)"
-            )
+            else (f"{'FREE ' if stop.camp_is_free else ''}{stop.camp.name} ({stop.camp.distance_km:.0f} km)")
         )
         click.echo(
             f"  {stop.order}. {stop.region_id}  +{stop.drive_km_from_prev:.0f} km  "
