@@ -100,7 +100,10 @@ export async function runDestinations(): Promise<void> {
     const calendarTab = card.querySelector<HTMLButtonElement>('[data-tab="calendar"]')!;
     const speciesBody = card.querySelector<HTMLElement>('[data-tab-content="species"]')!;
     const calendarBody = card.querySelector<HTMLElement>('[data-tab-content="calendar"]')!;
-    let calendarLoaded = false;
+    // "loading" (not just a boolean) guards against a second click firing a duplicate fetch
+    // while the first is still in flight; a failed fetch resets to "idle" so the tab can be
+    // retried, rather than permanently disabling it like a plain "already loaded" flag would.
+    let calendarState: "idle" | "loading" | "loaded" = "idle";
     const showTab = (tab: "species" | "calendar") => {
       speciesTab.classList.toggle("active", tab === "species");
       calendarTab.classList.toggle("active", tab === "calendar");
@@ -114,9 +117,11 @@ export async function runDestinations(): Promise<void> {
     calendarTab.onclick = (e) => {
       e.stopPropagation();
       showTab("calendar");
-      if (!calendarLoaded) {
-        calendarLoaded = true;
-        loadCalendarInto(region.region_id, calendarBody);
+      if (calendarState === "idle") {
+        calendarState = "loading";
+        loadCalendarInto(region.region_id, calendarBody).then((succeeded) => {
+          calendarState = succeeded ? "loaded" : "idle";
+        });
       }
     };
     // Selecting a region - from either its card or its map marker - highlights the card and
@@ -170,16 +175,17 @@ export async function runDestinations(): Promise<void> {
   selected = { marker: markers[0], weight: top.score_norm };
 }
 
-// Fetches once per card (cached by the `calendarLoaded` flag at the call site) and renders
-// straight into that card's own calendar-tab body, rather than a slot shared across all cards.
-async function loadCalendarInto(regionId: string, container: HTMLElement): Promise<void> {
+// Fetches once per card (cached by the calendarState flag at the call site) and renders straight
+// into that card's own calendar-tab body, rather than a slot shared across all cards. Returns
+// whether it succeeded so the caller can tell a real load from a failed one and allow a retry.
+async function loadCalendarInto(regionId: string, container: HTMLElement): Promise<boolean> {
   container.innerHTML = "<p class='hint'>Loading…</p>";
   let calendar: Calendar;
   try {
     calendar = await getJson<Calendar>(`/api/calendar?region_id=${regionId}`);
   } catch (error) {
     container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
-    return;
+    return false;
   }
   const peak = Math.max(1, ...Object.values(calendar).map((bucket) => bucket.total));
   let rows = "";
@@ -196,6 +202,7 @@ async function loadCalendarInto(regionId: string, container: HTMLElement): Promi
       <td class="meta">${speciesText}</td></tr>`;
   }
   container.innerHTML = `<table class="cal"><tr><th>Month</th><th>Obs</th><th>Species</th></tr>${rows}</table>`;
+  return true;
 }
 
 export async function runAlerts(): Promise<void> {
