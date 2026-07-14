@@ -71,10 +71,10 @@ export async function runDestinations(): Promise<void> {
     setStatus("");
     return;
   }
-  // Calendar and rank list live in separate slots so picking a region updates its calendar
-  // in place instead of overwriting the whole panel (which used to wipe out the rank cards -
-  // and their click handlers - leaving nothing left to click to switch regions).
-  panel.innerHTML = `<div id="calendar-slot"></div><div id="rank-list"></div>`;
+  // Rank list is the only thing in the panel now - each card's calendar lives behind a tab
+  // inside that card (see below) instead of a shared slot above the list, so picking a region
+  // no longer reshuffles what's on screen above it.
+  panel.innerHTML = `<div id="rank-list"></div>`;
   const rankList = qs("#rank-list");
   const markers = regions.map((region, rank) => {
     const marker = plot(
@@ -90,15 +90,42 @@ export async function runDestinations(): Promise<void> {
       <h3><span>#${rank + 1} · ${dist(region.distance_km)}</span><span>${region.n_species} spp</span></h3>
       <div class="bar"><span style="width:${(region.score_norm * 100).toFixed(0)}%"></span></div>
       <div class="meta">score ${region.score_norm.toFixed(2)}${region.recent_count ? ` · ${region.recent_count} seen recently` : ""}</div>
-      <div class="chips">${region.species
+      <div class="rank-tabs">
+        <button type="button" class="rank-tab active" data-tab="species">Species</button>
+        <button type="button" class="rank-tab" data-tab="calendar">Calendar</button>
+      </div>
+      <div class="chips" data-tab-content="species">${region.species
         .slice(0, 6)
         .map((hit) => speciesChip({ ...hit, label: (hit.w_pheno * 100).toFixed(0) + "%" }))
-        .join("")}</div>`;
+        .join("")}</div>
+      <div class="rank-calendar" data-tab-content="calendar" style="display:none"></div>`;
+    const speciesTab = card.querySelector<HTMLButtonElement>('[data-tab="species"]')!;
+    const calendarTab = card.querySelector<HTMLButtonElement>('[data-tab="calendar"]')!;
+    const speciesBody = card.querySelector<HTMLElement>('[data-tab-content="species"]')!;
+    const calendarBody = card.querySelector<HTMLElement>('[data-tab-content="calendar"]')!;
+    let calendarLoaded = false;
+    const showTab = (tab: "species" | "calendar") => {
+      speciesTab.classList.toggle("active", tab === "species");
+      calendarTab.classList.toggle("active", tab === "calendar");
+      speciesBody.style.display = tab === "species" ? "" : "none";
+      calendarBody.style.display = tab === "calendar" ? "" : "none";
+    };
+    speciesTab.onclick = (e) => {
+      e.stopPropagation();
+      showTab("species");
+    };
+    calendarTab.onclick = (e) => {
+      e.stopPropagation();
+      showTab("calendar");
+      if (!calendarLoaded) {
+        calendarLoaded = true;
+        loadCalendarInto(region.region_id, calendarBody);
+      }
+    };
     card.onclick = () => {
       map.setView([region.center_lat, region.center_lng], 9);
       marker.openPopup();
       focusRegion(region.center_lat, region.center_lng);
-      loadCalendar(region.region_id);
       rankList.querySelectorAll(".rank").forEach((el) => el.classList.remove("active"));
       card.classList.add("active");
     };
@@ -109,7 +136,8 @@ export async function runDestinations(): Promise<void> {
 
   // Automate the zoom + layer load for the (already server-sorted) top result: fit the map to
   // the full spread first ("zoom out"), then fly into the best destination and load its
-  // trails/camps/land/calendar - the same thing a click on the #1 card already does.
+  // trails/camps/land - the same thing a click on the #1 card already does. Its calendar loads
+  // on demand from the Calendar tab, same as every other card.
   const top = regions[0];
   if (regions.length > 1) {
     map.fitBounds(L.latLngBounds(markers.map((marker) => marker.getLatLng())), {
@@ -127,21 +155,20 @@ export async function runDestinations(): Promise<void> {
     markers[0].openPopup();
   }
   focusRegion(top.center_lat, top.center_lng);
-  loadCalendar(top.region_id);
   rankList.querySelector(".rank")?.classList.add("active");
 }
 
-export async function loadCalendar(regionId: string): Promise<void> {
+// Fetches once per card (cached by the `calendarLoaded` flag at the call site) and renders
+// straight into that card's own calendar-tab body, rather than a slot shared across all cards.
+async function loadCalendarInto(regionId: string, container: HTMLElement): Promise<void> {
+  container.innerHTML = "<p class='hint'>Loading…</p>";
   let calendar: Calendar;
   try {
     calendar = await getJson<Calendar>(`/api/calendar?region_id=${regionId}`);
   } catch (error) {
-    setStatus(errorDetail(error));
+    container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
     return;
   }
-  // The rank list may have been replaced (tab switch, re-run) by the time this resolves.
-  const slot = document.getElementById("calendar-slot");
-  if (!slot) return;
   const peak = Math.max(1, ...Object.values(calendar).map((bucket) => bucket.total));
   let rows = "";
   for (let month = 1; month <= 12; month++) {
@@ -156,9 +183,7 @@ export async function loadCalendar(regionId: string): Promise<void> {
       <td class="heat" style="background:${background}">${bucket.total || ""}</td>
       <td class="meta">${speciesText}</td></tr>`;
   }
-  slot.innerHTML = `<h3 style="margin-top:0">Calendar · region ${regionId}</h3>
-    <table class="cal"><tr><th>Month</th><th>Obs</th><th>Species</th></tr>${rows}</table>`;
-  setStatus("");
+  container.innerHTML = `<table class="cal"><tr><th>Month</th><th>Obs</th><th>Species</th></tr>${rows}</table>`;
 }
 
 export async function runAlerts(): Promise<void> {
