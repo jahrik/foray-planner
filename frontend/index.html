@@ -50,17 +50,9 @@
 
     <section class="controls">
       <div class="row">
-        <div class="field">
-          <label>Months</label>
-          <div id="months" class="months"></div>
-        </div>
-        <div class="field">
-          <label>Layers</label>
-          <div class="toggle-group">
-            <label class="toggle-btn"><input type="checkbox" id="show-land" /> <span>Public land</span></label>
-            <label class="toggle-btn"><input type="checkbox" id="show-trails" /> <span>Trails</span></label>
-          </div>
-        </div>
+        <button type="button" id="filters-toggle" class="filters-toggle" aria-expanded="false" aria-controls="filters-row">
+          Filters <span class="chevron">▾</span>
+        </button>
         <div class="field" style="align-self:flex-end">
           <button id="run" class="primary">Rank destinations</button>
         </div>
@@ -71,6 +63,19 @@
           <span id="status"></span>
           <progress id="refresh-progress" value="0" max="100" style="display: none;" aria-label="Refresh Progress"></progress>
           <span id="coverage-indicator" class="coverage-indicator"></span>
+        </div>
+      </div>
+      <div class="row" id="filters-row">
+        <div class="field">
+          <label>Months</label>
+          <div id="months" class="months"></div>
+        </div>
+        <div class="field">
+          <label>Layers</label>
+          <div class="toggle-group">
+            <label class="toggle-btn"><input type="checkbox" id="show-land" /> <span>Public land</span></label>
+            <label class="toggle-btn"><input type="checkbox" id="show-trails" /> <span>Trails</span></label>
+          </div>
         </div>
       </div>
       <div class="row plan-row" id="plan-row" style="display:none">

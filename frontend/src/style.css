@@ -74,6 +74,7 @@ header h1 { margin: 0; font-size: 13px; white-space: nowrap; flex-shrink: 0; }
   border-bottom: 1px solid var(--border);
 }
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.filters-toggle { display: none; } /* mobile-only; desktop always shows the filters row */
 .field { display: flex; flex-direction: column; gap: 3px; }
 .field label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .field small { color: var(--muted); font-size: 10px; }
@@ -186,6 +187,15 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
   .controls { padding: 4px 10px; gap: 4px; }
   .row { gap: 6px; }
   main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  /* Months/layers are one-off adjustments, not live status - collapse them behind a toggle
+     by default so they don't permanently eat map height on a small screen. */
+  .filters-toggle {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 10px; font-size: 12px; align-self: flex-end;
+  }
+  #filters-row:not(.open) { display: none; }
+  .filters-toggle[aria-expanded="true"] .chevron { transform: rotate(180deg); }
+  .chevron { display: inline-block; transition: transform 0.15s ease; }
   /* The map claims whatever's left after the capped panel below, instead of a hardcoded
      height that stayed small no matter how much the header/controls shrank. */
   .map-wrap { flex: 1; min-height: 0; }

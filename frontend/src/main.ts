@@ -48,6 +48,16 @@ function initTabs(): void {
   });
 }
 
+// Mobile-only toggle (hidden by CSS on desktop, where the filters row is always visible).
+function initFiltersToggle(): void {
+  const toggle = qs<HTMLButtonElement>("#filters-toggle");
+  const row = qs("#filters-row");
+  toggle.onclick = () => {
+    const open = row.classList.toggle("open");
+    toggle.setAttribute("aria-expanded", String(open));
+  };
+}
+
 function initTheme(): void {
   const toggle = qs<HTMLButtonElement>("#theme-toggle");
   const apply = (theme: "dark" | "light"): void => {
@@ -85,6 +95,7 @@ async function main(): Promise<void> {
   state.home = config.home;
   initTheme();
   initUnits();
+  initFiltersToggle();
   initMonths();
   initMap(config.home);
   setMapClickHandler(setLocationLatLng);
