@@ -1,5 +1,6 @@
 #!/bin/sh
 # Managed by the foray-planner ansible role
-docker run --rm --env-file /opt/foray-planner/foray.env \
-  {{ foray_app_image }} \
-  foray refresh --with camps,land,dispersed,trails
+exec flock -n /tmp/foray-layers.lock \
+  docker run --rm --env-file /opt/foray-planner/foray.env \
+    {{ foray_app_image }} \
+    foray refresh --with camps,land,dispersed,trails
