@@ -518,4 +518,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             status_code=503,
         )
 
+    # vite-plugin-pwa emits the manifest, service worker, and icons as root-level files in
+    # dist/ (not under assets/); the "/" route above already claims the exact root path, so
+    # this mount only ever serves the other root-level files.
+    if _DIST.is_dir():
+        app.mount("/", StaticFiles(directory=str(_DIST)), name="pwa-assets")
+
     return app

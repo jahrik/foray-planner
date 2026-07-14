@@ -32,7 +32,7 @@ frontend:
 	cd frontend && npm run build
 
 start:
-	docker compose up -d --build
+	docker compose up -d --build --force-recreate
 
 scheduler:
 	docker compose --profile scheduler up -d --build scheduler
