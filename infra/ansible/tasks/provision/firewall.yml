@@ -1,0 +1,45 @@
+---
+- name: Create firewall
+  community.digitalocean.digital_ocean_firewall:
+    oauth_token: "{{ foray_do_token }}"
+    state: present
+    name: "{{ foray_do_firewall_name }}"
+    droplet_ids:
+      - "{{ foray_droplet.data.droplet.id }}"
+    inbound_rules:
+      - protocol: tcp
+        ports: "22"
+        sources:
+          addresses: "{{ foray_ssh_allowed_ips }}"
+      - protocol: tcp
+        ports: "80"
+        sources:
+          addresses:
+            - "0.0.0.0/0"
+            - "::/0"
+      - protocol: tcp
+        ports: "443"
+        sources:
+          addresses:
+            - "0.0.0.0/0"
+            - "::/0"
+    outbound_rules:
+      - protocol: tcp
+        ports: "all"
+        destinations:
+          addresses:
+            - "0.0.0.0/0"
+            - "::/0"
+      - protocol: udp
+        ports: "all"
+        destinations:
+          addresses:
+            - "0.0.0.0/0"
+            - "::/0"
+      - protocol: icmp
+        ports: "all"
+        destinations:
+          addresses:
+            - "0.0.0.0/0"
+            - "::/0"
+  when: foray_droplet.data is defined

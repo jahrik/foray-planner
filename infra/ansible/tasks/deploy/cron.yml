@@ -1,0 +1,33 @@
+---
+- name: Create cron script directory
+  ansible.builtin.file:
+    path: /opt/foray-planner/scripts
+    state: directory
+    mode: "0755"
+
+- name: Deploy ingest cron script
+  ansible.builtin.template:
+    src: cron-ingest.sh.j2
+    dest: /opt/foray-planner/scripts/cron-ingest.sh
+    mode: "0755"
+
+- name: Deploy layers refresh cron script
+  ansible.builtin.template:
+    src: cron-layers.sh.j2
+    dest: /opt/foray-planner/scripts/cron-layers.sh
+    mode: "0755"
+
+- name: Schedule daily observation ingest
+  ansible.builtin.cron:
+    name: foray-ingest
+    hour: "{{ foray_ingest_cron_hour }}"
+    minute: "{{ foray_ingest_cron_minute }}"
+    job: /opt/foray-planner/scripts/cron-ingest.sh >> /var/log/foray-ingest.log 2>&1
+
+- name: Schedule weekly layers refresh
+  ansible.builtin.cron:
+    name: foray-layers
+    hour: "{{ foray_layers_cron_hour }}"
+    minute: "{{ foray_layers_cron_minute }}"
+    weekday: "{{ foray_layers_cron_weekday }}"
+    job: /opt/foray-planner/scripts/cron-layers.sh >> /var/log/foray-layers.log 2>&1

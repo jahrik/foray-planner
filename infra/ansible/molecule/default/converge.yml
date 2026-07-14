@@ -1,0 +1,25 @@
+---
+- name: Converge
+  hosts: all
+  tasks:
+    - name: Include deploy tasks only (no DO provisioning in molecule)
+      ansible.builtin.include_tasks:
+        file: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}/tasks/deploy/cron.yml"
+      vars:
+        foray_app_image: ghcr.io/jahrik/foray-planner:latest
+        foray_app_container_name: foray-planner
+        foray_app_port: 8000
+        foray_do_db_name: foray
+        foray_db_host: localhost
+        foray_db_port: "5432"
+        foray_db_user: foray
+        foray_db_password: testpass
+        foray_ridb_api_key: ""
+        foray_home_lat: "47.6062"
+        foray_home_lng: "-122.3321"
+        foray_home_radius_km: "150"
+        foray_ingest_cron_hour: "4"
+        foray_ingest_cron_minute: "0"
+        foray_layers_cron_hour: "3"
+        foray_layers_cron_minute: "0"
+        foray_layers_cron_weekday: "0"

@@ -1,6 +1,7 @@
 # Deployment
 
-Production target: **AWS ECS Fargate + RDS Postgres** via CDK, with Cloudflare in front.
+Production target: **Digital Ocean Droplet + Managed Postgres**, deployed via Ansible,
+with Cloudflare in front.
 The CD pipeline builds and publishes the image on every push to `main`.
 
 ---
@@ -76,11 +77,11 @@ are set via env vars (`FORAY_INGEST_INTERVAL_HOURS`, `FORAY_LAYERS_INTERVAL_HOUR
 The data pipeline is fully decoupled from search. Search/scoring is read-only against cached
 data and never triggers network calls. Data stays fresh via:
 
-**Option A - Background scheduler (recommended)**
+**Option A - Cron (production default)**
 
-The scheduler service handles this automatically. In production (AWS), use an ECS Scheduled
-Task (EventBridge rule triggering a Fargate task) that runs `foray ingest --all-regions`.
-Same image, same DB, no long-running container - spins up, ingests, exits.
+The Ansible playbook configures host cron jobs that run one-off containers against the
+managed Postgres instance. Observations ingest daily (04:00 UTC), layers refresh weekly
+(Sunday 03:00 UTC). Same image, same DB, spins up, runs, exits.
 
 **Option B - UI Refresh button**
 
@@ -123,8 +124,46 @@ on its next cycle.
 | `FORAY_INGEST_INTERVAL_HOURS` | No | Scheduler: hours between observation ingests (default: 24). |
 | `FORAY_LAYERS_INTERVAL_HOURS` | No | Scheduler: hours between layer refreshes (default: 168). |
 
-Secrets go in the instance environment, Secrets Manager, or a gitignored `.env` file locally.
+Secrets go in the instance environment or a gitignored `.env` file locally.
 **Never commit them.**
+
+---
+
+## Production deploy (Digital Ocean + Ansible)
+
+Infrastructure lives in `infra/ansible/`. The playbook provisions a DO Droplet (Docker
+pre-installed) and a managed Postgres cluster, then deploys the GHCR container with cron
+jobs for data refresh.
+
+### Prerequisites
+
+- Digital Ocean API token (export as `DO_API_TOKEN`)
+- SSH key registered in DO (name passed as `foray_do_ssh_key_name`)
+- Optional: `RIDB_API_KEY` for campground data, `GHCR_TOKEN` for private images
+
+### First deploy
+
+```bash
+cd infra/ansible
+uv sync
+uv run ansible-galaxy collection install -r requirements.yml
+uv run ansible-playbook site.yml -e foray_do_ssh_key_name=my-key
+```
+
+### Subsequent deploys (app update only)
+
+```bash
+uv run ansible-playbook site.yml --tags foray:deploy -e foray_do_ssh_key_name=my-key
+```
+
+### Tags
+
+| Tag | Scope |
+|---|---|
+| `foray` | Everything |
+| `foray:provision` | DO resources (Droplet, database, firewall) |
+| `foray:deploy` | Pull image, restart container |
+| `foray:cron` | Update cron schedules |
 
 ---
 

@@ -1,0 +1,50 @@
+---
+- name: Log in to GHCR
+  community.docker.docker_login:
+    registry: ghcr.io
+    username: "{{ lookup('ansible.builtin.env', 'GHCR_USER', default='') }}"
+    password: "{{ lookup('ansible.builtin.env', 'GHCR_TOKEN', default='') }}"
+  when: lookup('ansible.builtin.env', 'GHCR_TOKEN', default='') | length > 0
+
+- name: Pull latest container image
+  community.docker.docker_image:
+    name: "{{ foray_app_image }}"
+    source: pull
+    force_source: true
+
+- name: Write environment file
+  ansible.builtin.template:
+    src: foray.env.j2
+    dest: /opt/foray-planner/foray.env
+    mode: "0600"
+    owner: root
+    group: root
+  notify: restart foray
+
+- name: Run foray-planner container
+  community.docker.docker_container:
+    name: "{{ foray_app_container_name }}"
+    image: "{{ foray_app_image }}"
+    state: started
+    restart_policy: unless-stopped
+    ports:
+      - "{{ foray_app_port }}:8000"
+    env_file: /opt/foray-planner/foray.env
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+  register: foray_container
+
+- name: Run initial data ingest
+  community.docker.docker_container:
+    name: foray-ingest-init
+    image: "{{ foray_app_image }}"
+    state: started
+    detach: false
+    cleanup: true
+    env_file: /opt/foray-planner/foray.env
+    command: "foray ingest --all-regions"
+  when: foray_container.changed

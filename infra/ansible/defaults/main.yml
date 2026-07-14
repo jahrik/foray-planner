@@ -1,0 +1,48 @@
+---
+# Digital Ocean API token — never set here in a public repo; pass via
+# environment variable DO_API_TOKEN or --extra-vars at runtime.
+foray_do_token: "{{ lookup('ansible.builtin.env', 'DO_API_TOKEN') }}"
+
+# Region for all DO resources (droplet + managed database)
+foray_do_region: sfo3
+
+# Droplet configuration
+foray_do_droplet_name: foray-planner
+foray_do_droplet_size: s-1vcpu-1gb
+foray_do_droplet_image: docker-20-04
+foray_do_ssh_key_name: ""
+
+# Managed Postgres cluster
+foray_do_db_cluster_name: foray-postgres
+foray_do_db_size: db-s-1vcpu-1gb
+foray_do_db_engine: pg
+foray_do_db_version: "16"
+foray_do_db_name: foray
+
+# Container image (published by CD pipeline on every push to main)
+foray_app_image: ghcr.io/jahrik/foray-planner:latest
+foray_app_container_name: foray-planner
+foray_app_port: 8000
+
+# RIDB API key — optional, campground ingest is skipped without it.
+# Pass via environment or --extra-vars; never commit.
+foray_ridb_api_key: "{{ lookup('ansible.builtin.env', 'RIDB_API_KEY') }}"
+
+# App configuration (pydantic-settings env vars)
+foray_home_lat: "47.6062"
+foray_home_lng: "-122.3321"
+foray_home_radius_km: "150"
+
+# Cron: observation ingest (daily at 04:00 UTC)
+foray_ingest_cron_hour: "4"
+foray_ingest_cron_minute: "0"
+
+# Cron: full layer refresh (weekly Sunday at 03:00 UTC)
+foray_layers_cron_hour: "3"
+foray_layers_cron_minute: "0"
+foray_layers_cron_weekday: "0"
+
+# Firewall rules — Cloudflare IPs for HTTP, your IP for SSH
+foray_do_firewall_name: foray-planner-fw
+foray_ssh_allowed_ips:
+  - "0.0.0.0/0"

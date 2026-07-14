@@ -1,4 +1,5 @@
-.PHONY: db install lint test check frontend start restart stop scheduler clean ingest
+.PHONY: db install lint test check frontend start restart stop scheduler clean ingest \
+	ansible-install ansible-lint ansible-deploy ansible-provision
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
@@ -56,3 +57,21 @@ ingest: db
 
 clean:
 	docker compose --profile scheduler down -v
+
+# --- Ansible (Digital Ocean deployment) ---
+
+ANSIBLE_DIR := infra/ansible
+
+ansible-install:
+	cd $(ANSIBLE_DIR) && uv sync
+	cd $(ANSIBLE_DIR) && uv run ansible-galaxy collection install -r requirements.yml
+
+ansible-lint:
+	cd $(ANSIBLE_DIR) && uv run yamllint .
+	cd $(ANSIBLE_DIR) && uv run ansible-lint
+
+ansible-provision:
+	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:provision
+
+ansible-deploy:
+	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:deploy

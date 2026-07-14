@@ -1,0 +1,93 @@
+---
+argument_specs:
+  main:
+    short_description: Deploy foray-planner to Digital Ocean
+    options:
+      foray_do_token:
+        type: str
+        description: Digital Ocean API token (read from DO_API_TOKEN env var)
+        required: true
+      foray_do_region:
+        type: str
+        description: DO region for all resources
+        default: sfo3
+      foray_do_droplet_name:
+        type: str
+        description: Droplet hostname
+        default: foray-planner
+      foray_do_droplet_size:
+        type: str
+        description: Droplet size slug
+        default: s-1vcpu-1gb
+      foray_do_droplet_image:
+        type: str
+        description: Droplet image slug (must have Docker pre-installed)
+        default: docker-20-04
+      foray_do_ssh_key_name:
+        type: str
+        description: Name of the SSH key registered in DO (must exist)
+        required: true
+      foray_do_db_cluster_name:
+        type: str
+        description: Managed Postgres cluster name
+        default: foray-postgres
+      foray_do_db_size:
+        type: str
+        description: Managed database size slug
+        default: db-s-1vcpu-1gb
+      foray_do_db_version:
+        type: str
+        description: Postgres major version
+        default: "16"
+      foray_do_db_name:
+        type: str
+        description: Database name to create within the cluster
+        default: foray
+      foray_app_image:
+        type: str
+        description: Container image (GHCR)
+        default: ghcr.io/jahrik/foray-planner:latest
+      foray_app_container_name:
+        type: str
+        description: Docker container name on the host
+        default: foray-planner
+      foray_app_port:
+        type: int
+        description: Port the container listens on
+        default: 8000
+      foray_ridb_api_key:
+        type: str
+        description: Recreation.gov API key (optional, campground ingest skipped without it)
+        default: ""
+      foray_home_lat:
+        type: str
+        description: Default home latitude
+        default: "47.6062"
+      foray_home_lng:
+        type: str
+        description: Default home longitude
+        default: "-122.3321"
+      foray_home_radius_km:
+        type: str
+        description: Default search radius in km
+        default: "150"
+      foray_ingest_cron_hour:
+        type: str
+        description: Hour (UTC) for daily observation ingest cron
+        default: "4"
+      foray_ingest_cron_minute:
+        type: str
+        description: Minute for daily observation ingest cron
+        default: "0"
+      foray_layers_cron_hour:
+        type: str
+        description: Hour (UTC) for weekly layers refresh cron
+        default: "3"
+      foray_layers_cron_minute:
+        type: str
+        description: Minute for weekly layers refresh cron
+        default: "0"
+      foray_layers_cron_weekday:
+        type: str
+        description: Day of week (0=Sunday) for weekly layers refresh
+        default: "0"
