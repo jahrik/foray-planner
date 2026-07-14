@@ -3,8 +3,25 @@ import L from "leaflet";
 import { getJson } from "./api/client";
 import type { AlertRegion, Calendar, RegionScore } from "./api/types";
 import { focusRegion } from "./layers";
-import { clearMarkers, HEAT_RGB, map, plot } from "./map";
+import { clearMarkers, deselectSize, HEAT_RGB, map, plot, selectSize } from "./map";
 import { dist, errorDetail, escapeHtml, inatUrl, MONTHS, qs, setStatus, state } from "./state";
+
+// Cards act as buttons (selecting a region) but are plain <div>s for layout flexibility, so make
+// them keyboard-operable: focusable, and Enter/Space activates - but only when the key event's
+// target is the card itself, not a nested button/link (those already get native keyboard
+// activation, and re-triggering the card on top of that would double-fire).
+function makeActivatable(card: HTMLElement, activate: () => void): void {
+  card.tabIndex = 0;
+  card.setAttribute("role", "button");
+  card.onclick = activate;
+  card.onkeydown = (e) => {
+    if (e.target !== card) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      activate();
+    }
+  };
+}
 
 export function initMonths(): void {
   const box = qs("#months");
@@ -71,37 +88,81 @@ export async function runDestinations(): Promise<void> {
     setStatus("");
     return;
   }
-  // Calendar and rank list live in separate slots so picking a region updates its calendar
-  // in place instead of overwriting the whole panel (which used to wipe out the rank cards -
-  // and their click handlers - leaving nothing left to click to switch regions).
-  panel.innerHTML = `<div id="calendar-slot"></div><div id="rank-list"></div>`;
+  // Rank list is the only thing in the panel now - each card's calendar lives behind a tab
+  // inside that card (see below) instead of a shared slot above the list, so picking a region
+  // no longer reshuffles what's on screen above it.
+  panel.innerHTML = `<div id="rank-list"></div>`;
   const rankList = qs("#rank-list");
+  // Only one region's marker shows its true real-world size at a time; selecting a new one
+  // reverts whichever marker held that spot back to its score-scaled preview size.
+  let selected: { marker: L.Circle; weight: number } | null = null;
   const markers = regions.map((region, rank) => {
-    const marker = plot(
-      region.center_lat,
-      region.center_lng,
-      region.score_norm,
-      `<b>#${rank + 1}</b> ${dist(region.distance_km)}<br>${region.species.map((hit) => escapeHtml(hit.common_name)).join(", ")}`,
-      region.recent_count > 0,
-    );
+    const marker = plot(region.center_lat, region.center_lng, region.score_norm, region.recent_count > 0);
     const card = document.createElement("div");
     card.className = "rank";
     card.innerHTML = `
       <h3><span>#${rank + 1} · ${dist(region.distance_km)}</span><span>${region.n_species} spp</span></h3>
       <div class="bar"><span style="width:${(region.score_norm * 100).toFixed(0)}%"></span></div>
       <div class="meta">score ${region.score_norm.toFixed(2)}${region.recent_count ? ` · ${region.recent_count} seen recently` : ""}</div>
-      <div class="chips">${region.species
+      <div class="rank-tabs">
+        <button type="button" class="rank-tab active" data-tab="species">Species</button>
+        <button type="button" class="rank-tab" data-tab="calendar">Calendar</button>
+      </div>
+      <div class="chips" data-tab-content="species">${region.species
         .slice(0, 6)
         .map((hit) => speciesChip({ ...hit, label: (hit.w_pheno * 100).toFixed(0) + "%" }))
-        .join("")}</div>`;
-    card.onclick = () => {
-      map.setView([region.center_lat, region.center_lng], 9);
-      marker.openPopup();
-      focusRegion(region.center_lat, region.center_lng);
-      loadCalendar(region.region_id);
+        .join("")}</div>
+      <div class="rank-calendar" data-tab-content="calendar" style="display:none"></div>`;
+    const speciesTab = card.querySelector<HTMLButtonElement>('[data-tab="species"]')!;
+    const calendarTab = card.querySelector<HTMLButtonElement>('[data-tab="calendar"]')!;
+    const speciesBody = card.querySelector<HTMLElement>('[data-tab-content="species"]')!;
+    const calendarBody = card.querySelector<HTMLElement>('[data-tab-content="calendar"]')!;
+    // "loading" (not just a boolean) guards against a second click firing a duplicate fetch
+    // while the first is still in flight; a failed fetch resets to "idle" so the tab can be
+    // retried, rather than permanently disabling it like a plain "already loaded" flag would.
+    let calendarState: "idle" | "loading" | "loaded" = "idle";
+    const showTab = (tab: "species" | "calendar") => {
+      speciesTab.classList.toggle("active", tab === "species");
+      calendarTab.classList.toggle("active", tab === "calendar");
+      speciesBody.style.display = tab === "species" ? "" : "none";
+      calendarBody.style.display = tab === "calendar" ? "" : "none";
+    };
+    speciesTab.onclick = (e) => {
+      e.stopPropagation();
+      showTab("species");
+    };
+    calendarTab.onclick = (e) => {
+      e.stopPropagation();
+      showTab("calendar");
+      if (calendarState === "idle") {
+        calendarState = "loading";
+        loadCalendarInto(region.region_id, calendarBody).then((succeeded) => {
+          calendarState = succeeded ? "loaded" : "idle";
+        });
+      }
+    };
+    // Selecting a region - from either its card or its map marker - highlights the card and
+    // scrolls it into view instead of popping a bubble over the marker (which covered up the
+    // very thing you were trying to look at). The card already shows everything the popup used to.
+    // Its marker also snaps to its true cell-footprint size (see selectSize in map.ts), with the
+    // previously selected marker (if any) reverting to its score-scaled preview size.
+    const selectCard = () => {
       rankList.querySelectorAll(".rank").forEach((el) => el.classList.remove("active"));
       card.classList.add("active");
+      card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      if (selected && selected.marker !== marker) deselectSize(selected.marker, selected.weight);
+      selectSize(marker);
+      selected = { marker, weight: region.score_norm };
     };
+    makeActivatable(card, () => {
+      map.setView([region.center_lat, region.center_lng], 9);
+      focusRegion(region.center_lat, region.center_lng);
+      selectCard();
+    });
+    marker.on("click", () => {
+      focusRegion(region.center_lat, region.center_lng);
+      selectCard();
+    });
     rankList.appendChild(card);
     return marker;
   });
@@ -109,7 +170,8 @@ export async function runDestinations(): Promise<void> {
 
   // Automate the zoom + layer load for the (already server-sorted) top result: fit the map to
   // the full spread first ("zoom out"), then fly into the best destination and load its
-  // trails/camps/land/calendar - the same thing a click on the #1 card already does.
+  // trails/camps/land - the same thing a click on the #1 card already does. Its calendar loads
+  // on demand from the Calendar tab, same as every other card.
   const top = regions[0];
   if (regions.length > 1) {
     map.fitBounds(L.latLngBounds(markers.map((marker) => marker.getLatLng())), {
@@ -120,28 +182,28 @@ export async function runDestinations(): Promise<void> {
       pendingZoomIn = null;
       if (state.view !== "destinations") return; // user navigated away while we waited
       map.flyTo([top.center_lat, top.center_lng], 9);
-      markers[0].openPopup();
     }, 900);
   } else {
     map.flyTo([top.center_lat, top.center_lng], 9);
-    markers[0].openPopup();
   }
   focusRegion(top.center_lat, top.center_lng);
-  loadCalendar(top.region_id);
   rankList.querySelector(".rank")?.classList.add("active");
+  selectSize(markers[0]);
+  selected = { marker: markers[0], weight: top.score_norm };
 }
 
-export async function loadCalendar(regionId: string): Promise<void> {
+// Fetches once per card (cached by the calendarState flag at the call site) and renders straight
+// into that card's own calendar-tab body, rather than a slot shared across all cards. Returns
+// whether it succeeded so the caller can tell a real load from a failed one and allow a retry.
+async function loadCalendarInto(regionId: string, container: HTMLElement): Promise<boolean> {
+  container.innerHTML = "<p class='hint'>Loading…</p>";
   let calendar: Calendar;
   try {
     calendar = await getJson<Calendar>(`/api/calendar?region_id=${regionId}`);
   } catch (error) {
-    setStatus(errorDetail(error));
-    return;
+    container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
+    return false;
   }
-  // The rank list may have been replaced (tab switch, re-run) by the time this resolves.
-  const slot = document.getElementById("calendar-slot");
-  if (!slot) return;
   const peak = Math.max(1, ...Object.values(calendar).map((bucket) => bucket.total));
   let rows = "";
   for (let month = 1; month <= 12; month++) {
@@ -156,9 +218,8 @@ export async function loadCalendar(regionId: string): Promise<void> {
       <td class="heat" style="background:${background}">${bucket.total || ""}</td>
       <td class="meta">${speciesText}</td></tr>`;
   }
-  slot.innerHTML = `<h3 style="margin-top:0">Calendar · region ${regionId}</h3>
-    <table class="cal"><tr><th>Month</th><th>Obs</th><th>Species</th></tr>${rows}</table>`;
-  setStatus("");
+  container.innerHTML = `<table class="cal"><tr><th>Month</th><th>Obs</th><th>Species</th></tr>${rows}</table>`;
+  return true;
 }
 
 export async function runAlerts(): Promise<void> {
@@ -178,14 +239,10 @@ export async function runAlerts(): Promise<void> {
     return;
   }
   panel.innerHTML = "<h3 style='margin-top:0'>Fruiting now / recently</h3>";
+  let selected: { marker: L.Circle; weight: number } | null = null;
   regions.forEach((region) => {
-    plot(
-      region.center_lat,
-      region.center_lng,
-      Math.min(1, region.total / 10),
-      `${dist(region.distance_km)} · ${region.total} recent`,
-      true,
-    );
+    const weight = Math.min(1, region.total / 10);
+    const marker = plot(region.center_lat, region.center_lng, weight, true);
     const card = document.createElement("div");
     card.className = "rank";
 
@@ -205,10 +262,23 @@ export async function runAlerts(): Promise<void> {
           return speciesChip({ ...hit, label }, "live");
         })
         .join("")}</div>`;
-    card.onclick = () => {
+    const selectCard = () => {
+      panel.querySelectorAll(".rank").forEach((el) => el.classList.remove("active"));
+      card.classList.add("active");
+      card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      if (selected && selected.marker !== marker) deselectSize(selected.marker, selected.weight);
+      selectSize(marker);
+      selected = { marker, weight };
+    };
+    makeActivatable(card, () => {
       map.setView([region.center_lat, region.center_lng], 9);
       focusRegion(region.center_lat, region.center_lng);
-    };
+      selectCard();
+    });
+    marker.on("click", () => {
+      focusRegion(region.center_lat, region.center_lng);
+      selectCard();
+    });
     panel.appendChild(card);
   });
   setStatus(`${regions.length} active regions`);

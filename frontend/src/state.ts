@@ -21,6 +21,7 @@ export interface State {
   planTrip: TripPlan | null;
   focused: { lat: number; lng: number } | null;
   units: Units;
+  cellDeg: number;
 }
 
 export const state: State = {
@@ -34,6 +35,7 @@ export const state: State = {
   planRouteLayer: null,
   planTrip: null,
   focused: null,
+  cellDeg: 0.25, // overwritten from /api/config once it loads; matches the backend default
   units: ((): Units => {
     const stored = localStorage.getItem("foray-units");
     return stored === "km" || stored === "mi" ? stored : "mi";

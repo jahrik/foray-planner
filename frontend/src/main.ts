@@ -2,7 +2,7 @@ import "leaflet/dist/leaflet.css";
 import "./style.css";
 
 import { getJson, postJson } from "./api/client";
-import type { Config, CoverageRegion, Home } from "./api/types";
+import type { Config, Home } from "./api/types";
 import { loadCamps, loadLand, loadTrails } from "./layers";
 import { initLocationAutocomplete } from "./location";
 import { currentTheme, initMap, setMapClickHandler, setTiles, updateHome } from "./map";
@@ -26,6 +26,14 @@ function updateRunButton(): void {
     if (state.view === "alerts") runBtn.textContent = "Check alerts";
     else if (state.view === "plan") runBtn.textContent = "Plan route";
   }
+}
+
+// Re-runs whichever view is currently open - used after a data refresh finishes so the new
+// data actually shows up without the user having to switch tabs back and forth to force it.
+function refreshCurrentView(): void {
+  if (state.view === "destinations") runDestinations();
+  else if (state.view === "alerts") runAlerts();
+  else if (state.view === "plan") runPlan();
 }
 
 function initTabs(): void {
@@ -58,6 +66,28 @@ function initFiltersToggle(): void {
   };
 }
 
+// Small popover explaining the core flow for a first-time visitor - closes on outside click,
+// Escape, or toggling it again, same pattern as the mobile filters disclosure.
+function initHelp(): void {
+  const toggle = qs<HTMLButtonElement>("#help-toggle");
+  const popover = qs("#help-popover");
+  const close = () => {
+    popover.hidden = true;
+    toggle.setAttribute("aria-expanded", "false");
+  };
+  toggle.onclick = (e) => {
+    e.stopPropagation();
+    const open = popover.hidden;
+    popover.hidden = !open;
+    toggle.setAttribute("aria-expanded", String(open));
+  };
+  popover.onclick = (e) => e.stopPropagation();
+  document.addEventListener("click", close);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") close();
+  });
+}
+
 function initTheme(): void {
   const toggle = qs<HTMLButtonElement>("#theme-toggle");
   const apply = (theme: "dark" | "light"): void => {
@@ -70,6 +100,23 @@ function initTheme(): void {
   toggle.onclick = () => {
     const next = currentTheme() === "dark" ? "light" : "dark";
     localStorage.setItem("foray-theme", next);
+    apply(next);
+  };
+}
+
+// Persisted like theme/units - toggles a root data attribute that style.css uses to bump up
+// font sizes across the panel/cards/map controls for readability on a phone.
+function initTextSize(): void {
+  const toggle = qs<HTMLButtonElement>("#text-size-toggle");
+  const apply = (large: boolean): void => {
+    document.documentElement.dataset.textSize = large ? "large" : "normal";
+    toggle.setAttribute("aria-pressed", String(large));
+    toggle.title = large ? "Switch to normal text size" : "Switch to larger text";
+  };
+  apply(localStorage.getItem("foray-text-size") === "large");
+  toggle.onclick = () => {
+    const next = document.documentElement.dataset.textSize !== "large";
+    localStorage.setItem("foray-text-size", next ? "large" : "normal");
     apply(next);
   };
 }
@@ -93,8 +140,11 @@ function initUnits(): void {
 async function main(): Promise<void> {
   const config = await getJson<Config>("/api/config");
   state.home = config.home;
+  state.cellDeg = config.cell_deg;
   initTheme();
   initUnits();
+  initTextSize();
+  initHelp();
   initFiltersToggle();
   initMonths();
   initMap(config.home);
@@ -108,7 +158,10 @@ async function main(): Promise<void> {
     if (state.view === "alerts") runAlerts();
     else if (state.view === "plan") runPlan();
   };
-  qs("#refresh").onclick = () => startRefresh("Refreshing mushroom data…", "mushrooms");
+  qs("#refresh").onclick = async () => {
+    const succeeded = await startRefresh("Refreshing mushroom data…", "mushrooms");
+    if (succeeded) refreshCurrentView();
+  };
 
   let currentRefreshTarget: string | null = null;
 
@@ -147,11 +200,10 @@ async function main(): Promise<void> {
     else { cancelLayerRefresh("trails"); loadTrails(); }
   };
   initLocationAutocomplete();
-  loadCoverage();
   // If a refresh is already running (e.g. page reload mid-fetch), reflect it.
   if (config.refreshing) {
     startRefresh("Fetching data…").then((succeeded) => {
-      if (succeeded) runDestinations();
+      if (succeeded) refreshCurrentView();
     });
   } else if (state.view === "destinations") {
     runDestinations();
@@ -208,37 +260,6 @@ function initRadiusPresets(): void {
       if (state.view === "destinations") runDestinations();
     };
   });
-}
-
-function formatAge(iso: string): string {
-  const diff = Math.max(0, Date.now() - new Date(iso).getTime());
-  const hours = Math.floor(diff / 3600000);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-async function loadCoverage(): Promise<void> {
-  const el = document.getElementById("coverage-indicator");
-  if (!el) return;
-  let regions: CoverageRegion[];
-  try {
-    regions = await getJson<CoverageRegion[]>("/api/coverage");
-  } catch {
-    return;
-  }
-  if (!regions.length) {
-    el.textContent = "No coverage regions";
-    return;
-  }
-  const parts = regions.map((r) => {
-    const age = r.last_ingest ? formatAge(r.last_ingest) : "never";
-    return `${r.name}: ${age}`;
-  });
-  el.textContent = parts.join(" · ");
-  el.title = regions
-    .map((r) => `${r.name}: ${r.taxa_ingested} taxa, last ingest ${r.last_ingest ?? "never"}`)
-    .join("\n");
 }
 
 main();

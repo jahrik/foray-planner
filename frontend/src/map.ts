@@ -22,18 +22,15 @@ export const LAND_DEFAULT = "#b5b5b5"; // any other agency
 export const TRAIL = "#ff5555"; // bright red - the walking network (paths/routes) + trailhead dots
 export const PLAN_STOP = "#ffd060"; // neon gold - planned-route stops and connecting line
 
-// Theme-aware basemap: a dark CARTO raster under dark mode, standard OSM under light. The bright
-// marker palette above reads well over both. Attribution stays per each provider's terms.
-const TILES = {
-  dark: {
-    url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-    attribution: "© OpenStreetMap © CARTO · observations © iNaturalist",
-  },
-  light: {
-    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attribution: "© OpenStreetMap · observations © iNaturalist",
-  },
-} as const;
+// A single standard OSM tile source for both themes - dark mode inverts it via CSS
+// (`invert() hue-rotate()` in style.css) instead of swapping in a separate dark tileset.
+// The CARTO dark_all raster this used to load renders minor labels (peaks, lakes, wilderness
+// boundaries) in very low-contrast gray by design, and no CSS brightness/contrast filter could
+// fix that without also crushing the rest of the tile. Inverting OSM's normal high-contrast
+// dark-on-light labels turns them into equally high-contrast light-on-dark, so everything from
+// city names down to trail/forest labels stays legible.
+const TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const TILE_ATTRIBUTION = "© OpenStreetMap · observations © iNaturalist";
 let tileLayer: L.TileLayer | null = null;
 
 export let map: L.Map;
@@ -42,27 +39,35 @@ let homeMarker: L.CircleMarker;
 export const currentTheme = (): "dark" | "light" =>
   document.documentElement.dataset.theme === "light" ? "light" : "dark";
 
-export function setTiles(theme: "dark" | "light"): void {
+export function setTiles(_theme: "dark" | "light"): void {
   if (!map) return; // map not built yet; initMap lays the first tiles for the current theme
-  if (tileLayer) tileLayer.remove();
-  const tiles = TILES[theme];
-  tileLayer = L.tileLayer(tiles.url, { attribution: tiles.attribution, maxZoom: 14 }).addTo(map);
+  if (tileLayer) return; // same tile source for both themes now; the CSS filter handles dark mode
+  tileLayer = L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 14 }).addTo(map);
 }
 
 // A plain DOM block below the map (not a Leaflet map-overlay control) - on small screens an
 // on-map legend ate half the visible map, so this renders as a normal document element instead.
 // Each entry is its own block-level span (not <br>-joined) so the mobile flex-wrap layout can
 // wrap entries cleanly instead of fighting <br>'s line-break semantics.
-function renderLegend(): void {
+//
+// Destination markers (historical/recently-observed) are the only thing on the map by default,
+// so they're the only entries shown out of the box - camp/trail entries only appear once their
+// layer is actually toggled on, instead of explaining markers that aren't there yet. Called from
+// layers.ts after every camps/trails load or clear, so it always mirrors what's on the map.
+export function renderLegend(): void {
   const el = qs("#legend");
+  const camps = (document.getElementById("show-camps") as HTMLInputElement | null)?.checked;
+  const dispersed = (document.getElementById("show-dispersed") as HTMLInputElement | null)?.checked;
+  const trails = (document.getElementById("show-trails") as HTMLInputElement | null)?.checked;
   const entries: [string, string][] = [
-    [CAMP_FREE, "Free campground"],
-    [CAMP_PAID, "Paid / unknown campground"],
-    [CAMP_OSM, "Reported campsite (OSM)"],
-    [TRAIL, "Trail / trailhead"],
     [HEAT, "Destination (historical)"],
     [LIVE, "Recently observed"],
   ];
+  if (camps) {
+    entries.push([CAMP_FREE, "Free campground"], [CAMP_PAID, "Paid / unknown campground"]);
+  }
+  if (dispersed) entries.push([CAMP_OSM, "Reported campsite (OSM)"]);
+  if (trails) entries.push([TRAIL, "Trail / trailhead"]);
   el.innerHTML = entries
     .map(([color, label]) => `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`)
     .join("");
@@ -108,25 +113,60 @@ export function updateHome(home: Home): void {
   }
 }
 
-export function plot(
-  lat: number,
-  lng: number,
-  weight: number,
-  popup: string,
-  live: boolean,
-): L.CircleMarker {
-  const marker = L.circleMarker([lat, lng], {
-    radius: 6 + 14 * weight,
+// Matches the same 111 km/degree approximation used backend-side (camps.py, land.py,
+// scoring.py) to convert a region's cell_deg grid width into meters.
+const KM_PER_DEG = 111.0;
+
+// Per-marker sizing so a selected region can snap between its score size and its true
+// geographic footprint (see selectSize/deselectSize below) without re-plotting.
+const sizing = new WeakMap<L.Circle, { scoreRadius: number; trueRadius: number }>();
+
+// No popup bound here - a bubble hovering over the marker you're trying to look at was jarring,
+// and the same info (rank, distance, species) already lives on the matching card in the side
+// panel. Callers wire the marker's click to highlight/scroll to that card instead.
+//
+// Hue distinguishes category (magenta = historical destination, cyan = recently observed);
+// score is carried by size and fill opacity within that hue - a faint, small circle is a weak
+// match, a bold, larger one is a strong one. Uses L.circle (a geographic radius in meters, not
+// L.circleMarker's fixed pixel radius) so selecting a region can snap it to its true cell_deg
+// footprint (selectSize) - see the comment there for why - and so at any size the circle still
+// scales correctly with zoom instead of reading as an arbitrary screen-space blob.
+export function plot(lat: number, lng: number, weight: number, live: boolean): L.Circle {
+  const trueRadius = ((state.cellDeg * KM_PER_DEG) / 2) * 1000;
+  const scoreRadius = trueRadius * (0.3 + weight);
+  const marker = L.circle([lat, lng], {
+    radius: scoreRadius,
     color: live ? LIVE : HEAT,
     fillColor: live ? LIVE : HEAT,
-    fillOpacity: 0.6,
+    fillOpacity: 0.15 + 0.45 * weight,
+    opacity: 0.4 + 0.5 * weight,
     weight: 1.5,
     bubblingMouseEvents: false,
-  })
-    .addTo(map)
-    .bindPopup(popup);
+  }).addTo(map);
+  sizing.set(marker, { scoreRadius, trueRadius });
   state.markers.push(marker);
   return marker;
+}
+
+// Selecting a region (marker or card click) snaps its circle from the score-sized preview to
+// its true real-world cell_deg footprint, computed from the same live config value as plot()
+// (never hard-coded), so the user can see exactly how much ground that dot actually represents.
+// Fill goes very transparent at this size so the map underneath - which the circle now likely
+// covers a large part of - stays readable.
+export function selectSize(marker: L.Circle): void {
+  const info = sizing.get(marker);
+  if (!info) return;
+  marker.setRadius(info.trueRadius);
+  marker.setStyle({ fillOpacity: 0.08 });
+}
+
+// Reverts a previously selected marker back to its score-scaled preview size/opacity - called
+// when a different region gets selected, so only one circle shows its true footprint at a time.
+export function deselectSize(marker: L.Circle, weight: number): void {
+  const info = sizing.get(marker);
+  if (!info) return;
+  marker.setRadius(info.scoreRadius);
+  marker.setStyle({ fillOpacity: 0.15 + 0.45 * weight });
 }
 
 export function clearMarkers(): void {
