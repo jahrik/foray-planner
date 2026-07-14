@@ -38,6 +38,10 @@
         path: /opt/foray-planner
         state: directory
         mode: "0700"
+      tags:
+        - foray
+        - "foray:deploy"
+        - "foray:cron"
 
     - name: Include deploy tasks
       ansible.builtin.include_tasks:

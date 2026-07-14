@@ -4,7 +4,9 @@
     registry: ghcr.io
     username: "{{ lookup('ansible.builtin.env', 'GHCR_USER', default='') }}"
     password: "{{ lookup('ansible.builtin.env', 'GHCR_TOKEN', default='') }}"
-  when: lookup('ansible.builtin.env', 'GHCR_TOKEN', default='') | length > 0
+  when:
+    - lookup('ansible.builtin.env', 'GHCR_TOKEN', default='') | length > 0
+    - lookup('ansible.builtin.env', 'GHCR_USER', default='') | length > 0
 
 - name: Pull latest container image
   community.docker.docker_image:
