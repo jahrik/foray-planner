@@ -6,9 +6,9 @@ x-postgres-env: &postgres-env
   PGPASSWORD: ${POSTGRES_PASSWORD:-foray}
   PGDATABASE: foray
 
-# RIDB_API_KEY is optional (campground ingest is skipped without it); pass through from
-# the host/.env so `foray refresh`, whether triggered by the app's /api/refresh or the
-# scheduler, can see it.
+# RIDB_API_KEY is optional (campground ingest is skipped without it); pass it through
+# from the shell environment or a local .env file so `foray refresh`, whether triggered
+# by the app's /api/refresh or the scheduler, can see it.
 x-ridb-env: &ridb-env
   RIDB_API_KEY: ${RIDB_API_KEY:-}
 
