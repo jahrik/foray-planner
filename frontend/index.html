@@ -36,10 +36,10 @@
           <span class="loc-meta">(<span id="home-coords">…</span>) · <span id="home-radius">…</span></span>
         </span>
         <div class="radius-presets" id="radius-presets">
-          <button type="button" data-km="50">50</button>
-          <button type="button" data-km="150">150</button>
-          <button type="button" data-km="300">300</button>
-          <button type="button" data-km="500">500</button>
+          <button type="button" data-km="50" aria-label="Set search radius to 50 kilometers">50 km</button>
+          <button type="button" data-km="150" aria-label="Set search radius to 150 kilometers">150 km</button>
+          <button type="button" data-km="300" aria-label="Set search radius to 300 kilometers">300 km</button>
+          <button type="button" data-km="500" aria-label="Set search radius to 500 kilometers">500 km</button>
         </div>
       </div>
       <div class="header-actions">
@@ -104,7 +104,7 @@
     <main>
       <div class="map-wrap">
         <div id="map"></div>
-        <div id="legend" class="map-legend"></div>
+        <div id="legend" class="map-legend" role="region" aria-label="Map legend"></div>
       </div>
       <aside id="panel">
         <p class="hint">Finding your best destination…</p>

@@ -11,6 +11,23 @@ import { startRefresh } from "./refresh";
 import { errorDetail, qs, setStatus, state, type Units, type View } from "./state";
 import { initMonths, runAlerts, runDestinations } from "./views";
 
+// Destinations rank automatically now (no manual trigger needed); calendar has no re-runnable
+// action either. Alerts/plan still depend on inputs the user might change after the initial
+// run, so they keep a manual re-run button. Called both on tab switches and once on initial
+// load, since the page starts on the destinations tab and the button's static HTML label
+// ("Rank destinations") would otherwise sit there as a stale, non-functional no-op until the
+// user switched tabs at least once.
+function updateRunButton(): void {
+  const runBtn = qs<HTMLButtonElement>("#run");
+  if (state.view === "calendar" || state.view === "destinations") {
+    runBtn.style.display = "none";
+  } else {
+    runBtn.style.display = "";
+    if (state.view === "alerts") runBtn.textContent = "Check alerts";
+    else if (state.view === "plan") runBtn.textContent = "Plan route";
+  }
+}
+
 function initTabs(): void {
   document.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((button) => {
     button.onclick = () => {
@@ -22,17 +39,7 @@ function initTabs(): void {
       const planRow = document.getElementById("plan-row");
       if (planRow) planRow.style.display = state.view === "plan" ? "flex" : "none";
 
-      // Destinations rank automatically now (no manual trigger needed); calendar has no
-      // re-runnable action either. Alerts/plan still depend on inputs the user might change
-      // after the initial run, so they keep a manual re-run button.
-      const runBtn = qs<HTMLButtonElement>("#run");
-      if (state.view === "calendar" || state.view === "destinations") {
-        runBtn.style.display = "none";
-      } else {
-        runBtn.style.display = "";
-        if (state.view === "alerts") runBtn.textContent = "Check alerts";
-        else if (state.view === "plan") runBtn.textContent = "Plan route";
-      }
+      updateRunButton();
 
       if (state.view === "destinations") runDestinations();
       else if (state.view === "alerts") runAlerts();
@@ -87,6 +94,7 @@ async function main(): Promise<void> {
   initMap(config.home);
   updateHome(config.home);
   initTabs();
+  updateRunButton();
   initRadiusPresets();
   qs("#run").onclick = () => {
     if (state.view === "alerts") runAlerts();

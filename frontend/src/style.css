@@ -166,15 +166,16 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
 
 .map-legend {
   flex: 0 0 auto;
+  display: flex; flex-wrap: wrap; column-gap: 12px; row-gap: 2px;
   background: var(--panel); color: var(--ink); padding: 6px 10px;
   border-top: 1px solid var(--border);
-  font-size: 11px; line-height: 1.6;
+  font-size: 11px; line-height: 1.4;
 }
+.legend-item { display: inline-flex; align-items: center; white-space: nowrap; }
 .map-legend i {
   display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-  margin-right: 5px; vertical-align: middle;
+  margin-right: 5px; flex-shrink: 0;
 }
-.map-legend b { display: none; } /* position below the map already reads as "legend" */
 
 @media (max-width: 780px) {
   header { flex-wrap: wrap; row-gap: 6px; }
@@ -183,7 +184,6 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
   main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .map-wrap { flex: 0 0 auto; }
   #map { height: 240px; flex: none; }
-  .map-legend { display: flex; flex-wrap: wrap; column-gap: 10px; row-gap: 2px; line-height: 1.4; }
   #panel { flex: 1; min-height: 0; border-left: none; border-top: 1px solid var(--border); }
 }
 

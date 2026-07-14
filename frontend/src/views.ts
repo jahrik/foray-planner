@@ -45,7 +45,16 @@ const speciesChip = (hit: ChipData, extraClass?: string): string =>
       target="_blank" rel="noopener" onclick="event.stopPropagation()"
    >${escapeHtml(hit.common_name)}${hit.label ? " · " + escapeHtml(hit.label) : ""}</a>`;
 
+// Tracks the pending auto-zoom-in timeout so a second runDestinations() call (a fast months
+// toggle, a new location) can cancel the previous one - otherwise a stale timeout could fire
+// after clearMarkers() has already removed its markers from the map.
+let pendingZoomIn: ReturnType<typeof setTimeout> | null = null;
+
 export async function runDestinations(): Promise<void> {
+  if (pendingZoomIn !== null) {
+    clearTimeout(pendingZoomIn);
+    pendingZoomIn = null;
+  }
   setStatus("Ranking…");
   clearMarkers();
   let regions: RegionScore[];
@@ -101,7 +110,9 @@ export async function runDestinations(): Promise<void> {
       padding: [40, 40],
       maxZoom: 9,
     });
-    window.setTimeout(() => {
+    pendingZoomIn = window.setTimeout(() => {
+      pendingZoomIn = null;
+      if (state.view !== "destinations") return; // user navigated away while we waited
       map.flyTo([top.center_lat, top.center_lng], 9);
       markers[0].openPopup();
     }, 900);

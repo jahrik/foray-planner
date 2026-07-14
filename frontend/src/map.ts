@@ -51,17 +51,21 @@ export function setTiles(theme: "dark" | "light"): void {
 
 // A plain DOM block below the map (not a Leaflet map-overlay control) - on small screens an
 // on-map legend ate half the visible map, so this renders as a normal document element instead.
+// Each entry is its own block-level span (not <br>-joined) so the mobile flex-wrap layout can
+// wrap entries cleanly instead of fighting <br>'s line-break semantics.
 function renderLegend(): void {
   const el = qs("#legend");
-  el.innerHTML = [
-    `<b>Legend</b>`,
-    `<i style="background:${CAMP_FREE}"></i> Free campground`,
-    `<i style="background:${CAMP_PAID}"></i> Paid / unknown campground`,
-    `<i style="background:${CAMP_OSM}"></i> Reported campsite (OSM)`,
-    `<i style="background:${TRAIL}"></i> Trail / trailhead`,
-    `<i style="background:${HEAT}"></i> Destination (historical)`,
-    `<i style="background:${LIVE}"></i> Recently observed`,
-  ].join("<br>");
+  const entries: [string, string][] = [
+    [CAMP_FREE, "Free campground"],
+    [CAMP_PAID, "Paid / unknown campground"],
+    [CAMP_OSM, "Reported campsite (OSM)"],
+    [TRAIL, "Trail / trailhead"],
+    [HEAT, "Destination (historical)"],
+    [LIVE, "Recently observed"],
+  ];
+  el.innerHTML = entries
+    .map(([color, label]) => `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`)
+    .join("");
 }
 
 export function initMap(home: Home): void {
