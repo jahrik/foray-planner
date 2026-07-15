@@ -44,7 +44,8 @@ All settings come from environment variables (prefix `FORAY_`, nested delimiter 
 | `FORAY_INGEST__QUALITY_GRADE` | `research` | iNat quality filter |
 | `FORAY_INGEST__RECENT_WEEKS` | `4` | Trailing window for the "Fruiting now" live signal |
 | `FORAY_SPECIES` | (built-in defaults in `src/foray/defaults.py`) | Curated target taxa list (JSON array) |
-| `FORAY_COVERAGE` | (built-in: WA, OR, ID) | Coverage regions for state-level ingest (JSON array) |
+| `FORAY_COVERAGE` | (built-in: all 50 US states) | Coverage regions for state-level ingest (JSON array) |
+| `FORAY_COUNTRIES` | (built-in: United States) | Country-level regions for single-query observation ingest (JSON array) |
 | `FORAY_INGEST_INTERVAL_HOURS` | `24` | Scheduler: hours between observation ingests |
 | `FORAY_LAYERS_INTERVAL_HOURS` | `168` | Scheduler: hours between layer refreshes (camps/land/dispersed/trails) |
 
@@ -94,8 +95,9 @@ ArcGIS BLM/USFS          Nominatim (geocoding)
 Search/scoring is **read-only** against cached data. Data ingestion happens independently:
 
 - **Scheduler service** (`scripts/scheduler.sh`): opt-in via `make scheduler` (docker-compose profile), pulls observations every 24h and refreshes layers (camps/land/dispersed/trails) every 168h
-- **Coverage regions**: state-level ingest using iNat `place_id` for exact administrative boundaries (WA, OR, ID by default)
-- **`make ingest`**: one-shot manual ingest for all regions
+- **Coverage regions**: state-level, using iNat `place_id` for exact administrative boundaries - all 50 US states by default (`FORAY_COVERAGE`), used by `trails --all` (Overpass can't take a whole-country query in one request)
+- **Countries**: country-level, one iNat `place_id` per country - United States by default (`FORAY_COUNTRIES`). Adding another country later is just one more entry, no code changes
+- **`make ingest`**: one-shot manual ingest for all coverage regions
 - **UI Refresh button**: triggers an in-process refresh for the current home radius
 
 The UI's "Set Location" never triggers data fetching. It updates the home coordinates and immediately runs scoring against whatever is already in the database.
@@ -106,24 +108,33 @@ The UI's "Set Location" never triggers data fetching. It updates the home coordi
 
 ```bash
 uv run foray ingest              # pull observations for home radius
+uv run foray ingest --countries  # pull observations for every configured country (one query each)
 uv run foray ingest --all-regions  # pull observations for all coverage regions (state-level)
 uv run foray ingest --region "Oregon"  # pull observations for a single region
 uv run foray camps               # ingest Recreation.gov campgrounds (needs RIDB_API_KEY)
 uv run foray land                # ingest BLM/USFS ownership boundaries (ArcGIS, no key)
+uv run foray land --all          # ingest BLM/USFS ownership across all coverage regions, one query
 uv run foray dispersed           # ingest OSM dispersed-camping layer (Overpass, no key)
 uv run foray trails              # ingest OSM trails: paths, hiking routes, trailheads (Overpass, no key)
-uv run foray refresh             # all of the above + rebuild phenology/regions tables
+uv run foray trails --all        # ingest trails for every coverage region (state), one query each
+uv run foray refresh             # ingest (home radius) + camps + land + dispersed + trails + phenology
 uv run foray refresh --with camps,trails  # refresh only specific layers
+uv run foray refresh --with land,trails --all  # region-scoped land/trails across all coverage; not valid for camps/dispersed (home-radius only)
 uv run foray plan                # print a greedy multi-stop trip itinerary
 uv run foray serve               # start the FastAPI server (--host / --port to override)
 uv run foray openapi             # dump OpenAPI schema (feeds npm run gen:api)
 ```
 
-`ingest --all-regions` is what the scheduler runs. It uses iNat's `place_id` parameter for
-state-level boundaries (no tiling needed) and rebuilds phenology after ingest.
+`ingest --countries` is what the daily cron runs: one `ingest_region` call per configured
+country (place_id-based, no tiling) instead of looping every state - simpler and avoids any
+double-counting near state borders. `refresh --with land,trails --all` is what the weekly
+layers cron runs: land in one whole-coverage envelope query (ArcGIS's own pagination handles
+the volume), trails looped per coverage region since Overpass can't take a query that large in
+one request.
 
-`refresh` is for manual/ad-hoc use: it runs ingest (home radius) + camps + land + dispersed +
-trails + phenology in sequence. `plan` reads the already-cached data and does no network I/O.
+`refresh` (no `--all`) is for manual/ad-hoc use against the home radius: it runs ingest + camps
++ land + dispersed + trails + phenology in sequence. `plan` reads the already-cached data and
+does no network I/O.
 
 ---
 

@@ -8,14 +8,17 @@ import httpx
 import psycopg
 import pytest
 
-from foray.cache import upsert_public_land
+from foray.cache import is_ingested, upsert_public_land
+from foray.config import CoverageRegion, Settings
 from foray.land import (
     LandSource,
     _bounds,
+    _coverage_envelope,
     _envelope,
     _get,
     _parse_feature,
     fetch_public_land,
+    ingest_public_land_coverage,
 )
 from foray.scoring import land_near
 
@@ -210,3 +213,42 @@ def test_land_near_filters_by_bbox_and_returns_geometry(con: psycopg.Connection)
 
 def test_land_near_no_rows_ingested_returns_empty(con: psycopg.Connection) -> None:
     assert land_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0) == []
+
+
+def test_coverage_envelope_unions_region_bboxes() -> None:
+    regions = [
+        CoverageRegion(name="A", place_id=1, bbox=(-124.0, 45.0, -120.0, 49.0)),
+        CoverageRegion(name="B", place_id=2, bbox=(-121.0, 41.0, -116.0, 46.0)),
+        CoverageRegion(name="No bbox", place_id=3),
+    ]
+    assert _coverage_envelope(regions) == (-124.0, 41.0, -116.0, 49.0)
+
+
+def test_coverage_envelope_raises_when_nothing_has_a_bbox() -> None:
+    with pytest.raises(ValueError, match="bbox"):
+        _coverage_envelope([CoverageRegion(name="No bbox", place_id=1)])
+
+
+def test_ingest_public_land_coverage_upserts_and_records_ingest(con: psycopg.Connection) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "usfs" in str(request.url):
+            return httpx.Response(200, json={"type": "FeatureCollection", "features": []})
+        offset = int(request.url.params.get("resultOffset", "0"))
+        if offset > 0:
+            return httpx.Response(200, json={"type": "FeatureCollection", "features": []})
+        return httpx.Response(
+            200,
+            json={
+                "type": "FeatureCollection",
+                "features": [{"properties": {"OBJECTID": 9}, "geometry": _polygon(47.6, -122.3)}],
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    cfg = Settings(coverage=[CoverageRegion(name="Washington", place_id=46, bbox=(-124.8, 45.5, -116.9, 49.0))])
+    count = ingest_public_land_coverage(cfg, con, client=client, sources=(BLM, USFS))
+    assert count == 1
+    assert is_ingested(con, "land:coverage")
+    # Second call skips before ever opening a client - if it didn't, this would try (and fail)
+    # to reach the real ArcGIS services, since no client is passed here.
+    assert ingest_public_land_coverage(cfg, con, sources=(BLM, USFS)) == 0

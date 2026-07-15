@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from foray.defaults import CELL_DEG as _DEFAULT_CELL_DEG
+from foray.defaults import COUNTRIES as _DEFAULT_COUNTRIES
 from foray.defaults import COVERAGE as _DEFAULT_COVERAGE
 from foray.defaults import HOME_LAT as _DEFAULT_HOME_LAT
 from foray.defaults import HOME_LNG as _DEFAULT_HOME_LNG
@@ -57,6 +58,11 @@ class CoverageRegion(BaseModel):
 
     name: str
     place_id: int = Field(gt=0)
+    # (west, south, east, north) lon/lat box for this region - used by the trails per-region
+    # ingest (Overpass bbox filter) instead of a radius-around-a-point approximation. None for
+    # regions that only need observations (place_id-based, no bbox required) - e.g. entries in
+    # ``countries`` below.
+    bbox: tuple[float, float, float, float] | None = None
 
 
 class Settings(BaseSettings):
@@ -72,7 +78,14 @@ class Settings(BaseSettings):
     cell_deg: float = Field(gt=0, le=10, default=_DEFAULT_CELL_DEG)
     ingest: Ingest = Ingest()
     species: list[Species] = Field(default_factory=list)
+    # Sub-national regions (US states today) - the granularity trails ingest chunks by, since
+    # Overpass can't handle a whole-country query in one request.
     coverage: list[CoverageRegion] = Field(default_factory=list)
+    # Country-level regions - one ingest_region() call per entry covers every sub-region within
+    # it in a single (paginated) query, which is both simpler and more correct than looping
+    # `coverage` for data sources (like iNat observations) that don't need chunking. Adding a
+    # new country later is just one more entry here, no code changes.
+    countries: list[CoverageRegion] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _apply_defaults(self) -> Settings:
@@ -83,6 +96,12 @@ class Settings(BaseSettings):
                 self,
                 "coverage",
                 [CoverageRegion.model_validate(entry) for entry in _DEFAULT_COVERAGE],
+            )
+        if not self.countries and "countries" not in self.model_fields_set:
+            object.__setattr__(
+                self,
+                "countries",
+                [CoverageRegion.model_validate(entry) for entry in _DEFAULT_COUNTRIES],
             )
         return self
 
