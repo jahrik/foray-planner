@@ -59,12 +59,6 @@ argument_specs:
         type: str
         description: Public domain name Caddy terminates TLS for
         default: forayplanner.com
-      foray_legacy_domain:
-        type: str
-        description: >-
-          Optional retired domain that 301-redirects to foray_domain instead of serving the app
-          directly. The origin cert must cover this hostname too. Empty string disables it.
-        default: foray.gourmetgills.com
       foray_caddy_container_name:
         type: str
         description: Caddy container name on the host
