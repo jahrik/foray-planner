@@ -22,24 +22,25 @@ database - and turns years of accumulated field data into three practical views.
 
 ### Destinations tab - where should I go this month?
 
-The main view. Pick one or more months, hit **Rank destinations**, and the map fills
-with hotspot markers ranked by historical fruiting activity for that time of year.
-The side panel lists them in order with a score bar, the number of species active
-there, and small clickable chips for each one that open the species' iNaturalist page.
+The main view, and the default on load. Toggle one or more months and the map fills
+with hotspot markers ranked by historical fruiting activity for that time of year -
+ranking updates automatically as you change months, radius, or location. The side
+panel lists them in order with a score bar and the number of species active there.
 
 - **Magenta markers** = strong historical signal for the selected months
 - **Cyan markers** = magenta + something was actually observed there recently
 - Bigger marker = stronger signal; marker size and color update every time you re-rank
 
-Clicking a card in the side panel zooms the map to that region and loads its
-12-month calendar automatically.
+Each card has three tabs:
 
-### Place calendar tab - when is the best time for a specific spot?
-
-Click any ranked destination card and the side panel switches to a 12-month heatmap
-for that region - darker cells mean more observations historically for that month.
-Great for planning a trip weeks out: "is late October really the right time for this
-area, or should I wait until November?"
+- **Species** - clickable chips for each target species active there, linking to its
+  iNaturalist page.
+- **Calendar** - a 12-month heatmap for that region, loaded on first click - darker
+  cells mean more observations historically for that month. Good for planning weeks
+  out: "is late October really the right time here, or should I wait until November?"
+- **Photos** - thumbnails from the region's most recent observations, loaded on first
+  click. Only photos with a redisplayable Creative Commons license show a thumbnail
+  (with attribution); everything else still lists with a link back to its iNat page.
 
 ### Fruiting now tab - what's been spotted recently?
 
@@ -51,16 +52,19 @@ links directly to the iNat observation page and flags obscured (GPS-fuzzy) sight
 
 ## Camping layers
 
-After you rank destinations, click any region card and the camping and trail layers load
-for that area. Toggle them on from the **Camping** controls:
+Each layer is off by default; toggle it on and the map plots it for whichever region
+is currently focused (click a card, or fly to a stop on the Plan route tab).
+**Public land** and **Trails** live in the always-visible Filters row; **Campgrounds**,
+**Dispersed**, and **Free only** live under the Plan route tab's Camping controls, but
+apply to the map regardless of which tab you're on.
 
 | Toggle | What it shows | Marker |
 |---|---|---|
-| **Show campgrounds** | Named campgrounds from Recreation.gov | Gold = free, Amber = fee/unknown |
-| **Show dispersed camping (OSM)** | OSM-tagged free campsites + likely dispersed zones | Teal solid = reported site, Teal dashed ring = proxy |
-| **Free only** | Filters both layers to free/no-fee options only | - |
-| **Show public land (BLM/USFS)** | Land ownership polygons shaded by agency | Ochre = BLM, Violet = USFS |
-| **Show trails (OSM)** | Hiking paths, named routes & trailheads near the hotspot | Red lines = trails, Red dots = trailheads |
+| **Campgrounds** | Named campgrounds from Recreation.gov | Gold = free, Amber = fee/unknown |
+| **Dispersed** | OSM-tagged free campsites + likely dispersed zones | Teal solid = reported site, Teal dashed ring = proxy |
+| **Free only** | Filters both camping layers to free/no-fee options only | - |
+| **Public land** | Land ownership polygons shaded by agency (BLM/USFS) | Ochre = BLM, Violet = USFS |
+| **Trails** | Hiking paths, named routes & trailheads near the hotspot | Red lines = trails, Red dots = trailheads |
 
 **A note on dispersed camping:** the dashed-ring markers are a *best-guess proxy* -
 drivable forest roads that fall on BLM or USFS land, where dispersed camping is
@@ -75,22 +79,23 @@ ownership polygons show who manages the land; they are informational only.
 | Control | What it does |
 |---|---|
 | **Location bar** | Type a place name (`Coos Bay, OR`) or raw `lat,lng`. Scores destinations against cached data for that area. |
-| **Months** | Toggle any combination of months. The current month is on by default. |
-| **Target species** | Narrow to one or more genera (Ctrl/Cmd-click for multiples). Leave unselected to include all 21 targets. |
-| **Rank destinations** | Score and plot regions for the selected months + species. |
-| **Refresh data** | Re-pulls the latest observations from iNaturalist for the current area. Runs in the background; a status line shows progress. |
-| **Coverage indicator** | Shows how fresh each region's data is (e.g. "Washington: 3d ago"). |
+| **Radius** | Search radius presets (50/150/300/500 km) from the current location. |
+| **Months** | Toggle any combination of months. The current month is on by default; ranking updates automatically. |
+| **Refresh** | Re-pulls the latest observations from iNaturalist for the current area. Runs in the background; a status line and progress bar show what's happening. |
 | **Theme toggle** | Switch between dark (the default) and light; the map basemap follows. Your choice is remembered across visits. |
 | **Units toggle** | Switch between kilometers and miles for distance displays. |
+| **Text size toggle** | Bumps up font size across the panel and cards for readability. |
 
 ---
 
-## Trip planning (CLI / API)
+## Plan route tab - a multi-stop itinerary
 
-`foray plan` (or `GET /api/plan`) sequences the top destinations into a greedy multi-stop
-itinerary - each stop a region with active targets **and** a nearby free camp, ordered from
-home to keep the driving down. A map-based itinerary view is coming; for now see the
-[development guide](docs/development.md#cli-reference).
+`foray plan` (or `GET /api/plan`, or the **🗺️ Plan route** tab) sequences the top
+destinations into a greedy multi-stop itinerary - each stop a region with active
+targets and, if required, a nearby free camp - ordered from home to keep the driving
+down. The tab plots the route on the map and lists each stop with its drive distance
+and nearest camp; **Max stops**, **Max leg (km)**, and **Require free camp** tune it.
+See the [development guide](docs/development.md#cli-reference) for the CLI/API form.
 
 ---
 
@@ -128,6 +133,8 @@ Run `make check` before pushing (lint + type-check + tests). See the
 ## Attribution
 
 Observation data (c) [iNaturalist](https://www.inaturalist.org) contributors (CC-BY-NC).
+Observation photos carry their own per-photo license and attribution, shown under each
+thumbnail; only Creative Commons-licensed photos are displayed.
 Camping data (c) [OpenStreetMap](https://www.openstreetmap.org) contributors (ODbL) and
 [Recreation.gov](https://recreation.gov) RIDB API. Land boundaries via BLM and USFS
 ArcGIS services. Geocoding (c) OpenStreetMap / Nominatim.
