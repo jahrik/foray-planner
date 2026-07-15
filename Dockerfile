@@ -38,7 +38,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
 # ---- runtime: slim image, non-root, app + venv only ----
-FROM python:3.14-slim-bookworm AS runtime
+FROM python:3.13-slim-bookworm AS runtime
 
 # No local volume needed: the DB is Postgres, reached via the standard PGHOST/PGPORT/PGUSER/
 # PGPASSWORD/PGDATABASE env vars (never baked into the image); the curated species seed stays
