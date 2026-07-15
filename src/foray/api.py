@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import ipaddress
 import json
 import logging
 import queue
@@ -70,8 +71,17 @@ def _is_https(request: Request) -> bool:
 
 def _client_ip(request: Request) -> str:
     # The origin firewall only accepts inbound 80/443 from Cloudflare's ranges, so
-    # CF-Connecting-IP is safe to trust here.
-    return request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "unknown")
+    # CF-Connecting-IP is safe to trust - but only after confirming it's actually an IP,
+    # since a misconfigured proxy or local dev could hand us arbitrary header junk that
+    # would otherwise let the rate-limit dict grow unbounded and bypass per-IP limiting.
+    header = request.headers.get("cf-connecting-ip")
+    if header:
+        try:
+            ipaddress.ip_address(header)
+            return header
+        except ValueError:
+            pass
+    return request.client.host if request.client else "unknown"
 
 
 class LocationBody(BaseModel):
@@ -100,6 +110,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         "abort_event": threading.Event(),
         "http_client": None,
         "refresh_rate_limit": {},
+        "refresh_rate_limit_lock": threading.Lock(),
     }
 
     @asynccontextmanager
@@ -211,17 +222,18 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     def check_refresh_rate_limit(ip: str) -> None:
         now = time.monotonic()
         limiter: dict[str, float] = state["refresh_rate_limit"]
-        last = limiter.get(ip)
-        if last is not None and now - last < _REFRESH_RATE_LIMIT_SECONDS:
-            retry_after = int(_REFRESH_RATE_LIMIT_SECONDS - (now - last)) + 1
-            raise HTTPException(
-                429,
-                f"refresh rate limit: try again in {retry_after}s",
-                headers={"Retry-After": str(retry_after)},
-            )
-        limiter[ip] = now
-        for stale_ip in [key for key, ts in limiter.items() if now - ts >= _REFRESH_RATE_LIMIT_SECONDS]:
-            del limiter[stale_ip]
+        with state["refresh_rate_limit_lock"]:
+            last = limiter.get(ip)
+            if last is not None and now - last < _REFRESH_RATE_LIMIT_SECONDS:
+                retry_after = int(_REFRESH_RATE_LIMIT_SECONDS - (now - last)) + 1
+                raise HTTPException(
+                    429,
+                    f"refresh rate limit: try again in {retry_after}s",
+                    headers={"Retry-After": str(retry_after)},
+                )
+            limiter[ip] = now
+            for stale_ip in [key for key, ts in limiter.items() if now - ts >= _REFRESH_RATE_LIMIT_SECONDS]:
+                del limiter[stale_ip]
 
     def parse_months(months: str) -> list[int]:
         try:

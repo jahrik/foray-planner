@@ -313,6 +313,21 @@ def test_refresh_rate_limit_is_scoped_per_client_ip(client: TestClient, monkeypa
 
     other_ip = client.post("/api/refresh", params={"target": "mushrooms"}, headers={"cf-connecting-ip": "10.0.0.2"})
     assert other_ip.status_code == 200
+    _wait_for_idle(client)
+
+
+def test_refresh_ignores_malformed_cf_connecting_ip(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bogus CF-Connecting-IP value must not let a caller dodge the rate limit."""
+    monkeypatch.setattr("foray.api.ingest", lambda *args, **kwargs: None)
+    monkeypatch.setattr("foray.scoring.build_phenology", lambda *args, **kwargs: None)
+
+    bogus_ip = "not-an-ip"
+    started = client.post("/api/refresh", params={"target": "mushrooms"}, headers={"cf-connecting-ip": bogus_ip})
+    assert started.status_code == 200
+    _wait_for_idle(client)
+
+    again = client.post("/api/refresh", params={"target": "mushrooms"}, headers={"cf-connecting-ip": bogus_ip})
+    assert again.status_code == 429
 
 
 def test_refresh_ingests_around_calling_devices_home(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
