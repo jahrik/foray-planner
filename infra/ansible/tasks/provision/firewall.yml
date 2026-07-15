@@ -4,14 +4,9 @@
     msg: "foray_ssh_allowed_ips must contain at least one CIDR (your IP or VPN range)"
   when: foray_ssh_allowed_ips | length == 0
 
-- name: Create firewall
-  digitalocean.cloud.firewall:
-    token: "{{ foray_do_token }}"
-    state: present
-    name: "{{ foray_do_firewall_name }}"
-    droplet_ids:
-      - "{{ foray_droplet.id }}"
-    inbound_rules:
+- name: Set desired firewall rules as facts
+  ansible.builtin.set_fact:
+    foray_firewall_inbound_rules:
       - protocol: tcp
         ports: "22"
         sources:
@@ -24,7 +19,7 @@
         ports: "443"
         sources:
           addresses: "{{ foray_cloudflare_ipv4 + foray_cloudflare_ipv6 }}"
-    outbound_rules:
+    foray_firewall_outbound_rules:
       - protocol: tcp
         ports: "all"
         destinations:
@@ -42,4 +37,50 @@
           addresses:
             - "0.0.0.0/0"
             - "::/0"
+  when: foray_droplet is defined
+
+- name: Create firewall if it doesn't exist yet
+  digitalocean.cloud.firewall:
+    token: "{{ foray_do_token }}"
+    state: present
+    name: "{{ foray_do_firewall_name }}"
+    droplet_ids:
+      - "{{ foray_droplet.id }}"
+    inbound_rules: "{{ foray_firewall_inbound_rules }}"
+    outbound_rules: "{{ foray_firewall_outbound_rules }}"
+  when: foray_droplet is defined
+
+# digitalocean.cloud.firewall's `present` only creates a firewall when none exists by that
+# name - if one already exists it unconditionally reports changed=False and does NOT
+# reconcile inbound_rules/outbound_rules against what's requested (confirmed by reading the
+# module source: there's no update path at all for an existing firewall). Discovered when a
+# real provisioning run reported `ok` on "Create firewall" but the live DO firewall still had
+# the old 0.0.0.0/0 rule - verified via a direct API GET. Reconcile explicitly via the REST
+# API instead of relying on the module for updates.
+- name: Look up firewalls by name
+  digitalocean.cloud.firewalls_info:
+    token: "{{ foray_do_token }}"
+  register: foray_firewalls_lookup
+  when: foray_droplet is defined
+
+- name: Resolve this firewall's id
+  ansible.builtin.set_fact:
+    foray_firewall_id: >-
+      {{ (foray_firewalls_lookup.firewalls | selectattr('name', 'equalto', foray_do_firewall_name) | first).id }}
+  when: foray_droplet is defined
+
+- name: Reconcile firewall rules against the live DO firewall
+  ansible.builtin.uri:
+    url: "https://api.digitalocean.com/v2/firewalls/{{ foray_firewall_id }}"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ foray_do_token }}"
+    body_format: json
+    body:
+      name: "{{ foray_do_firewall_name }}"
+      droplet_ids:
+        - "{{ foray_droplet.id }}"
+      inbound_rules: "{{ foray_firewall_inbound_rules }}"
+      outbound_rules: "{{ foray_firewall_outbound_rules }}"
+    status_code: [200]
   when: foray_droplet is defined
