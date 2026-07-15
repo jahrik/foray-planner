@@ -297,13 +297,47 @@ def test_ingest_trails_region_upserts_and_records_ingest(con: psycopg.Connection
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     # Washington's bbox spans multiple 2-degree tiles, so this same trail comes back from every
-    # tile query - `count` is rows upserted (may exceed the number of distinct trails), while the
-    # `trails` table itself stays deduped by id via ON CONFLICT.
+    # tile query - `count` is rows upserted (may exceed the number of distinct trails), one per
+    # tile, while the `trails` table itself stays deduped by id via ON CONFLICT.
     region = CoverageRegion(name="Washington", place_id=46, bbox=(-124.8, 45.5, -116.9, 49.0))
+    expected_tiles = len(_tile_bboxes(45.5, -124.8, 49.0, -116.9))
     count = ingest_trails_region(region, con, client=client)
-    assert count >= 1
+    assert count == expected_tiles
     assert con.execute("SELECT count(*) FROM trails").fetchone() == (1,)
     assert is_ingested(con, "trails:place:46")
     # Second call skips before ever opening a client - if it didn't, this would try (and fail)
     # to reach the real Overpass API, since no client is passed here.
     assert ingest_trails_region(region, con) == 0
+
+
+def test_ingest_trails_region_does_not_mark_ingested_when_a_tile_fails(con: psycopg.Connection) -> None:
+    ok_response = httpx.Response(
+        200,
+        json={
+            "elements": [
+                {
+                    "type": "way",
+                    "id": 9,
+                    "tags": {"highway": "path", "name": "Partial Trail"},
+                    "geometry": [
+                        {"lat": 45.6, "lon": -124.0},
+                        {"lat": 45.7, "lon": -123.9},
+                    ],
+                }
+            ]
+        },
+    )
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        # First tile succeeds, every other tile fails - simulates a transient Overpass outage
+        # partway through a region.
+        return ok_response if calls["n"] == 1 else httpx.Response(500)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    region = CoverageRegion(name="Washington", place_id=46, bbox=(-124.8, 45.5, -116.9, 49.0))
+    count = ingest_trails_region(region, con, client=client)
+    assert count == 1  # only the one tile that succeeded
+    assert con.execute("SELECT count(*) FROM trails").fetchone() == (1,)  # its row is still cached
+    assert not is_ingested(con, "trails:place:46")  # not marked done - a retry should fill the gaps

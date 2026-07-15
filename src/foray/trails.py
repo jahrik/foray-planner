@@ -64,6 +64,8 @@ def _tile_bboxes(
     min_lat: float, min_lng: float, max_lat: float, max_lng: float, tile_deg: float = _TILE_DEG
 ) -> list[tuple[float, float, float, float]]:
     """Carve a bbox into a grid of (min_lat, min_lng, max_lat, max_lng) tiles <= tile_deg wide."""
+    if tile_deg <= 0:
+        raise ValueError(f"tile_deg must be positive, got {tile_deg}")
     tiles: list[tuple[float, float, float, float]] = []
     lat = min_lat
     while lat < max_lat:
@@ -333,12 +335,15 @@ def fetch_trails_bbox(
     timeout_s: int = 300,
     client: httpx.Client | None = None,
     progress_cb: Callable[[str, float], None] | None = None,
+    raise_on_error: bool = False,
 ) -> list[tuple[Any, ...]]:
     """Fetch OSM paths, hiking routes, and trailheads within a bbox (state-sized) as trails rows.
 
-    Best-effort, same as ``fetch_trails``: a failing or malformed Overpass response is logged
-    and yields ``[]`` rather than aborting the refresh - a state timing out on public Overpass
-    just means that state's trails stay empty until a future run succeeds.
+    Best-effort by default (``raise_on_error=False``, matching ``fetch_trails``): a failing or
+    malformed Overpass response is logged and yields ``[]`` rather than aborting the refresh.
+    ``ingest_trails_region`` passes ``raise_on_error=True`` instead, since it needs to tell a
+    tile that's genuinely empty apart from one that failed, to decide whether the region is
+    safe to mark as fully ingested.
     """
     owns = client is None
     client = client or httpx.Client(timeout=timeout_s + 30.0)
@@ -350,6 +355,8 @@ def fetch_trails_bbox(
         logger.info("trails: %d trails/routes/trailheads", len(rows))
         return rows
     except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+        if raise_on_error:
+            raise
         logger.warning("trails: bbox query failed (%s) - skipping", error)
         return []
     finally:
@@ -392,19 +399,38 @@ def ingest_trails_region(
         tiles = _tile_bboxes(south, west, north, east)
         logger.info("trails: fetching OSM trail network for %s (%d tiles)…", region.name, len(tiles))
         total = 0
+        had_failures = False
         for index, (tile_south, tile_west, tile_north, tile_east) in enumerate(tiles, start=1):
             if progress_cb:
                 progress_cb(f"Fetching trails for {region.name} ({index}/{len(tiles)})…", (index / len(tiles)) * 100.0)
-            rows = fetch_trails_bbox(
-                min_lat=tile_south,
-                min_lng=tile_west,
-                max_lat=tile_north,
-                max_lng=tile_east,
-                client=client,
-            )
+            try:
+                rows = fetch_trails_bbox(
+                    min_lat=tile_south,
+                    min_lng=tile_west,
+                    max_lat=tile_north,
+                    max_lng=tile_east,
+                    client=client,
+                    raise_on_error=True,
+                )
+            except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+                logger.warning(
+                    "trails: tile %d/%d for %s failed (%s) - region won't be marked ingested, will retry next run",
+                    index,
+                    len(tiles),
+                    region.name,
+                    error,
+                )
+                had_failures = True
+                continue
             upsert_trails(database, rows)
             total += len(rows)
-        record_ingest(database, key, total)
+        # Only mark the region done if every tile succeeded - a partial failure still leaves
+        # its successful tiles' rows cached (upserted above), but a future run needs to retry
+        # the whole region rather than believing it's fully covered.
+        if had_failures:
+            logger.warning("trails: %s only partially ingested (%d rows) - not recording as done", region.name, total)
+        else:
+            record_ingest(database, key, total)
         logger.info("trails: cached %d trails in %s", total, region.name)
         return total
     finally:
