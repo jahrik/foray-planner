@@ -7,6 +7,7 @@ import datetime as dt
 import json
 import logging
 import queue
+import secrets
 import threading
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -15,7 +16,7 @@ from typing import Any
 
 import httpx
 import psycopg
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -77,9 +78,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     "the dispersed-camping proxy will be skipped."
                 )
             conn.execute(SCHEMA)
-            override = db_load_location(conn)
-        if override is not None:
-            state["cfg"] = state["cfg"].model_copy(update={"home": Home(**override)})
+        # `state["cfg"].home` is now only ever the env/default home - see get_or_create_device_id
+        # and resolve_home below for per-visitor overrides. Multi-user, no accounts: each browser
+        # gets its own anonymous device-id cookie and its own saved home/radius in `app_location`.
         try:
             yield
         finally:
@@ -112,6 +113,42 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     def current() -> Config:
         return state["cfg"]
+
+    _DEVICE_ID_COOKIE = "device_id"
+    _DEVICE_ID_MAX_AGE = 60 * 60 * 24 * 365  # ~1 year
+
+    def resolve_device_id(request: Request) -> tuple[str, bool]:
+        """Anonymous per-browser identity - no accounts, no login, works on first visit.
+
+        Multi-user, but no auth: each browser gets its own opaque device-id cookie, which is
+        the key for that visitor's saved home/radius (see resolve_home). Clearing cookies or
+        switching browsers/devices starts a "new" visitor with the default home - an accepted
+        tradeoff for zero-friction use over cross-device sync.
+
+        Returns ``(device_id, is_new)`` - callers must set the cookie on their actual response
+        object when ``is_new``, via ``set_device_cookie`` below. This can't set the cookie
+        itself: some endpoints return their own ``JSONResponse`` directly, and FastAPI does
+        *not* merge cookies from an injected ``Response`` param onto a returned Response.
+        """
+        device_id = request.cookies.get(_DEVICE_ID_COOKIE)
+        if device_id:
+            return device_id, False
+        return secrets.token_urlsafe(32), True
+
+    def set_device_cookie(response: Response, device_id: str) -> None:
+        response.set_cookie(
+            _DEVICE_ID_COOKIE,
+            device_id,
+            max_age=_DEVICE_ID_MAX_AGE,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+        )
+
+    def resolve_home(conn: psycopg.Connection, device_id: str) -> Home:
+        """This visitor's saved home/radius, falling back to the env-configured default."""
+        override = db_load_location(conn, device_id)
+        return Home(**override) if override is not None else current().home
 
     def require_idle() -> None:
         if state["refreshing"]:
@@ -222,10 +259,15 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             state["refreshing"] = False
 
     @app.get("/api/config")
-    def get_config() -> dict[str, Any]:
+    def get_config(request: Request, response: Response) -> dict[str, Any]:
         cfg = current()
+        device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(response, device_id)
+        with pool.connection() as conn:
+            home = resolve_home(conn, device_id)
         return {
-            "home": cfg.home.model_dump(),
+            "home": home.model_dump(),
             "cell_deg": cfg.cell_deg,
             "recent_weeks": cfg.recent_weeks,
             "refreshing": state["refreshing"],
@@ -264,29 +306,35 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/destinations")
     def destinations(
+        request: Request,
         months: str | None = Query(None),
         species: str = Query("all"),
         radius_km: float | None = Query(None),
     ) -> JSONResponse:
         require_idle()
         cfg = current()
+        device_id, is_new = resolve_device_id(request)
         # No months given -> default to the current calendar month.
         selected_months = parse_months(months) if months is not None else [dt.date.today().month]
         try:
             with pool.connection() as conn:
+                home = resolve_home(conn, device_id)
                 ranked = scoring.rank_destinations(
                     conn,
                     months=selected_months,
                     taxon_ids=parse_species(species),
-                    home_lat=cfg.home.lat,
-                    home_lng=cfg.home.lng,
-                    radius_km=radius_km or cfg.home.radius_km,
+                    home_lat=home.lat,
+                    home_lng=home.lng,
+                    radius_km=radius_km or home.radius_km,
                     cell_deg=cfg.cell_deg,
                     recent_weeks=cfg.recent_weeks,
                 )
         except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
-        return JSONResponse([asdict(region) for region in ranked])
+        result = JSONResponse([asdict(region) for region in ranked])
+        if is_new:
+            set_device_cookie(result, device_id)
+        return result
 
     @app.get("/api/calendar")
     def calendar(region_id: str, species: str = Query("all")) -> dict[int, Any]:
@@ -300,20 +348,26 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/alerts")
     def get_alerts(
+        request: Request,
+        response: Response,
         species: str = Query("all"),
         weeks: int | None = Query(None),
         radius_km: float | None = Query(None),
     ) -> list[dict[str, Any]]:
         require_idle()
         cfg = current()
+        device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(response, device_id)
         try:
             with pool.connection() as conn:
+                home = resolve_home(conn, device_id)
                 return scoring.alerts(
                     conn,
                     taxon_ids=parse_species(species),
-                    home_lat=cfg.home.lat,
-                    home_lng=cfg.home.lng,
-                    radius_km=radius_km or cfg.home.radius_km,
+                    home_lat=home.lat,
+                    home_lng=home.lng,
+                    radius_km=radius_km or home.radius_km,
                     cell_deg=cfg.cell_deg,
                     weeks=weeks or cfg.recent_weeks,
                 )
@@ -386,6 +440,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/plan")
     def plan(
+        request: Request,
         months: str | None = Query(None),
         species: str = Query("all"),
         radius_km: float | None = Query(None),
@@ -397,16 +452,18 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         """Greedy multi-stop itinerary: top destinations sequenced home-out with the least drive."""
         require_idle()
         cfg = current()
+        device_id, is_new = resolve_device_id(request)
         selected_months = parse_months(months) if months is not None else [dt.date.today().month]
         try:
             with pool.connection() as conn:
+                home = resolve_home(conn, device_id)
                 trip = scoring.plan_route(
                     conn,
                     months=selected_months,
                     taxon_ids=parse_species(species),
-                    home_lat=cfg.home.lat,
-                    home_lng=cfg.home.lng,
-                    radius_km=radius_km or cfg.home.radius_km,
+                    home_lat=home.lat,
+                    home_lng=home.lng,
+                    radius_km=radius_km or home.radius_km,
                     cell_deg=cfg.cell_deg,
                     recent_weeks=cfg.recent_weeks,
                     max_stops=max_stops,
@@ -416,37 +473,44 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 )
         except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
-        return JSONResponse(asdict(trip))
+        result = JSONResponse(asdict(trip))
+        if is_new:
+            set_device_cookie(result, device_id)
+        return result
 
     @app.post("/api/location")
-    def set_location(body: LocationBody) -> dict[str, Any]:
-        cfg = current()
-        if body.lat is not None and body.lng is not None:
-            home = Home(
-                name=body.name or f"{body.lat:.4f}, {body.lng:.4f}",
-                lat=body.lat,
-                lng=body.lng,
-                radius_km=body.radius_km or cfg.home.radius_km,
-            )
-        elif body.query:
-            try:
-                location = geocode.resolve(body.query)
-            except (LookupError, ValueError) as error:
-                raise HTTPException(404, str(error)) from None
-            except Exception as error:  # network/geocoder failure
-                raise HTTPException(502, f"geocoding failed: {error}") from None
-            home = Home(
-                name=body.name or location.name,
-                lat=location.lat,
-                lng=location.lng,
-                radius_km=body.radius_km or cfg.home.radius_km,
-            )
-        else:
-            raise HTTPException(400, "provide `query` or both `lat` and `lng`")
-
+    def set_location(body: LocationBody, request: Request, response: Response) -> dict[str, Any]:
+        device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(response, device_id)
         with pool.connection() as conn:
-            db_save_location(conn, name=home.name, lat=home.lat, lng=home.lng, radius_km=home.radius_km)
-            state["cfg"] = cfg.model_copy(update={"home": home})
+            current_home = resolve_home(conn, device_id)
+            if body.lat is not None and body.lng is not None:
+                home = Home(
+                    name=body.name or f"{body.lat:.4f}, {body.lng:.4f}",
+                    lat=body.lat,
+                    lng=body.lng,
+                    radius_km=body.radius_km or current_home.radius_km,
+                )
+            elif body.query:
+                try:
+                    location = geocode.resolve(body.query)
+                except (LookupError, ValueError) as error:
+                    raise HTTPException(404, str(error)) from None
+                except Exception as error:  # network/geocoder failure
+                    raise HTTPException(502, f"geocoding failed: {error}") from None
+                home = Home(
+                    name=body.name or location.name,
+                    lat=location.lat,
+                    lng=location.lng,
+                    radius_km=body.radius_km or current_home.radius_km,
+                )
+            else:
+                raise HTTPException(400, "provide `query` or both `lat` and `lng`")
+
+            db_save_location(
+                conn, device_id=device_id, name=home.name, lat=home.lat, lng=home.lng, radius_km=home.radius_km
+            )
 
         return {"home": home.model_dump()}
 

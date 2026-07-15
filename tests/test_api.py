@@ -181,6 +181,64 @@ def test_set_location_requires_query_or_latlng(client: TestClient) -> None:
     assert response.status_code == 400
 
 
+def test_config_sets_device_id_cookie_on_first_visit(client: TestClient) -> None:
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    assert "device_id" in response.cookies
+
+
+def test_config_does_not_set_cookie_when_device_id_already_present(client: TestClient) -> None:
+    client.cookies.set("device_id", "existing-device")
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    assert "device_id" not in response.cookies
+
+
+def test_config_falls_back_to_default_home_for_unknown_device(client: TestClient) -> None:
+    client.cookies.set("device_id", "never-seen-before")
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    assert response.json()["home"]["name"] == "Home"
+
+
+def test_location_is_scoped_per_device(client: TestClient) -> None:
+    """Two different device-id cookies must not see or stomp each other's saved home."""
+    client.cookies.set("device_id", "device-a")
+    set_a = client.post("/api/location", json={"lat": 10.0, "lng": 20.0, "radius_km": 50})
+    assert set_a.status_code == 200
+    assert set_a.json()["home"]["lat"] == 10.0
+
+    client.cookies.set("device_id", "device-b")
+    set_b = client.post("/api/location", json={"lat": 30.0, "lng": 40.0, "radius_km": 75})
+    assert set_b.status_code == 200
+    assert set_b.json()["home"]["lat"] == 30.0
+
+    # Device A's saved home is unaffected by device B's write.
+    client.cookies.set("device_id", "device-a")
+    get_a = client.get("/api/config")
+    assert get_a.json()["home"]["lat"] == 10.0
+    assert get_a.json()["home"]["radius_km"] == 50
+
+    client.cookies.set("device_id", "device-b")
+    get_b = client.get("/api/config")
+    assert get_b.json()["home"]["lat"] == 30.0
+    assert get_b.json()["home"]["radius_km"] == 75
+
+    # A device that never saved a location still gets the default, not another device's home.
+    client.cookies.set("device_id", "device-c")
+    get_unknown = client.get("/api/config")
+    assert get_unknown.json()["home"]["name"] == "Home"
+
+
+def test_destinations_uses_per_device_home(client: TestClient) -> None:
+    """A device with no saved override still ranks by the default home (existing behavior)."""
+    client.cookies.set("device_id", "device-destinations")
+    response = client.get("/api/destinations", params={"months": "4"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body, "expected at least one ranked region"
+
+
 def test_refresh_rejects_unknown_target(client: TestClient) -> None:
     response = client.post("/api/refresh", params={"target": "bogus"})
     assert response.status_code == 400

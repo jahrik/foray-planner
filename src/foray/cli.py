@@ -7,9 +7,9 @@ import logging
 
 import click
 
-from foray.cache import connect, load_location, observation_count
+from foray.cache import connect, observation_count
 from foray.camps import ingest_campgrounds
-from foray.config import Home, Settings
+from foray.config import Settings
 from foray.dispersed import ingest_dispersed
 from foray.ingest import ingest, ingest_region
 from foray.land import ingest_public_land
@@ -160,9 +160,10 @@ def refresh(ctx: click.Context, with_: str) -> None:
     cfg = ctx.obj["cfg"]
     targets = _parse_targets(with_)
     con = connect()
-    override = load_location(con)
-    if override is not None:
-        cfg = cfg.model_copy(update={"home": Home(**override)})
+    # No more global location override to load here - home/radius overrides are now per-device
+    # (anonymous cookie, see api.py), which this CLI path has no way to resolve. Cron-driven
+    # refresh uses `cfg.home` (the env-configured default) unchanged - see TODO.md Epic 9's
+    # "Background layer refresh" section for the planned redesign of this gap.
     if "mushrooms" in targets:
         ingest(cfg, con)
     if "camps" in targets:
