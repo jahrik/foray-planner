@@ -3,6 +3,18 @@
 # (tasks/deploy/cron.yml) already keeps data fresh on a schedule; running a full
 # --all-regions ingest synchronously on every deploy just risked hitting iNaturalist's
 # rate limit and failing the whole deploy play for something cron already handles.
+- name: Check for the deploy-rendered env file
+  ansible.builtin.stat:
+    path: /opt/foray-planner/foray.env
+  register: foray_ingest_once_env_stat
+
+- name: Fail fast if this droplet has never been deployed to
+  ansible.builtin.fail:
+    msg: >-
+      /opt/foray-planner/foray.env not found - run `make ansible-deploy` at least once on
+      this droplet first (foray:ingest-once depends on the env file it renders).
+  when: not foray_ingest_once_env_stat.stat.exists
+
 - name: Run one-off data ingest
   community.docker.docker_container:
     name: foray-ingest-once

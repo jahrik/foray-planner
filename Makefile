@@ -87,8 +87,9 @@ ansible-deploy:
 		-e foray_droplet_ip=$$FORAY_DROPLET_IP
 
 # Manual/opt-in only - the foray-ingest cron job already keeps data fresh on a schedule.
-# Use this to warm data immediately (e.g. right after provisioning a fresh droplet) without
-# waiting for the next cron run; not part of `ansible-deploy`.
+# Use this to warm data immediately after the *first* `ansible-deploy` on a fresh droplet
+# (depends on the env file that deploy renders), instead of waiting for the next cron run.
+# Not part of `ansible-deploy` itself.
 ansible-ingest-once:
 	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
 	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:ingest-once \
