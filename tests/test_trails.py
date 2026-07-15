@@ -8,15 +8,17 @@ import httpx
 import psycopg
 import pytest
 
-from foray.cache import upsert_campsites, upsert_trails
-from foray.config import Config, Home, Ingest
+from foray.cache import is_ingested, upsert_campsites, upsert_trails
+from foray.config import Config, CoverageRegion, Home, Ingest
 from foray.scoring import trails_near
 from foray.trails import (
+    _bbox_filter,
     _parse_element,
     _parse_trails,
     _sample,
     fetch_trails,
     ingest_trails,
+    ingest_trails_region,
 )
 
 HOME_LAT, HOME_LNG = 47.6, -122.3
@@ -243,3 +245,42 @@ def test_ingest_trails_upserts_into_cache(con: psycopg.Connection) -> None:
     trails = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0)
     assert [trail.name for trail in trails] == ["Riverside Trail"]
     assert trails[0].kind == "path"
+
+
+def test_bbox_filter_formats_south_west_north_east() -> None:
+    assert _bbox_filter(45.5, -124.8, 49.0, -116.9) == "(45.5,-124.8,49.0,-116.9)"
+
+
+def test_ingest_trails_region_requires_a_bbox() -> None:
+    region = CoverageRegion(name="No Bbox", place_id=999)
+    with pytest.raises(ValueError, match="bbox"):
+        ingest_trails_region(region)
+
+
+def test_ingest_trails_region_upserts_and_records_ingest(con: psycopg.Connection) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "elements": [
+                    {
+                        "type": "way",
+                        "id": 7,
+                        "tags": {"highway": "path", "name": "State Trail"},
+                        "geometry": [
+                            {"lat": 47.61, "lon": -122.31},
+                            {"lat": 47.62, "lon": -122.30},
+                        ],
+                    }
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    region = CoverageRegion(name="Washington", place_id=46, bbox=(-124.8, 45.5, -116.9, 49.0))
+    count = ingest_trails_region(region, con, client=client)
+    assert count == 1
+    assert is_ingested(con, "trails:place:46")
+    # Second call skips before ever opening a client - if it didn't, this would try (and fail)
+    # to reach the real Overpass API, since no client is passed here.
+    assert ingest_trails_region(region, con) == 0

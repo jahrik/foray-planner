@@ -119,7 +119,7 @@ def test_cli_ingest_region_and_all_regions_mutually_exclusive(env_with_coverage)
     runner = CliRunner()
     result = runner.invoke(cli, ["ingest", "--region", "Washington", "--all-regions"])
     assert result.exit_code != 0
-    assert "not both" in result.output
+    assert "only one of" in result.output
 
 
 def test_cli_ingest_all_regions_no_coverage(con, monkeypatch) -> None:

@@ -3,4 +3,4 @@
 exec flock -n /tmp/foray-ingest.lock \
   docker run --rm --env-file /opt/foray-planner/foray.env \
     {{ foray_app_image }} \
-    foray ingest --all-regions
+    foray ingest --countries

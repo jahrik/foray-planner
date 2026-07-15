@@ -40,8 +40,8 @@ from typing import Any
 import httpx
 import psycopg
 
-from foray.cache import connect, is_area_covered, record_ingest, upsert_trails
-from foray.config import Config
+from foray.cache import connect, is_area_covered, is_ingested, record_ingest, upsert_trails
+from foray.config import Config, CoverageRegion
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,29 @@ def _trails_query(lat: float, lng: float, radius_m: float) -> str:
         f'way["highway"="path"]({around});'
         f'relation["route"="hiking"]({around});'
         f'node["highway"="trailhead"]({around});'
+        ");"
+        "out geom tags;"
+    )
+
+
+def _bbox_filter(min_lat: float, min_lng: float, max_lat: float, max_lng: float) -> str:
+    return f"({min_lat},{min_lng},{max_lat},{max_lng})"
+
+
+def _trails_query_bbox(min_lat: float, min_lng: float, max_lat: float, max_lng: float, *, timeout_s: int = 300) -> str:
+    """Overpass QL for the same three element classes within a state-sized bbox.
+
+    A whole state (rather than a home-radius circle) is large enough that the query needs a
+    longer server-side timeout - Overpass rejects a query outright if its own [timeout:N] is
+    exceeded, so this defaults higher than the home-radius query's 180s.
+    """
+    bbox = _bbox_filter(min_lat, min_lng, max_lat, max_lng)
+    return (
+        f"[out:json][timeout:{timeout_s}];"
+        "("
+        f'way["highway"="path"]{bbox};'
+        f'relation["route"="hiking"]{bbox};'
+        f'node["highway"="trailhead"]{bbox};'
         ");"
         "out geom tags;"
     )
@@ -271,6 +294,84 @@ def ingest_trails(
         key = f"trails:{home.lat}:{home.lng}:{home.radius_km}"
         record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
         logger.info("trails: cached %d trails", len(rows))
+        return len(rows)
+    finally:
+        if own_con:
+            database.close()
+
+
+def fetch_trails_bbox(
+    *,
+    min_lat: float,
+    min_lng: float,
+    max_lat: float,
+    max_lng: float,
+    timeout_s: int = 300,
+    client: httpx.Client | None = None,
+    progress_cb: Callable[[str, float], None] | None = None,
+) -> list[tuple[Any, ...]]:
+    """Fetch OSM paths, hiking routes, and trailheads within a bbox (state-sized) as trails rows.
+
+    Best-effort, same as ``fetch_trails``: a failing or malformed Overpass response is logged
+    and yields ``[]`` rather than aborting the refresh - a state timing out on public Overpass
+    just means that state's trails stay empty until a future run succeeds.
+    """
+    owns = client is None
+    client = client or httpx.Client(timeout=timeout_s + 30.0)
+    try:
+        if progress_cb:
+            progress_cb("Fetching trails…", 50.0)
+        payload = _post_overpass(client, _trails_query_bbox(min_lat, min_lng, max_lat, max_lng, timeout_s=timeout_s))
+        rows = _parse_trails(payload)
+        logger.info("trails: %d trails/routes/trailheads", len(rows))
+        return rows
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+        logger.warning("trails: bbox query failed (%s) - skipping", error)
+        return []
+    finally:
+        if owns:
+            client.close()
+
+
+def ingest_trails_region(
+    region: CoverageRegion,
+    con: psycopg.Connection | None = None,
+    *,
+    client: httpx.Client | None = None,
+    progress_cb: Callable[[str, float], None] | None = None,
+) -> int:
+    """Ingest the OSM trail network for one coverage region (state) into ``trails``.
+
+    Unlike land ownership, Overpass can't handle a whole-US query in one request, so full US
+    coverage means looping this per region - see ``cli.py``'s ``refresh --with trails --all``.
+    One-shot per region: skips once ``trails:place:{place_id}`` is in ``ingest_log``.
+    """
+    if region.bbox is None:
+        raise ValueError(f"{region.name} has no bbox configured for trails ingest")
+    own_con = con is None
+    database = con if con is not None else connect()
+    key = f"trails:place:{region.place_id}"
+    if is_ingested(database, key):
+        logger.info("trails: %s already ingested, skipping", region.name)
+        if progress_cb:
+            progress_cb(f"Trails already cached for {region.name}, skipping…", 100.0)
+        if own_con:
+            database.close()
+        return 0
+    try:
+        west, south, east, north = region.bbox
+        logger.info("trails: fetching OSM trail network for %s…", region.name)
+        rows = fetch_trails_bbox(
+            min_lat=south,
+            min_lng=west,
+            max_lat=north,
+            max_lng=east,
+            client=client,
+            progress_cb=progress_cb,
+        )
+        upsert_trails(database, rows)
+        record_ingest(database, key, len(rows))
+        logger.info("trails: cached %d trails in %s", len(rows), region.name)
         return len(rows)
     finally:
         if own_con:

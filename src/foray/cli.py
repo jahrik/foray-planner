@@ -12,9 +12,9 @@ from foray.camps import ingest_campgrounds
 from foray.config import Settings
 from foray.dispersed import ingest_dispersed
 from foray.ingest import ingest, ingest_region
-from foray.land import ingest_public_land
+from foray.land import ingest_public_land, ingest_public_land_coverage
 from foray.scoring import build_phenology, plan_route
-from foray.trails import ingest_trails
+from foray.trails import ingest_trails, ingest_trails_region
 
 
 def _setup_logging() -> None:
@@ -43,14 +43,17 @@ def cli(ctx: click.Context) -> None:
     help="Named coverage region to ingest (from FORAY_COVERAGE).",
 )
 @click.option("--all-regions", "all_regions", is_flag=True, help="Ingest all configured coverage regions.")
+@click.option("--countries", "countries", is_flag=True, help="Ingest all configured countries (one query per country).")
 @click.pass_context
-def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool) -> None:
-    """Pull observations into the cache (home radius, or --region/--all-regions for place_id)."""
+def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool, countries: bool) -> None:
+    """Pull observations into the cache (home radius, --region/--all-regions, or --countries)."""
     cfg = ctx.obj["cfg"]
-    if region_name and all_regions:
-        raise click.UsageError("Use --region or --all-regions, not both.")
+    if sum([bool(region_name), all_regions, countries]) > 1:
+        raise click.UsageError("Use only one of --region, --all-regions, --countries.")
     if all_regions and not cfg.coverage:
         raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
+    if countries and not cfg.countries:
+        raise click.UsageError("No countries configured (set FORAY_COUNTRIES).")
     if region_name:
         resolved_region = next((r for r in cfg.coverage if r.name.lower() == region_name.lower()), None)
         if resolved_region is None:
@@ -59,7 +62,13 @@ def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool) -
 
     con = connect()
     try:
-        if all_regions:
+        if countries:
+            for country in cfg.countries:
+                click.echo(f"Ingesting {country.name} (place_id={country.place_id})…")
+                counts = ingest_region(cfg, con, country)
+                for species in cfg.species:
+                    click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
+        elif all_regions:
             for region in cfg.coverage:
                 click.echo(f"Ingesting {region.name} (place_id={region.place_id})…")
                 counts = ingest_region(cfg, con, region)
@@ -98,13 +107,20 @@ def camps_cmd(ctx: click.Context) -> None:
 
 
 @cli.command("land")
+@click.option(
+    "--all", "all_coverage", is_flag=True, help="Ingest BLM/USFS ownership across all coverage regions in one query."
+)
 @click.pass_context
-def land_cmd(ctx: click.Context) -> None:
-    """Ingest public-land ownership (BLM + USFS) polygons within the home radius."""
+def land_cmd(ctx: click.Context, all_coverage: bool) -> None:
+    """Ingest public-land ownership (BLM + USFS) polygons within the home radius, or --all."""
     cfg = ctx.obj["cfg"]
     con = connect()
-    count = ingest_public_land(cfg, con)
-    click.echo(f"Cached {count} public-land units within {cfg.home.radius_km} km of home.")
+    if all_coverage:
+        count = ingest_public_land_coverage(cfg, con)
+        click.echo(f"Cached {count} public-land units (coverage-wide).")
+    else:
+        count = ingest_public_land(cfg, con)
+        click.echo(f"Cached {count} public-land units within {cfg.home.radius_km} km of home.")
     con.close()
 
 
@@ -120,13 +136,22 @@ def dispersed_cmd(ctx: click.Context) -> None:
 
 
 @cli.command("trails")
+@click.option("--all", "all_coverage", is_flag=True, help="Ingest trails for every configured coverage region.")
 @click.pass_context
-def trails_cmd(ctx: click.Context) -> None:
-    """Ingest OSM trails (paths, hiking routes, trailheads) near home."""
+def trails_cmd(ctx: click.Context, all_coverage: bool) -> None:
+    """Ingest OSM trails (paths, hiking routes, trailheads) near home, or --all."""
     cfg = ctx.obj["cfg"]
     con = connect()
-    count = ingest_trails(cfg, con)
-    click.echo(f"Cached {count} trails within {cfg.home.radius_km} km of home.")
+    if all_coverage:
+        if not cfg.coverage:
+            raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
+        for region in cfg.coverage:
+            click.echo(f"Ingesting trails for {region.name}…")
+            count = ingest_trails_region(region, con)
+            click.echo(f"  cached {count} trails")
+    else:
+        count = ingest_trails(cfg, con)
+        click.echo(f"Cached {count} trails within {cfg.home.radius_km} km of home.")
     con.close()
 
 
@@ -154,26 +179,52 @@ def _parse_targets(with_: str) -> tuple[str, ...]:
         "(default: all). e.g. --with camps,trails to prefetch offline layers only."
     ),
 )
+@click.option(
+    "--all",
+    "all_coverage",
+    is_flag=True,
+    help=(
+        "Ingest region-scoped targets (mushrooms, land, trails) across all configured "
+        "coverage/countries instead of just the home radius. Not supported for camps/dispersed "
+        "(on-demand, home-radius only)."
+    ),
+)
 @click.pass_context
-def refresh(ctx: click.Context, with_: str) -> None:
+def refresh(ctx: click.Context, with_: str, all_coverage: bool) -> None:
     """Ingest observations + campgrounds + land + dispersed + trails, then (re)build phenology."""
     cfg = ctx.obj["cfg"]
     targets = _parse_targets(with_)
+    if all_coverage:
+        unsupported = [t for t in targets if t in ("camps", "dispersed")]
+        if unsupported:
+            raise click.UsageError(f"--all doesn't apply to {', '.join(unsupported)} (home-radius only, on-demand).")
     con = connect()
     # No more global location override to load here - home/radius overrides are now per-device
     # (anonymous cookie, see api.py), which this CLI path has no way to resolve. Cron-driven
     # refresh uses `cfg.home` (the env-configured default) unchanged - see TODO.md Epic 9's
     # "Background layer refresh" section for the planned redesign of this gap.
-    if "mushrooms" in targets:
-        ingest(cfg, con)
-    if "camps" in targets:
-        ingest_campgrounds(cfg, con)
-    if "land" in targets:
-        ingest_public_land(cfg, con)
-    if "dispersed" in targets:
-        ingest_dispersed(cfg, con)
-    if "trails" in targets:
-        ingest_trails(cfg, con)
+    if all_coverage:
+        if "mushrooms" in targets:
+            for country in cfg.countries:
+                click.echo(f"Ingesting {country.name}…")
+                ingest_region(cfg, con, country)
+        if "land" in targets:
+            ingest_public_land_coverage(cfg, con)
+        if "trails" in targets:
+            for region in cfg.coverage:
+                click.echo(f"Ingesting trails for {region.name}…")
+                ingest_trails_region(region, con)
+    else:
+        if "mushrooms" in targets:
+            ingest(cfg, con)
+        if "camps" in targets:
+            ingest_campgrounds(cfg, con)
+        if "land" in targets:
+            ingest_public_land(cfg, con)
+        if "dispersed" in targets:
+            ingest_dispersed(cfg, con)
+        if "trails" in targets:
+            ingest_trails(cfg, con)
     if "mushrooms" in targets:
         build_phenology(con, cfg.cell_deg)
         region_count = (con.execute("SELECT count(*) FROM regions").fetchone() or (0,))[0]

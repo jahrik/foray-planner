@@ -53,9 +53,12 @@ def test_settings_coverage_inline_json_overrides_defaults(monkeypatch: pytest.Mo
 def test_settings_defaults_applied_when_no_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FORAY_SPECIES", raising=False)
     monkeypatch.delenv("FORAY_COVERAGE", raising=False)
+    monkeypatch.delenv("FORAY_COUNTRIES", raising=False)
     cfg = Settings()
     assert len(cfg.species) == 21
-    assert len(cfg.coverage) == 3
+    assert len(cfg.coverage) == 50
+    assert len(cfg.countries) == 1
+    assert cfg.countries[0].name == "United States"
     assert cfg.taxon_ids[0] == 47348
 
 

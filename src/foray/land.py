@@ -32,8 +32,8 @@ from typing import Any
 import httpx
 import psycopg
 
-from foray.cache import connect, is_area_covered, record_ingest, upsert_public_land
-from foray.config import Config
+from foray.cache import connect, is_area_covered, is_ingested, record_ingest, upsert_public_land
+from foray.config import Config, CoverageRegion
 
 logger = logging.getLogger(__name__)
 
@@ -200,16 +200,14 @@ def _iter_features(
             return
 
 
-def fetch_public_land(
+def _fetch_public_land_envelope(
+    envelope: tuple[float, float, float, float],
     *,
-    lat: float,
-    lng: float,
-    radius_km: float,
     client: httpx.Client | None = None,
     sources: Iterable[LandSource] = SOURCES,
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> list[tuple[Any, ...]]:
-    """Fetch ownership polygons near home from each source, deduped by id.
+    """Fetch ownership polygons within a (xmin, ymin, xmax, ymax) envelope, deduped by id.
 
     A source that fails is skipped so the others still ingest - ownership is best-effort
     context, never a hard dependency of the refresh. "Fails" covers both transport errors
@@ -218,7 +216,6 @@ def fetch_public_land(
     """
     owns = client is None
     client = client or httpx.Client(timeout=60.0)
-    envelope = _envelope(lat, lng, radius_km)
     by_id: dict[str, tuple[Any, ...]] = {}
     try:
         sources_list = list(sources)
@@ -243,6 +240,21 @@ def fetch_public_land(
         if owns:
             client.close()
     return list(by_id.values())
+
+
+def fetch_public_land(
+    *,
+    lat: float,
+    lng: float,
+    radius_km: float,
+    client: httpx.Client | None = None,
+    sources: Iterable[LandSource] = SOURCES,
+    progress_cb: Callable[[str, float], None] | None = None,
+) -> list[tuple[Any, ...]]:
+    """Fetch ownership polygons near home from each source, deduped by id."""
+    return _fetch_public_land_envelope(
+        _envelope(lat, lng, radius_km), client=client, sources=sources, progress_cb=progress_cb
+    )
 
 
 def ingest_public_land(
@@ -278,6 +290,59 @@ def ingest_public_land(
         key = f"land:{home.lat}:{home.lng}:{home.radius_km}"
         record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
         logger.info("land: cached %d public-land units", len(rows))
+        return len(rows)
+    finally:
+        if own_con:
+            database.close()
+
+
+def _coverage_envelope(regions: Iterable[CoverageRegion]) -> tuple[float, float, float, float]:
+    """Union bbox of every region that has one - the query envelope for a whole-coverage ingest.
+
+    Derived from whatever's configured (``cfg.coverage``) rather than a hardcoded literal, so
+    adding regions for another country later grows this automatically.
+    """
+    boxes = [region.bbox for region in regions if region.bbox is not None]
+    if not boxes:
+        raise ValueError("no coverage regions with a bbox configured")
+    west = min(box[0] for box in boxes)
+    south = min(box[1] for box in boxes)
+    east = max(box[2] for box in boxes)
+    north = max(box[3] for box in boxes)
+    return (west, south, east, north)
+
+
+def ingest_public_land_coverage(
+    cfg: Config,
+    con: psycopg.Connection | None = None,
+    *,
+    client: httpx.Client | None = None,
+    sources: Iterable[LandSource] = SOURCES,
+    progress_cb: Callable[[str, float], None] | None = None,
+) -> int:
+    """Ingest BLM/USFS ownership across all of ``cfg.coverage`` in one envelope query.
+
+    A single request covers the whole union bbox - ArcGIS's own pagination (see
+    ``_iter_features``) already handles arbitrarily many results, so there's no need to chunk
+    by region the way ``trails.py`` has to for Overpass. One-shot: skips entirely once
+    ``land:coverage`` is in ``ingest_log``, same as the home-radius path.
+    """
+    own_con = con is None
+    database = con if con is not None else connect()
+    if is_ingested(database, "land:coverage"):
+        logger.info("land: coverage-wide ownership already ingested, skipping")
+        if progress_cb:
+            progress_cb("Public land already cached, skipping…", 100.0)
+        if own_con:
+            database.close()
+        return 0
+    try:
+        envelope = _coverage_envelope(cfg.coverage)
+        logger.info("land: fetching BLM/USFS ownership across %d coverage regions…", len(cfg.coverage))
+        rows = _fetch_public_land_envelope(envelope, client=client, sources=sources, progress_cb=progress_cb)
+        upsert_public_land(database, rows)
+        record_ingest(database, "land:coverage", len(rows))
+        logger.info("land: cached %d public-land units (coverage-wide)", len(rows))
         return len(rows)
     finally:
         if own_con:
