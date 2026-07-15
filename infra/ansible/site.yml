@@ -13,9 +13,11 @@
           tags:
             - foray
             - "foray:provision"
+            - "foray:deploy"
       tags:
         - foray
         - "foray:provision"
+        - "foray:deploy"
 
     - name: Include droplet provisioning
       ansible.builtin.include_tasks:
