@@ -51,10 +51,30 @@ argument_specs:
         type: str
         description: Docker container name on the host
         default: foray-planner
-      foray_app_port:
-        type: int
-        description: Host port mapped to the container's port 8000
-        default: 80
+      foray_docker_network:
+        type: str
+        description: Docker network shared by the app and caddy containers
+        default: foray-net
+      foray_domain:
+        type: str
+        description: Public domain name Caddy terminates TLS for
+        default: foray.gourmetgills.com
+      foray_caddy_container_name:
+        type: str
+        description: Caddy container name on the host
+        default: foray-planner-caddy
+      foray_caddy_image:
+        type: str
+        description: Caddy container image
+        default: caddy:2-alpine
+      foray_tls_cert_path:
+        type: str
+        description: Local path to the Cloudflare Origin CA certificate (read from FORAY_TLS_CERT_PATH env var)
+        required: true
+      foray_tls_key_path:
+        type: str
+        description: Local path to the Cloudflare Origin CA private key (read from FORAY_TLS_KEY_PATH env var)
+        required: true
       foray_ridb_api_key:
         type: str
         description: Recreation.gov API key (optional, campground ingest skipped without it)

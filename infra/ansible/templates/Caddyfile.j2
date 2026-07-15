@@ -1,0 +1,9 @@
+# Managed by the foray-planner ansible role
+http://{{ foray_domain }} {
+    redir https://{{ foray_domain }}{uri} permanent
+}
+
+https://{{ foray_domain }} {
+    tls /etc/caddy/tls/origin.pem /etc/caddy/tls/origin.key
+    reverse_proxy {{ foray_app_container_name }}:8000
+}

@@ -6,8 +6,8 @@
     state: started
     restart: true
     restart_policy: unless-stopped
-    ports:
-      - "{{ foray_app_port }}:8000"
+    networks:
+      - name: "{{ foray_docker_network }}"
     env_file: /opt/foray-planner/foray.env
     healthcheck:
       test: ["CMD", "python", "scripts/healthcheck.py"]
@@ -16,3 +16,20 @@
       retries: 3
       start_period: 15s
   listen: restart foray
+
+- name: Restart caddy
+  community.docker.docker_container:
+    name: "{{ foray_caddy_container_name }}"
+    image: "{{ foray_caddy_image }}"
+    state: started
+    restart: true
+    restart_policy: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /opt/foray-planner/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/foray-planner/tls:/etc/caddy/tls:ro
+    networks:
+      - name: "{{ foray_docker_network }}"
+  listen: restart caddy

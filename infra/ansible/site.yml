@@ -57,9 +57,31 @@
         - "foray:deploy"
         - "foray:cron"
 
+    - name: Include docker network tasks
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/network.yml
+        apply:
+          tags:
+            - foray
+            - "foray:deploy"
+      tags:
+        - foray
+        - "foray:deploy"
+
     - name: Include deploy tasks
       ansible.builtin.include_tasks:
         file: tasks/deploy/app.yml
+        apply:
+          tags:
+            - foray
+            - "foray:deploy"
+      tags:
+        - foray
+        - "foray:deploy"
+
+    - name: Include caddy (TLS reverse proxy) tasks
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/caddy.yml
         apply:
           tags:
             - foray
