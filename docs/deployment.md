@@ -166,10 +166,11 @@ make ansible-deploy
 
 | Tag | Scope |
 |---|---|
-| `foray` | Everything |
+| `foray` | Provision + deploy + cron (not ingest-once - see below) |
 | `foray:provision` | DO resources (Droplet, database, firewall) |
 | `foray:deploy` | Pull image, restart container |
 | `foray:cron` | Update cron schedules |
+| `foray:ingest-once` | Manual/opt-in full data ingest (`make ansible-ingest-once`) - not part of `foray:deploy` or the `foray` umbrella; the daily `foray-ingest` cron job already keeps data fresh, so this only exists for warming a fresh droplet's data immediately instead of waiting for the next cron run. **Run this only after the first `foray:deploy`** - it depends on the env file that deploy renders (`/opt/foray-planner/foray.env`) and fails fast with a clear message if that hasn't happened yet. |
 
 ---
 
