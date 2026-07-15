@@ -136,7 +136,7 @@ BEGIN
 END $$;
 
 -- Per-device "Set location" override: which device set what home/radius, keyed by an opaque
--- anonymous device-id cookie (see api.py get_or_create_device_id) - no accounts, no login.
+-- anonymous device-id cookie (see api.py resolve_device_id) - no accounts, no login.
 CREATE TABLE IF NOT EXISTS app_location (
     device_id TEXT PRIMARY KEY,
     name      TEXT NOT NULL,

@@ -7,6 +7,7 @@ import datetime as dt
 import json
 import logging
 import queue
+import re
 import secrets
 import threading
 from contextlib import asynccontextmanager
@@ -78,7 +79,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     "the dispersed-camping proxy will be skipped."
                 )
             conn.execute(SCHEMA)
-        # `state["cfg"].home` is now only ever the env/default home - see get_or_create_device_id
+        # `state["cfg"].home` is now only ever the env/default home - see resolve_device_id
         # and resolve_home below for per-visitor overrides. Multi-user, no accounts: each browser
         # gets its own anonymous device-id cookie and its own saved home/radius in `app_location`.
         try:
@@ -116,6 +117,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     _DEVICE_ID_COOKIE = "device_id"
     _DEVICE_ID_MAX_AGE = 60 * 60 * 24 * 365  # ~1 year
+    # Matches secrets.token_urlsafe's output alphabet; bounds reject junk a client could send
+    # in a hand-crafted cookie (log/DB-key bloat) without hard-coding the exact generated length.
+    _DEVICE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
     def resolve_device_id(request: Request) -> tuple[str, bool]:
         """Anonymous per-browser identity - no accounts, no login, works on first visit.
@@ -131,17 +135,22 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         *not* merge cookies from an injected ``Response`` param onto a returned Response.
         """
         device_id = request.cookies.get(_DEVICE_ID_COOKIE)
-        if device_id:
+        if device_id and _DEVICE_ID_PATTERN.fullmatch(device_id):
             return device_id, False
         return secrets.token_urlsafe(32), True
 
-    def set_device_cookie(response: Response, device_id: str) -> None:
+    def set_device_cookie(request: Request, response: Response, device_id: str) -> None:
+        # Cloudflare terminates TLS and proxies to the droplet over plain HTTP, setting
+        # X-Forwarded-Proto to the client-facing scheme - trust that over the raw connection
+        # scheme so `secure` is accurate in prod. Falls back to the direct scheme for local dev
+        # (no proxy in front), so the cookie still works over plain http://localhost.
+        is_https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
         response.set_cookie(
             _DEVICE_ID_COOKIE,
             device_id,
             max_age=_DEVICE_ID_MAX_AGE,
             httponly=True,
-            secure=True,
+            secure=is_https,
             samesite="lax",
         )
 
@@ -263,7 +272,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         cfg = current()
         device_id, is_new = resolve_device_id(request)
         if is_new:
-            set_device_cookie(response, device_id)
+            set_device_cookie(request, response, device_id)
         with pool.connection() as conn:
             home = resolve_home(conn, device_id)
         return {
@@ -333,7 +342,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
         result = JSONResponse([asdict(region) for region in ranked])
         if is_new:
-            set_device_cookie(result, device_id)
+            set_device_cookie(request, result, device_id)
         return result
 
     @app.get("/api/calendar")
@@ -358,7 +367,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         cfg = current()
         device_id, is_new = resolve_device_id(request)
         if is_new:
-            set_device_cookie(response, device_id)
+            set_device_cookie(request, response, device_id)
         try:
             with pool.connection() as conn:
                 home = resolve_home(conn, device_id)
@@ -475,14 +484,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
         result = JSONResponse(asdict(trip))
         if is_new:
-            set_device_cookie(result, device_id)
+            set_device_cookie(request, result, device_id)
         return result
 
     @app.post("/api/location")
     def set_location(body: LocationBody, request: Request, response: Response) -> dict[str, Any]:
         device_id, is_new = resolve_device_id(request)
         if is_new:
-            set_device_cookie(response, device_id)
+            set_device_cookie(request, response, device_id)
         with pool.connection() as conn:
             current_home = resolve_home(conn, device_id)
             if body.lat is not None and body.lng is not None:
