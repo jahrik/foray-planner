@@ -1,0 +1,60 @@
+---
+- name: Fail if the TLS cert/key paths aren't set
+  ansible.builtin.assert:
+    that:
+      - foray_tls_cert_path | length > 0
+      - foray_tls_key_path | length > 0
+    fail_msg: >-
+      FORAY_TLS_CERT_PATH / FORAY_TLS_KEY_PATH must point at the Cloudflare Origin CA
+      cert/key saved locally (SSL/TLS -> Origin Server in the Cloudflare dashboard) -
+      see .env.
+
+- name: Ensure the TLS directory exists
+  ansible.builtin.file:
+    path: /opt/foray-planner/tls
+    state: directory
+    mode: "0700"
+    owner: root
+    group: root
+
+- name: Copy the origin certificate
+  ansible.builtin.copy:
+    src: "{{ foray_tls_cert_path }}"
+    dest: /opt/foray-planner/tls/origin.pem
+    mode: "0600"
+    owner: root
+    group: root
+  notify: restart caddy
+
+- name: Copy the origin private key
+  ansible.builtin.copy:
+    src: "{{ foray_tls_key_path }}"
+    dest: /opt/foray-planner/tls/origin.key
+    mode: "0600"
+    owner: root
+    group: root
+  notify: restart caddy
+
+- name: Write the Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: /opt/foray-planner/Caddyfile
+    mode: "0600"
+    owner: root
+    group: root
+  notify: restart caddy
+
+- name: Run the caddy container
+  community.docker.docker_container:
+    name: "{{ foray_caddy_container_name }}"
+    image: "{{ foray_caddy_image }}"
+    state: started
+    restart_policy: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /opt/foray-planner/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/foray-planner/tls:/etc/caddy/tls:ro
+    networks:
+      - name: "{{ foray_docker_network }}"

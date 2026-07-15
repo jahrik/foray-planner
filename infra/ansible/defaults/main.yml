@@ -22,7 +22,18 @@ foray_do_db_name: foray
 # Container image (published by CD pipeline on every push to main)
 foray_app_image: ghcr.io/jahrik/foray-planner:latest
 foray_app_container_name: foray-planner
-foray_app_port: 80
+foray_docker_network: foray-net
+
+# Caddy terminates TLS on 80/443 and reverse-proxies to the app container over the
+# foray_docker_network - the app container itself no longer publishes a host port.
+foray_domain: foray.gourmetgills.com
+foray_caddy_container_name: foray-planner-caddy
+foray_caddy_image: caddy:2-alpine
+
+# Cloudflare Origin CA cert/key - generated in the Cloudflare dashboard, saved locally, and
+# referenced here by path only; never committed or pasted into this repo.
+foray_tls_cert_path: "{{ lookup('ansible.builtin.env', 'FORAY_TLS_CERT_PATH') }}"
+foray_tls_key_path: "{{ lookup('ansible.builtin.env', 'FORAY_TLS_KEY_PATH') }}"
 
 # RIDB API key — optional, campground ingest is skipped without it.
 # Pass via environment or --extra-vars; never commit.
