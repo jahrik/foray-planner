@@ -59,6 +59,14 @@ _CONTENT_SECURITY_POLICY = (
 )
 
 
+def _is_https(request: Request) -> bool:
+    # Cloudflare terminates TLS and proxies to the droplet over plain HTTP, setting
+    # X-Forwarded-Proto to the client-facing scheme - trust that over the raw connection
+    # scheme so this is accurate in prod. Falls back to the direct scheme for local dev
+    # (no proxy in front), so behavior stays correct over plain http://localhost too.
+    return request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+
+
 class LocationBody(BaseModel):
     query: str | None = Field(default=None, max_length=200)
     lat: float | None = Field(default=None, ge=-90, le=90)
@@ -117,7 +125,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(self), camera=(), microphone=()"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        if _is_https(request):
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
 
     if (_DIST / "assets").is_dir():
@@ -171,17 +180,12 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         return secrets.token_urlsafe(32), True
 
     def set_device_cookie(request: Request, response: Response, device_id: str) -> None:
-        # Cloudflare terminates TLS and proxies to the droplet over plain HTTP, setting
-        # X-Forwarded-Proto to the client-facing scheme - trust that over the raw connection
-        # scheme so `secure` is accurate in prod. Falls back to the direct scheme for local dev
-        # (no proxy in front), so the cookie still works over plain http://localhost.
-        is_https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
         response.set_cookie(
             _DEVICE_ID_COOKIE,
             device_id,
             max_age=_DEVICE_ID_MAX_AGE,
             httponly=True,
-            secure=is_https,
+            secure=_is_https(request),
             samesite="lax",
         )
 
