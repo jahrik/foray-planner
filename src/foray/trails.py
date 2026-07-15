@@ -52,6 +52,32 @@ USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahr
 # each line is thinned to at most this many evenly-spaced points before caching.
 _MAX_POINTS_PER_LINE = 60
 
+# A whole state's Overpass response (with full geometry for every path/route/trailhead) can be
+# large enough to OOM a small droplet before it's even parsed - a well-mapped state like Arizona
+# killed a 1 GB box mid-response. Tiling each region into degree-sized sub-queries bounds a
+# single response's size regardless of how big or trail-dense the region is; each tile's rows
+# are upserted and discarded before the next tile starts; see ``ingest_trails_region``.
+_TILE_DEG = 2.0
+
+
+def _tile_bboxes(
+    min_lat: float, min_lng: float, max_lat: float, max_lng: float, tile_deg: float = _TILE_DEG
+) -> list[tuple[float, float, float, float]]:
+    """Carve a bbox into a grid of (min_lat, min_lng, max_lat, max_lng) tiles <= tile_deg wide."""
+    if tile_deg <= 0:
+        raise ValueError(f"tile_deg must be positive, got {tile_deg}")
+    tiles: list[tuple[float, float, float, float]] = []
+    lat = min_lat
+    while lat < max_lat:
+        lat_end = min(lat + tile_deg, max_lat)
+        lng = min_lng
+        while lng < max_lng:
+            lng_end = min(lng + tile_deg, max_lng)
+            tiles.append((lat, lng, lat_end, lng_end))
+            lng = lng_end
+        lat = lat_end
+    return tiles
+
 
 def _around(lat: float, lng: float, radius_m: float) -> str:
     return f"around:{radius_m:.0f},{lat},{lng}"
@@ -309,12 +335,15 @@ def fetch_trails_bbox(
     timeout_s: int = 300,
     client: httpx.Client | None = None,
     progress_cb: Callable[[str, float], None] | None = None,
+    raise_on_error: bool = False,
 ) -> list[tuple[Any, ...]]:
     """Fetch OSM paths, hiking routes, and trailheads within a bbox (state-sized) as trails rows.
 
-    Best-effort, same as ``fetch_trails``: a failing or malformed Overpass response is logged
-    and yields ``[]`` rather than aborting the refresh - a state timing out on public Overpass
-    just means that state's trails stay empty until a future run succeeds.
+    Best-effort by default (``raise_on_error=False``, matching ``fetch_trails``): a failing or
+    malformed Overpass response is logged and yields ``[]`` rather than aborting the refresh.
+    ``ingest_trails_region`` passes ``raise_on_error=True`` instead, since it needs to tell a
+    tile that's genuinely empty apart from one that failed, to decide whether the region is
+    safe to mark as fully ingested.
     """
     owns = client is None
     client = client or httpx.Client(timeout=timeout_s + 30.0)
@@ -326,6 +355,8 @@ def fetch_trails_bbox(
         logger.info("trails: %d trails/routes/trailheads", len(rows))
         return rows
     except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+        if raise_on_error:
+            raise
         logger.warning("trails: bbox query failed (%s) - skipping", error)
         return []
     finally:
@@ -344,7 +375,12 @@ def ingest_trails_region(
 
     Unlike land ownership, Overpass can't handle a whole-US query in one request, so full US
     coverage means looping this per region - see ``cli.py``'s ``refresh --with trails --all``.
-    One-shot per region: skips once ``trails:place:{place_id}`` is in ``ingest_log``.
+    Within a region, the bbox is further tiled (see ``_tile_bboxes``) and each tile's rows are
+    upserted immediately rather than accumulated - a trail-dense state's full response can be
+    large enough to OOM a small droplet before it's even parsed. The returned/logged count is
+    rows upserted, not distinct trails - a route spanning a tile boundary gets upserted (and
+    counted) once per tile it touches, though it's the same row each time (id is the primary
+    key). One-shot per region: skips once ``trails:place:{place_id}`` is in ``ingest_log``.
     """
     if region.bbox is None:
         raise ValueError(f"{region.name} has no bbox configured for trails ingest")
@@ -360,19 +396,43 @@ def ingest_trails_region(
         return 0
     try:
         west, south, east, north = region.bbox
-        logger.info("trails: fetching OSM trail network for %s…", region.name)
-        rows = fetch_trails_bbox(
-            min_lat=south,
-            min_lng=west,
-            max_lat=north,
-            max_lng=east,
-            client=client,
-            progress_cb=progress_cb,
-        )
-        upsert_trails(database, rows)
-        record_ingest(database, key, len(rows))
-        logger.info("trails: cached %d trails in %s", len(rows), region.name)
-        return len(rows)
+        tiles = _tile_bboxes(south, west, north, east)
+        logger.info("trails: fetching OSM trail network for %s (%d tiles)…", region.name, len(tiles))
+        total = 0
+        had_failures = False
+        for index, (tile_south, tile_west, tile_north, tile_east) in enumerate(tiles, start=1):
+            if progress_cb:
+                progress_cb(f"Fetching trails for {region.name} ({index}/{len(tiles)})…", (index / len(tiles)) * 100.0)
+            try:
+                rows = fetch_trails_bbox(
+                    min_lat=tile_south,
+                    min_lng=tile_west,
+                    max_lat=tile_north,
+                    max_lng=tile_east,
+                    client=client,
+                    raise_on_error=True,
+                )
+            except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+                logger.warning(
+                    "trails: tile %d/%d for %s failed (%s) - region won't be marked ingested, will retry next run",
+                    index,
+                    len(tiles),
+                    region.name,
+                    error,
+                )
+                had_failures = True
+                continue
+            upsert_trails(database, rows)
+            total += len(rows)
+        # Only mark the region done if every tile succeeded - a partial failure still leaves
+        # its successful tiles' rows cached (upserted above), but a future run needs to retry
+        # the whole region rather than believing it's fully covered.
+        if had_failures:
+            logger.warning("trails: %s only partially ingested (%d rows) - not recording as done", region.name, total)
+        else:
+            record_ingest(database, key, total)
+        logger.info("trails: cached %d trails in %s", total, region.name)
+        return total
     finally:
         if own_con:
             database.close()
