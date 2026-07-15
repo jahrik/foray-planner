@@ -4,6 +4,7 @@
 # camps/dispersed stay home-radius only (on-demand, see AGENTS.md); land/trails run
 # coverage-wide (--all) so they're pre-cached for every configured region, not just home.
 flock -n /tmp/foray-layers.lock sh -c '
+  set -e
   docker run --rm --env-file /opt/foray-planner/foray.env \
     {{ foray_app_image }} \
     foray refresh --with camps,dispersed

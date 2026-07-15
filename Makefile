@@ -53,7 +53,7 @@ stop:
 	docker compose --profile scheduler stop
 
 ingest: db
-	docker compose run --rm app foray ingest --all-regions
+	docker compose run --rm app foray ingest --countries
 
 clean:
 	docker compose --profile scheduler down -v

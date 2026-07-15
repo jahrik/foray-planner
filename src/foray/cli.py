@@ -141,10 +141,10 @@ def dispersed_cmd(ctx: click.Context) -> None:
 def trails_cmd(ctx: click.Context, all_coverage: bool) -> None:
     """Ingest OSM trails (paths, hiking routes, trailheads) near home, or --all."""
     cfg = ctx.obj["cfg"]
+    if all_coverage and not cfg.coverage:
+        raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
     con = connect()
     if all_coverage:
-        if not cfg.coverage:
-            raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
         for region in cfg.coverage:
             click.echo(f"Ingesting trails for {region.name}…")
             count = ingest_trails_region(region, con)
@@ -198,6 +198,12 @@ def refresh(ctx: click.Context, with_: str, all_coverage: bool) -> None:
         unsupported = [t for t in targets if t in ("camps", "dispersed")]
         if unsupported:
             raise click.UsageError(f"--all doesn't apply to {', '.join(unsupported)} (home-radius only, on-demand).")
+        if "mushrooms" in targets and not cfg.countries:
+            raise click.UsageError("No countries configured (set FORAY_COUNTRIES).")
+        if "land" in targets and not cfg.coverage:
+            raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
+        if "trails" in targets and not cfg.coverage:
+            raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
     con = connect()
     # No more global location override to load here - home/radius overrides are now per-device
     # (anonymous cookie, see api.py), which this CLI path has no way to resolve. Cron-driven

@@ -138,6 +138,53 @@ def test_cli_ingest_all_regions_no_coverage(con, monkeypatch) -> None:
     assert "No coverage regions configured" in result.output
 
 
+def test_cli_trails_all_no_coverage_does_not_leak_connection(con, monkeypatch) -> None:
+    monkeypatch.setenv("FORAY_HOME__LAT", "47.6")
+    monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
+    monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
+    monkeypatch.setenv("FORAY_COVERAGE", "[]")
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["trails", "--all"])
+    assert result.exit_code != 0
+    assert "No coverage regions configured" in result.output
+
+
+def test_cli_refresh_all_rejects_camps_and_dispersed(env_with_coverage) -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli, ["refresh", "--with", "camps,land", "--all"])
+    assert result.exit_code != 0
+    assert "--all doesn't apply to" in result.output
+
+
+def test_cli_refresh_all_mushrooms_requires_countries(con, monkeypatch) -> None:
+    monkeypatch.setenv("FORAY_HOME__LAT", "47.6")
+    monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
+    monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
+    monkeypatch.setenv(
+        "FORAY_SPECIES",
+        json.dumps([{"taxon_id": 111, "name": "Morchella", "common_name": "Morels", "rank": "genus"}]),
+    )
+    monkeypatch.setenv("FORAY_COUNTRIES", "[]")
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["refresh", "--with", "mushrooms", "--all"])
+    assert result.exit_code != 0
+    assert "No countries configured" in result.output
+
+
+def test_cli_refresh_all_trails_requires_coverage(con, monkeypatch) -> None:
+    monkeypatch.setenv("FORAY_HOME__LAT", "47.6")
+    monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
+    monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
+    monkeypatch.setenv("FORAY_COVERAGE", "[]")
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["refresh", "--with", "trails", "--all"])
+    assert result.exit_code != 0
+    assert "No coverage regions configured" in result.output
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
