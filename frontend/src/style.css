@@ -210,7 +210,19 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
 }
 
 @media (max-width: 780px) {
-  header { flex-wrap: wrap; row-gap: 4px; }
+  header { flex-wrap: wrap; row-gap: 6px; }
+  /* .locbar (search box + home name/coords) never wrapped, so on a narrow phone it
+     could overflow past the viewport or overlap .header-actions. `order` reflows header's
+     3 top-level children (h1, .locbar, .header-actions) without touching markup: title +
+     icon toggles share row 1 (same as desktop), .locbar claims its own full-width row below
+     and wraps internally. Radius presets moved out of .locbar entirely - they now live in
+     #filters-row (see index.html), so on mobile they're collapsed behind the same "Filters"
+     disclosure as Months/Layers instead of needing header space of their own. */
+  header h1 { order: 1; }
+  .header-actions { order: 2; }
+  .locbar { order: 3; flex-basis: 100%; flex-wrap: wrap; row-gap: 4px; }
+  .locbar form { flex: 1 1 160px; }
+  .loc-current { flex: 1 1 auto; min-width: 120px; }
   .controls { padding: 4px 10px; gap: 4px; }
   .row { gap: 6px; }
   main { display: flex; flex-direction: column; flex: 1; min-height: 0; }

@@ -22,7 +22,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg_pool import ConnectionPool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from foray import camps, dispersed, geocode, land, scoring, trails
 from foray.cache import _ENABLE_POSTGIS, SCHEMA
@@ -40,12 +40,31 @@ _WEB = Path(__file__).parent / "web"
 _DIST = _WEB / "dist"
 
 
+# Public-facing app serving an HTML+JS frontend - locked down to what the frontend actually
+# needs (Leaflet bundled as 'self', OSM tiles/Nominatim as the only third-party origins) so an
+# XSS bug can't exfiltrate to or load script from anywhere else. style-src needs 'unsafe-inline'
+# because the frontend sets `style="..."` attributes directly (map legend swatches, score bars,
+# phenology heatmap cells) - much lower risk than script injection, so that's an accepted gap.
+_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' https://*.tile.openstreetmap.org data:; "
+    "connect-src 'self' https://nominatim.openstreetmap.org; "
+    "font-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+
+
 class LocationBody(BaseModel):
-    query: str | None = None
-    lat: float | None = None
-    lng: float | None = None
-    name: str | None = None
-    radius_km: float | None = None
+    query: str | None = Field(default=None, max_length=200)
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lng: float | None = Field(default=None, ge=-180, le=180)
+    name: str | None = Field(default=None, max_length=200)
+    radius_km: float | None = Field(default=None, gt=0, le=500)
 
 
 def create_app(cfg: Config | None = None) -> FastAPI:
@@ -89,6 +108,18 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     app = FastAPI(title="Foray Planner API", lifespan=lifespan)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next: Any) -> Response:
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = _CONTENT_SECURITY_POLICY
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(self), camera=(), microphone=()"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
     if (_DIST / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=str(_DIST / "assets")), name="assets")
 
@@ -190,7 +221,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         cell = current().cell_deg
         return (ilat + 0.5) * cell, (ilng + 0.5) * cell
 
-    def run_refresh(target: str = "all") -> None:
+    def run_refresh(home: Home, target: str = "all") -> None:
+        # Refresh ingests around *this visitor's* home, not the env-configured default - a
+        # per-request Config with `.home` swapped in lets ingest()/camps.py/land.py/etc. stay
+        # unchanged (they all just read `cfg.home` internally).
+        refresh_cfg = current().model_copy(update={"home": home})
         try:
             state["abort_event"].clear()
             # 300s covers Overpass trail queries that can take up to 180s; set a
@@ -198,7 +233,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             state["http_client"] = httpx.Client(timeout=300.0)
 
             broadcast({"step": "Starting refresh…", "progress": 0.0})
-            logger.info("refresh: starting for %s (target=%s)", current().home.name, target)
+            logger.info("refresh: starting for %s (target=%s)", refresh_cfg.home.name, target)
 
             # One pooled connection checked out for the whole refresh - Postgres handles
             # concurrent readers (other requests borrowing their own connections) natively
@@ -206,35 +241,35 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             with pool.connection() as db:
                 if target in ("all", "mushrooms") and not state["abort_event"].is_set():
                     ingest(
-                        current(),
+                        refresh_cfg,
                         db,
                         progress_cb=make_cb(0.0, 90.0 if target == "mushrooms" else 50.0),
                         abort_event=state["abort_event"],
                     )
                 if target in ("all", "camps") and not state["abort_event"].is_set():
                     camps.ingest_campgrounds(
-                        current(),
+                        refresh_cfg,
                         db,
                         client=state["http_client"],
                         progress_cb=make_cb(50.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
                     )
                 if target in ("all", "land") and not state["abort_event"].is_set():
                     land.ingest_public_land(
-                        current(),
+                        refresh_cfg,
                         db,
                         client=state["http_client"],
                         progress_cb=make_cb(60.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
                     )
                 if target in ("all", "dispersed") and not state["abort_event"].is_set():
                     dispersed.ingest_dispersed(
-                        current(),
+                        refresh_cfg,
                         db,
                         client=state["http_client"],
                         progress_cb=make_cb(70.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
                     )
                 if target in ("all", "trails") and not state["abort_event"].is_set():
                     trails.ingest_trails(
-                        current(),
+                        refresh_cfg,
                         db,
                         client=state["http_client"],
                         progress_cb=make_cb(80.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
@@ -243,7 +278,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 if target in ("all", "mushrooms") and not state["abort_event"].is_set():
                     broadcast({"step": "Building phenology…", "progress": 90.0})
                     logger.info("refresh: building phenology…")
-                    scoring.build_phenology(db, current().cell_deg)
+                    scoring.build_phenology(db, refresh_cfg.cell_deg)
 
             if state["abort_event"].is_set():
                 logger.info("refresh: cancelled by user")
@@ -526,15 +561,20 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     _VALID_REFRESH_TARGETS = frozenset({"all", "mushrooms", "camps", "land", "dispersed", "trails"})
 
     @app.post("/api/refresh")
-    def refresh(target: str = Query("mushrooms")) -> dict[str, Any]:
+    def refresh(request: Request, response: Response, target: str = Query("mushrooms")) -> dict[str, Any]:
         if target not in _VALID_REFRESH_TARGETS:
             raise HTTPException(400, f"unknown target '{target}'; valid: {sorted(_VALID_REFRESH_TARGETS)}")
         if state["refreshing"]:
             return {"status": "already running"}
+        device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(request, response, device_id)
+        with pool.connection() as conn:
+            home = resolve_home(conn, device_id)
         state["refreshing"] = True
         state["last_error"] = None
         state["last_progress"] = None
-        threading.Thread(target=run_refresh, args=(target,), daemon=True).start()
+        threading.Thread(target=run_refresh, args=(home, target), daemon=True).start()
         return {"status": "started"}
 
     @app.delete("/api/refresh")

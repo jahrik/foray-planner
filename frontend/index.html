@@ -6,20 +6,7 @@
     <meta name="theme-color" content="#12140f" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>Foray Planner</title>
-    <script>
-      // Set the theme before first paint so light-mode users don't flash dark. Default = dark.
-      (function () {
-        try {
-          document.documentElement.dataset.theme =
-            localStorage.getItem("foray-theme") === "light" ? "light" : "dark";
-          document.documentElement.dataset.textSize =
-            localStorage.getItem("foray-text-size") === "large" ? "large" : "normal";
-        } catch (e) {
-          document.documentElement.dataset.theme = "dark";
-          document.documentElement.dataset.textSize = "normal";
-        }
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <header>
@@ -38,12 +25,6 @@
           <strong id="home-name">…</strong>
           <span class="loc-meta">(<span id="home-coords">…</span>) · <span id="home-radius">…</span></span>
         </span>
-        <div class="radius-presets" id="radius-presets">
-          <button type="button" data-km="50" aria-label="Set search radius to 50 kilometers">50 km</button>
-          <button type="button" data-km="150" aria-label="Set search radius to 150 kilometers">150 km</button>
-          <button type="button" data-km="300" aria-label="Set search radius to 300 kilometers">300 km</button>
-          <button type="button" data-km="500" aria-label="Set search radius to 500 kilometers">500 km</button>
-        </div>
       </div>
       <div class="header-actions">
         <div class="help-wrap">
@@ -67,9 +48,6 @@
           Filters <span class="chevron">▾</span>
         </button>
         <div class="field" style="align-self:flex-end">
-          <button id="run" class="primary">Rank destinations</button>
-        </div>
-        <div class="field" style="align-self:flex-end">
           <button id="refresh">Refresh</button>
         </div>
         <div class="field action-status" style="align-self:flex-end">
@@ -79,6 +57,15 @@
       </div>
       <div class="row" id="filters-row">
         <div class="field">
+          <label>Radius</label>
+          <div class="radius-presets" id="radius-presets">
+            <button type="button" data-km="50" aria-label="Set search radius to 50 kilometers">50 km</button>
+            <button type="button" data-km="150" aria-label="Set search radius to 150 kilometers">150 km</button>
+            <button type="button" data-km="300" aria-label="Set search radius to 300 kilometers">300 km</button>
+            <button type="button" data-km="500" aria-label="Set search radius to 500 kilometers">500 km</button>
+          </div>
+        </div>
+        <div class="field" id="months-field">
           <label>Months</label>
           <div id="months" class="months"></div>
         </div>
