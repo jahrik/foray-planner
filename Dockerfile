@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- frontend: build the Vite/TypeScript client bundle ----
-FROM node:22-slim AS frontend
+FROM node:26-slim AS frontend
 WORKDIR /app/frontend
 
 # Install deps first, keyed only on the lockfiles, so source edits don't bust the cache.
