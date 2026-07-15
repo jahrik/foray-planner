@@ -16,6 +16,7 @@ from foray.trails import (
     _parse_element,
     _parse_trails,
     _sample,
+    _tile_bboxes,
     fetch_trails,
     ingest_trails,
     ingest_trails_region,
@@ -251,6 +252,24 @@ def test_bbox_filter_formats_south_west_north_east() -> None:
     assert _bbox_filter(45.5, -124.8, 49.0, -116.9) == "(45.5,-124.8,49.0,-116.9)"
 
 
+def test_tile_bboxes_covers_a_wide_region_in_bounded_tiles() -> None:
+    # Washington: ~7.9 degrees wide, ~3.5 tall - bigger than one 2-degree tile in both axes.
+    tiles = _tile_bboxes(45.5438, -124.8485, 49.002, -116.9156)
+    assert len(tiles) > 1
+    for min_lat, min_lng, max_lat, max_lng in tiles:
+        assert max_lat - min_lat <= 2.0 + 1e-9
+        assert max_lng - min_lng <= 2.0 + 1e-9
+    # Every point in the original bbox is covered by at least one tile.
+    assert min(t[0] for t in tiles) == pytest.approx(45.5438)
+    assert min(t[1] for t in tiles) == pytest.approx(-124.8485)
+    assert max(t[2] for t in tiles) == pytest.approx(49.002)
+    assert max(t[3] for t in tiles) == pytest.approx(-116.9156)
+
+
+def test_tile_bboxes_single_tile_for_a_small_region() -> None:
+    assert _tile_bboxes(45.0, -123.0, 46.0, -122.0) == [(45.0, -123.0, 46.0, -122.0)]
+
+
 def test_ingest_trails_region_requires_a_bbox() -> None:
     region = CoverageRegion(name="No Bbox", place_id=999)
     with pytest.raises(ValueError, match="bbox"):
@@ -277,9 +296,13 @@ def test_ingest_trails_region_upserts_and_records_ingest(con: psycopg.Connection
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
+    # Washington's bbox spans multiple 2-degree tiles, so this same trail comes back from every
+    # tile query - `count` is rows upserted (may exceed the number of distinct trails), while the
+    # `trails` table itself stays deduped by id via ON CONFLICT.
     region = CoverageRegion(name="Washington", place_id=46, bbox=(-124.8, 45.5, -116.9, 49.0))
     count = ingest_trails_region(region, con, client=client)
-    assert count == 1
+    assert count >= 1
+    assert con.execute("SELECT count(*) FROM trails").fetchone() == (1,)
     assert is_ingested(con, "trails:place:46")
     # Second call skips before ever opening a client - if it didn't, this would try (and fail)
     # to reach the real Overpass API, since no client is passed here.
