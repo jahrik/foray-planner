@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 from collections.abc import Iterator
 
 import psycopg
@@ -10,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from foray.api import create_app
-from foray.config import Home, Settings, Species
+from foray.config import Config, Home, Settings, Species
 from foray.scoring import build_phenology
 
 CELL = 0.5
@@ -216,6 +217,7 @@ def test_config_cookie_is_secure_behind_https_proxy(client: TestClient) -> None:
     assert response.status_code == 200
     set_cookie = response.headers.get("set-cookie", "")
     assert "; secure" in set_cookie.lower()
+    assert "strict-transport-security" in response.headers
 
 
 def test_config_cookie_is_not_secure_over_plain_http(client: TestClient) -> None:
@@ -224,6 +226,9 @@ def test_config_cookie_is_not_secure_over_plain_http(client: TestClient) -> None
     assert response.status_code == 200
     set_cookie = response.headers.get("set-cookie", "")
     assert "; secure" not in set_cookie.lower()
+    # HSTS over plain HTTP is a no-op for browsers and just confusing to send - Copilot
+    # review caught this: only emit it when the client-facing scheme is actually HTTPS.
+    assert "strict-transport-security" not in response.headers
 
 
 def test_location_is_scoped_per_device(client: TestClient) -> None:
@@ -273,6 +278,43 @@ def test_cancel_refresh_when_idle(client: TestClient) -> None:
     response = client.delete("/api/refresh")
     assert response.status_code == 200
     assert response.json() == {"status": "idle"}
+
+
+def test_refresh_ingests_around_calling_devices_home(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: refresh must use the calling device's saved home, not the env-default home."""
+    captured_homes: list[Home] = []
+
+    def fake_ingest(cfg: Config, db: psycopg.Connection, **kwargs: object) -> None:
+        captured_homes.append(cfg.home)
+
+    monkeypatch.setattr("foray.api.ingest", fake_ingest)
+    # The assertion only cares which Home was threaded into ingest - stub out the real
+    # phenology rebuild (DDL + aggregation) too, so the test doesn't depend on that work
+    # finishing within the polling window below on a slower machine/CI.
+    monkeypatch.setattr("foray.scoring.build_phenology", lambda *args, **kwargs: None)
+
+    client.cookies.set("device_id", "test-device-refresh-own-home")
+    saved = client.post(
+        "/api/location",
+        json={"lat": 40.0, "lng": -105.0, "name": "Boulder", "radius_km": 50},
+    )
+    assert saved.status_code == 200
+
+    started = client.post("/api/refresh", params={"target": "mushrooms"})
+    assert started.status_code == 200
+    assert started.json() == {"status": "started"}
+
+    for _ in range(100):
+        if not client.get("/api/config").json()["refreshing"]:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("refresh did not finish in time")
+
+    assert len(captured_homes) == 1
+    assert captured_homes[0].name == "Boulder"
+    assert captured_homes[0].lat == 40.0
+    assert captured_homes[0].lng == -105.0
 
 
 def test_index_serves_built_frontend_or_hint(client: TestClient) -> None:

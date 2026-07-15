@@ -19,15 +19,11 @@
       - protocol: tcp
         ports: "80"
         sources:
-          addresses:
-            - "0.0.0.0/0"
-            - "::/0"
+          addresses: "{{ foray_cloudflare_ipv4 + foray_cloudflare_ipv6 }}"
       - protocol: tcp
         ports: "443"
         sources:
-          addresses:
-            - "0.0.0.0/0"
-            - "::/0"
+          addresses: "{{ foray_cloudflare_ipv4 + foray_cloudflare_ipv6 }}"
     outbound_rules:
       - protocol: tcp
         ports: "all"
