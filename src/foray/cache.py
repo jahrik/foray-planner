@@ -120,12 +120,25 @@ CREATE TABLE IF NOT EXISTS trails (
     geojson     TEXT                 -- GeoJSON text (LineString / MultiLineString / Point)
 );
 
--- Single-row settings table: the UI's "Set location" override, which used to live in a
--- location.json sidecar file next to the DuckDB cache. Fargate's container storage is
--- ephemeral, so this now has to be durable state in Postgres instead. The BOOLEAN PK +
--- CHECK enforces at most one row.
+-- One-time migration: app_location used to be a single global row shared by every visitor
+-- (BOOLEAN PK + CHECK enforcing at most one row). The app is now multi-user (anonymous
+-- per-device cookie, see api.py), so it needs one row per device instead. Rename the old
+-- table out of the way (preserve, don't drop) rather than losing whatever was last saved
+-- there; the CREATE TABLE below then claims the original name fresh.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'app_location' AND column_name = 'id' AND data_type = 'boolean'
+    ) THEN
+        ALTER TABLE app_location RENAME TO app_location_legacy_singleton;
+    END IF;
+END $$;
+
+-- Per-device "Set location" override: which device set what home/radius, keyed by an opaque
+-- anonymous device-id cookie (see api.py resolve_device_id) - no accounts, no login.
 CREATE TABLE IF NOT EXISTS app_location (
-    id        BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+    device_id TEXT PRIMARY KEY,
     name      TEXT NOT NULL,
     lat       DOUBLE PRECISION NOT NULL,
     lng       DOUBLE PRECISION NOT NULL,
@@ -374,25 +387,27 @@ def latest_obs_date_by_place(con: psycopg.Connection, taxon_id: int, place_id: i
     return row[0]
 
 
-def load_location(con: psycopg.Connection) -> dict[str, Any] | None:
-    """The UI's "Set location" override, if one has been saved. `None` = use config.yaml's."""
-    row = con.execute("SELECT name, lat, lng, radius_km FROM app_location WHERE id = true").fetchone()
+def load_location(con: psycopg.Connection, device_id: str) -> dict[str, Any] | None:
+    """This device's "Set location" override, if one has been saved. `None` = use the default."""
+    row = con.execute("SELECT name, lat, lng, radius_km FROM app_location WHERE device_id = %s", [device_id]).fetchone()
     if row is None:
         return None
     name, lat, lng, radius_km = row
     return {"name": name, "lat": lat, "lng": lng, "radius_km": radius_km}
 
 
-def save_location(con: psycopg.Connection, *, name: str, lat: float, lng: float, radius_km: float) -> None:
+def save_location(
+    con: psycopg.Connection, *, device_id: str, name: str, lat: float, lng: float, radius_km: float
+) -> None:
     con.execute(
         """
-        INSERT INTO app_location (id, name, lat, lng, radius_km)
-        VALUES (true, %s, %s, %s, %s)
-        ON CONFLICT (id) DO UPDATE SET
+        INSERT INTO app_location (device_id, name, lat, lng, radius_km)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (device_id) DO UPDATE SET
             name = EXCLUDED.name,
             lat = EXCLUDED.lat,
             lng = EXCLUDED.lng,
             radius_km = EXCLUDED.radius_km
         """,
-        [name, lat, lng, radius_km],
+        [device_id, name, lat, lng, radius_km],
     )
