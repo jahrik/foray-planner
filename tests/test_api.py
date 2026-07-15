@@ -280,6 +280,56 @@ def test_cancel_refresh_when_idle(client: TestClient) -> None:
     assert response.json() == {"status": "idle"}
 
 
+def _wait_for_idle(client: TestClient) -> None:
+    for _ in range(100):
+        if not client.get("/api/config").json()["refreshing"]:
+            return
+        time.sleep(0.05)
+    pytest.fail("refresh did not finish in time")
+
+
+def test_refresh_rate_limits_repeat_triggers_from_same_ip(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A client can't hammer /api/refresh (and the upstream iNat/RIDB calls behind it)."""
+    monkeypatch.setattr("foray.api.ingest", lambda *args, **kwargs: None)
+    monkeypatch.setattr("foray.scoring.build_phenology", lambda *args, **kwargs: None)
+
+    started = client.post("/api/refresh", params={"target": "mushrooms"})
+    assert started.status_code == 200
+    _wait_for_idle(client)
+
+    again = client.post("/api/refresh", params={"target": "mushrooms"})
+    assert again.status_code == 429
+    assert "retry-after" in {key.lower() for key in again.headers}
+
+
+def test_refresh_rate_limit_is_scoped_per_client_ip(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cloudflare's CF-Connecting-IP is trusted for the rate-limit key, not a shared bucket."""
+    monkeypatch.setattr("foray.api.ingest", lambda *args, **kwargs: None)
+    monkeypatch.setattr("foray.scoring.build_phenology", lambda *args, **kwargs: None)
+
+    started = client.post("/api/refresh", params={"target": "mushrooms"}, headers={"cf-connecting-ip": "10.0.0.1"})
+    assert started.status_code == 200
+    _wait_for_idle(client)
+
+    other_ip = client.post("/api/refresh", params={"target": "mushrooms"}, headers={"cf-connecting-ip": "10.0.0.2"})
+    assert other_ip.status_code == 200
+    _wait_for_idle(client)
+
+
+def test_refresh_ignores_malformed_cf_connecting_ip(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bogus CF-Connecting-IP value must not let a caller dodge the rate limit."""
+    monkeypatch.setattr("foray.api.ingest", lambda *args, **kwargs: None)
+    monkeypatch.setattr("foray.scoring.build_phenology", lambda *args, **kwargs: None)
+
+    bogus_ip = "not-an-ip"
+    started = client.post("/api/refresh", params={"target": "mushrooms"}, headers={"cf-connecting-ip": bogus_ip})
+    assert started.status_code == 200
+    _wait_for_idle(client)
+
+    again = client.post("/api/refresh", params={"target": "mushrooms"}, headers={"cf-connecting-ip": bogus_ip})
+    assert again.status_code == 429
+
+
 def test_refresh_ingests_around_calling_devices_home(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression: refresh must use the calling device's saved home, not the env-default home."""
     captured_homes: list[Home] = []
