@@ -10,6 +10,7 @@ import queue
 import re
 import secrets
 import threading
+import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -67,6 +68,12 @@ def _is_https(request: Request) -> bool:
     return request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
 
 
+def _client_ip(request: Request) -> str:
+    # The origin firewall only accepts inbound 80/443 from Cloudflare's ranges, so
+    # CF-Connecting-IP is safe to trust here.
+    return request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "unknown")
+
+
 class LocationBody(BaseModel):
     query: str | None = Field(default=None, max_length=200)
     lat: float | None = Field(default=None, ge=-90, le=90)
@@ -92,6 +99,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         "last_progress": None,
         "abort_event": threading.Event(),
         "http_client": None,
+        "refresh_rate_limit": {},
     }
 
     @asynccontextmanager
@@ -197,6 +205,23 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     def require_idle() -> None:
         if state["refreshing"]:
             raise HTTPException(409, "refreshing data for this area - try again shortly")
+
+    _REFRESH_RATE_LIMIT_SECONDS = 300.0
+
+    def check_refresh_rate_limit(ip: str) -> None:
+        now = time.monotonic()
+        limiter: dict[str, float] = state["refresh_rate_limit"]
+        last = limiter.get(ip)
+        if last is not None and now - last < _REFRESH_RATE_LIMIT_SECONDS:
+            retry_after = int(_REFRESH_RATE_LIMIT_SECONDS - (now - last)) + 1
+            raise HTTPException(
+                429,
+                f"refresh rate limit: try again in {retry_after}s",
+                headers={"Retry-After": str(retry_after)},
+            )
+        limiter[ip] = now
+        for stale_ip in [key for key, ts in limiter.items() if now - ts >= _REFRESH_RATE_LIMIT_SECONDS]:
+            del limiter[stale_ip]
 
     def parse_months(months: str) -> list[int]:
         try:
@@ -570,6 +595,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(400, f"unknown target '{target}'; valid: {sorted(_VALID_REFRESH_TARGETS)}")
         if state["refreshing"]:
             return {"status": "already running"}
+        check_refresh_rate_limit(_client_ip(request))
         device_id, is_new = resolve_device_id(request)
         if is_new:
             set_device_cookie(request, response, device_id)
