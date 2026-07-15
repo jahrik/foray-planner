@@ -41,16 +41,12 @@
       address in its network response. Networks returned: {{ foray_droplet.networks }}
   when: foray_droplet_ip is none
 
-- name: Add droplet to in-memory inventory with DB connection facts
+- name: Add droplet to in-memory inventory
   ansible.builtin.add_host:
     name: foray-prod
     ansible_host: "{{ foray_droplet_ip }}"
     ansible_user: root
     groups: foray
-    foray_db_host: "{{ foray_db_host }}"
-    foray_db_port: "{{ foray_db_port }}"
-    foray_db_user: "{{ foray_db_user }}"
-    foray_db_password: "{{ foray_db_password }}"
 
 - name: Wait for SSH to become available
   ansible.builtin.wait_for:

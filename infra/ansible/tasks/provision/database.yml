@@ -24,3 +24,11 @@
     foray_db_port: "{{ foray_db_cluster.database.connection.port }}"
     foray_db_user: "{{ foray_db_cluster.database.connection.user }}"
     foray_db_password: "{{ foray_db_cluster.database.connection.password }}"
+
+- name: Attach DB connection facts to the foray-prod host
+  ansible.builtin.add_host:
+    name: foray-prod
+    foray_db_host: "{{ foray_db_host }}"
+    foray_db_port: "{{ foray_db_port }}"
+    foray_db_user: "{{ foray_db_user }}"
+    foray_db_password: "{{ foray_db_password }}"
