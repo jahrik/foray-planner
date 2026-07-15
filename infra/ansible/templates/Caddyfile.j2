@@ -7,3 +7,14 @@ https://{{ foray_domain }} {
     tls /etc/caddy/tls/origin.pem /etc/caddy/tls/origin.key
     reverse_proxy {{ foray_app_container_name }}:8000
 }
+{% if foray_legacy_domain %}
+
+http://{{ foray_legacy_domain }} {
+    redir https://{{ foray_domain }}{uri} permanent
+}
+
+https://{{ foray_legacy_domain }} {
+    tls /etc/caddy/tls/origin.pem /etc/caddy/tls/origin.key
+    redir https://{{ foray_domain }}{uri} permanent
+}
+{% endif %}
