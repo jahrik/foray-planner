@@ -18,6 +18,7 @@
     region: "{{ foray_do_region }}"
     ssh_keys:
       - "{{ foray_ssh_key_id }}"
+    monitoring: true
     unique_name: true
   register: foray_droplet_result
 
