@@ -9,6 +9,24 @@
       cert/key saved locally (SSL/TLS -> Origin Server in the Cloudflare dashboard) -
       see .env.
 
+- name: Check the cert/key files exist locally
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ foray_tls_cert_path }}"
+    - "{{ foray_tls_key_path }}"
+  register: foray_tls_file_stats
+  delegate_to: localhost
+  become: false
+
+- name: Fail if either file is missing
+  ansible.builtin.assert:
+    that: "item.stat.exists"
+    fail_msg: "{{ item.item }} does not exist - check FORAY_TLS_CERT_PATH/FORAY_TLS_KEY_PATH in .env."
+  loop: "{{ foray_tls_file_stats.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
 - name: Ensure the TLS directory exists
   ansible.builtin.file:
     path: /opt/foray-planner/tls
