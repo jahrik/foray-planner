@@ -193,6 +193,10 @@ table.cal { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.cal td, table.cal th { padding: 4px 6px; text-align: left; }
 table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); font-weight: 600; }
 
+.rank-photos { margin-top: 6px; display: flex; flex-direction: column; gap: 10px; }
+.obs-photo { font-size: 12px; }
+.obs-thumb { width: 100%; max-width: 200px; border-radius: 6px; display: block; }
+
 /* Collapsed to a one-line peek by default - full contents still there, just scroll within
    the strip to see them, so it never eats map height on small screens. */
 .map-legend {

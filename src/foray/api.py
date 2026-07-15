@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
-from foray import camps, dispersed, geocode, land, scoring, trails
+from foray import camps, dispersed, geocode, inat, land, scoring, trails
 from foray.cache import _ENABLE_POSTGIS, SCHEMA
 from foray.cache import load_location as db_load_location
 from foray.cache import save_location as db_save_location
@@ -51,7 +51,8 @@ _CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
     "script-src 'self'; "
     "style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' https://*.tile.openstreetmap.org data:; "
+    "img-src 'self' https://*.tile.openstreetmap.org "
+    "https://static.inaturalist.org https://inaturalist-open-data.s3.amazonaws.com data:; "
     "connect-src 'self' https://nominatim.openstreetmap.org; "
     "font-src 'self'; "
     "object-src 'none'; "
@@ -430,6 +431,28 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
         return calendar
+
+    @app.get("/api/observations/photos")
+    def observation_photos(region_id: str, species: str = Query("all")) -> list[dict[str, Any]]:
+        require_idle()
+        cfg = current()
+        try:
+            with pool.connection() as conn:
+                recent = scoring.recent_observations(
+                    conn, region_id=region_id, taxon_ids=parse_species(species), cell_deg=cfg.cell_deg
+                )
+        except psycopg.errors.UndefinedTable:
+            raise HTTPException(409, "no data for this area yet - click Fetch data") from None
+        photos_by_obs = inat.photos_for_observations([obs["id"] for obs in recent])
+        result = []
+        for obs in recent:
+            photos = [
+                {"url": photo["url"], "license_code": photo["license_code"], "attribution": photo["attribution"]}
+                for photo in photos_by_obs.get(obs["id"], [])
+                if photo.get("license_code") in inat.DISPLAYABLE_PHOTO_LICENSES
+            ]
+            result.append({**obs, "photos": photos})
+        return result
 
     @app.get("/api/alerts")
     def get_alerts(

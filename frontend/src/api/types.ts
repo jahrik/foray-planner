@@ -153,6 +153,25 @@ export interface CoverageRegion {
   taxa_ingested: number;
 }
 
+/** A displayable observation photo (`GET /api/observations/photos`) - already license-filtered. */
+export interface ObservationPhoto {
+  url: string;
+  license_code: string;
+  attribution: string;
+}
+
+/** A recent observation, with any eligible thumbnails (`GET /api/observations/photos`). */
+export interface RecentObservation {
+  id: number;
+  taxon_id: number;
+  common_name: string;
+  observed_on: string | null;
+  place_guess: string | null;
+  uri: string | null;
+  obscured: boolean;
+  photos: ObservationPhoto[];
+}
+
 /** FastAPI's error envelope (`{ "detail": ... }`). */
 export interface ApiError {
   detail?: string;

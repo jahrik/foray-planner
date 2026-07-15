@@ -1,7 +1,7 @@
 import L from "leaflet";
 
 import { getJson } from "./api/client";
-import type { AlertRegion, Calendar, RegionScore } from "./api/types";
+import type { AlertRegion, Calendar, RecentObservation, RegionScore } from "./api/types";
 import { focusRegion } from "./layers";
 import { clearMarkers, deselectSize, HEAT_RGB, map, plot, selectSize } from "./map";
 import { dist, errorDetail, escapeHtml, inatUrl, MONTHS, qs, setStatus, state } from "./state";
@@ -107,25 +107,32 @@ export async function runDestinations(): Promise<void> {
       <div class="rank-tabs">
         <button type="button" class="rank-tab active" data-tab="species">Species</button>
         <button type="button" class="rank-tab" data-tab="calendar">Calendar</button>
+        <button type="button" class="rank-tab" data-tab="photos">Photos</button>
       </div>
       <div class="chips" data-tab-content="species">${region.species
         .slice(0, 6)
         .map((hit) => speciesChip({ ...hit, label: (hit.w_pheno * 100).toFixed(0) + "%" }))
         .join("")}</div>
-      <div class="rank-calendar" data-tab-content="calendar" style="display:none"></div>`;
+      <div class="rank-calendar" data-tab-content="calendar" style="display:none"></div>
+      <div class="rank-photos" data-tab-content="photos" style="display:none"></div>`;
     const speciesTab = card.querySelector<HTMLButtonElement>('[data-tab="species"]')!;
     const calendarTab = card.querySelector<HTMLButtonElement>('[data-tab="calendar"]')!;
+    const photosTab = card.querySelector<HTMLButtonElement>('[data-tab="photos"]')!;
     const speciesBody = card.querySelector<HTMLElement>('[data-tab-content="species"]')!;
     const calendarBody = card.querySelector<HTMLElement>('[data-tab-content="calendar"]')!;
+    const photosBody = card.querySelector<HTMLElement>('[data-tab-content="photos"]')!;
     // "loading" (not just a boolean) guards against a second click firing a duplicate fetch
     // while the first is still in flight; a failed fetch resets to "idle" so the tab can be
     // retried, rather than permanently disabling it like a plain "already loaded" flag would.
     let calendarState: "idle" | "loading" | "loaded" = "idle";
-    const showTab = (tab: "species" | "calendar") => {
+    let photosState: "idle" | "loading" | "loaded" = "idle";
+    const showTab = (tab: "species" | "calendar" | "photos") => {
       speciesTab.classList.toggle("active", tab === "species");
       calendarTab.classList.toggle("active", tab === "calendar");
+      photosTab.classList.toggle("active", tab === "photos");
       speciesBody.style.display = tab === "species" ? "" : "none";
       calendarBody.style.display = tab === "calendar" ? "" : "none";
+      photosBody.style.display = tab === "photos" ? "" : "none";
     };
     speciesTab.onclick = (e) => {
       e.stopPropagation();
@@ -138,6 +145,16 @@ export async function runDestinations(): Promise<void> {
         calendarState = "loading";
         loadCalendarInto(region.region_id, calendarBody).then((succeeded) => {
           calendarState = succeeded ? "loaded" : "idle";
+        });
+      }
+    };
+    photosTab.onclick = (e) => {
+      e.stopPropagation();
+      showTab("photos");
+      if (photosState === "idle") {
+        photosState = "loading";
+        loadPhotosInto(region.region_id, photosBody).then((succeeded) => {
+          photosState = succeeded ? "loaded" : "idle";
         });
       }
     };
@@ -219,6 +236,47 @@ async function loadCalendarInto(regionId: string, container: HTMLElement): Promi
       <td class="meta">${speciesText}</td></tr>`;
   }
   container.innerHTML = `<table class="cal"><tr><th>Month</th><th>Obs</th><th>Species</th></tr>${rows}</table>`;
+  return true;
+}
+
+// Same fetch-once-per-card pattern as loadCalendarInto. Observations without an eligible
+// (redisplayable) photo still get listed as a plain link back to iNat, per the license allow-list
+// the backend already applied.
+async function loadPhotosInto(regionId: string, container: HTMLElement): Promise<boolean> {
+  container.innerHTML = "<p class='hint'>Loading…</p>";
+  let observations: RecentObservation[];
+  try {
+    observations = await getJson<RecentObservation[]>(`/api/observations/photos?region_id=${regionId}`);
+  } catch (error) {
+    container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
+    return false;
+  }
+  if (!observations.length) {
+    container.innerHTML = "<p class='hint'>No recent observations here yet.</p>";
+    return true;
+  }
+  container.innerHTML = observations
+    .map((obs) => {
+      const uri = obs.uri && obs.uri.startsWith("https://") ? escapeHtml(obs.uri) : null;
+      const link = uri
+        ? `<a href="${uri}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(obs.common_name)}</a>`
+        : escapeHtml(obs.common_name);
+      const when = obs.observed_on ? escapeHtml(obs.observed_on) : "";
+      const photo = obs.photos[0] && obs.photos[0].url.startsWith("https://") ? obs.photos[0] : null;
+      const img = photo
+        ? `<img class="obs-thumb" src="${escapeHtml(photo.url)}" alt="${escapeHtml(obs.common_name)}" loading="lazy" />`
+        : "";
+      const thumb = photo
+        ? `${
+            uri
+              ? `<a href="${uri}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${img}</a>`
+              : img
+          }
+           <div class="meta">${escapeHtml(photo.attribution)}</div>`
+        : "";
+      return `<div class="obs-photo">${thumb}<div class="meta">${link} · ${when}</div></div>`;
+    })
+    .join("");
   return true;
 }
 
