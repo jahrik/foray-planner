@@ -121,8 +121,7 @@ def test_calendar_for_ranked_region(client: TestClient) -> None:
 
 def test_observation_photos_filters_by_license(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     region_id = client.get("/api/destinations", params={"months": "4"}).json()[0]["region_id"]
-    recent = client.get("/api/observations/photos", params={"region_id": region_id}).json()
-    obs_id = recent[0]["id"] if recent else 1
+    obs_id = 1  # a Morel observation id from the `cfg` fixture (ids 1..10), in this region
 
     def fake_photos(ids: list[int]) -> dict[int, list[dict]]:
         return {

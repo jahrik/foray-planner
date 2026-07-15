@@ -257,15 +257,21 @@ async function loadPhotosInto(regionId: string, container: HTMLElement): Promise
   }
   container.innerHTML = observations
     .map((obs) => {
-      const link = obs.uri
-        ? `<a href="${obs.uri}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(obs.common_name)}</a>`
+      const uri = obs.uri && obs.uri.startsWith("https://") ? escapeHtml(obs.uri) : null;
+      const link = uri
+        ? `<a href="${uri}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(obs.common_name)}</a>`
         : escapeHtml(obs.common_name);
       const when = obs.observed_on ? escapeHtml(obs.observed_on) : "";
-      const photo = obs.photos[0];
+      const photo = obs.photos[0] && obs.photos[0].url.startsWith("https://") ? obs.photos[0] : null;
+      const img = photo
+        ? `<img class="obs-thumb" src="${escapeHtml(photo.url)}" alt="${escapeHtml(obs.common_name)}" loading="lazy" />`
+        : "";
       const thumb = photo
-        ? `<a href="${obs.uri}" target="_blank" rel="noopener" onclick="event.stopPropagation()">
-             <img class="obs-thumb" src="${photo.url}" alt="${escapeHtml(obs.common_name)}" loading="lazy" />
-           </a>
+        ? `${
+            uri
+              ? `<a href="${uri}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${img}</a>`
+              : img
+          }
            <div class="meta">${escapeHtml(photo.attribution)}</div>`
         : "";
       return `<div class="obs-photo">${thumb}<div class="meta">${link} · ${when}</div></div>`;
