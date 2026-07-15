@@ -62,16 +62,7 @@ const speciesChip = (hit: ChipData, extraClass?: string): string =>
       target="_blank" rel="noopener" onclick="event.stopPropagation()"
    >${escapeHtml(hit.common_name)}${hit.label ? " · " + escapeHtml(hit.label) : ""}</a>`;
 
-// Tracks the pending auto-zoom-in timeout so a second runDestinations() call (a fast months
-// toggle, a new location) can cancel the previous one - otherwise a stale timeout could fire
-// after clearMarkers() has already removed its markers from the map.
-let pendingZoomIn: ReturnType<typeof setTimeout> | null = null;
-
 export async function runDestinations(): Promise<void> {
-  if (pendingZoomIn !== null) {
-    clearTimeout(pendingZoomIn);
-    pendingZoomIn = null;
-  }
   setStatus("Ranking…");
   clearMarkers();
   let regions: RegionScore[];
@@ -185,24 +176,16 @@ export async function runDestinations(): Promise<void> {
   });
   setStatus(`${regions.length} regions`);
 
-  // Automate the zoom + layer load for the (already server-sorted) top result: fit the map to
-  // the full spread first ("zoom out"), then fly into the best destination and load its
-  // trails/camps/land - the same thing a click on the #1 card already does. Its calendar loads
-  // on demand from the Calendar tab, same as every other card.
+  // Fit the map to every ranked result and stop there - no follow-up zoom into the top pick,
+  // which felt disorienting (the map settles, then yanks in tight a moment later). The
+  // (already server-sorted) top result still gets its trails/camps/land auto-loaded, same as
+  // a click on the #1 card; its calendar loads on demand from the Calendar tab like every
+  // other card.
   const top = regions[0];
-  if (regions.length > 1) {
-    map.fitBounds(L.latLngBounds(markers.map((marker) => marker.getLatLng())), {
-      padding: [40, 40],
-      maxZoom: 9,
-    });
-    pendingZoomIn = window.setTimeout(() => {
-      pendingZoomIn = null;
-      if (state.view !== "destinations") return; // user navigated away while we waited
-      map.flyTo([top.center_lat, top.center_lng], 9);
-    }, 900);
-  } else {
-    map.flyTo([top.center_lat, top.center_lng], 9);
-  }
+  map.fitBounds(L.latLngBounds(markers.map((marker) => marker.getLatLng())), {
+    padding: [40, 40],
+    maxZoom: 9,
+  });
   focusRegion(top.center_lat, top.center_lng);
   rankList.querySelector(".rank")?.classList.add("active");
   selectSize(markers[0]);
