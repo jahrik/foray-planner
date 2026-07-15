@@ -5,12 +5,12 @@
   when: foray_ssh_allowed_ips | length == 0
 
 - name: Create firewall
-  community.digitalocean.digital_ocean_firewall:
-    oauth_token: "{{ foray_do_token }}"
+  digitalocean.cloud.firewall:
+    token: "{{ foray_do_token }}"
     state: present
     name: "{{ foray_do_firewall_name }}"
     droplet_ids:
-      - "{{ foray_droplet.data.droplet.id }}"
+      - "{{ foray_droplet.id }}"
     inbound_rules:
       - protocol: tcp
         ports: "22"
@@ -47,4 +47,4 @@
           addresses:
             - "0.0.0.0/0"
             - "::/0"
-  when: foray_droplet.data is defined
+  when: foray_droplet is defined
