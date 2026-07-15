@@ -6,7 +6,14 @@
 
 - name: Resolve SSH key ID by name
   ansible.builtin.set_fact:
-    foray_ssh_key_id: "{{ (foray_ssh_keys.ssh_keys | selectattr('name', 'equalto', foray_do_ssh_key_name) | map(attribute='id') | first) }}"
+    foray_ssh_key_id: "{{ foray_ssh_keys.ssh_keys | selectattr('name', 'equalto', foray_do_ssh_key_name) | map(attribute='id') | list | first | default(None) }}"
+
+- name: Fail if the named SSH key isn't registered with DO
+  ansible.builtin.fail:
+    msg: >-
+      No SSH key named '{{ foray_do_ssh_key_name }}' found in this DO account.
+      Available keys: {{ foray_ssh_keys.ssh_keys | map(attribute='name') | list }}
+  when: foray_ssh_key_id is none
 
 - name: Create Droplet
   digitalocean.cloud.droplet:
@@ -25,7 +32,14 @@
 - name: Store droplet facts
   ansible.builtin.set_fact:
     foray_droplet: "{{ foray_droplet_result.droplet }}"
-    foray_droplet_ip: "{{ foray_droplet_result.droplet.networks.v4 | selectattr('type', 'equalto', 'public') | map(attribute='ip_address') | first }}"
+    foray_droplet_ip: "{{ foray_droplet_result.droplet.networks.v4 | selectattr('type', 'equalto', 'public') | map(attribute='ip_address') | list | first | default(None) }}"
+
+- name: Fail if the Droplet has no public IPv4 yet
+  ansible.builtin.fail:
+    msg: >-
+      Droplet {{ foray_droplet.name }} ({{ foray_droplet.id }}) has no public IPv4
+      address in its network response. Networks returned: {{ foray_droplet.networks }}
+  when: foray_droplet_ip is none
 
 - name: Add droplet to in-memory inventory with DB connection facts
   ansible.builtin.add_host:
