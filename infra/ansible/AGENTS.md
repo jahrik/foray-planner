@@ -27,7 +27,7 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 
 ## Conventions
 
-- All modules use FQCN (`ansible.builtin.*`, `community.docker.*`, `community.digitalocean.*`)
+- All modules use FQCN (`ansible.builtin.*`, `community.docker.*`, `digitalocean.cloud.*`)
 - Variables prefixed with `foray_`
 - Tags: `foray`, `foray:provision`, `foray:deploy`, `foray:cron`
 - Secrets read from environment at runtime, never committed

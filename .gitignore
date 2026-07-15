@@ -28,3 +28,6 @@ TODO.md
 
 # playwright-mcp session output (snapshots/console logs from manual browser testing)
 .playwright-mcp/
+
+# Ansible local collection/role/module cache (reinstalled via `make ansible-install`)
+infra/ansible/.ansible/

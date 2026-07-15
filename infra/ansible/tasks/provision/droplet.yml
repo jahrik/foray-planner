@@ -1,23 +1,45 @@
 ---
+- name: Look up registered SSH keys
+  digitalocean.cloud.ssh_keys_info:
+    token: "{{ foray_do_token }}"
+  register: foray_ssh_keys
+
+- name: Resolve SSH key ID by name
+  ansible.builtin.set_fact:
+    foray_ssh_key_id: "{{ foray_ssh_keys.ssh_keys | selectattr('name', 'equalto', foray_do_ssh_key_name) | map(attribute='id') | list | first | default(None) }}"
+
+- name: Fail if the named SSH key isn't registered with DO
+  ansible.builtin.fail:
+    msg: >-
+      No SSH key named '{{ foray_do_ssh_key_name }}' found in this DO account.
+      Available keys: {{ foray_ssh_keys.ssh_keys | map(attribute='name') | list }}
+  when: foray_ssh_key_id is none
+
 - name: Create Droplet
-  community.digitalocean.digital_ocean_droplet:
-    oauth_token: "{{ foray_do_token }}"
+  digitalocean.cloud.droplet:
+    token: "{{ foray_do_token }}"
     state: present
     name: "{{ foray_do_droplet_name }}"
     size: "{{ foray_do_droplet_size }}"
     image: "{{ foray_do_droplet_image }}"
     region: "{{ foray_do_region }}"
     ssh_keys:
-      - "{{ foray_do_ssh_key_name }}"
+      - "{{ foray_ssh_key_id }}"
+    monitoring: true
     unique_name: true
-    wait: true
-    wait_timeout: 300
-  register: foray_droplet
+  register: foray_droplet_result
 
-- name: Store droplet IP
+- name: Store droplet facts
   ansible.builtin.set_fact:
-    foray_droplet_ip: "{{ foray_droplet.data.droplet.networks.v4 | selectattr('type', 'equalto', 'public') | map(attribute='ip_address') | first }}"
-  when: foray_droplet.data is defined
+    foray_droplet: "{{ foray_droplet_result.droplet }}"
+    foray_droplet_ip: "{{ foray_droplet_result.droplet.networks.v4 | selectattr('type', 'equalto', 'public') | map(attribute='ip_address') | list | first | default(None) }}"
+
+- name: Fail if the Droplet has no public IPv4 yet
+  ansible.builtin.fail:
+    msg: >-
+      Droplet {{ foray_droplet.name }} ({{ foray_droplet.id }}) has no public IPv4
+      address in its network response. Networks returned: {{ foray_droplet.networks }}
+  when: foray_droplet_ip is none
 
 - name: Add droplet to in-memory inventory with DB connection facts
   ansible.builtin.add_host:
@@ -29,7 +51,6 @@
     foray_db_port: "{{ foray_db_port }}"
     foray_db_user: "{{ foray_db_user }}"
     foray_db_password: "{{ foray_db_password }}"
-  when: foray_droplet_ip is defined
 
 - name: Wait for SSH to become available
   ansible.builtin.wait_for:
@@ -37,4 +58,3 @@
     port: 22
     delay: 10
     timeout: 120
-  when: foray_droplet_ip is defined

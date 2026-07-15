@@ -9,6 +9,10 @@
     - name: Include database provisioning
       ansible.builtin.include_tasks:
         file: tasks/provision/database.yml
+        apply:
+          tags:
+            - foray
+            - "foray:provision"
       tags:
         - foray
         - "foray:provision"
@@ -16,6 +20,10 @@
     - name: Include droplet provisioning
       ansible.builtin.include_tasks:
         file: tasks/provision/droplet.yml
+        apply:
+          tags:
+            - foray
+            - "foray:provision"
       tags:
         - foray
         - "foray:provision"
@@ -23,13 +31,17 @@
     - name: Include firewall provisioning
       ansible.builtin.include_tasks:
         file: tasks/provision/firewall.yml
+        apply:
+          tags:
+            - foray
+            - "foray:provision"
       tags:
         - foray
         - "foray:provision"
 
 - name: Deploy foray-planner
   hosts: foray
-  gather_facts: true
+  gather_facts: false
   vars_files:
     - defaults/main.yml
   tasks:
@@ -46,6 +58,10 @@
     - name: Include deploy tasks
       ansible.builtin.include_tasks:
         file: tasks/deploy/app.yml
+        apply:
+          tags:
+            - foray
+            - "foray:deploy"
       tags:
         - foray
         - "foray:deploy"
@@ -53,6 +69,10 @@
     - name: Include cron tasks
       ansible.builtin.include_tasks:
         file: tasks/deploy/cron.yml
+        apply:
+          tags:
+            - foray
+            - "foray:cron"
       tags:
         - foray
         - "foray:cron"
