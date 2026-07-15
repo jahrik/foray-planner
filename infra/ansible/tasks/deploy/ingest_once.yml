@@ -1,0 +1,14 @@
+---
+# Manual/opt-in only - not part of foray:deploy. The daily foray-ingest cron job
+# (tasks/deploy/cron.yml) already keeps data fresh on a schedule; running a full
+# --all-regions ingest synchronously on every deploy just risked hitting iNaturalist's
+# rate limit and failing the whole deploy play for something cron already handles.
+- name: Run one-off data ingest
+  community.docker.docker_container:
+    name: foray-ingest-once
+    image: "{{ foray_app_image }}"
+    state: started
+    detach: false
+    cleanup: true
+    env_file: /opt/foray-planner/foray.env
+    command: "foray ingest --all-regions"

@@ -79,6 +79,15 @@
         - foray
         - "foray:cron"
 
+    - name: Include one-off ingest task
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/ingest_once.yml
+        apply:
+          tags:
+            - "foray:ingest-once"
+      tags:
+        - "foray:ingest-once"
+
   handlers:
     - name: Include handlers
       ansible.builtin.import_tasks:

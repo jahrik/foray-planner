@@ -1,5 +1,5 @@
 .PHONY: db install lint test check frontend start restart stop scheduler clean ingest \
-	ansible-install ansible-lint ansible-deploy ansible-provision
+	ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
@@ -83,5 +83,14 @@ ansible-provision:
 ansible-deploy:
 	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
 	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:deploy \
+		-i inventory/hosts.yml \
+		-e foray_droplet_ip=$$FORAY_DROPLET_IP
+
+# Manual/opt-in only - the foray-ingest cron job already keeps data fresh on a schedule.
+# Use this to warm data immediately (e.g. right after provisioning a fresh droplet) without
+# waiting for the next cron run; not part of `ansible-deploy`.
+ansible-ingest-once:
+	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
+	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:ingest-once \
 		-i inventory/hosts.yml \
 		-e foray_droplet_ip=$$FORAY_DROPLET_IP
