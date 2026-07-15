@@ -119,6 +119,50 @@ def test_calendar_for_ranked_region(client: TestClient) -> None:
     assert body["4"]["species"]["Morels"] == 10
 
 
+def test_observation_photos_filters_by_license(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    region_id = client.get("/api/destinations", params={"months": "4"}).json()[0]["region_id"]
+    recent = client.get("/api/observations/photos", params={"region_id": region_id}).json()
+    obs_id = recent[0]["id"] if recent else 1
+
+    def fake_photos(ids: list[int]) -> dict[int, list[dict]]:
+        return {
+            obs_id: [
+                {
+                    "url": "https://static.inaturalist.org/photos/1/square.jpg",
+                    "license_code": "cc-by",
+                    "attribution": "(c) someone",
+                },
+                {
+                    "url": "https://static.inaturalist.org/photos/2/square.jpg",
+                    "license_code": "cc-by-nd",
+                    "attribution": "(c) someone else",
+                },
+                {
+                    "url": "https://static.inaturalist.org/photos/3/square.jpg",
+                    "license_code": None,
+                    "attribution": "all rights reserved",
+                },
+            ]
+        }
+
+    monkeypatch.setattr("foray.api.inat.photos_for_observations", fake_photos)
+    response = client.get("/api/observations/photos", params={"region_id": region_id})
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 10  # every Morel observation in the fixture is in this region
+    target = next(obs for obs in body if obs["id"] == obs_id)
+    assert len(target["photos"]) == 1
+    assert target["photos"][0]["license_code"] == "cc-by"
+    others = [obs for obs in body if obs["id"] != obs_id]
+    assert all(obs["photos"] == [] for obs in others)
+
+
+def test_observation_photos_bad_region_returns_empty(client: TestClient) -> None:
+    response = client.get("/api/observations/photos", params={"region_id": "999_999"})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
 def test_alerts_empty_when_no_recent_observations(client: TestClient) -> None:
     # Fixture observations are dated 2022, well outside the default recent_weeks window.
     response = client.get("/api/alerts")

@@ -18,6 +18,12 @@ from pyinaturalist import (
     get_observations,
 )
 
+# Photo license codes iNat's API returns that are safe to redisplay (with attribution) under
+# their terms; cc-by-nd/cc-by-nc-nd forbid derivatives (thumbnailing counts) and a null license
+# means all-rights-reserved (the platform default) - those observations still get listed, just
+# without a thumbnail.
+DISPLAYABLE_PHOTO_LICENSES = frozenset({"cc0", "cc-by", "cc-by-sa", "cc-by-nc", "cc-by-nc-sa"})
+
 USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
 
 # iNat caps deep offset paging; ``id_above`` walks past that. 200 is the max page size.
@@ -146,3 +152,27 @@ def monthly_histogram(
     )
     # keys come back as month numbers (as ints or strings depending on version)
     return {int(k): int(v) for k, v in resp.items()}
+
+
+def photos_for_observations(ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+    """Fetch each observation's photos (id, url, license_code, attribution), keyed by obs id.
+
+    Only observations with at least one photo appear in the result.
+    """
+    if not ids:
+        return {}
+    photos: dict[int, list[dict[str, Any]]] = {}
+    for start in range(0, len(ids), _PAGE_SIZE):
+        chunk = ids[start : start + _PAGE_SIZE]
+        page = _with_retries(
+            lambda chunk=chunk: get_observations(
+                id=chunk,
+                per_page=_PAGE_SIZE,
+                user_agent=USER_AGENT,
+            )
+        )
+        for obs in page.get("results", []):
+            obs_photos = obs.get("photos") or []
+            if obs_photos:
+                photos[obs["id"]] = obs_photos
+    return photos

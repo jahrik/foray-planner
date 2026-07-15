@@ -415,6 +415,39 @@ def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[i
     return calendar
 
 
+def recent_observations(
+    con: psycopg.Connection, *, region_id: str, taxon_ids: list[int], cell_deg: float, limit: int = 12
+) -> list[dict[str, Any]]:
+    """Most recent observations in a region, newest first - the source list for photo thumbnails."""
+    binned = _BINNED.format(cell=cell_deg)
+    rows = con.execute(
+        cast(
+            LiteralString,
+            f"""
+            SELECT o.id, o.taxon_id, o.observed_on, o.place_guess, o.uri, o.obscured
+            FROM ({binned}) o
+            WHERE o.region_id = %s AND o.taxon_id IN ({_in(taxon_ids)})
+            ORDER BY o.observed_on DESC
+            LIMIT %s
+            """,
+        ),
+        [region_id, *taxon_ids, limit],
+    ).fetchall()
+    names = dict(con.execute("SELECT taxon_id, common_name FROM taxa").fetchall())
+    return [
+        {
+            "id": obs_id,
+            "taxon_id": taxon_id,
+            "common_name": names.get(taxon_id, str(taxon_id)),
+            "observed_on": observed_on.isoformat() if observed_on else None,
+            "place_guess": place_guess,
+            "uri": uri,
+            "obscured": bool(obscured),
+        }
+        for obs_id, taxon_id, observed_on, place_guess, uri, obscured in rows
+    ]
+
+
 def alerts(
     con: psycopg.Connection,
     *,
