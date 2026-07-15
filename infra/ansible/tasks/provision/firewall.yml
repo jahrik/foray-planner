@@ -63,10 +63,46 @@
   register: foray_firewalls_lookup
   when: foray_droplet is defined
 
+- name: Find this firewall by name
+  ansible.builtin.set_fact:
+    foray_firewall_matches: >-
+      {{ foray_firewalls_lookup.firewalls | selectattr('name', 'equalto', foray_do_firewall_name) | list }}
+  when: foray_droplet is defined
+
+- name: Fail if the name lookup didn't resolve to exactly one firewall
+  ansible.builtin.assert:
+    that:
+      - foray_firewall_matches | length == 1
+    fail_msg: >-
+      Expected exactly one firewall named {{ foray_do_firewall_name }}, found
+      {{ foray_firewall_matches | length }} - the "Create firewall" task above should have
+      just created it if missing, so this means either DO's API hasn't caught up yet
+      (eventual consistency - retry) or there's a duplicate-name firewall to clean up by hand.
+  when: foray_droplet is defined
+
 - name: Resolve this firewall's id
   ansible.builtin.set_fact:
-    foray_firewall_id: >-
-      {{ (foray_firewalls_lookup.firewalls | selectattr('name', 'equalto', foray_do_firewall_name) | first).id }}
+    foray_firewall_id: "{{ foray_firewall_matches[0].id }}"
+  when: foray_droplet is defined
+
+# Address-only comparison: ports/protocol are hardcoded above (never vary at runtime), so the
+# only thing that actually changes between runs is which addresses are allowed
+# (foray_ssh_allowed_ips, or Cloudflare's ranges if they're ever updated) - comparing just the
+# allowed-address sets is enough to skip a no-op PUT in the common case, without the fragility
+# of deep-diffing DO's full rule objects (which include fields like empty tags/
+# load_balancer_uids we don't send and don't want a mismatch on).
+- name: Extract current + desired allowed addresses for comparison
+  ansible.builtin.set_fact:
+    foray_firewall_current_addresses: >-
+      {{ foray_firewall_matches[0].inbound_rules
+         | map(attribute='sources')
+         | map(attribute='addresses', default=[])
+         | sum(start=[]) | sort }}
+    foray_firewall_desired_addresses: >-
+      {{ foray_firewall_inbound_rules
+         | map(attribute='sources')
+         | map(attribute='addresses')
+         | sum(start=[]) | sort }}
   when: foray_droplet is defined
 
 - name: Reconcile firewall rules against the live DO firewall
@@ -83,4 +119,6 @@
       inbound_rules: "{{ foray_firewall_inbound_rules }}"
       outbound_rules: "{{ foray_firewall_outbound_rules }}"
     status_code: [200]
-  when: foray_droplet is defined
+  when:
+    - foray_droplet is defined
+    - foray_firewall_current_addresses != foray_firewall_desired_addresses
