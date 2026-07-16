@@ -38,6 +38,12 @@ class Ingest(BaseModel):
     since_year: int = Field(ge=1900, le=2100, default=2015)
     quality_grade: QualityGrade = "research"
     recent_weeks: int = Field(gt=0, le=520, default=4)
+    # Cap on how far back a coverage-region ingest (the nightly --countries cron job) will ever
+    # look, regardless of whether it's a taxon's first run for that region. Full historical
+    # coverage comes from a one-time bulk load (see data/ scratch scripts), not this path - a
+    # first-run country ingest used to fall back to since_year (2015), which repeatedly crashed
+    # the droplet with ENOSPC on genera whose backfill never finished.
+    region_sync_days: int = Field(gt=0, le=3650, default=30)
 
 
 class Species(BaseModel):
@@ -116,6 +122,10 @@ class Settings(BaseSettings):
     @property
     def recent_weeks(self) -> int:
         return self.ingest.recent_weeks
+
+    @property
+    def region_sync_days(self) -> int:
+        return self.ingest.region_sync_days
 
     @property
     def taxon_ids(self) -> list[int]:
