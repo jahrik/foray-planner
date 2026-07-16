@@ -171,7 +171,13 @@ def ingest_region(
     progress_cb: Callable[[str, float], None] | None = None,
     abort_event: threading.Event | None = None,
 ) -> dict[int, int]:
-    """Pull observations for every seed taxon within a coverage region. Returns {taxon_id: rows}."""
+    """Pull observations for every seed taxon within a coverage region. Returns {taxon_id: rows}.
+
+    Bounded to the last ``cfg.region_sync_days`` regardless of whether this is a taxon's first
+    run for the region - full historical coverage is a one-time bulk load, not this path (see
+    data/ scratch scripts). Falling back to a full since_year backfill on first run is what
+    repeatedly crashed the droplet with ENOSPC before this was capped.
+    """
     upsert_taxa(
         db,
         [
@@ -185,7 +191,7 @@ def ingest_region(
         ],
     )
 
-    start_date = f"{cfg.since_year}-01-01"
+    recent_cutoff = (dt.date.today() - dt.timedelta(days=cfg.region_sync_days)).isoformat()
     end_date = dt.date.today().isoformat()
     counts: dict[int, int] = {}
 
@@ -195,7 +201,7 @@ def ingest_region(
         total,
         region.name,
         region.place_id,
-        start_date,
+        recent_cutoff,
         end_date,
     )
     for index, species in enumerate(cfg.species, start=1):
@@ -204,9 +210,9 @@ def ingest_region(
         latest = latest_obs_date_by_place(db, species.taxon_id, region.place_id)
         if latest:
             overlap = (dt.date.fromisoformat(latest) - dt.timedelta(days=7)).isoformat()
-            species_start = max(start_date, overlap)
+            species_start = max(recent_cutoff, overlap)
         else:
-            species_start = start_date
+            species_start = recent_cutoff
 
         logger.info(
             "ingest_region [%d/%d] %s (taxon %d) in %s from %s…",
