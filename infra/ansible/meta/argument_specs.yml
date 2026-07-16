@@ -18,7 +18,7 @@ argument_specs:
       foray_do_droplet_size:
         type: str
         description: Droplet size slug
-        default: s-1vcpu-1gb
+        default: s-1vcpu-2gb
       foray_do_droplet_image:
         type: str
         description: Droplet image slug (must have Docker pre-installed)

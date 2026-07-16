@@ -1,0 +1,63 @@
+---
+# Manual/opt-in only (foray:resize, never) - resizing is a deliberate, disruptive action
+# (droplet goes down for the power cycle) so it must never run as a side effect of a
+# regular foray:provision or foray:deploy pass. Target size comes from
+# foray_do_droplet_size in defaults/main.yml, same variable droplet.yml uses to create
+# the droplet in the first place, so the two never drift apart.
+- name: Shut down the droplet before resizing
+  digitalocean.cloud.droplet_action_power:
+    token: "{{ foray_do_token }}"
+    state: shutdown
+    force_power_off: true
+    name: "{{ foray_do_droplet_name }}"
+    region: "{{ foray_do_region }}"
+
+- name: Resize the droplet
+  digitalocean.cloud.droplet_action_resize:
+    token: "{{ foray_do_token }}"
+    state: present
+    disk: false
+    size: "{{ foray_do_droplet_size }}"
+    name: "{{ foray_do_droplet_name }}"
+    region: "{{ foray_do_region }}"
+
+- name: Power the droplet back on
+  digitalocean.cloud.droplet_action_power:
+    token: "{{ foray_do_token }}"
+    state: power_on
+    name: "{{ foray_do_droplet_name }}"
+    region: "{{ foray_do_region }}"
+
+- name: Look up droplet IP for the post-resize SSH wait
+  digitalocean.cloud.droplets_info:
+    token: "{{ foray_do_token }}"
+  register: foray_resize_droplets_info
+
+- name: Resolve resized droplet's public IPv4
+  ansible.builtin.set_fact:
+    foray_resize_droplet_ip: >-
+      {{ (foray_resize_droplets_info.droplets
+          | selectattr('name', 'equalto', foray_do_droplet_name)
+          | list | first | default({})).get('networks', {}).get('v4', [])
+          | selectattr('type', 'equalto', 'public')
+          | map(attribute='ip_address') | first | default(None) }}
+
+- name: Fail if the resized droplet has no public IPv4
+  ansible.builtin.fail:
+    msg: >-
+      Droplet {{ foray_do_droplet_name }} has no public IPv4 address after resize -
+      check it manually in the DO dashboard. Droplets found: {{ foray_resize_droplets_info.droplets
+      | selectattr('name', 'equalto', foray_do_droplet_name) | map(attribute='id') | list }}
+  when: foray_resize_droplet_ip is none
+
+# A plain TCP wait_for would false-positive on the exact failure mode that triggered this
+# resize: sshd hanging post-handshake under memory pressure (TCP connects, banner never
+# arrives). search_regex requires sshd to actually answer with its banner string, not just
+# accept the connection.
+- name: Wait for SSH to come back up after resize
+  ansible.builtin.wait_for:
+    host: "{{ foray_resize_droplet_ip }}"
+    port: 22
+    search_regex: "^SSH-"
+    delay: 10
+    timeout: 180

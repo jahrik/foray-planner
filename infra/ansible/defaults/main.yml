@@ -8,7 +8,7 @@ foray_do_region: sfo3
 
 # Droplet configuration
 foray_do_droplet_name: foray-planner
-foray_do_droplet_size: s-1vcpu-1gb
+foray_do_droplet_size: s-1vcpu-2gb
 foray_do_droplet_image: docker-20-04
 foray_do_ssh_key_name: ""
 
