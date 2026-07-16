@@ -38,13 +38,26 @@
     foray_resize_droplet_ip: >-
       {{ (foray_resize_droplets_info.droplets
           | selectattr('name', 'equalto', foray_do_droplet_name)
-          | first).networks.v4
+          | list | first | default({})).get('networks', {}).get('v4', [])
           | selectattr('type', 'equalto', 'public')
-          | map(attribute='ip_address') | first }}
+          | map(attribute='ip_address') | first | default(None) }}
 
+- name: Fail if the resized droplet has no public IPv4
+  ansible.builtin.fail:
+    msg: >-
+      Droplet {{ foray_do_droplet_name }} has no public IPv4 address after resize -
+      check it manually in the DO dashboard. Droplets found: {{ foray_resize_droplets_info.droplets
+      | selectattr('name', 'equalto', foray_do_droplet_name) | map(attribute='id') | list }}
+  when: foray_resize_droplet_ip is none
+
+# A plain TCP wait_for would false-positive on the exact failure mode that triggered this
+# resize: sshd hanging post-handshake under memory pressure (TCP connects, banner never
+# arrives). search_regex requires sshd to actually answer with its banner string, not just
+# accept the connection.
 - name: Wait for SSH to come back up after resize
   ansible.builtin.wait_for:
     host: "{{ foray_resize_droplet_ip }}"
     port: 22
+    search_regex: "^SSH-"
     delay: 10
     timeout: 180
