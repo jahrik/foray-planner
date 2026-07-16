@@ -29,7 +29,8 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 
 - All modules use FQCN (`ansible.builtin.*`, `community.docker.*`, `digitalocean.cloud.*`)
 - Variables prefixed with `foray_`
-- Tags: `foray`, `foray:provision`, `foray:deploy`, `foray:cron`
+- Tags: `foray`, `foray:provision`, `foray:deploy`, `foray:cron`, `foray:resize` (opt-in only,
+  behind `never` - resizes the droplet to `foray_do_droplet_size`, power-cycling it)
 - Secrets read from environment at runtime, never committed
 - Test with molecule: `uv run molecule test`
 

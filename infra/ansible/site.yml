@@ -41,6 +41,17 @@
         - foray
         - "foray:provision"
 
+    - name: Include droplet resize
+      ansible.builtin.include_tasks:
+        file: tasks/provision/droplet_resize.yml
+        apply:
+          tags:
+            - "foray:resize"
+            - never
+      tags:
+        - "foray:resize"
+        - never
+
 - name: Deploy foray-planner
   hosts: foray
   gather_facts: false
