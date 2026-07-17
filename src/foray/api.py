@@ -112,6 +112,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         "http_client": None,
         "refresh_rate_limit": {},
         "refresh_rate_limit_lock": threading.Lock(),
+        "refresh_lock": threading.Lock(),
     }
 
     @asynccontextmanager
@@ -628,15 +629,22 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     def refresh(request: Request, response: Response, target: str = Query("mushrooms")) -> dict[str, Any]:
         if target not in _VALID_REFRESH_TARGETS:
             raise HTTPException(400, f"unknown target '{target}'; valid: {sorted(_VALID_REFRESH_TARGETS)}")
-        if state["refreshing"]:
-            return {"status": "already running"}
-        check_refresh_rate_limit(_client_ip(request))
-        device_id, is_new = resolve_device_id(request)
-        if is_new:
-            set_device_cookie(request, response, device_id)
-        with pool.connection() as conn:
-            home = resolve_home(conn, device_id)
-        state["refreshing"] = True
+        # Check-and-set must be one atomic step, else two concurrent requests can both see
+        # `refreshing=False` and both start a refresh thread.
+        with state["refresh_lock"]:
+            if state["refreshing"]:
+                return {"status": "already running"}
+            state["refreshing"] = True
+        try:
+            check_refresh_rate_limit(_client_ip(request))
+            device_id, is_new = resolve_device_id(request)
+            if is_new:
+                set_device_cookie(request, response, device_id)
+            with pool.connection() as conn:
+                home = resolve_home(conn, device_id)
+        except Exception:
+            state["refreshing"] = False
+            raise
         state["last_error"] = None
         state["last_progress"] = None
         threading.Thread(target=run_refresh, args=(home, target), daemon=True).start()

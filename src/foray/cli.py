@@ -98,12 +98,14 @@ def camps_cmd(ctx: click.Context) -> None:
     """Ingest developed campgrounds (Recreation.gov RIDB) within the home radius."""
     cfg = ctx.obj["cfg"]
     con = connect()
-    count = ingest_campgrounds(cfg, con)
-    if count:
-        click.echo(f"Cached {count} campgrounds within {cfg.home.radius_km} km of home.")
-    else:
-        click.echo("No campgrounds ingested - set RIDB_API_KEY to enable camp data.")
-    con.close()
+    try:
+        count = ingest_campgrounds(cfg, con)
+        if count:
+            click.echo(f"Cached {count} campgrounds within {cfg.home.radius_km} km of home.")
+        else:
+            click.echo("No campgrounds ingested - set RIDB_API_KEY to enable camp data.")
+    finally:
+        con.close()
 
 
 @cli.command("land")
@@ -115,13 +117,15 @@ def land_cmd(ctx: click.Context, all_coverage: bool) -> None:
     """Ingest public-land ownership (BLM + USFS) polygons within the home radius, or --all."""
     cfg = ctx.obj["cfg"]
     con = connect()
-    if all_coverage:
-        count = ingest_public_land_coverage(cfg, con)
-        click.echo(f"Cached {count} public-land units (coverage-wide).")
-    else:
-        count = ingest_public_land(cfg, con)
-        click.echo(f"Cached {count} public-land units within {cfg.home.radius_km} km of home.")
-    con.close()
+    try:
+        if all_coverage:
+            count = ingest_public_land_coverage(cfg, con)
+            click.echo(f"Cached {count} public-land units (coverage-wide).")
+        else:
+            count = ingest_public_land(cfg, con)
+            click.echo(f"Cached {count} public-land units within {cfg.home.radius_km} km of home.")
+    finally:
+        con.close()
 
 
 @cli.command("dispersed")
@@ -130,9 +134,11 @@ def dispersed_cmd(ctx: click.Context) -> None:
     """Ingest OSM dispersed camping (reported sites + road∩public-land proxy) near home."""
     cfg = ctx.obj["cfg"]
     con = connect()
-    count = ingest_dispersed(cfg, con)
-    click.echo(f"Cached {count} dispersed/reported sites within {cfg.home.radius_km} km of home.")
-    con.close()
+    try:
+        count = ingest_dispersed(cfg, con)
+        click.echo(f"Cached {count} dispersed/reported sites within {cfg.home.radius_km} km of home.")
+    finally:
+        con.close()
 
 
 @cli.command("trails")
@@ -144,15 +150,17 @@ def trails_cmd(ctx: click.Context, all_coverage: bool) -> None:
     if all_coverage and not cfg.coverage:
         raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
     con = connect()
-    if all_coverage:
-        for region in cfg.coverage:
-            click.echo(f"Ingesting trails for {region.name}…")
-            count = ingest_trails_region(region, con)
-            click.echo(f"  cached {count} trails")
-    else:
-        count = ingest_trails(cfg, con)
-        click.echo(f"Cached {count} trails within {cfg.home.radius_km} km of home.")
-    con.close()
+    try:
+        if all_coverage:
+            for region in cfg.coverage:
+                click.echo(f"Ingesting trails for {region.name}…")
+                count = ingest_trails_region(region, con)
+                click.echo(f"  cached {count} trails")
+        else:
+            count = ingest_trails(cfg, con)
+            click.echo(f"Cached {count} trails within {cfg.home.radius_km} km of home.")
+    finally:
+        con.close()
 
 
 _REFRESH_TARGETS = ("mushrooms", "camps", "land", "dispersed", "trails")
@@ -205,39 +213,41 @@ def refresh(ctx: click.Context, with_: str, all_coverage: bool) -> None:
         if "trails" in targets and not cfg.coverage:
             raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
     con = connect()
-    # No more global location override to load here - home/radius overrides are now per-device
-    # (anonymous cookie, see api.py), which this CLI path has no way to resolve. Cron-driven
-    # refresh uses `cfg.home` (the env-configured default) unchanged - see TODO.md Epic 9's
-    # "Background layer refresh" section for the planned redesign of this gap.
-    if all_coverage:
+    try:
+        # No more global location override to load here - home/radius overrides are now per-device
+        # (anonymous cookie, see api.py), which this CLI path has no way to resolve. Cron-driven
+        # refresh uses `cfg.home` (the env-configured default) unchanged - see TODO.md Epic 9's
+        # "Background layer refresh" section for the planned redesign of this gap.
+        if all_coverage:
+            if "mushrooms" in targets:
+                for country in cfg.countries:
+                    click.echo(f"Ingesting {country.name}…")
+                    ingest_region(cfg, con, country)
+            if "land" in targets:
+                ingest_public_land_coverage(cfg, con)
+            if "trails" in targets:
+                for region in cfg.coverage:
+                    click.echo(f"Ingesting trails for {region.name}…")
+                    ingest_trails_region(region, con)
+        else:
+            if "mushrooms" in targets:
+                ingest(cfg, con)
+            if "camps" in targets:
+                ingest_campgrounds(cfg, con)
+            if "land" in targets:
+                ingest_public_land(cfg, con)
+            if "dispersed" in targets:
+                ingest_dispersed(cfg, con)
+            if "trails" in targets:
+                ingest_trails(cfg, con)
         if "mushrooms" in targets:
-            for country in cfg.countries:
-                click.echo(f"Ingesting {country.name}…")
-                ingest_region(cfg, con, country)
-        if "land" in targets:
-            ingest_public_land_coverage(cfg, con)
-        if "trails" in targets:
-            for region in cfg.coverage:
-                click.echo(f"Ingesting trails for {region.name}…")
-                ingest_trails_region(region, con)
-    else:
-        if "mushrooms" in targets:
-            ingest(cfg, con)
-        if "camps" in targets:
-            ingest_campgrounds(cfg, con)
-        if "land" in targets:
-            ingest_public_land(cfg, con)
-        if "dispersed" in targets:
-            ingest_dispersed(cfg, con)
-        if "trails" in targets:
-            ingest_trails(cfg, con)
-    if "mushrooms" in targets:
-        build_phenology(con, cfg.cell_deg)
-        region_count = (con.execute("SELECT count(*) FROM regions").fetchone() or (0,))[0]
-        click.echo(f"Phenology rebuilt across {region_count} regions ({observation_count(con)} observations).")
-    else:
-        click.echo(f"Warmed: {', '.join(targets)}.")
-    con.close()
+            build_phenology(con, cfg.cell_deg)
+            region_count = (con.execute("SELECT count(*) FROM regions").fetchone() or (0,))[0]
+            click.echo(f"Phenology rebuilt across {region_count} regions ({observation_count(con)} observations).")
+        else:
+            click.echo(f"Warmed: {', '.join(targets)}.")
+    finally:
+        con.close()
 
 
 def _parse_months(months: str) -> list[int]:
@@ -267,20 +277,22 @@ def plan_cmd(ctx: click.Context, months: str, max_stops: int, max_drive_km: floa
     cfg = ctx.obj["cfg"]
     selected = _parse_months(months) or [dt.date.today().month]
     con = connect()
-    trip = plan_route(
-        con,
-        months=selected,
-        taxon_ids=cfg.taxon_ids,
-        home_lat=cfg.home.lat,
-        home_lng=cfg.home.lng,
-        radius_km=cfg.home.radius_km,
-        cell_deg=cfg.cell_deg,
-        recent_weeks=cfg.recent_weeks,
-        max_stops=max_stops,
-        max_drive_km=max_drive_km,
-        require_free_camp=not any_camp,
-    )
-    con.close()
+    try:
+        trip = plan_route(
+            con,
+            months=selected,
+            taxon_ids=cfg.taxon_ids,
+            home_lat=cfg.home.lat,
+            home_lng=cfg.home.lng,
+            radius_km=cfg.home.radius_km,
+            cell_deg=cfg.cell_deg,
+            recent_weeks=cfg.recent_weeks,
+            max_stops=max_stops,
+            max_drive_km=max_drive_km,
+            require_free_camp=not any_camp,
+        )
+    finally:
+        con.close()
     if not trip.stops:
         click.echo("No viable stops found - try a wider radius, more months, or --any-camp.")
         return
