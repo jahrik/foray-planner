@@ -2,7 +2,7 @@ import "leaflet/dist/leaflet.css";
 import "./style.css";
 
 import { getJson, postJson } from "./api/client";
-import type { Config, Home } from "./api/types";
+import type { Home } from "./api/types";
 import { loadCamps, loadLand, loadTrails } from "./layers";
 import { initLocationAutocomplete } from "./location";
 import { currentTheme, initMap, setMapClickHandler, setTiles, updateHome } from "./map";
@@ -124,7 +124,7 @@ function initUnits(): void {
 }
 
 async function main(): Promise<void> {
-  const config = await getJson<Config>("/api/config");
+  const config = await getJson("/api/config");
   state.home = config.home;
   state.cellDeg = config.cell_deg;
   initTheme();
@@ -209,7 +209,7 @@ function initGeolocation(): void {
     async (position) => {
       let response: { home: Home };
       try {
-        response = await postJson<{ home: Home }>("/api/location", {
+        response = await postJson("/api/location", {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
         });
@@ -234,7 +234,7 @@ function initRadiusPresets(): void {
       const radius_km = Number(button.dataset.km);
       let response: { home: Home };
       try {
-        response = await postJson<{ home: Home }>("/api/location", {
+        response = await postJson("/api/location", {
           lat: state.home.lat,
           lng: state.home.lng,
           name: state.home.name,

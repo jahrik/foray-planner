@@ -38,6 +38,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Coverage
+         * @description Coverage regions with their latest ingest timestamps.
+         */
+        get: operations["get_coverage_api_coverage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/destinations": {
         parameters: {
             query?: never;
@@ -64,6 +84,23 @@ export interface paths {
         };
         /** Calendar */
         get: operations["calendar_api_calendar_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/observations/photos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Observation Photos */
+        get: operations["observation_photos_api_observations_photos_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -197,6 +234,24 @@ export interface paths {
         put?: never;
         /** Refresh */
         post: operations["refresh_api_refresh_post"];
+        /** Cancel Refresh */
+        delete: operations["cancel_refresh_api_refresh_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/refresh/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Refresh Stream */
+        get: operations["refresh_stream_api_refresh_stream_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -224,10 +279,137 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AlertHit */
+        AlertHit: {
+            /** Taxon Id */
+            taxon_id: number;
+            /** Common Name */
+            common_name: string;
+            /** Count */
+            count: number;
+            /** Last Seen */
+            last_seen: string;
+            /** Place Guess */
+            place_guess: string | null;
+            /** Uri */
+            uri: string | null;
+            /** Obscured */
+            obscured: boolean;
+        };
+        /** AlertRegion */
+        AlertRegion: {
+            /** Region Id */
+            region_id: string;
+            /** Center Lat */
+            center_lat: number;
+            /** Center Lng */
+            center_lng: number;
+            /** Distance Km */
+            distance_km: number;
+            /** Total */
+            total: number;
+            /** Species */
+            species: components["schemas"]["AlertHit"][];
+        };
+        /** CalendarBucket */
+        CalendarBucket: {
+            /** Total */
+            total: number;
+            /** Species */
+            species: {
+                [key: string]: number;
+            };
+        };
+        /** CampSite */
+        CampSite: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Kind */
+            kind: string;
+            /** Fee */
+            fee: string | null;
+            /** Free */
+            free: boolean | null;
+            /** Center Lat */
+            center_lat: number;
+            /** Center Lng */
+            center_lng: number;
+            /** Distance Km */
+            distance_km: number;
+            /** Source */
+            source: string;
+            /** Url */
+            url: string;
+        };
+        /** ConfigResponse */
+        ConfigResponse: {
+            home: components["schemas"]["Home"];
+            /** Cell Deg */
+            cell_deg: number;
+            /** Recent Weeks */
+            recent_weeks: number;
+            /** Refreshing */
+            refreshing: boolean;
+            /** Last Error */
+            last_error: string | null;
+        };
+        /** CoverageRegionResponse */
+        CoverageRegionResponse: {
+            /** Name */
+            name: string;
+            /** Place Id */
+            place_id: number;
+            /** Last Ingest */
+            last_ingest: string | null;
+            /** Taxa Ingested */
+            taxa_ingested: number;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** Home */
+        Home: {
+            /**
+             * Name
+             * @default Home
+             */
+            name: string;
+            /**
+             * Lat
+             * @default 47.6062
+             */
+            lat: number;
+            /**
+             * Lng
+             * @default -122.3321
+             */
+            lng: number;
+            /**
+             * Radius Km
+             * @default 150
+             */
+            radius_km: number;
+        };
+        /** LandUnit */
+        LandUnit: {
+            /** Id */
+            id: string;
+            /** Agency */
+            agency: string;
+            /** Unit */
+            unit: string;
+            /** Source */
+            source: string;
+            /** Url */
+            url: string;
+            /** Geometry */
+            geometry: {
+                [key: string]: unknown;
+            };
         };
         /** LocationBody */
         LocationBody: {
@@ -241,6 +423,164 @@ export interface components {
             name?: string | null;
             /** Radius Km */
             radius_km?: number | null;
+        };
+        /** LocationResponse */
+        LocationResponse: {
+            home: components["schemas"]["Home"];
+        };
+        /** ObservationPhoto */
+        ObservationPhoto: {
+            /** Url */
+            url: string;
+            /** License Code */
+            license_code: string;
+            /** Attribution */
+            attribution: string;
+        };
+        /** RecentObservation */
+        RecentObservation: {
+            /** Id */
+            id: number;
+            /** Taxon Id */
+            taxon_id: number;
+            /** Common Name */
+            common_name: string;
+            /** Observed On */
+            observed_on: string | null;
+            /** Place Guess */
+            place_guess: string | null;
+            /** Uri */
+            uri: string | null;
+            /** Obscured */
+            obscured: boolean;
+            /** Photos */
+            photos: components["schemas"]["ObservationPhoto"][];
+        };
+        /** RegionScore */
+        RegionScore: {
+            /** Region Id */
+            region_id: string;
+            /** Center Lat */
+            center_lat: number;
+            /** Center Lng */
+            center_lng: number;
+            /** Distance Km */
+            distance_km: number;
+            /** Score */
+            score: number;
+            /** Score Norm */
+            score_norm: number;
+            /** N Species */
+            n_species: number;
+            /** Recent Count */
+            recent_count: number;
+            /** Species */
+            species: components["schemas"]["SpeciesHit"][];
+        };
+        /** SpeciesHit */
+        SpeciesHit: {
+            /** Taxon Id */
+            taxon_id: number;
+            /** Common Name */
+            common_name: string;
+            /** Month Count */
+            month_count: number;
+            /** Total Count */
+            total_count: number;
+            /** W Pheno */
+            w_pheno: number;
+        };
+        /**
+         * SpeciesResponse
+         * @description ``Species`` plus the derived ``inat_url`` the route already adds to each entry.
+         *
+         *     Not a subclass of ``Species`` - a field named ``inat_url`` would shadow that model's
+         *     ``inat_url`` *property*, which pydantic warns about (and it's fragile besides).
+         */
+        SpeciesResponse: {
+            /** Taxon Id */
+            taxon_id: number;
+            /** Name */
+            name: string;
+            /** Common Name */
+            common_name: string;
+            /** Rank */
+            rank: string;
+            /** Inat Url */
+            inat_url: string;
+        };
+        /** StatusResponse */
+        StatusResponse: {
+            /** Status */
+            status: string;
+        };
+        /** Stop */
+        Stop: {
+            /** Order */
+            order: number;
+            /** Region Id */
+            region_id: string;
+            /** Center Lat */
+            center_lat: number;
+            /** Center Lng */
+            center_lng: number;
+            /** Score Norm */
+            score_norm: number;
+            /** N Species */
+            n_species: number;
+            /** Recent Count */
+            recent_count: number;
+            /** Species */
+            species: components["schemas"]["SpeciesHit"][];
+            /** Drive Km From Prev */
+            drive_km_from_prev: number;
+            /** Cumulative Drive Km */
+            cumulative_drive_km: number;
+            camp: components["schemas"]["CampSite"] | null;
+            /** Camp Is Free */
+            camp_is_free: boolean;
+        };
+        /** Trail */
+        Trail: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Kind */
+            kind: string;
+            /** Source */
+            source: string;
+            /** Url */
+            url: string;
+            /** Center Lat */
+            center_lat: number;
+            /** Center Lng */
+            center_lng: number;
+            /** Distance Km */
+            distance_km: number;
+            /** Camp Distance Km */
+            camp_distance_km: number | null;
+            /** Geometry */
+            geometry: {
+                [key: string]: unknown;
+            };
+        };
+        /** TripPlan */
+        TripPlan: {
+            /** Home Lat */
+            home_lat: number;
+            /** Home Lng */
+            home_lng: number;
+            /** Months */
+            months: number[];
+            /** N Stops */
+            n_stops: number;
+            /** Total Drive Km */
+            total_drive_km: number;
+            /** Stops */
+            stops: components["schemas"]["Stop"][];
+            /** Skipped Unreachable */
+            skipped_unreachable: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -279,9 +619,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ConfigResponse"];
                 };
             };
         };
@@ -301,9 +639,27 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["SpeciesResponse"][];
+                };
+            };
+        };
+    };
+    get_coverage_api_coverage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverageRegionResponse"][];
                 };
             };
         };
@@ -327,7 +683,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RegionScore"][];
                 };
             };
             /** @description Validation Error */
@@ -360,8 +716,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        [key: string]: unknown;
+                        [key: string]: components["schemas"]["CalendarBucket"];
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    observation_photos_api_observations_photos_get: {
+        parameters: {
+            query: {
+                region_id: string;
+                species?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecentObservation"][];
                 };
             };
             /** @description Validation Error */
@@ -394,9 +782,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["AlertRegion"][];
                 };
             };
             /** @description Validation Error */
@@ -431,7 +817,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CampSite"][];
                 };
             };
             /** @description Validation Error */
@@ -465,7 +851,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["LandUnit"][];
                 };
             };
             /** @description Validation Error */
@@ -499,7 +885,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Trail"][];
                 };
             };
             /** @description Validation Error */
@@ -536,7 +922,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TripPlan"];
                 };
             };
             /** @description Validation Error */
@@ -569,9 +955,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["LocationResponse"];
                 };
             };
             /** @description Validation Error */
@@ -587,6 +971,37 @@ export interface operations {
     };
     refresh_api_refresh_post: {
         parameters: {
+            query?: {
+                target?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_refresh_api_refresh_delete: {
+        parameters: {
             query?: never;
             header?: never;
             path?: never;
@@ -600,9 +1015,27 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+        };
+    };
+    refresh_stream_api_refresh_stream_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

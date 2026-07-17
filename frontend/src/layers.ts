@@ -38,9 +38,7 @@ export async function loadCamps(): Promise<void> {
   const { lat, lng } = state.focused;
   let sites: CampSite[];
   try {
-    sites = await getJson<CampSite[]>(
-      `/api/camps?lat=${lat}&lng=${lng}&free_only=${freeOnly()}`,
-    );
+    sites = await getJson("/api/camps", { query: { lat, lng, free_only: freeOnly() } });
   } catch (error) {
     setStatus(errorDetail(error));
     return;
@@ -108,7 +106,9 @@ export async function loadLand(): Promise<void> {
   const { lat, lng, radius_km } = state.home;
   let units: LandUnit[];
   try {
-    units = await getJson<LandUnit[]>(`/api/land?lat=${lat}&lng=${lng}&radius_km=${radius_km}`);
+    // The schema types `geometry` as an opaque `{[key: string]: unknown}` (see LandUnit in
+    // ./api/types) - it's real GeoJSON at runtime, just not modeled further on the backend.
+    units = (await getJson("/api/land", { query: { lat, lng, radius_km } })) as unknown as LandUnit[];
   } catch (error) {
     setStatus(errorDetail(error));
     return;
@@ -166,7 +166,8 @@ export async function loadTrails(): Promise<void> {
   const { lat, lng } = state.focused;
   let found: Trail[];
   try {
-    found = await getJson<Trail[]>(`/api/trails?lat=${lat}&lng=${lng}`);
+    // See the LandUnit cast above - `geometry` is real GeoJSON, just untyped on the backend.
+    found = (await getJson("/api/trails", { query: { lat, lng } })) as unknown as Trail[];
   } catch (error) {
     setStatus(errorDetail(error));
     return;

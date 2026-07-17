@@ -67,7 +67,7 @@ export async function runDestinations(): Promise<void> {
   clearMarkers();
   let regions: RegionScore[];
   try {
-    regions = await getJson<RegionScore[]>(`/api/destinations?months=${monthsParam()}`);
+    regions = await getJson("/api/destinations", { query: { months: monthsParam() } });
   } catch (error) {
     setStatus(errorDetail(error));
     return;
@@ -199,7 +199,7 @@ async function loadCalendarInto(regionId: string, container: HTMLElement): Promi
   container.innerHTML = "<p class='hint'>Loading…</p>";
   let calendar: Calendar;
   try {
-    calendar = await getJson<Calendar>(`/api/calendar?region_id=${regionId}`);
+    calendar = await getJson("/api/calendar", { query: { region_id: regionId } });
   } catch (error) {
     container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
     return false;
@@ -229,7 +229,7 @@ async function loadPhotosInto(regionId: string, container: HTMLElement): Promise
   container.innerHTML = "<p class='hint'>Loading…</p>";
   let observations: RecentObservation[];
   try {
-    observations = await getJson<RecentObservation[]>(`/api/observations/photos?region_id=${regionId}`);
+    observations = await getJson("/api/observations/photos", { query: { region_id: regionId } });
   } catch (error) {
     container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
     return false;
@@ -268,7 +268,7 @@ export async function runAlerts(): Promise<void> {
   clearMarkers();
   let regions: AlertRegion[];
   try {
-    regions = await getJson<AlertRegion[]>("/api/alerts");
+    regions = await getJson("/api/alerts");
   } catch (error) {
     setStatus(errorDetail(error));
     return;
