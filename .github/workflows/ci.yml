@@ -47,12 +47,23 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
       - name: Install dependencies
         working-directory: frontend
         run: npm ci
 
       - name: Type-check + build (tsc --noEmit + vite build)
         run: make frontend
+
+      - name: API schema up to date (foray openapi + openapi-typescript, fails on drift)
+        run: make check-api-schema
 
   docker:
     name: Lint + build image
