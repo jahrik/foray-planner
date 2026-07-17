@@ -30,15 +30,15 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
-      - id: pytest
-        name: pytest
-        entry: uv run python -m pytest
+      - id: make-test
+        name: make test
+        entry: make test
         language: system
         types: [python]
         pass_filenames: false
       - id: frontend-build
         name: frontend build (type-check + vite build)
-        entry: bash -c 'export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH" && cd frontend && npm run build'
+        entry: make frontend
         language: system
         types_or: [ts, css, html, json, javascript]
         pass_filenames: false
