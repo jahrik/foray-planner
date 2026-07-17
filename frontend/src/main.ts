@@ -7,7 +7,7 @@ import { loadCamps, loadLand, loadTrails } from "./layers";
 import { initLocationAutocomplete } from "./location";
 import { currentTheme, initMap, setMapClickHandler, setTiles, updateHome } from "./map";
 import { runPlan } from "./plan";
-import { setLocationLatLng, startRefresh } from "./refresh";
+import { cancelRefresh, setLocationLatLng, startRefresh } from "./refresh";
 import { errorDetail, qs, setStatus, state, type Units, type View } from "./state";
 import { initMonths, runAlerts, runDestinations } from "./views";
 
@@ -154,16 +154,19 @@ async function main(): Promise<void> {
   const ensureLayer = async (target: string, msg: string) => {
     // startRefresh will instantly skip if the backend detects it's already ingested
     await startRefresh(msg, target);
+    // If the user toggled a different layer (or cancelled) while this await was in flight,
+    // currentRefreshTarget has already moved on - don't clobber its state or reload out of order.
+    if (currentRefreshTarget !== target) return;
     currentRefreshTarget = null;
     loadCamps();
     loadLand();
     loadTrails();
   };
-  const cancelLayerRefresh = async (target: string) => {
+  const cancelLayerRefresh = (target: string) => {
     // Only cancel if the in-flight refresh is for this specific layer, so we
     // don't accidentally abort an unrelated mushroom refresh.
     if (currentRefreshTarget === target) {
-      await fetch("/api/refresh", { method: "DELETE" });
+      cancelRefresh();
       currentRefreshTarget = null;
     }
   };
