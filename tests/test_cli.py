@@ -77,3 +77,35 @@ def test_refresh_with_unknown_target_errors(env_config, calls) -> None:
     assert result.exit_code != 0
     assert "unknown target" in result.output
     assert calls == []
+
+
+class _CloseTrackingConnection:
+    """Proxies to a real connection but only records close() calls rather than actually
+    closing it - the wrapped connection is the shared session-scoped test fixture, which
+    later tests still need open."""
+
+    def __init__(self, real: psycopg.Connection) -> None:
+        self._real = real
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+    def __getattr__(self, name: str):
+        return getattr(self._real, name)
+
+
+def test_camps_closes_connection_on_error(con: psycopg.Connection, env_config, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression for #89: an exception mid-command must not leak the Postgres connection."""
+    tracker = _CloseTrackingConnection(con)
+    monkeypatch.setattr(cli_module, "connect", lambda: tracker)
+
+    def boom(cfg, con):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(cli_module, "ingest_campgrounds", boom)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["camps"])
+    assert result.exit_code != 0
+    assert tracker.close_calls == 1
