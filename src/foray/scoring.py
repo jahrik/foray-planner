@@ -78,6 +78,11 @@ def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
                 """,
             )
         )
+        # rank_destinations filters/groups by (taxon_id, region_id); place_calendar filters by
+        # region_id alone - both scan the whole table without these, and `phenology` scales
+        # with taxon x region x month so that gets expensive as observations grow.
+        con.execute("CREATE INDEX ix_phenology_taxon_region ON phenology (taxon_id, region_id)")
+        con.execute("CREATE INDEX ix_phenology_region ON phenology (region_id)")
 
 
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
