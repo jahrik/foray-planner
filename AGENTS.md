@@ -3,6 +3,22 @@
 Python web app that ranks mushroom-hunting destinations from iNaturalist observation
 phenology. Public repo: [jahrik/foray-planner](https://github.com/jahrik/foray-planner).
 
+## Why this app exists
+
+Built for a mycology hobbyist who travels constantly and tracks finds on iNaturalist - turns
+iNat phenology into road-trip planning: where to go next to be standing on top of the mushrooms,
+and where to sleep for free on BLM/Forest Service land while there. Jobs to be done, in
+priority order: (1) when/where are target fungi active now/soon, (2) where to camp for free,
+closest to that activity, (3) which trails put you closest to the mushrooms, (4) string several
+week-long stays into a sane driving route.
+
+Guiding principles - keep these in mind for any feature work:
+- **Free-first.** Rank dispersed camping on public land above paid sites; surface cost when known.
+- **No claims.** No edibility/ID/safety claims - and don't *assert* camping legality either. Show
+  land ownership + link the official source; informational, not authoritative.
+- **Reuse the grid.** Camping and trails hang off the same lat/lng grid + `haversine_km` scoring
+  already uses - don't invent a second geography.
+
 ## Layout
 
 - `src/foray/config.py` - pydantic-settings (`Settings(BaseSettings)`) with `Home`, `Ingest`,
@@ -66,6 +82,10 @@ phenology. Public repo: [jahrik/foray-planner](https://github.com/jahrik/foray-p
 Follows the global `python` skill: uv, ruff, ty, pytest, and **no single-letter variable
 names**. Tests are hermetic - never hit the network (scoring uses fixtures, geocoding is
 mocked).
+
+No CORS middleware is configured, which is intentionally safe by omission (no
+`Access-Control-Allow-Origin` = no cross-origin JS can read responses). Don't add one later
+without scoping `allow_origins` to the real domain.
 
 ## Commands
 
