@@ -55,3 +55,19 @@ def test_reupsert_preserves_place_guess_when_new_value_is_null(con: psycopg.Conn
     row = con.execute("SELECT place_guess FROM observations WHERE id = %s", [_ROW[0]]).fetchone()
     assert row is not None
     assert row[0] == "Seattle, WA"
+
+
+def test_reupsert_preserves_taxon_id_and_quality_grade_when_new_value_is_null(con: psycopg.Connection) -> None:
+    # A well-formed first write, then a re-upsert from a path that doesn't carry these
+    # columns (e.g. a partial bulk loader) - the healed/correct values must survive, not get
+    # wiped back to NULL.
+    _insert(con, _ROW)
+
+    row_without_taxon_or_grade = (*_ROW[:1], None, *_ROW[2:7], None, *_ROW[8:])
+    _insert(con, row_without_taxon_or_grade)
+
+    row = con.execute("SELECT taxon_id, quality_grade FROM observations WHERE id = %s", [_ROW[0]]).fetchone()
+    assert row is not None
+    taxon_id, quality_grade = row
+    assert taxon_id == _ROW[1]
+    assert quality_grade == _ROW[7]
