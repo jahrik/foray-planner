@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import threading
 import time
 from collections.abc import Iterator
 
@@ -371,6 +372,45 @@ def test_refresh_ignores_malformed_cf_connecting_ip(client: TestClient, monkeypa
 
     again = client.post("/api/refresh", params={"target": "mushrooms"}, headers={"cf-connecting-ip": bogus_ip})
     assert again.status_code == 429
+
+
+def test_refresh_concurrent_requests_start_only_one(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression for #88: concurrent POSTs must not both pass the check-then-act guard and
+    launch overlapping refresh threads."""
+    call_count = 0
+    call_lock = threading.Lock()
+    release = threading.Event()
+
+    def fake_ingest(cfg: Config, db: psycopg.Connection, **kwargs: object) -> None:
+        nonlocal call_count
+        with call_lock:
+            call_count += 1
+        # Block until every concurrent request has had a chance to race the guard, so the
+        # window the original bug needed to slip through is actually exercised.
+        release.wait(timeout=5)
+
+    monkeypatch.setattr("foray.api.ingest", fake_ingest)
+    monkeypatch.setattr("foray.scoring.build_phenology", lambda *args, **kwargs: None)
+
+    statuses: list[int] = []
+    statuses_lock = threading.Lock()
+
+    def fire() -> None:
+        response = client.post("/api/refresh", params={"target": "mushrooms"})
+        with statuses_lock:
+            statuses.append(response.status_code)
+
+    threads = [threading.Thread(target=fire) for _ in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    release.set()
+    _wait_for_idle(client)
+
+    assert call_count == 1, "ingest ran more than once - the check-then-act race reopened"
+    assert statuses == [200] * 5
 
 
 def test_refresh_ingests_around_calling_devices_home(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
