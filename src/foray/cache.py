@@ -204,6 +204,8 @@ def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
                  positional_accuracy, place_guess, uri, obscured)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
+                taxon_id = EXCLUDED.taxon_id,
+                quality_grade = EXCLUDED.quality_grade,
                 place_guess = COALESCE(EXCLUDED.place_guess, observations.place_guess),
                 uri = COALESCE(EXCLUDED.uri, observations.uri),
                 obscured = COALESCE(EXCLUDED.obscured, observations.obscured)

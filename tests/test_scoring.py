@@ -104,6 +104,34 @@ def test_radius_filters_far_regions(con: psycopg.Connection) -> None:
     assert all(abs(region.center_lat - APR_LAT) < CELL for region in ranked)
 
 
+def test_non_research_grade_excluded_from_scoring(con: psycopg.Connection) -> None:
+    # A third taxon with only casual-grade observations should never surface in scoring,
+    # even though it has plenty of in-season, in-radius rows - the research-grade filter is
+    # enforced centrally (scoring._BINNED), not just at ingest time.
+    casual_taxon = 333
+    with con.cursor() as cur:
+        cur.execute("INSERT INTO taxa VALUES (%s, %s, %s, %s)", (casual_taxon, "Amanita", "Amanitas", "genus"))
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            [
+                (9000 + i, casual_taxon, APR_LAT, APR_LNG, dt.date(2022, 4, 15), 4, 2022, "casual", 10)
+                for i in range(20)
+            ],
+        )
+    build_phenology(con, CELL)
+    ranked = rank_destinations(
+        con,
+        months=[4],
+        taxon_ids=[MOREL, CHANTERELLE, casual_taxon],
+        home_lat=46.0,
+        home_lng=-121.6,
+        radius_km=500,
+        cell_deg=CELL,
+    )
+    assert all(hit.taxon_id != casual_taxon for region in ranked for hit in region.species)
+
+
 def test_place_calendar_peaks_in_expected_month(con: psycopg.Connection) -> None:
     # Find the OCT region id via the regions table.
     row = con.execute("SELECT region_id FROM regions ORDER BY abs(center_lat - %s) LIMIT 1", [OCT_LAT]).fetchone()

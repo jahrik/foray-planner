@@ -22,6 +22,10 @@ from typing import Any, LiteralString, cast
 
 import psycopg
 
+# The "research-grade only" invariant (see AGENTS.md) is enforced here, centrally, rather
+# than trusted from the iNat API query param it started as (inat.py) - any row that lands in
+# `observations` some other way (a future bulk loader, a manual insert) still can't leak into
+# scoring.
 _BINNED = """
 SELECT
     o.*,
@@ -30,6 +34,7 @@ SELECT
     (CAST(floor(o.lat / {cell}) AS INTEGER))::text || '_' ||
         (CAST(floor(o.lng / {cell}) AS INTEGER))::text AS region_id
 FROM observations o
+WHERE o.quality_grade = 'research'
 """
 
 
