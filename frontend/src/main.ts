@@ -154,6 +154,9 @@ async function main(): Promise<void> {
   const ensureLayer = async (target: string, msg: string) => {
     // startRefresh will instantly skip if the backend detects it's already ingested
     await startRefresh(msg, target);
+    // If the user toggled a different layer (or cancelled) while this await was in flight,
+    // currentRefreshTarget has already moved on - don't clobber its state or reload out of order.
+    if (currentRefreshTarget !== target) return;
     currentRefreshTarget = null;
     loadCamps();
     loadLand();

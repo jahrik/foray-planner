@@ -7,16 +7,39 @@ import { runDestinations } from "./views";
 
 // Tracks the in-flight refresh's SSE connection + its promise resolver, so cancelRefresh()
 // can tear both down immediately instead of waiting for the server to report cancellation.
+// At most one refresh is ever tracked here - a new startRefresh() call finishes (as
+// cancelled) whatever the previous call was still tracking, so an old EventSource/promise
+// can never be leaked or left dangling behind a newer one.
 let activeSource: EventSource | null = null;
 let activeResolve: ((succeeded: boolean) => void) | null = null;
+// Set when cancelRefresh() is called before the SSE connection exists yet (i.e. while
+// startRefresh() is still awaiting the initial POST) - checked right after that await so
+// startRefresh() short-circuits instead of opening a stream for a refresh already cancelled.
+let cancelRequested = false;
 
 function resetRefreshUI(): void {
   qs<HTMLButtonElement>("#refresh").disabled = false;
   qs<HTMLProgressElement>("#refresh-progress").style.display = "none";
 }
 
+function finishActive(succeeded: boolean): void {
+  if (activeSource) {
+    activeSource.close();
+    activeSource = null;
+  }
+  if (activeResolve) {
+    const resolve = activeResolve;
+    activeResolve = null;
+    resolve(succeeded);
+  }
+}
+
 // Kick off a data refresh and resolve once the server finishes (listens via SSE).
 export async function startRefresh(message: string, target: string = "mushrooms"): Promise<boolean> {
+  // A new refresh supersedes whatever the previous call was still tracking.
+  finishActive(false);
+  cancelRequested = false;
+
   setStatus(message);
   qs<HTMLButtonElement>("#refresh").disabled = true;
   const progress = qs<HTMLProgressElement>("#refresh-progress");
@@ -44,6 +67,11 @@ export async function startRefresh(message: string, target: string = "mushrooms"
     return false;
   }
   const body = await started.json();
+  if (cancelRequested) {
+    // Cancelled while the POST was still in flight - don't open a stream for it.
+    resetRefreshUI();
+    return false;
+  }
   if (body?.status === "already running") {
     setStatus("Another refresh is running, showing progress…");
   }
@@ -53,9 +81,9 @@ export async function startRefresh(message: string, target: string = "mushrooms"
     activeResolve = resolve;
 
     const finish = (succeeded: boolean) => {
-      source.close();
       if (activeSource === source) activeSource = null;
       if (activeResolve === resolve) activeResolve = null;
+      source.close();
       resolve(succeeded);
     };
 
@@ -98,21 +126,16 @@ export async function startRefresh(message: string, target: string = "mushrooms"
 
 // Cancel the in-flight refresh from the client side: tell the server to abort, then
 // immediately close the local SSE connection and resolve startRefresh()'s pending promise
-// rather than waiting for the server to notice and broadcast a cancellation.
+// rather than waiting for the server to notice and broadcast a cancellation. If startRefresh()
+// hasn't opened its EventSource yet (still awaiting the initial POST), cancelRequested makes
+// it short-circuit as soon as that await resolves instead of opening a stream anyway.
 export function cancelRefresh(): void {
+  cancelRequested = true;
   fetch("/api/refresh", { method: "DELETE" }).catch(() => {
     // best-effort - still tear down the client side below regardless
   });
-  if (activeSource) {
-    activeSource.close();
-    activeSource = null;
-  }
+  finishActive(false);
   resetRefreshUI();
-  if (activeResolve) {
-    const resolve = activeResolve;
-    activeResolve = null;
-    resolve(false);
-  }
 }
 
 export async function setLocation(query: string): Promise<void> {
