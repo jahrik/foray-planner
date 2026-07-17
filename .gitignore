@@ -13,12 +13,10 @@ wheels/
 node_modules/
 src/foray/web/dist/
 
-# Local iNaturalist cache (rebuildable via `foray refresh`)
-data/*.duckdb
-data/*.duckdb.wal
-
-# Runtime location override (personal state, set from the UI)
-data/location.json
+# Local scratch dir: iNaturalist cache (rebuildable via `foray refresh`), runtime location
+# override (personal state, set from the UI), and one-off data-pipeline scripts/downloads -
+# never meant to be committed.
+data/
 
 # Local secrets (e.g. RIDB_API_KEY) - never commit; use env vars in prod
 .env
