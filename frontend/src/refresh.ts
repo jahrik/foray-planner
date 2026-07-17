@@ -5,6 +5,16 @@ import { updateHome } from "./map";
 import { errorDetail, qs, setStatus } from "./state";
 import { runDestinations } from "./views";
 
+// Tracks the in-flight refresh's SSE connection + its promise resolver, so cancelRefresh()
+// can tear both down immediately instead of waiting for the server to report cancellation.
+let activeSource: EventSource | null = null;
+let activeResolve: ((succeeded: boolean) => void) | null = null;
+
+function resetRefreshUI(): void {
+  qs<HTMLButtonElement>("#refresh").disabled = false;
+  qs<HTMLProgressElement>("#refresh-progress").style.display = "none";
+}
+
 // Kick off a data refresh and resolve once the server finishes (listens via SSE).
 export async function startRefresh(message: string, target: string = "mushrooms"): Promise<boolean> {
   setStatus(message);
@@ -18,8 +28,7 @@ export async function startRefresh(message: string, target: string = "mushrooms"
     started = await fetch(`/api/refresh?target=${target}`, { method: "POST" });
   } catch (error) {
     setStatus(errorDetail(error) || "refresh failed to start - no connection");
-    qs<HTMLButtonElement>("#refresh").disabled = false;
-    progress.style.display = "none";
+    resetRefreshUI();
     return false;
   }
   if (!started.ok) {
@@ -31,8 +40,7 @@ export async function startRefresh(message: string, target: string = "mushrooms"
       // body wasn't JSON; fall back to the status-code message above
     }
     setStatus(detail);
-    qs<HTMLButtonElement>("#refresh").disabled = false;
-    progress.style.display = "none";
+    resetRefreshUI();
     return false;
   }
   const body = await started.json();
@@ -41,9 +49,27 @@ export async function startRefresh(message: string, target: string = "mushrooms"
   }
   return new Promise((resolve) => {
     const source = new EventSource("/api/refresh/stream");
+    activeSource = source;
+    activeResolve = resolve;
+
+    const finish = (succeeded: boolean) => {
+      source.close();
+      if (activeSource === source) activeSource = null;
+      if (activeResolve === resolve) activeResolve = null;
+      resolve(succeeded);
+    };
 
     source.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      let data: { step?: string; progress?: number; error?: string; done?: boolean };
+      try {
+        data = JSON.parse(event.data);
+      } catch (error) {
+        console.error("SSE: malformed message", event.data, error);
+        setStatus("Refresh error: malformed update from server");
+        resetRefreshUI();
+        finish(false);
+        return;
+      }
       if (data.step) {
         setStatus(data.step);
       }
@@ -53,28 +79,40 @@ export async function startRefresh(message: string, target: string = "mushrooms"
 
       if (data.error) {
         setStatus("Refresh error: " + data.error);
-        qs<HTMLButtonElement>("#refresh").disabled = false;
-        progress.style.display = "none";
-        source.close();
-        resolve(false);
+        resetRefreshUI();
+        finish(false);
       } else if (data.done) {
         setStatus("Data ready.");
-        qs<HTMLButtonElement>("#refresh").disabled = false;
-        progress.style.display = "none";
-        source.close();
-        resolve(true);
+        resetRefreshUI();
+        finish(true);
       }
     };
 
     source.onerror = (err) => {
       console.error("SSE Error:", err);
-      source.close();
-      // Only un-disable if we haven't already finished.
-      qs<HTMLButtonElement>("#refresh").disabled = false;
-      progress.style.display = "none";
-      resolve(false);
+      resetRefreshUI();
+      finish(false);
     };
   });
+}
+
+// Cancel the in-flight refresh from the client side: tell the server to abort, then
+// immediately close the local SSE connection and resolve startRefresh()'s pending promise
+// rather than waiting for the server to notice and broadcast a cancellation.
+export function cancelRefresh(): void {
+  fetch("/api/refresh", { method: "DELETE" }).catch(() => {
+    // best-effort - still tear down the client side below regardless
+  });
+  if (activeSource) {
+    activeSource.close();
+    activeSource = null;
+  }
+  resetRefreshUI();
+  if (activeResolve) {
+    const resolve = activeResolve;
+    activeResolve = null;
+    resolve(false);
+  }
 }
 
 export async function setLocation(query: string): Promise<void> {
