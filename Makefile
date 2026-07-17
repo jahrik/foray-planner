@@ -19,8 +19,10 @@ install:
 	uv sync
 	cd frontend && npm ci
 
+# Check-only (not auto-fixing) so this is a true verification step, safe for CI - the
+# ruff-format/ruff-check pre-commit hooks own auto-fixing on commit.
 lint:
-	uv run ruff format .
+	uv run ruff format --check .
 	uv run ruff check .
 	uv run ty check
 
@@ -29,6 +31,8 @@ test: db
 
 check: lint test
 
+# Assumes `frontend/node_modules` already exists (`make install` or CI's `npm ci`) - this
+# only runs the type-check + build, not the install.
 frontend:
 	cd frontend && npm run build
 

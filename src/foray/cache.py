@@ -146,6 +146,13 @@ CREATE TABLE IF NOT EXISTS app_location (
 );
 
 CREATE INDEX IF NOT EXISTS ix_observations_lat_lng ON observations (lat, lng);
+
+-- Scoring's shared _BINNED fragment (scoring.py) filters on taxon_id + observed_on
+-- (_recent_counts, recent_observations, alerts) on every live request - without this, each
+-- one is a sequential scan over `observations`. (build_phenology's GROUP BY region_id,
+-- taxon_id, month is a full aggregate over _BINNED's output regardless, so a plain index on
+-- `month` alone wouldn't speed that up - not added.)
+CREATE INDEX IF NOT EXISTS ix_observations_taxon_observed ON observations (taxon_id, observed_on);
 """
 
 

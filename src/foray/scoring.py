@@ -78,6 +78,16 @@ def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
                 """,
             )
         )
+        # rank_destinations filters/groups by (taxon_id, region_id); place_calendar filters by
+        # region_id + taxon_id IN (...) - both scan the whole table without these, and
+        # `phenology` scales with taxon x region x month so that gets expensive as
+        # observations grow.
+        con.execute("CREATE INDEX ix_phenology_taxon_region ON phenology (taxon_id, region_id)")
+        con.execute("CREATE INDEX ix_phenology_region ON phenology (region_id)")
+        # Fresh tables have no planner statistics until autovacuum gets to them - without this,
+        # requests right after a refresh could still get seq-scan plans despite the indexes above.
+        con.execute("ANALYZE phenology")
+        con.execute("ANALYZE regions")
 
 
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
