@@ -676,7 +676,16 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             return StatusResponse(status="cancelling")
         return StatusResponse(status="idle")
 
-    @app.get("/api/refresh/stream")
+    @app.get(
+        "/api/refresh/stream",
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "description": "Server-sent progress events",
+                "content": {"text/event-stream": {"schema": {"type": "string"}}},
+            }
+        },
+    )
     async def refresh_stream() -> StreamingResponse:
         listener_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=100)
         if state["last_progress"]:

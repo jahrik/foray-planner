@@ -106,8 +106,10 @@ export async function loadLand(): Promise<void> {
   const { lat, lng, radius_km } = state.home;
   let units: LandUnit[];
   try {
-    // The schema types `geometry` as an opaque `{[key: string]: unknown}` (see LandUnit in
-    // ./api/types) - it's real GeoJSON at runtime, just not modeled further on the backend.
+    // The generated OpenAPI schema types `geometry` as an opaque `{[key: string]: unknown}`
+    // (components["schemas"]["LandUnit"] in ./api/schema) - it's real GeoJSON at runtime, just
+    // not modeled further on the backend. `./api/types`'s `LandUnit` alias overrides it to
+    // `GeoJSON.Geometry`, hence this cast.
     units = (await getJson("/api/land", { query: { lat, lng, radius_km } })) as unknown as LandUnit[];
   } catch (error) {
     setStatus(errorDetail(error));
