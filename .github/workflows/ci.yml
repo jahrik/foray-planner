@@ -18,7 +18,7 @@ jobs:
     name: Lint, type-check, test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
@@ -38,7 +38,7 @@ jobs:
     name: Build client (type-check + bundle)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -69,7 +69,7 @@ jobs:
     name: Lint + build image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Hadolint
         uses: hadolint/hadolint-action@v3.3.0
