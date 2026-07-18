@@ -13,7 +13,6 @@ import secrets
 import threading
 import time
 from contextlib import asynccontextmanager
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -21,12 +20,27 @@ import httpx
 import psycopg
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
 from foray import camps, dispersed, geocode, inat, land, scoring, trails
+from foray.api_models import (
+    AlertRegion,
+    CalendarBucket,
+    CampSite,
+    ConfigResponse,
+    CoverageRegionResponse,
+    LandUnit,
+    LocationResponse,
+    RecentObservation,
+    RegionScore,
+    SpeciesResponse,
+    StatusResponse,
+    Trail,
+    TripPlan,
+)
 from foray.cache import _ENABLE_POSTGIS, SCHEMA
 from foray.cache import load_location as db_load_location
 from foray.cache import save_location as db_save_location
@@ -191,9 +205,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         tradeoff for zero-friction use over cross-device sync.
 
         Returns ``(device_id, is_new)`` - callers must set the cookie on their actual response
-        object when ``is_new``, via ``set_device_cookie`` below. This can't set the cookie
-        itself: some endpoints return their own ``JSONResponse`` directly, and FastAPI does
-        *not* merge cookies from an injected ``Response`` param onto a returned Response.
+        object when ``is_new``, via ``set_device_cookie`` below. Every route that needs this
+        takes a ``response: Response`` param and returns a plain model/list rather than building
+        its own ``JSONResponse`` - FastAPI merges cookies set on the injected ``Response`` onto
+        the real response in that case, and it's also required for an accurate response schema
+        (FastAPI can't infer one from a route that returns a ``Response`` instance directly).
         """
         device_id = request.cookies.get(_DEVICE_ID_COOKIE)
         if device_id and _DEVICE_ID_PATTERN.fullmatch(device_id):
@@ -346,27 +362,27 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             state["refreshing"] = False
 
     @app.get("/api/config")
-    def get_config(request: Request, response: Response) -> dict[str, Any]:
+    def get_config(request: Request, response: Response) -> ConfigResponse:
         cfg = current()
         device_id, is_new = resolve_device_id(request)
         if is_new:
             set_device_cookie(request, response, device_id)
         with pool.connection() as conn:
             home = resolve_home(conn, device_id)
-        return {
-            "home": home.model_dump(),
-            "cell_deg": cfg.cell_deg,
-            "recent_weeks": cfg.recent_weeks,
-            "refreshing": state["refreshing"],
-            "last_error": state["last_error"],
-        }
+        return ConfigResponse(
+            home=home,
+            cell_deg=cfg.cell_deg,
+            recent_weeks=cfg.recent_weeks,
+            refreshing=state["refreshing"],
+            last_error=state["last_error"],
+        )
 
     @app.get("/api/species")
-    def get_species() -> list[dict[str, Any]]:
-        return [{**species.model_dump(), "inat_url": species.inat_url} for species in current().species]
+    def get_species() -> list[SpeciesResponse]:
+        return [SpeciesResponse(**species.model_dump(), inat_url=species.inat_url) for species in current().species]
 
     @app.get("/api/coverage")
-    def get_coverage() -> list[dict[str, Any]]:
+    def get_coverage() -> list[CoverageRegionResponse]:
         """Coverage regions with their latest ingest timestamps."""
         cfg = current()
         with pool.connection() as conn:
@@ -382,25 +398,28 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     [f"obs:%:place:{region.place_id}:%"],
                 ).fetchone()
                 results.append(
-                    {
-                        "name": region.name,
-                        "place_id": region.place_id,
-                        "last_ingest": last_ingest,
-                        "taxa_ingested": count_row[0] if count_row else 0,
-                    }
+                    CoverageRegionResponse(
+                        name=region.name,
+                        place_id=region.place_id,
+                        last_ingest=last_ingest,
+                        taxa_ingested=count_row[0] if count_row else 0,
+                    )
                 )
         return results
 
     @app.get("/api/destinations")
     def destinations(
         request: Request,
+        response: Response,
         months: str | None = Query(None),
         species: str = Query("all"),
         radius_km: float | None = Query(None),
-    ) -> JSONResponse:
+    ) -> list[RegionScore]:
         require_idle()
         cfg = current()
         device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(request, response, device_id)
         # No months given -> default to the current calendar month.
         selected_months = parse_months(months) if months is not None else [dt.date.today().month]
         try:
@@ -418,23 +437,20 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 )
         except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
-        result = JSONResponse([asdict(region) for region in ranked])
-        if is_new:
-            set_device_cookie(request, result, device_id)
-        return result
+        return [RegionScore.model_validate(region) for region in ranked]
 
     @app.get("/api/calendar")
-    def calendar(region_id: str, species: str = Query("all")) -> dict[int, Any]:
+    def calendar(region_id: str, species: str = Query("all")) -> dict[str, CalendarBucket]:
         require_idle()
         try:
             with pool.connection() as conn:
                 calendar = scoring.place_calendar(conn, region_id=region_id, taxon_ids=parse_species(species))
         except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
-        return calendar
+        return {str(month): CalendarBucket.model_validate(bucket) for month, bucket in calendar.items()}
 
     @app.get("/api/observations/photos")
-    def observation_photos(region_id: str, species: str = Query("all")) -> list[dict[str, Any]]:
+    def observation_photos(region_id: str, species: str = Query("all")) -> list[RecentObservation]:
         require_idle()
         cfg = current()
         try:
@@ -452,7 +468,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 for photo in photos_by_obs.get(obs["id"], [])
                 if photo.get("license_code") in inat.DISPLAYABLE_PHOTO_LICENSES
             ]
-            result.append({**obs, "photos": photos})
+            result.append(RecentObservation.model_validate({**obs, "photos": photos}))
         return result
 
     @app.get("/api/alerts")
@@ -462,7 +478,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         species: str = Query("all"),
         weeks: int | None = Query(None),
         radius_km: float | None = Query(None),
-    ) -> list[dict[str, Any]]:
+    ) -> list[AlertRegion]:
         require_idle()
         cfg = current()
         device_id, is_new = resolve_device_id(request)
@@ -471,7 +487,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         try:
             with pool.connection() as conn:
                 home = resolve_home(conn, device_id)
-                return scoring.alerts(
+                regions = scoring.alerts(
                     conn,
                     taxon_ids=parse_species(species),
                     home_lat=home.lat,
@@ -482,6 +498,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 )
         except psycopg.errors.UndefinedTable:
             return []
+        return [AlertRegion.model_validate(region) for region in regions]
 
     @app.get("/api/camps")
     def get_camps(
@@ -490,7 +507,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         lng: float | None = Query(None),
         radius_km: float = Query(40.0),
         free_only: bool = Query(False),
-    ) -> JSONResponse:
+    ) -> list[CampSite]:
         """Campsites near a region (by id) or an explicit lat/lng, free-first by distance."""
         require_idle()
         if region_id is not None:
@@ -507,7 +524,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 radius_km=radius_km,
                 free_only=free_only,
             )
-        return JSONResponse([asdict(site) for site in sites])
+        return [CampSite.model_validate(site) for site in sites]
 
     @app.get("/api/land")
     def get_land(
@@ -515,7 +532,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         lat: float | None = Query(None),
         lng: float | None = Query(None),
         radius_km: float = Query(40.0),
-    ) -> JSONResponse:
+    ) -> list[LandUnit]:
         """Public-land ownership polygons near a region (by id) or an explicit lat/lng."""
         require_idle()
         if region_id is not None:
@@ -526,7 +543,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
         with pool.connection() as conn:
             units = scoring.land_near(conn, lat=center_lat, lng=center_lng, radius_km=radius_km)
-        return JSONResponse([asdict(unit) for unit in units])
+        return [LandUnit.model_validate(unit) for unit in units]
 
     @app.get("/api/trails")
     def get_trails(
@@ -534,7 +551,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         lat: float | None = Query(None),
         lng: float | None = Query(None),
         radius_km: float = Query(40.0),
-    ) -> JSONResponse:
+    ) -> list[Trail]:
         """Trails near a region (by id) or an explicit lat/lng, nearest to the hotspot first."""
         require_idle()
         if region_id is not None:
@@ -545,11 +562,12 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
         with pool.connection() as conn:
             found = scoring.trails_near(conn, lat=center_lat, lng=center_lng, radius_km=radius_km)
-        return JSONResponse([asdict(trail) for trail in found])
+        return [Trail.model_validate(trail) for trail in found]
 
     @app.get("/api/plan")
     def plan(
         request: Request,
+        response: Response,
         months: str | None = Query(None),
         species: str = Query("all"),
         radius_km: float | None = Query(None),
@@ -557,11 +575,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         max_drive_km: float = Query(400.0, gt=0),
         camp_radius_km: float = Query(40.0, gt=0),
         require_free_camp: bool = Query(True),
-    ) -> JSONResponse:
+    ) -> TripPlan:
         """Greedy multi-stop itinerary: top destinations sequenced home-out with the least drive."""
         require_idle()
         cfg = current()
         device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(request, response, device_id)
         selected_months = parse_months(months) if months is not None else [dt.date.today().month]
         try:
             with pool.connection() as conn:
@@ -582,13 +602,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 )
         except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
-        result = JSONResponse(asdict(trip))
-        if is_new:
-            set_device_cookie(request, result, device_id)
-        return result
+        return TripPlan.model_validate(trip)
 
     @app.post("/api/location")
-    def set_location(body: LocationBody, request: Request, response: Response) -> dict[str, Any]:
+    def set_location(body: LocationBody, request: Request, response: Response) -> LocationResponse:
         device_id, is_new = resolve_device_id(request)
         if is_new:
             set_device_cookie(request, response, device_id)
@@ -621,19 +638,19 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 conn, device_id=device_id, name=home.name, lat=home.lat, lng=home.lng, radius_km=home.radius_km
             )
 
-        return {"home": home.model_dump()}
+        return LocationResponse(home=home)
 
     _VALID_REFRESH_TARGETS = frozenset({"all", "mushrooms", "camps", "land", "dispersed", "trails"})
 
     @app.post("/api/refresh")
-    def refresh(request: Request, response: Response, target: str = Query("mushrooms")) -> dict[str, Any]:
+    def refresh(request: Request, response: Response, target: str = Query("mushrooms")) -> StatusResponse:
         if target not in _VALID_REFRESH_TARGETS:
             raise HTTPException(400, f"unknown target '{target}'; valid: {sorted(_VALID_REFRESH_TARGETS)}")
         # Check-and-set must be one atomic step, else two concurrent requests can both see
         # `refreshing=False` and both start a refresh thread.
         with state["refresh_lock"]:
             if state["refreshing"]:
-                return {"status": "already running"}
+                return StatusResponse(status="already running")
             state["refreshing"] = True
         try:
             check_refresh_rate_limit(_client_ip(request))
@@ -648,18 +665,27 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         state["last_error"] = None
         state["last_progress"] = None
         threading.Thread(target=run_refresh, args=(home, target), daemon=True).start()
-        return {"status": "started"}
+        return StatusResponse(status="started")
 
     @app.delete("/api/refresh")
-    def cancel_refresh() -> dict[str, Any]:
+    def cancel_refresh() -> StatusResponse:
         if state["refreshing"]:
             state["abort_event"].set()
             if state["http_client"] is not None:
                 state["http_client"].close()
-            return {"status": "cancelling"}
-        return {"status": "idle"}
+            return StatusResponse(status="cancelling")
+        return StatusResponse(status="idle")
 
-    @app.get("/api/refresh/stream")
+    @app.get(
+        "/api/refresh/stream",
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "description": "Server-sent progress events",
+                "content": {"text/event-stream": {"schema": {"type": "string"}}},
+            }
+        },
+    )
     async def refresh_stream() -> StreamingResponse:
         listener_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=100)
         if state["last_progress"]:

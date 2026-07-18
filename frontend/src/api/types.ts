@@ -1,176 +1,62 @@
-// Domain shapes for the JSON API. The backend endpoints return loosely-typed dicts
-// (see src/foray/scoring.py), so the generated schema (./schema.ts) only pins the
-// request/response envelope. These interfaces mirror the actual field-level shapes we
-// consume and are the single place to update if a payload changes.
+// Domain shapes for the JSON API, re-exported from the generated schema (./schema.ts, built by
+// `npm run gen:api` from the backend's OpenAPI spec). The backend now declares real Pydantic
+// response models for every route (see src/foray/api_models.py), so these are thin aliases onto
+// `components["schemas"][...]` rather than hand-maintained duplicates - a backend field rename
+// shows up here (and at every import site) as a compile error instead of silently drifting.
 
-export interface Home {
-  name: string;
-  lat: number;
-  lng: number;
-  radius_km: number;
-}
+import type { components } from "./schema";
 
-export interface Config {
-  home: Home;
-  cell_deg: number;
-  recent_weeks: number;
-  refreshing: boolean;
-  last_error: string | null;
-}
-
-export interface Species {
-  taxon_id: number;
-  common_name: string;
-  inat_url: string;
-}
+export type Home = components["schemas"]["Home"];
+export type Config = components["schemas"]["ConfigResponse"];
+export type Species = components["schemas"]["SpeciesResponse"];
 
 /** A target-species contribution to a ranked region. */
-export interface SpeciesHit {
-  taxon_id: number;
-  common_name: string;
-  month_count: number;
-  total_count: number;
-  w_pheno: number;
-}
+export type SpeciesHit = components["schemas"]["SpeciesHit"];
 
 /** One ranked destination region (`GET /api/destinations`). */
-export interface RegionScore {
-  region_id: string;
-  center_lat: number;
-  center_lng: number;
-  distance_km: number;
-  score: number;
-  score_norm: number;
-  n_species: number;
-  recent_count: number;
-  species: SpeciesHit[];
-}
+export type RegionScore = components["schemas"]["RegionScore"];
 
 /** A month bucket in the place calendar (`GET /api/calendar`). */
-export interface CalendarBucket {
-  total: number;
-  species: Record<string, number>;
-}
+export type CalendarBucket = components["schemas"]["CalendarBucket"];
 
-/** Keyed by month number 1-12. */
-export type Calendar = Record<number, CalendarBucket>;
+/** Keyed by month number 1-12 (JSON always stringifies dict keys). */
+export type Calendar = Record<string, CalendarBucket>;
 
 /** A recently-observed species within an alert region. */
-export interface AlertHit {
-  taxon_id: number;
-  common_name: string;
-  count: number;
-  last_seen: string;
-  place_guess: string | null;
-  uri: string | null;
-  obscured: boolean;
-}
+export type AlertHit = components["schemas"]["AlertHit"];
 
 /** A region with recent activity (`GET /api/alerts`). */
-export interface AlertRegion {
-  region_id: string;
-  center_lat: number;
-  center_lng: number;
-  distance_km: number;
-  total: number;
-  species: AlertHit[];
-}
+export type AlertRegion = components["schemas"]["AlertRegion"];
 
 /** A campsite near a region (`GET /api/camps`). `free` is null when the source is silent. */
-export interface CampSite {
-  id: string;
-  name: string;
-  kind: string;
-  fee: string | null;
-  free: boolean | null;
-  center_lat: number;
-  center_lng: number;
-  distance_km: number;
-  source: string;
-  url: string;
-}
+export type CampSite = components["schemas"]["CampSite"];
 
 /** A public-land ownership polygon (`GET /api/land`). `geometry` is raw GeoJSON. */
-export interface LandUnit {
-  id: string;
-  agency: string;
-  unit: string;
-  source: string;
-  url: string;
+export type LandUnit = Omit<components["schemas"]["LandUnit"], "geometry"> & {
   geometry: GeoJSON.Geometry;
-}
+};
 
 /** A trail near a hotspot (`GET /api/trails`). `geometry` is raw GeoJSON (line or point). */
-export interface Trail {
-  id: string;
-  name: string;
-  kind: string; // "path" | "route" | "trailhead"
-  source: string;
-  url: string;
-  center_lat: number;
-  center_lng: number;
-  distance_km: number;
-  camp_distance_km: number | null; // nearest campsite, null when none cached
+export type Trail = Omit<components["schemas"]["Trail"], "geometry"> & {
   geometry: GeoJSON.Geometry;
-}
+};
 
 /** One week-long stay in a planned trip (a `TripPlan.stops` entry). */
-export interface Stop {
-  order: number;
-  region_id: string;
-  center_lat: number;
-  center_lng: number;
-  score_norm: number;
-  n_species: number;
-  recent_count: number;
-  species: SpeciesHit[];
-  drive_km_from_prev: number;
-  cumulative_drive_km: number;
-  camp: CampSite | null; // nearest camp, null when none is within range
-  camp_is_free: boolean;
-}
+export type Stop = components["schemas"]["Stop"];
 
 /** A greedy multi-stop itinerary (`GET /api/plan`). */
-export interface TripPlan {
-  home_lat: number;
-  home_lng: number;
-  months: number[];
-  n_stops: number;
-  total_drive_km: number;
-  stops: Stop[];
-  skipped_unreachable: number;
-}
+export type TripPlan = components["schemas"]["TripPlan"];
 
-export interface LocationResponse {
-  home: Home;
-}
+export type LocationResponse = components["schemas"]["LocationResponse"];
 
 /** A configured coverage region with ingest freshness info (`GET /api/coverage`). */
-export interface CoverageRegion {
-  name: string;
-  place_id: number;
-  last_ingest: string | null;
-  taxa_ingested: number;
-}
+export type CoverageRegion = components["schemas"]["CoverageRegionResponse"];
 
 /** A displayable observation photo (`GET /api/observations/photos`) - already license-filtered. */
-export interface ObservationPhoto {
-  url: string;
-  license_code: string;
-  attribution: string;
-}
+export type ObservationPhoto = components["schemas"]["ObservationPhoto"];
 
 /** A recent observation, with any eligible thumbnails (`GET /api/observations/photos`). */
-export interface RecentObservation {
-  id: number;
-  taxon_id: number;
-  common_name: string;
-  observed_on: string | null;
-  place_guess: string | null;
-  uri: string | null;
-  obscured: boolean;
-  photos: ObservationPhoto[];
-}
+export type RecentObservation = components["schemas"]["RecentObservation"];
 
 /** FastAPI's error envelope (`{ "detail": ... }`). */
 export interface ApiError {

@@ -72,10 +72,13 @@ Guiding principles - keep these in mind for any feature work:
   theme/tile switching, marker palette, `clear*()` layer helpers), `src/layers.ts` (camps/land/
   trails fetch + render + popups), `src/views.ts` (destinations/calendar/alerts tabs),
   `src/plan.ts` (route planning UI + GPX/JSON export), `src/refresh.ts` (SSE refresh + set-location),
-  and `src/main.ts` (DOM wiring/orchestration + coverage indicator). `src/api/` holds the typed
-  client + `schema.ts` generated from the backend's OpenAPI via `openapi-typescript`. Builds into
-  `../src/foray/web/dist`. A **light/dark theme toggle** is `data-theme`-driven with a
-  `localStorage` preference (default **dark**); the basemap follows it (CARTO dark / OSM light).
+  and `src/main.ts` (DOM wiring/orchestration). `src/api/` holds the typed client (`openapi-fetch`,
+  in `client.ts`) + `schema.ts` generated from the backend's OpenAPI via `openapi-typescript` -
+  `npm run gen:api` regenerates both; CI fails if that produces a diff, so `schema.ts` never
+  drifts from the actual API. `GET /api/coverage` exists on the backend (coverage regions + their
+  last-ingest freshness) but has no frontend consumer yet. Builds into `../src/foray/web/dist`. A
+  **light/dark theme toggle** is `data-theme`-driven with a `localStorage` preference (default
+  **dark**); the basemap follows it (CARTO dark / OSM light).
 
 ## Conventions
 

@@ -21,9 +21,14 @@ export async function runPlan(): Promise<void> {
 
   let trip: TripPlan;
   try {
-    trip = await getJson<TripPlan>(
-      `/api/plan?months=${monthsParam()}&max_stops=${maxStops}&max_drive_km=${maxDrive}&require_free_camp=${requireFree}`,
-    );
+    trip = await getJson("/api/plan", {
+      query: {
+        months: monthsParam(),
+        max_stops: maxStops,
+        max_drive_km: maxDrive,
+        require_free_camp: requireFree,
+      },
+    });
   } catch (error) {
     setStatus(errorDetail(error));
     return;

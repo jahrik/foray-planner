@@ -1,5 +1,5 @@
-.PHONY: db install lint test check frontend start restart stop scheduler clean ingest \
-	ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once
+.PHONY: db install lint test check frontend check-api-schema start restart stop scheduler clean \
+	ingest ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
@@ -35,6 +35,14 @@ check: lint test
 # only runs the type-check + build, not the install.
 frontend:
 	cd frontend && npm run build
+
+# Regenerates the OpenAPI-derived frontend types (needs `uv` for `foray openapi` + `npm` for
+# `openapi-typescript`, so `frontend/node_modules` and the Python venv must already exist) and
+# fails if that produces a diff - catches a backend response shape drifting from schema.ts
+# without anyone remembering to run `npm run gen:api` (see issue #98).
+check-api-schema:
+	cd frontend && npm run gen:api
+	git diff --exit-code frontend/src/api/schema.ts
 
 start:
 	docker compose up -d --build

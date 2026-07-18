@@ -142,7 +142,7 @@ export async function setLocation(query: string): Promise<void> {
   setStatus("Finding location…");
   let response: { home: Home };
   try {
-    response = await postJson<{ home: Home }>("/api/location", { query });
+    response = await postJson("/api/location", { query });
   } catch (error) {
     setStatus(errorDetail(error) || "location not found");
     return;
@@ -170,7 +170,7 @@ export async function setLocationLatLng(lat: number, lng: number): Promise<void>
   }
   let response: { home: Home };
   try {
-    response = await postJson<{ home: Home }>("/api/location", { lat, lng, name });
+    response = await postJson("/api/location", { lat, lng, name: name ?? null });
   } catch (error) {
     setStatus(errorDetail(error) || "location not found");
     return;
