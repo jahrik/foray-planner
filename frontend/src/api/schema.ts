@@ -47,7 +47,7 @@ export interface paths {
         };
         /**
          * Get Genera
-         * @description Genus catalog search (issue #79) - empty q returns the most-observed genera.
+         * @description Genus catalog search (issue #79) - empty query returns the most-observed genera.
          */
         get: operations["get_genera_api_genera_get"];
         put?: never;
