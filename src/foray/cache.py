@@ -199,10 +199,12 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS place_guess TEXT")
     con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS uri TEXT")
     con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS obscured BOOLEAN")
-    # Retired (issue #79 Phase 4): superseded by fungi_genera, the full catalog every name
-    # lookup now reads from (see scoring.py's _genus_name_map). Drop rather than leave an
-    # unused legacy table around on already-deployed databases.
-    con.execute("DROP TABLE IF EXISTS taxa")
+    # `taxa` is retired (issue #79 Phase 4): superseded by fungi_genera, the full catalog
+    # every name lookup now reads from (see scoring.py's _genus_name_map). Left in place
+    # rather than dropped here - a DROP TABLE running unconditionally on every connect() is a
+    # disruptive side effect for a rolling deploy where an older instance might still be
+    # running against it. Drop it manually (`DROP TABLE IF EXISTS taxa;`) once nothing older
+    # than this change is running.
     return con
 
 
