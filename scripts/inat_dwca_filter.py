@@ -128,7 +128,7 @@ def main() -> None:
                         + "\n"
                     )
                     kept += 1
-                    bar.set_postfix(kept=kept)
+                    bar.set_postfix(kept=kept, refresh=False)
 
     print(f"Done. scanned={scanned:,} kept={kept:,}")
     print(f"Output: {OUTPUT_PATH}")
