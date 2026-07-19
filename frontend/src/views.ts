@@ -177,16 +177,11 @@ export async function runDestinations(): Promise<void> {
   });
   setStatus(`${regions.length} regions`);
 
-  // Fit the map to every ranked result and stop there - no follow-up zoom into the top pick,
-  // which felt disorienting (the map settles, then yanks in tight a moment later). The
-  // (already server-sorted) top result still gets its trails/camps/land auto-loaded, same as
-  // a click on the #1 card; its calendar loads on demand from the Calendar tab like every
-  // other card.
+  // No auto-zoom/pan on results - the map stays wherever the user has it (centered on their
+  // location by default) and they zoom/pan themselves. The (already server-sorted) top result
+  // still gets its trails/camps/land auto-loaded, same as a click on the #1 card; its calendar
+  // loads on demand from the Calendar tab like every other card.
   const top = regions[0];
-  map.fitBounds(L.latLngBounds(markers.map((marker) => marker.getLatLng())), {
-    padding: [40, 40],
-    maxZoom: 9,
-  });
   focusRegion(top.center_lat, top.center_lng);
   rankList.querySelector(".rank")?.classList.add("active");
   selectSize(markers[0]);
