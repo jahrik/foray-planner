@@ -31,6 +31,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from tqdm import tqdm
+
 from foray.cache import connect, record_ingest, upsert_observations
 
 INPUT_PATH = Path(__file__).parent.parent / "data" / "inat_us_observations.jsonl"
@@ -60,8 +62,8 @@ def main() -> None:
     total = 0
     skipped_no_date = 0
 
-    with INPUT_PATH.open() as input_file:
-        for line in input_file:
+    with INPUT_PATH.open() as input_file, tqdm(input_file, unit=" obs", unit_scale=True) as bar:
+        for line in bar:
             rec = json.loads(line)
             day = _parse_date(rec.get("event_date"))
             if day is None:
@@ -93,11 +95,12 @@ def main() -> None:
                 upsert_observations(con, chunk)
                 total += len(chunk)
                 chunk = []
-                print(f"...{total:,} rows upserted", flush=True)
+                bar.set_postfix(upserted=total)
 
-    if chunk:
-        upsert_observations(con, chunk)
-        total += len(chunk)
+        if chunk:
+            upsert_observations(con, chunk)
+            total += len(chunk)
+            bar.set_postfix(upserted=total)
 
     print(
         f"\nUpserted {total:,} observations across {len(per_taxon_count)} genera ({skipped_no_date} skipped, no date)."

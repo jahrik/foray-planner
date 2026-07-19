@@ -15,8 +15,9 @@ The dump itself (see eml.xml's alternateIdentifier) is already iNaturalist's
 "quality_grade=research" export - every row here is research-grade at the source, so the output
 rows all carry quality_grade="research" (issue #108's scoring filter needs that to count them).
 
-This will take a while (fully scanning ~208M rows) - progress is logged periodically so you can
-tell it's alive versus stuck.
+This will take a while (fully scanning ~208M rows) - a tqdm progress bar tracks scanned rows
+against ROW_COUNT_ESTIMATE so you can tell it's alive versus stuck. The estimate is only for the
+bar's ETA/percentage; scanning itself stops at EOF regardless of whether the real count differs.
 
 Usage: make bulk-download bulk-filter (or `uv run python scripts/inat_dwca_filter.py` directly)
 Output: data/inat_us_observations.jsonl (one JSON object per matching record)
@@ -28,9 +29,10 @@ import csv
 import io
 import json
 import sys
-import time
 import zipfile
 from pathlib import Path
+
+from tqdm import tqdm
 
 from foray.cache import connect, genus_taxon_ids
 
@@ -39,7 +41,8 @@ ZIP_PATH = DATA_DIR / "gbif-observations-dwca.zip"
 OUTPUT_PATH = DATA_DIR / "inat_us_observations.jsonl"
 ENTRY_NAME = "observations.csv"
 
-PROGRESS_EVERY = 2_000_000
+# For the progress bar's ETA/percentage only - see module docstring.
+ROW_COUNT_ESTIMATE = 208_000_000
 
 # Column indices from meta.xml's field order for the Occurrence core (0-indexed, matches
 # observations.csv's header exactly - verified by reading both directly out of the zip).
@@ -73,9 +76,7 @@ def main() -> None:
     taxon_id_by_genus = _load_genus_taxon_ids()
     print(f"Loaded {len(taxon_id_by_genus):,} genera from the catalog.", flush=True)
 
-    scanned = 0
     kept = 0
-    started = time.monotonic()
 
     with zipfile.ZipFile(ZIP_PATH) as zf, zf.open(ENTRY_NAME) as raw:
         # errors="replace": a single bad byte shouldn't abort a multi-hour scan of an
@@ -85,9 +86,9 @@ def main() -> None:
         header = next(reader)
         expected_len = len(header)
 
-        with OUTPUT_PATH.open("w") as out:
+        with OUTPUT_PATH.open("w") as out, tqdm(total=ROW_COUNT_ESTIMATE, unit="row", unit_scale=True) as bar:
             for row in reader:
-                scanned += 1
+                bar.update(1)
 
                 if len(row) != expected_len:
                     # Malformed/truncated row - skip rather than crash a multi-hour run over it.
@@ -119,18 +120,11 @@ def main() -> None:
                     + "\n"
                 )
                 kept += 1
+                bar.set_postfix(kept=kept)
 
-                if scanned % PROGRESS_EVERY == 0:
-                    elapsed = time.monotonic() - started
-                    rate = scanned / elapsed if elapsed else 0
-                    print(
-                        f"scanned={scanned:,} kept={kept:,} elapsed={elapsed:,.0f}s rate={rate:,.0f} rows/s",
-                        flush=True,
-                    )
+            scanned = bar.n
 
-    elapsed = time.monotonic() - started
-    print()
-    print(f"Done. scanned={scanned:,} kept={kept:,} elapsed={elapsed:,.0f}s")
+    print(f"Done. scanned={scanned:,} kept={kept:,}")
     print(f"Output: {OUTPUT_PATH}")
 
 
