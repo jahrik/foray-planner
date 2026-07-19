@@ -202,19 +202,34 @@ async function main(): Promise<void> {
   initGeolocation();
 }
 
-// Auto-detect location on load so the destination flow needs no manual setup; the search box
-// (initLocationAutocomplete) stays available as an override/plan-ahead path, and denial/error
-// just leaves whatever location `/api/config` already gave us.
+// Auto-detect location on load so users without a fixed home base (e.g. living in a van) get
+// a current fix each time they open the app, without needing to remember to set it manually.
+// maximumAge: 0 forces a fresh GPS fix rather than whatever cached position the OS/browser last
+// resolved - the earlier bug here was a stale cached fix silently masquerading as current. The
+// search box (initLocationAutocomplete) and map click stay available as manual overrides.
+// Denial/error surfaces a status message instead of failing silently, since a stale location is
+// otherwise easy to miss.
 function initGeolocation(): void {
   if (!("geolocation" in navigator)) return;
   navigator.geolocation.getCurrentPosition(
     async (position) => {
+      const { latitude: lat, longitude: lng } = position.coords;
+      let name: string | undefined;
+      try {
+        const params = new URLSearchParams({ lat: String(lat), lon: String(lng), format: "json" });
+        const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`);
+        if (resp.ok) name = (await resp.json())?.display_name;
+      } catch {
+        // fall back to the coordinate-based name the backend derives
+      }
+      // /api/location's `name` field is capped at 200 chars server-side; Nominatim's
+      // display_name is often longer (full address chain), so an unguarded post would 422 and
+      // leave the location stale - the opposite of the point of this auto-refresh.
+      if (name && name.length > 200) name = undefined;
+
       let response: { home: Home };
       try {
-        response = await postJson("/api/location", {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        });
+        response = await postJson("/api/location", { lat, lng, name: name ?? null });
       } catch {
         return; // keep whatever location is already loaded
       }
@@ -222,10 +237,10 @@ function initGeolocation(): void {
       loadLand();
       refreshCurrentView();
     },
-    () => {
-      // denied/unavailable - fall back silently to the already-loaded location
+    (error) => {
+      setStatus(`couldn't detect location (${error.message}) - set it manually via search or map click`);
     },
-    { timeout: 8000 },
+    { timeout: 8000, maximumAge: 0 },
   );
 }
 
