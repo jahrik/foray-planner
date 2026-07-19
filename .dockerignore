@@ -12,10 +12,8 @@ wheels/
 *.egg-info
 .venv
 
-# Local cache + personal runtime state (rebuilt in-container on the volume)
-data/*.duckdb
-data/*.duckdb.wal
-data/location.json
+# local dev testing
+data/
 
 # Node deps + generated schema input - the frontend stage runs `npm ci` and builds fresh
 node_modules
