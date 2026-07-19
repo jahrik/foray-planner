@@ -1,6 +1,7 @@
 .PHONY: db install lint test check frontend check-api-schema start restart stop scheduler clean \
 	ingest genera-refresh bulk-download bulk-filter bulk-load \
-	ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once
+	ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once \
+	ansible-genera-once ansible-bulk-load-once
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
