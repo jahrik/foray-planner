@@ -78,7 +78,9 @@ def main() -> None:
     started = time.monotonic()
 
     with zipfile.ZipFile(ZIP_PATH) as zf, zf.open(ENTRY_NAME) as raw:
-        text = io.TextIOWrapper(raw, encoding="utf-8", newline="")
+        # errors="replace": a single bad byte shouldn't abort a multi-hour scan of an
+        # external archive we don't control.
+        text = io.TextIOWrapper(raw, encoding="utf-8", newline="", errors="replace")
         reader = csv.reader(text)
         header = next(reader)
         expected_len = len(header)

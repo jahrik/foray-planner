@@ -60,8 +60,8 @@ def main() -> None:
     total = 0
     skipped_no_date = 0
 
-    with INPUT_PATH.open() as f:
-        for line in f:
+    with INPUT_PATH.open() as input_file:
+        for line in input_file:
             rec = json.loads(line)
             day = _parse_date(rec.get("event_date"))
             if day is None:
