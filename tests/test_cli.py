@@ -49,6 +49,22 @@ def calls(monkeypatch):
     return seen
 
 
+def test_genera_refresh_upserts_catalog(con: psycopg.Connection, env_config, monkeypatch) -> None:
+    fake_genera = [
+        {"id": 47348, "name": "Cantharellus", "preferred_common_name": "Chanterelles", "observations_count": 90000},
+        {"id": 999999, "name": "Obscurella", "observations_count": 3},  # no common name
+    ]
+    monkeypatch.setattr(cli_module, "iter_fungi_genera", lambda: iter(fake_genera))
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["genera-refresh"])
+
+    assert result.exit_code == 0, result.output
+    assert "Cached 2 Fungi genera." in result.output
+    rows = con.execute("SELECT taxon_id, name, common_name FROM fungi_genera ORDER BY taxon_id").fetchall()
+    assert rows == [(47348, "Cantharellus", "Chanterelles"), (999999, "Obscurella", None)]
+
+
 def test_refresh_default_runs_everything(env_config, calls) -> None:
     runner = CliRunner()
     result = runner.invoke(cli, ["refresh"])

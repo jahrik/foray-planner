@@ -22,3 +22,6 @@
         foray_layers_cron_hour: "3"
         foray_layers_cron_minute: "0"
         foray_layers_cron_weekday: "0"
+        foray_genera_cron_hour: "2"
+        foray_genera_cron_minute: "0"
+        foray_genera_cron_weekday: "0"

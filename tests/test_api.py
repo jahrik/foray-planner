@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from foray.api import create_app
+from foray.cache import upsert_fungi_genera
 from foray.config import Config, Home, Settings, Species
 from foray.scoring import build_phenology
 
@@ -91,6 +92,23 @@ def test_get_species(client: TestClient) -> None:
             "inat_url": f"https://www.inaturalist.org/taxa/{MOREL}",
         }
     ]
+
+
+def test_get_genera_searches_by_scientific_or_common_name(client: TestClient, con: psycopg.Connection) -> None:
+    upsert_fungi_genera(
+        con,
+        [
+            {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "observations_count": 90000},
+            {"taxon_id": 999999, "name": "Obscurella", "common_name": None, "observations_count": 3},
+        ],
+    )
+
+    response = client.get("/api/genera", params={"q": "chanterelle"})
+    assert response.status_code == 200
+    assert response.json() == [{"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles"}]
+
+    no_common_name = client.get("/api/genera", params={"q": "obscurella"})
+    assert no_common_name.json() == [{"taxon_id": 999999, "name": "Obscurella", "common_name": None}]
 
 
 def test_destinations_ranks_morel_region(client: TestClient) -> None:

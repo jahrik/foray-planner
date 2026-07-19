@@ -27,6 +27,7 @@ _TABLES = (
     "trails",
     "ingest_log",
     "app_location",
+    "fungi_genera",
 )
 
 

@@ -7,10 +7,11 @@ import logging
 
 import click
 
-from foray.cache import connect, observation_count
+from foray.cache import connect, observation_count, upsert_fungi_genera
 from foray.camps import ingest_campgrounds
 from foray.config import Settings
 from foray.dispersed import ingest_dispersed
+from foray.inat import iter_fungi_genera
 from foray.ingest import ingest, ingest_region
 from foray.land import ingest_public_land, ingest_public_land_coverage
 from foray.scoring import build_phenology, plan_route
@@ -159,6 +160,29 @@ def trails_cmd(ctx: click.Context, all_coverage: bool) -> None:
         else:
             count = ingest_trails(cfg, con)
             click.echo(f"Cached {count} trails within {cfg.home.radius_km} km of home.")
+    finally:
+        con.close()
+
+
+@cli.command("genera-refresh")
+def genera_refresh_cmd() -> None:
+    """Refresh the full Fungi genus catalog from iNat (issue #79's search/selection catalog)."""
+    con = connect()
+    try:
+        rows = list(iter_fungi_genera())
+        upsert_fungi_genera(
+            con,
+            [
+                {
+                    "taxon_id": row["id"],
+                    "name": row["name"],
+                    "common_name": row.get("preferred_common_name"),
+                    "observations_count": row.get("observations_count"),
+                }
+                for row in rows
+            ],
+        )
+        click.echo(f"Cached {len(rows)} Fungi genera.")
     finally:
         con.close()
 
