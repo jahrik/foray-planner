@@ -32,20 +32,6 @@ class ConfigResponse(BaseModel):
     last_error: str | None
 
 
-class SpeciesResponse(BaseModel):
-    """``Species`` plus the derived ``inat_url`` the route already adds to each entry.
-
-    Not a subclass of ``Species`` - a field named ``inat_url`` would shadow that model's
-    ``inat_url`` *property*, which pydantic warns about (and it's fragile besides).
-    """
-
-    taxon_id: int
-    name: str
-    common_name: str
-    rank: str
-    inat_url: str
-
-
 class GenusResult(BaseModel):
     """A genus catalog search hit (issue #79).
 
@@ -62,14 +48,21 @@ class CoverageRegionResponse(BaseModel):
     name: str
     place_id: int
     last_ingest: str | None
-    taxa_ingested: int
+    observations_ingested: int
 
 
 class SpeciesHit(BaseModel):
+    """A target-genus contribution to a ranked region.
+
+    ``name`` (scientific) is the primary display label; ``common_name`` is optional
+    secondary enrichment - most of the ~6,018-genus catalog lacks an English common name.
+    """
+
     model_config = _FROM_DATACLASS
 
     taxon_id: int
-    common_name: str
+    name: str
+    common_name: str | None
     month_count: int
     total_count: int
     w_pheno: float
@@ -103,7 +96,8 @@ class ObservationPhoto(BaseModel):
 class RecentObservation(BaseModel):
     id: int
     taxon_id: int
-    common_name: str
+    name: str
+    common_name: str | None
     observed_on: str | None
     place_guess: str | None
     uri: str | None
@@ -113,7 +107,8 @@ class RecentObservation(BaseModel):
 
 class AlertHit(BaseModel):
     taxon_id: int
-    common_name: str
+    name: str
+    common_name: str | None
     count: int
     last_seen: str
     place_guess: str | None

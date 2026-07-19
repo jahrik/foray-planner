@@ -99,12 +99,12 @@ See the [development guide](docs/development.md#cli-reference) for the CLI/API f
 
 ---
 
-## Target species
+## Target genera
 
-The app tracks a curated list of 21 genera - morels, chanterelles, king
-boletes, hedgehogs, lobster mushrooms, and more. The full list is in
-`src/foray/defaults.py` (or override via the `FORAY_SPECIES` env var).
-Each species chip in the UI links directly to its iNaturalist page for photos, range maps, and community notes.
+The app tracks the full Fungi genus catalog from iNaturalist (~6,000 genera) - search for
+any genus and add it to your device's target list, or leave the list empty to see everything
+nearby. Each species chip in the UI links directly to its iNaturalist page for photos, range
+maps, and community notes.
 
 ---
 

@@ -29,10 +29,10 @@ OCT_LAT, OCT_LNG = 44.0, -121.0
 def _seed(con: psycopg.Connection) -> None:
     with con.cursor() as cur:
         cur.executemany(
-            "INSERT INTO taxa VALUES (%s, %s, %s, %s)",
+            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
             [
-                (MOREL, "Morchella", "Morels", "genus"),
-                (CHANTERELLE, "Cantharellus", "Chanterelles", "genus"),
+                (MOREL, "Morchella", "Morels"),
+                (CHANTERELLE, "Cantharellus", "Chanterelles"),
             ],
         )
     rows: list[tuple] = []
@@ -126,7 +126,10 @@ def test_non_research_grade_excluded_from_scoring(con: psycopg.Connection) -> No
     # enforced centrally (scoring._BINNED), not just at ingest time.
     casual_taxon = 333
     with con.cursor() as cur:
-        cur.execute("INSERT INTO taxa VALUES (%s, %s, %s, %s)", (casual_taxon, "Amanita", "Amanitas", "genus"))
+        cur.execute(
+            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            (casual_taxon, "Amanita", "Amanitas"),
+        )
         cur.executemany(
             "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
             " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",

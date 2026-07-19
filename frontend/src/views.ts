@@ -4,7 +4,7 @@ import { getJson } from "./api/client";
 import type { AlertRegion, Calendar, RecentObservation, RegionScore } from "./api/types";
 import { focusRegion } from "./layers";
 import { clearMarkers, deselectSize, HEAT_RGB, map, plot, selectSize } from "./map";
-import { dist, errorDetail, escapeHtml, inatUrl, MONTHS, qs, setStatus, state } from "./state";
+import { dist, displayName, errorDetail, escapeHtml, inatUrl, MONTHS, qs, setStatus, state } from "./state";
 
 // Cards act as buttons (selecting a region) but are plain <div>s for layout flexibility, so make
 // them keyboard-operable: focusable, and Enter/Space activates - but only when the key event's
@@ -51,16 +51,17 @@ export function monthsParam(): string {
 
 interface ChipData {
   taxon_id: number;
-  common_name: string;
+  name: string;
+  common_name?: string | null;
   label?: string;
 }
 
-// common_name/label ultimately come from iNaturalist (user-editable), so escape before
+// name/common_name/label ultimately come from iNaturalist (user-editable), so escape before
 // interpolating into an HTML string template.
 const speciesChip = (hit: ChipData, extraClass?: string): string =>
   `<a class="chip${extraClass ? " " + extraClass : ""}" href="${inatUrl(hit.taxon_id)}"
       target="_blank" rel="noopener" onclick="event.stopPropagation()"
-   >${escapeHtml(hit.common_name)}${hit.label ? " · " + escapeHtml(hit.label) : ""}</a>`;
+   >${escapeHtml(displayName(hit))}${hit.label ? " · " + escapeHtml(hit.label) : ""}</a>`;
 
 export async function runDestinations(): Promise<void> {
   setStatus("Ranking…");
@@ -240,14 +241,15 @@ async function loadPhotosInto(regionId: string, container: HTMLElement): Promise
   }
   container.innerHTML = observations
     .map((obs) => {
+      const name = displayName(obs);
       const uri = obs.uri && obs.uri.startsWith("https://") ? escapeHtml(obs.uri) : null;
       const link = uri
-        ? `<a href="${uri}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(obs.common_name)}</a>`
-        : escapeHtml(obs.common_name);
+        ? `<a href="${uri}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(name)}</a>`
+        : escapeHtml(name);
       const when = obs.observed_on ? escapeHtml(obs.observed_on) : "";
       const photo = obs.photos[0] && obs.photos[0].url.startsWith("https://") ? obs.photos[0] : null;
       const img = photo
-        ? `<img class="obs-thumb" src="${escapeHtml(photo.url)}" alt="${escapeHtml(obs.common_name)}" loading="lazy" />`
+        ? `<img class="obs-thumb" src="${escapeHtml(photo.url)}" alt="${escapeHtml(name)}" loading="lazy" />`
         : "";
       const thumb = photo
         ? `${
@@ -298,7 +300,7 @@ export async function runAlerts(): Promise<void> {
           if (safeUri) {
             return `<a class="chip live" href="${escapeHtml(safeUri)}"
               target="_blank" rel="noopener" onclick="event.stopPropagation()"
-              >${escapeHtml(hit.common_name)} · ${escapeHtml(label)}</a>`;
+              >${escapeHtml(displayName(hit))} · ${escapeHtml(label)}</a>`;
           }
           return speciesChip({ ...hit, label }, "live");
         })

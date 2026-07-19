@@ -18,7 +18,6 @@ from foray.defaults import COVERAGE as _DEFAULT_COVERAGE
 from foray.defaults import HOME_LAT as _DEFAULT_HOME_LAT
 from foray.defaults import HOME_LNG as _DEFAULT_HOME_LNG
 from foray.defaults import HOME_RADIUS_KM as _DEFAULT_HOME_RADIUS_KM
-from foray.defaults import SPECIES as _DEFAULT_SPECIES
 
 QualityGrade = Literal["research", "needs_id", "casual"]
 
@@ -46,19 +45,6 @@ class Ingest(BaseModel):
     region_sync_days: int = Field(gt=0, le=3650, default=30)
 
 
-class Species(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    taxon_id: int = Field(gt=0)
-    name: str
-    common_name: str
-    rank: str
-
-    @property
-    def inat_url(self) -> str:
-        return f"https://www.inaturalist.org/taxa/{self.taxon_id}"
-
-
 class CoverageRegion(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -83,7 +69,6 @@ class Settings(BaseSettings):
     home: Home = Field(default_factory=Home)
     cell_deg: float = Field(gt=0, le=10, default=_DEFAULT_CELL_DEG)
     ingest: Ingest = Ingest()
-    species: list[Species] = Field(default_factory=list)
     # Sub-national regions (US states today) - the granularity trails ingest chunks by, since
     # Overpass can't handle a whole-country query in one request.
     coverage: list[CoverageRegion] = Field(default_factory=list)
@@ -95,8 +80,6 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _apply_defaults(self) -> Settings:
-        if not self.species and "species" not in self.model_fields_set:
-            object.__setattr__(self, "species", [Species.model_validate(entry) for entry in _DEFAULT_SPECIES])
         if not self.coverage and "coverage" not in self.model_fields_set:
             object.__setattr__(
                 self,
@@ -126,10 +109,6 @@ class Settings(BaseSettings):
     @property
     def region_sync_days(self) -> int:
         return self.ingest.region_sync_days
-
-    @property
-    def taxon_ids(self) -> list[int]:
-        return [species.taxon_id for species in self.species]
 
 
 # Backwards-compatible alias so callers can still use `Config` type annotations.

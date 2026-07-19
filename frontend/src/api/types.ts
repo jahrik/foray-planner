@@ -8,7 +8,6 @@ import type { components } from "./schema";
 
 export type Home = components["schemas"]["Home"];
 export type Config = components["schemas"]["ConfigResponse"];
-export type Species = components["schemas"]["SpeciesResponse"];
 
 /** A genus catalog search hit / selection (`GET /api/genera`, `/api/genera/selected`). */
 export type GenusResult = components["schemas"]["GenusResult"];

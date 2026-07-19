@@ -21,23 +21,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/species": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Species */
-        get: operations["get_species_api_species_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/genera": {
         parameters: {
             query?: never;
@@ -341,8 +324,10 @@ export interface components {
         AlertHit: {
             /** Taxon Id */
             taxon_id: number;
+            /** Name */
+            name: string;
             /** Common Name */
-            common_name: string;
+            common_name: string | null;
             /** Count */
             count: number;
             /** Last Seen */
@@ -421,8 +406,8 @@ export interface components {
             place_id: number;
             /** Last Ingest */
             last_ingest: string | null;
-            /** Taxa Ingested */
-            taxa_ingested: number;
+            /** Observations Ingested */
+            observations_ingested: number;
         };
         /**
          * GenusResult
@@ -516,8 +501,10 @@ export interface components {
             id: number;
             /** Taxon Id */
             taxon_id: number;
+            /** Name */
+            name: string;
             /** Common Name */
-            common_name: string;
+            common_name: string | null;
             /** Observed On */
             observed_on: string | null;
             /** Place Guess */
@@ -550,37 +537,26 @@ export interface components {
             /** Species */
             species: components["schemas"]["SpeciesHit"][];
         };
-        /** SpeciesHit */
+        /**
+         * SpeciesHit
+         * @description A target-genus contribution to a ranked region.
+         *
+         *     ``name`` (scientific) is the primary display label; ``common_name`` is optional
+         *     secondary enrichment - most of the ~6,018-genus catalog lacks an English common name.
+         */
         SpeciesHit: {
             /** Taxon Id */
             taxon_id: number;
+            /** Name */
+            name: string;
             /** Common Name */
-            common_name: string;
+            common_name: string | null;
             /** Month Count */
             month_count: number;
             /** Total Count */
             total_count: number;
             /** W Pheno */
             w_pheno: number;
-        };
-        /**
-         * SpeciesResponse
-         * @description ``Species`` plus the derived ``inat_url`` the route already adds to each entry.
-         *
-         *     Not a subclass of ``Species`` - a field named ``inat_url`` would shadow that model's
-         *     ``inat_url`` *property*, which pydantic warns about (and it's fragile besides).
-         */
-        SpeciesResponse: {
-            /** Taxon Id */
-            taxon_id: number;
-            /** Name */
-            name: string;
-            /** Common Name */
-            common_name: string;
-            /** Rank */
-            rank: string;
-            /** Inat Url */
-            inat_url: string;
         };
         /** StatusResponse */
         StatusResponse: {
@@ -693,26 +669,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigResponse"];
-                };
-            };
-        };
-    };
-    get_species_api_species_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SpeciesResponse"][];
                 };
             };
         };

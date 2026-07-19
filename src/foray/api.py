@@ -37,7 +37,6 @@ from foray.api_models import (
     LocationResponse,
     RecentObservation,
     RegionScore,
-    SpeciesResponse,
     StatusResponse,
     Trail,
     TripPlan,
@@ -390,10 +389,6 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             last_error=state["last_error"],
         )
 
-    @app.get("/api/species")
-    def get_species() -> list[SpeciesResponse]:
-        return [SpeciesResponse(**species.model_dump(), inat_url=species.inat_url) for species in current().species]
-
     @app.get("/api/genera")
     def get_genera(query: str = Query("", alias="q", max_length=200)) -> list[GenusResult]:
         """Genus catalog search (issue #79) - empty query returns the most-observed genera."""
@@ -441,8 +436,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     [f"obs:%:place:{region.place_id}:%"],
                 ).fetchone()
                 last_ingest = row[0].isoformat() if row and row[0] else None
+                # Since issue #79 Phase 4, ingest_region() writes one whole-Fungi-kingdom
+                # ingest_log row per (place, window) instead of one per taxon - "observations
+                # ingested" (row_count) is the meaningful count now, not "distinct taxa".
                 count_row = conn.execute(
-                    "SELECT count(DISTINCT split_part(key, ':', 2)) FROM ingest_log WHERE key LIKE %s",
+                    "SELECT COALESCE(sum(row_count), 0) FROM ingest_log WHERE key LIKE %s",
                     [f"obs:%:place:{region.place_id}:%"],
                 ).fetchone()
                 results.append(
@@ -450,7 +448,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                         name=region.name,
                         place_id=region.place_id,
                         last_ingest=last_ingest,
-                        taxa_ingested=count_row[0] if count_row else 0,
+                        observations_ingested=count_row[0] if count_row else 0,
                     )
                 )
         return results

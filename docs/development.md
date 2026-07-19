@@ -43,7 +43,6 @@ All settings come from environment variables (prefix `FORAY_`, nested delimiter 
 | `FORAY_INGEST__SINCE_YEAR` | `2015` | How far back to pull iNat observations |
 | `FORAY_INGEST__QUALITY_GRADE` | `research` | iNat quality filter |
 | `FORAY_INGEST__RECENT_WEEKS` | `4` | Trailing window for the "Fruiting now" live signal |
-| `FORAY_SPECIES` | (built-in defaults in `src/foray/defaults.py`) | Curated target taxa list (JSON array) |
 | `FORAY_COVERAGE` | (built-in: all 50 US states) | Coverage regions for state-level ingest (JSON array) |
 | `FORAY_COUNTRIES` | (built-in: United States) | Country-level regions for single-query observation ingest (JSON array) |
 | `FORAY_INGEST_INTERVAL_HOURS` | `24` | Scheduler: hours between observation ingests |
@@ -189,14 +188,15 @@ shows per-month totals. The alerts view fixes species + recency, ignoring the mo
 | Table | Key | Contents |
 |---|---|---|
 | `observations` | `(id)` | Raw iNat research-grade observations: lat, lng, observed_on, taxon_id, place_guess, uri, obscured |
-| `taxa` | `taxon_id` | taxon_id -> name/common_name mapping |
+| `fungi_genera` | `taxon_id` | Full Fungi genus catalog: taxon_id -> name/common_name/observations_count |
 | `phenology` | `(region_id, taxon_id, month)` | Materialized per-(region, taxon, month) observation counts |
 | `regions` | `region_id` | Grid cell summaries: center coords, total obs count, distinct taxa |
 | `campsites` | `id` (`"{source}:{source_id}"`) | Developed campgrounds (RIDB) + OSM reported/dispersed sites |
 | `public_land` | `id` (`"{source}:{source_id}"`) | BLM/USFS ownership polygons - GeoJSON text + bbox columns |
 | `trails` | `id` (`"{source}:{osm_type}/{osm_id}"`) | OSM trails/routes/trailheads - GeoJSON text + bbox columns |
 | `ingest_log` | - | Per-run progress records for refresh stages |
-| `app_location` | single row | The UI's "Set location" override |
+| `app_location` | `device_id` | Per-device "Set location" override |
+| `app_genera` | `(device_id, taxon_id)` | Per-device selected target genera |
 
 `phenology`/`regions` are dynamically (re)materialized by `foray ingest` and `foray refresh`;
 every other table is created by `foray.cache.SCHEMA` (which also enables the `postgis` extension,
@@ -206,22 +206,16 @@ PostGIS geometry types). The database is fully rebuildable with `foray refresh`.
 
 ---
 
-## Adding or changing target species
+## Target genera
 
-Edit `src/foray/defaults.py` or override via the `FORAY_SPECIES` env var (JSON array). Each entry needs:
-
-```json
-{"taxon_id": 56830, "name": "Morchella", "common_name": "Morels", "rank": "genus"}
-```
-
-Taxon IDs come from iNaturalist - look them up on the website or via
-`pyinaturalist.get_taxa(q="Morchella", rank="genus")`. Genus-level only by convention
-(coarser = more observations = better phenology signal).
+There's no fixed target list (issue #79): `foray genera-refresh` keeps the full Fungi genus
+catalog (`fungi_genera`, ~6,018 rows) synced from iNat, `ingest`/`ingest_region` pull every
+Fungi observation and resolve each one's own genus from its taxon ancestry, and each device
+picks which genera it cares about via the search UI (`app_genera`) - a device with none
+selected sees everything nearby, not a curated default.
 
 **Hard rule:** no authored descriptions, edibility claims, or lookalike text anywhere in this
 codebase. The UI links each taxon to its iNaturalist page. Keep it that way.
-
-After editing, run `make ingest` to re-ingest.
 
 ---
 

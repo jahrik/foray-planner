@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from foray.api import create_app
 from foray.cache import upsert_fungi_genera
-from foray.config import Config, Home, Settings, Species
+from foray.config import Config, Home, Settings
 from foray.scoring import build_phenology
 
 CELL = 0.5
@@ -25,15 +25,14 @@ HOME_LAT, HOME_LNG = 47.6, -122.3
 
 @pytest.fixture
 def cfg(con: psycopg.Connection) -> Settings:
-    with con.cursor() as cur:
-        cur.executemany(
-            "INSERT INTO taxa VALUES (%s, %s, %s, %s)",
-            [
-                (MOREL, "Morchella", "Morels", "genus"),
-                (CHANT, "Cantharellus", "Chanterelles", "genus"),
-                (BOLET, "Boletus", "King Boletes", "genus"),
-            ],
-        )
+    upsert_fungi_genera(
+        con,
+        [
+            {"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels"},
+            {"taxon_id": CHANT, "name": "Cantharellus", "common_name": "Chanterelles"},
+            {"taxon_id": BOLET, "name": "Boletus", "common_name": "King Boletes"},
+        ],
+    )
     rows = (
         [(obs_id, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", 10) for obs_id in range(1, 11)]
         + [
@@ -60,7 +59,6 @@ def cfg(con: psycopg.Connection) -> Settings:
         home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=200),
         cell_deg=CELL,
         ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=8),
-        species=[Species(taxon_id=MOREL, name="Morchella", common_name="Morels", rank="genus")],
     )
 
 
@@ -79,21 +77,6 @@ def test_get_config(client: TestClient) -> None:
     assert body["refreshing"] is False
 
 
-def test_get_species(client: TestClient) -> None:
-    response = client.get("/api/species")
-    assert response.status_code == 200
-    body = response.json()
-    assert body == [
-        {
-            "taxon_id": MOREL,
-            "name": "Morchella",
-            "common_name": "Morels",
-            "rank": "genus",
-            "inat_url": f"https://www.inaturalist.org/taxa/{MOREL}",
-        }
-    ]
-
-
 def test_get_genera_searches_by_scientific_or_common_name(client: TestClient, con: psycopg.Connection) -> None:
     upsert_fungi_genera(
         con,
@@ -105,7 +88,11 @@ def test_get_genera_searches_by_scientific_or_common_name(client: TestClient, co
 
     response = client.get("/api/genera", params={"q": "chanterelle"})
     assert response.status_code == 200
-    assert response.json() == [{"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles"}]
+    # The `client` fixture's own `cfg` fixture also seeds a taxon_id=CHANT "Cantharellus"/
+    # "Chanterelles" genus into the shared catalog, so this scientific/common-name search
+    # legitimately matches both - check the one this test seeded is among the hits, rather
+    # than asserting an exact list (which would be coupled to that unrelated fixture).
+    assert {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles"} in response.json()
 
     no_common_name = client.get("/api/genera", params={"q": "obscurella"})
     assert no_common_name.json() == [{"taxon_id": 999999, "name": "Obscurella", "common_name": None}]

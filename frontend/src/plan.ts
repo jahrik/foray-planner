@@ -4,7 +4,7 @@ import { getJson } from "./api/client";
 import type { Stop, TripPlan } from "./api/types";
 import { focusRegion } from "./layers";
 import { clearMarkers, map, PLAN_STOP } from "./map";
-import { dist, errorDetail, inatUrl, MONTHS, qs, setStatus, state } from "./state";
+import { dist, displayName, errorDetail, inatUrl, MONTHS, qs, setStatus, state } from "./state";
 import { monthsParam } from "./views";
 
 export async function runPlan(): Promise<void> {
@@ -57,7 +57,7 @@ export async function runPlan(): Promise<void> {
   }).addTo(map);
 
   // Plot stop markers (reuse plot() then re-colour to gold). Build the popup
-  // with DOM nodes so common_name values from the external API are never
+  // with DOM nodes so name/common_name values from the external API are never
   // injected as raw HTML.
   trip.stops.forEach((stop) => {
     const popupEl = document.createElement("div");
@@ -66,7 +66,7 @@ export async function runPlan(): Promise<void> {
     const drive = document.createTextNode(` · ${dist(stop.drive_km_from_prev)} leg`);
     const br = document.createElement("br");
     const names = document.createTextNode(
-      stop.species.slice(0, 3).map((hit) => hit.common_name).join(", "),
+      stop.species.slice(0, 3).map((hit) => displayName(hit)).join(", "),
     );
     popupEl.append(title, drive, br, names);
     const marker = L.circleMarker([stop.center_lat, stop.center_lng], {
@@ -142,7 +142,7 @@ function buildStopCard(stop: Stop): HTMLElement {
   }`;
   card.appendChild(meta);
 
-  // Species chips (top 5) - built as DOM nodes so common_name/label from
+  // Species chips (top 5) - built as DOM nodes so name/common_name/label from
   // external APIs are set via textContent and never injected as raw HTML.
   const chips = document.createElement("div");
   chips.className = "chips";
@@ -153,7 +153,7 @@ function buildStopCard(stop: Stop): HTMLElement {
     anchor.target = "_blank";
     anchor.rel = "noopener";
     anchor.onclick = (ev) => ev.stopPropagation();
-    anchor.textContent = `${hit.common_name} · ${(hit.w_pheno * 100).toFixed(0)}%`;
+    anchor.textContent = `${displayName(hit)} · ${(hit.w_pheno * 100).toFixed(0)}%`;
     chips.appendChild(anchor);
   });
   card.appendChild(chips);
@@ -194,7 +194,7 @@ function exportGpx(trip: TripPlan): void {
       const name = stop.camp ? `Stop ${stop.order}: ${stop.camp.name}` : `Stop ${stop.order}`;
       const desc = `${stop.species
         .slice(0, 3)
-        .map((hit) => hit.common_name)
+        .map((hit) => displayName(hit))
         .join(", ")} · ${dist(stop.drive_km_from_prev)} leg`;
       return `  <wpt lat="${lat.toFixed(6)}" lon="${lng.toFixed(6)}">\n    <name>${escXml(name)}</name>\n    <desc>${escXml(desc)}</desc>\n  </wpt>`;
     })

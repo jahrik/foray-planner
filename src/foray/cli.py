@@ -67,24 +67,20 @@ def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool, c
             for country in cfg.countries:
                 click.echo(f"Ingesting {country.name} (place_id={country.place_id})…")
                 counts = ingest_region(cfg, con, country)
-                for species in cfg.species:
-                    click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
+                click.echo(f"  {sum(counts.values())} observations across {len(counts)} genera")
         elif all_regions:
             for region in cfg.coverage:
                 click.echo(f"Ingesting {region.name} (place_id={region.place_id})…")
                 counts = ingest_region(cfg, con, region)
-                for species in cfg.species:
-                    click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
+                click.echo(f"  {sum(counts.values())} observations across {len(counts)} genera")
         elif region_name:
             click.echo(f"Ingesting {resolved_region.name} (place_id={resolved_region.place_id})…")
             counts = ingest_region(cfg, con, resolved_region)
-            for species in cfg.species:
-                click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
+            click.echo(f"  {sum(counts.values())} observations across {len(counts)} genera")
         else:
-            click.echo(f"Ingesting {len(cfg.species)} species within {cfg.home.radius_km} km of home…")
+            click.echo(f"Ingesting Fungi observations within {cfg.home.radius_km} km of home…")
             counts = ingest(cfg, con)
-            for species in cfg.species:
-                click.echo(f"  {species.common_name:28s} {counts.get(species.taxon_id, 0):>6d}")
+            click.echo(f"  {sum(counts.values())} observations across {len(counts)} genera")
 
         click.echo("Rebuilding phenology…")
         build_phenology(con, cfg.cell_deg)
@@ -305,7 +301,7 @@ def plan_cmd(ctx: click.Context, months: str, max_stops: int, max_drive_km: floa
         trip = plan_route(
             con,
             months=selected,
-            taxon_ids=cfg.taxon_ids,
+            taxon_ids=[],  # no fixed target list (issue #79) - every genus in the catalog is in play
             home_lat=cfg.home.lat,
             home_lng=cfg.home.lng,
             radius_km=cfg.home.radius_km,
@@ -325,7 +321,7 @@ def plan_cmd(ctx: click.Context, months: str, max_stops: int, max_drive_km: floa
         f"{trip.total_drive_km:.0f} km total drive:"
     )
     for stop in trip.stops:
-        top = ", ".join(hit.common_name for hit in stop.species[:3]) or "-"
+        top = ", ".join(hit.common_name or hit.name for hit in stop.species[:3]) or "-"
         camp = (
             "no camp"
             if stop.camp is None
