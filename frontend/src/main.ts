@@ -202,37 +202,18 @@ async function main(): Promise<void> {
   initGeolocation();
 }
 
-// Below this distance the browser's GPS jitter isn't worth a location update; above it (e.g.
-// after driving to a new area) it's a real move worth reflecting.
-const LOCATION_UPDATE_KM = 2;
-
-function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
-}
-
-// Auto-track location for users without a fixed home base (e.g. living in a van): watches
-// position continuously while the tab is open and re-saves it whenever the device has moved
-// far enough to matter, so the app keeps following the user instead of only detecting once on
-// load. The search box (initLocationAutocomplete) and map click stay available as manual
-// overrides. Denial/error surfaces a status message instead of failing silently, since a stale
-// location is easy to miss otherwise.
+// Auto-detect location on load so users without a fixed home base (e.g. living in a van) get
+// a current fix each time they open the app, without needing to remember to set it manually.
+// maximumAge: 0 forces a fresh GPS fix rather than whatever cached position the OS/browser last
+// resolved - the earlier bug here was a stale cached fix silently masquerading as current. The
+// search box (initLocationAutocomplete) and map click stay available as manual overrides.
+// Denial/error surfaces a status message instead of failing silently, since a stale location is
+// otherwise easy to miss.
 function initGeolocation(): void {
   if (!("geolocation" in navigator)) return;
-  let lastReported: { lat: number; lng: number } | null = null;
-
-  navigator.geolocation.watchPosition(
+  navigator.geolocation.getCurrentPosition(
     async (position) => {
       const { latitude: lat, longitude: lng } = position.coords;
-      if (lastReported && haversineKm(lastReported.lat, lastReported.lng, lat, lng) < LOCATION_UPDATE_KM) {
-        return; // hasn't moved far enough since the last save to be worth a write + reverse geocode
-      }
-
       let name: string | undefined;
       try {
         const params = new URLSearchParams({ lat: String(lat), lon: String(lng), format: "json" });
@@ -246,17 +227,16 @@ function initGeolocation(): void {
       try {
         response = await postJson("/api/location", { lat, lng, name: name ?? null });
       } catch {
-        return; // keep whatever location is already loaded; try again on the next fix
+        return; // keep whatever location is already loaded
       }
-      lastReported = { lat, lng };
       updateHome(response.home);
       loadLand();
       refreshCurrentView();
     },
     (error) => {
-      setStatus(`location tracking unavailable (${error.message}) - set it manually via search or map click`);
+      setStatus(`couldn't detect location (${error.message}) - set it manually via search or map click`);
     },
-    { timeout: 8000, maximumAge: 60_000 },
+    { timeout: 8000, maximumAge: 0 },
   );
 }
 
