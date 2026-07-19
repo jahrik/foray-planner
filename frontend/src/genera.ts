@@ -61,10 +61,15 @@ async function selectGenus(genus: GenusResult): Promise<void> {
   const list = qs<HTMLUListElement>("#genus-suggestions");
   input.value = "";
   list.classList.remove("open");
+  let resp: Response;
   try {
-    await fetch(`/api/genera/${genus.taxon_id}`, { method: "POST" });
+    resp = await fetch(`/api/genera/${genus.taxon_id}`, { method: "POST" });
   } catch (error) {
     setStatus(errorDetail(error) || "couldn't add genus");
+    return;
+  }
+  if (!resp.ok) {
+    setStatus("couldn't add genus");
     return;
   }
   selected.push(genus);
@@ -74,10 +79,15 @@ async function selectGenus(genus: GenusResult): Promise<void> {
 }
 
 async function removeGenus(taxonId: number): Promise<void> {
+  let resp: Response;
   try {
-    await fetch(`/api/genera/${taxonId}`, { method: "DELETE" });
+    resp = await fetch(`/api/genera/${taxonId}`, { method: "DELETE" });
   } catch (error) {
     setStatus(errorDetail(error) || "couldn't remove genus");
+    return;
+  }
+  if (!resp.ok) {
+    setStatus("couldn't remove genus");
     return;
   }
   selected = selected.filter((genus) => genus.taxon_id !== taxonId);
@@ -104,6 +114,10 @@ export async function initGenusSelection(onSelectionChange: () => void): Promise
   input.addEventListener("input", () => {
     const query = input.value.trim();
     if (debounceTimer) clearTimeout(debounceTimer);
+    if (query.length < 2) {
+      list.classList.remove("open");
+      return;
+    }
     debounceTimer = setTimeout(async () => {
       results = await fetchSuggestions(query);
       renderSuggestions(results, list);
