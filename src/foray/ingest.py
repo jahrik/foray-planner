@@ -128,7 +128,16 @@ def ingest(
     end_date = dt.date.today().isoformat()
     home = cfg.home
 
+    # A country-level ingest_region() run (the nightly --countries cron, or a one-time bulk
+    # load) already covers the whole country the home radius sits in - a place-scoped key has
+    # no lat/lng, so latest_obs_date()'s radius check can never see it on its own. Fold in the
+    # country-scoped coverage too, or every live Refresh keeps re-pulling history that's
+    # already sitting in Postgres (issue #141).
     latest = latest_obs_date(db, "fungi", home.lat, home.lng, home.radius_km)
+    for country in cfg.countries:
+        country_latest = latest_obs_date_by_place(db, "fungi", country.place_id)
+        if country_latest and (latest is None or country_latest > latest):
+            latest = country_latest
     if latest:
         overlap = (dt.date.fromisoformat(latest) - dt.timedelta(days=7)).isoformat()
         window_start = max(start_date, overlap)

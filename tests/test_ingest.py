@@ -116,6 +116,24 @@ def test_ingest_incremental_overlaps_by_a_week(con: psycopg.Connection, cfg_with
     assert call_kwargs["d1"] >= "2024-05-25"
 
 
+def test_ingest_incremental_overlaps_with_country_scoped_coverage(
+    con: psycopg.Connection, cfg_with_home: Settings
+) -> None:
+    """A place-scoped ingest_log row (ingest_region()/the nightly --countries cron, or a bulk
+    load - no lat/lng, see cache.record_ingest) must still narrow the window - not just the
+    lat/lng-scoped rows ingest() itself writes (issue #141)."""
+    con.execute(
+        "INSERT INTO ingest_log (key, fetched_at, row_count) "
+        "VALUES ('obs:fungi:place:1:2015-01-01:2024-06-01', now(), 5)"
+    )
+    with patch("foray.ingest.iter_observations") as mock_iter:
+        mock_iter.return_value = iter([])
+        ingest(cfg_with_home, con)
+
+    call_kwargs = mock_iter.call_args.kwargs
+    assert call_kwargs["d1"] >= "2024-05-25"
+
+
 def test_ingest_fails_fast_on_empty_catalog(con: psycopg.Connection, monkeypatch) -> None:
     """A never-refreshed/misconfigured fungi_genera catalog must abort loudly, not silently
     ingest only already-genus-rank observations while dropping every finer-rank one."""
