@@ -15,9 +15,10 @@ The dump itself (see eml.xml's alternateIdentifier) is already iNaturalist's
 "quality_grade=research" export - every row here is research-grade at the source, so the output
 rows all carry quality_grade="research" (issue #108's scoring filter needs that to count them).
 
-This will take a while (fully scanning ~208M rows) - a tqdm progress bar tracks scanned rows
-against ROW_COUNT_ESTIMATE so you can tell it's alive versus stuck. The estimate is only for the
-bar's ETA/percentage; scanning itself stops at EOF regardless of whether the real count differs.
+This will take a while (fully scanning ~208M rows) - a tqdm progress bar tracks bytes read off
+the zip entry's decompressed stream against its exact uncompressed size (from the zip's own
+central directory, via ZipInfo.file_size), so the percentage/ETA are accurate without guessing
+a row count.
 
 Usage: make bulk-download bulk-filter (or `uv run python scripts/inat_dwca_filter.py` directly)
 Output: data/inat_us_observations.jsonl (one JSON object per matching record)
@@ -31,8 +32,10 @@ import json
 import sys
 import zipfile
 from pathlib import Path
+from typing import BinaryIO, cast
 
 from tqdm import tqdm
+from tqdm.utils import CallbackIOWrapper
 
 from foray.cache import connect, genus_taxon_ids
 
@@ -40,9 +43,6 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 ZIP_PATH = DATA_DIR / "gbif-observations-dwca.zip"
 OUTPUT_PATH = DATA_DIR / "inat_us_observations.jsonl"
 ENTRY_NAME = "observations.csv"
-
-# For the progress bar's ETA/percentage only - see module docstring.
-ROW_COUNT_ESTIMATE = 208_000_000
 
 # Column indices from meta.xml's field order for the Occurrence core (0-indexed, matches
 # observations.csv's header exactly - verified by reading both directly out of the zip).
@@ -77,52 +77,58 @@ def main() -> None:
     print(f"Loaded {len(taxon_id_by_genus):,} genera from the catalog.", flush=True)
 
     kept = 0
+    scanned = 0
 
     with zipfile.ZipFile(ZIP_PATH) as zf, zf.open(ENTRY_NAME) as raw:
-        # errors="replace": a single bad byte shouldn't abort a multi-hour scan of an
-        # external archive we don't control.
-        text = io.TextIOWrapper(raw, encoding="utf-8", newline="", errors="replace")
-        reader = csv.reader(text)
-        header = next(reader)
-        expected_len = len(header)
+        entry_size = zf.getinfo(ENTRY_NAME).file_size  # exact uncompressed size, from the zip itself
 
-        with OUTPUT_PATH.open("w") as out, tqdm(total=ROW_COUNT_ESTIMATE, unit="row", unit_scale=True) as bar:
-            for row in reader:
-                bar.update(1)
+        with tqdm(total=entry_size, unit="B", unit_scale=True, unit_divisor=1024, desc=ENTRY_NAME) as bar:
+            # CallbackIOWrapper proxies every attribute to `raw` (including close/readable/etc via
+            # ObjectWrapper.__getattr__), so it satisfies TextIOWrapper's buffer protocol at
+            # runtime even though the type checker can't see that through the dynamic proxy.
+            wrapped = cast(BinaryIO, CallbackIOWrapper(bar.update, raw, "read"))
+            # errors="replace": a single bad byte shouldn't abort a multi-hour scan of an
+            # external archive we don't control.
+            text = io.TextIOWrapper(wrapped, encoding="utf-8", newline="", errors="replace")
+            reader = csv.reader(text)
+            header = next(reader)
+            expected_len = len(header)
 
-                if len(row) != expected_len:
-                    # Malformed/truncated row - skip rather than crash a multi-hour run over it.
-                    continue
+            with OUTPUT_PATH.open("w") as out:
+                for row in reader:
+                    scanned += 1
 
-                genus = row[COL_GENUS]
-                taxon_id = taxon_id_by_genus.get(genus)
-                if taxon_id is None:
-                    continue
-                if row[COL_COUNTRY_CODE] != "US":
-                    continue
-                lat, lng = row[COL_LAT], row[COL_LNG]
-                if not lat or not lng:
-                    continue
+                    if len(row) != expected_len:
+                        # Malformed/truncated row - skip rather than crash a multi-hour run over it.
+                        continue
 
-                out.write(
-                    json.dumps(
-                        {
-                            "inat_id": int(row[COL_ID]),
-                            "genus": genus,
-                            "taxon_id": taxon_id,
-                            "inat_taxon_id": row[COL_TAXON_ID] or None,
-                            "lat": float(lat),
-                            "lng": float(lng),
-                            "coordinate_uncertainty_m": row[COL_COORD_UNCERTAINTY] or None,
-                            "event_date": row[COL_EVENT_DATE] or None,
-                        }
+                    genus = row[COL_GENUS]
+                    taxon_id = taxon_id_by_genus.get(genus)
+                    if taxon_id is None:
+                        continue
+                    if row[COL_COUNTRY_CODE] != "US":
+                        continue
+                    lat, lng = row[COL_LAT], row[COL_LNG]
+                    if not lat or not lng:
+                        continue
+
+                    out.write(
+                        json.dumps(
+                            {
+                                "inat_id": int(row[COL_ID]),
+                                "genus": genus,
+                                "taxon_id": taxon_id,
+                                "inat_taxon_id": row[COL_TAXON_ID] or None,
+                                "lat": float(lat),
+                                "lng": float(lng),
+                                "coordinate_uncertainty_m": row[COL_COORD_UNCERTAINTY] or None,
+                                "event_date": row[COL_EVENT_DATE] or None,
+                            }
+                        )
+                        + "\n"
                     )
-                    + "\n"
-                )
-                kept += 1
-                bar.set_postfix(kept=kept)
-
-            scanned = bar.n
+                    kept += 1
+                    bar.set_postfix(kept=kept)
 
     print(f"Done. scanned={scanned:,} kept={kept:,}")
     print(f"Output: {OUTPUT_PATH}")
