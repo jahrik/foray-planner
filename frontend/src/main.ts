@@ -222,6 +222,10 @@ function initGeolocation(): void {
       } catch {
         // fall back to the coordinate-based name the backend derives
       }
+      // /api/location's `name` field is capped at 200 chars server-side; Nominatim's
+      // display_name is often longer (full address chain), so an unguarded post would 422 and
+      // leave the location stale - the opposite of the point of this auto-refresh.
+      if (name && name.length > 200) name = undefined;
 
       let response: { home: Home };
       try {
