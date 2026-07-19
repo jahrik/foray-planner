@@ -383,10 +383,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         return [SpeciesResponse(**species.model_dump(), inat_url=species.inat_url) for species in current().species]
 
     @app.get("/api/genera")
-    def get_genera(q: str = Query("", max_length=200)) -> list[GenusResult]:
-        """Genus catalog search (issue #79) - empty q returns the most-observed genera."""
+    def get_genera(query: str = Query("", alias="q", max_length=200)) -> list[GenusResult]:
+        """Genus catalog search (issue #79) - empty query returns the most-observed genera."""
         with pool.connection() as conn:
-            hits = search_fungi_genera(conn, q)
+            hits = search_fungi_genera(conn, query)
         return [GenusResult(**hit) for hit in hits]
 
     @app.get("/api/coverage")

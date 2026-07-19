@@ -228,13 +228,14 @@ def upsert_fungi_genera(con: psycopg.Connection, rows: Iterable[dict[str, Any]])
         )
 
 
-def search_fungi_genera(con: psycopg.Connection, q: str, limit: int = 20) -> list[dict[str, Any]]:
+def search_fungi_genera(con: psycopg.Connection, query: str, limit: int = 20) -> list[dict[str, Any]]:
     """Genus catalog search by scientific or common name, ranked by iNat's observation count.
 
-    Empty ``q`` returns the most-observed genera (a sane browse default), not everything -
+    Empty ``query`` returns the most-observed genera (a sane browse default), not everything -
     the catalog has ~6,018 rows, too many to dump into a dropdown unfiltered.
     """
-    if q.strip():
+    stripped = query.strip()
+    if stripped:
         rows = con.execute(
             """
             SELECT taxon_id, name, common_name
@@ -243,7 +244,7 @@ def search_fungi_genera(con: psycopg.Connection, q: str, limit: int = 20) -> lis
             ORDER BY observations_count DESC NULLS LAST, name
             LIMIT %s
             """,
-            [f"%{q.strip()}%", f"%{q.strip()}%", limit],
+            [f"%{stripped}%", f"%{stripped}%", limit],
         ).fetchall()
     else:
         rows = con.execute(
