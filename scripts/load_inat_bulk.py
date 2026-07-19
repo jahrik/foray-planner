@@ -8,10 +8,12 @@ Reads data/inat_us_observations.jsonl (produced by inat_dwca_filter.py) and:
      quality_grade is always written as "research": the GBIF DwC-A dump itself is already
      iNaturalist's quality_grade=research export (see the zip's eml.xml), so every row here
      is research-grade at the source - needed for issue #108's scoring filter to count them.
-  2. Writes one ingest_log row per genus in the same "obs:{taxon_id}:place:{place_id}:
-     {start}:{end}" shape ingest_region() itself produces, so the nightly cron (now capped
-     to region_sync_days - see ingest.py) treats these genera as already covered and only
-     syncs forward from here instead of re-attempting a full backfill.
+  2. Writes a single ingest_log row for the whole load, in the same "obs:fungi:place:
+     {place_id}:{start}:{end}" shape ingest_region() itself produces (issue #79 Phase 4:
+     one whole-Fungi-kingdom key per place, not one per genus), so the nightly cron (capped
+     to region_sync_days - see ingest.py) treats this place as already covered and only
+     syncs forward from here instead of re-attempting a full backfill. Also drives
+     /api/coverage's "last ingest" display, which reads the same key shape.
 
 Connects to Postgres via foray.cache.connect(), i.e. the standard PG* env vars/libpq
 conninfo - point it at prod by exporting PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE
@@ -106,11 +108,11 @@ def main() -> None:
         f"\nUpserted {total:,} observations across {len(per_taxon_count)} genera ({skipped_no_date} skipped, no date)."
     )
 
-    for taxon_id, count in sorted(per_taxon_count.items()):
-        end_date = per_taxon_max_date[taxon_id].isoformat()
-        key = f"obs:{taxon_id}:place:{PLACE_ID_US}:{SINCE_YEAR_FLOOR}:{end_date}"
-        record_ingest(con, key, count)
-        print(f"  taxon {taxon_id}: {count:,} rows, ingest_log marked through {end_date}")
+    if per_taxon_max_date:
+        end_date = max(per_taxon_max_date.values()).isoformat()
+        key = f"obs:fungi:place:{PLACE_ID_US}:{SINCE_YEAR_FLOOR}:{end_date}"
+        record_ingest(con, key, total)
+        print(f"  ingest_log marked place {PLACE_ID_US} covered through {end_date}")
 
 
 if __name__ == "__main__":

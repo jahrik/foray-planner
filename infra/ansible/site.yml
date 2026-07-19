@@ -41,6 +41,20 @@
         - foray
         - "foray:provision"
 
+    # Runs after firewall provisioning, not inside tasks/provision/droplet.yml - the firewall
+    # is what opens port 22 for foray_ssh_allowed_ips, so waiting for SSH before it exists
+    # means the first provision run after the operator's IP changes always times out.
+    - name: Wait for SSH to become available
+      ansible.builtin.wait_for:
+        host: "{{ foray_droplet_ip }}"
+        port: 22
+        delay: 10
+        timeout: 120
+      when: foray_droplet_ip is defined
+      tags:
+        - foray
+        - "foray:provision"
+
     - name: Include droplet resize
       ansible.builtin.include_tasks:
         file: tasks/provision/droplet_resize.yml
@@ -112,6 +126,17 @@
         - foray
         - "foray:cron"
 
+    - name: Include one-off genus catalog refresh task
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/genera_once.yml
+        apply:
+          tags:
+            - "foray:genera-once"
+            - never
+      tags:
+        - "foray:genera-once"
+        - never
+
     - name: Include one-off ingest task
       ansible.builtin.include_tasks:
         file: tasks/deploy/ingest_once.yml
@@ -121,6 +146,17 @@
             - never
       tags:
         - "foray:ingest-once"
+        - never
+
+    - name: Include one-off bulk load task
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/bulk_load_once.yml
+        apply:
+          tags:
+            - "foray:bulk-load-once"
+            - never
+      tags:
+        - "foray:bulk-load-once"
         - never
 
   handlers:

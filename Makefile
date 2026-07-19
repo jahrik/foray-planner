@@ -119,6 +119,16 @@ ansible-deploy:
 		-i inventory/hosts.yml \
 		-e foray_droplet_ip=$$FORAY_DROPLET_IP
 
+# Manual/opt-in only - the foray-genera cron job already keeps the catalog fresh on a
+# schedule. Use this to warm fungi_genera immediately on a fresh droplet (depends on the env
+# file that deploy renders), instead of waiting for the next cron run. Run this *before*
+# ansible-ingest-once - ingest fails fast if the catalog is empty.
+ansible-genera-once:
+	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
+	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:genera-once \
+		-i inventory/hosts.yml \
+		-e foray_droplet_ip=$$FORAY_DROPLET_IP
+
 # Manual/opt-in only - the foray-ingest cron job already keeps data fresh on a schedule.
 # Use this to warm data immediately after the *first* `ansible-deploy` on a fresh droplet
 # (depends on the env file that deploy renders), instead of waiting for the next cron run.
@@ -126,5 +136,15 @@ ansible-deploy:
 ansible-ingest-once:
 	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
 	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:ingest-once \
+		-i inventory/hosts.yml \
+		-e foray_droplet_ip=$$FORAY_DROPLET_IP
+
+# One-off: push the already-filtered, already-verified data/inat_us_observations.jsonl
+# (see `make bulk-filter`) to the droplet and load it - the fast path for issue #79 Phase 3b
+# instead of waiting on the nightly ingest cron to backfill history via the iNat API. Run
+# `make ansible-genera-once` first if the catalog hasn't been warmed yet.
+ansible-bulk-load-once:
+	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
+	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:bulk-load-once \
 		-i inventory/hosts.yml \
 		-e foray_droplet_ip=$$FORAY_DROPLET_IP

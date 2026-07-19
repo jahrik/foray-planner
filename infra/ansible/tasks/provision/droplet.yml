@@ -48,9 +48,8 @@
     ansible_user: root
     groups: foray
 
-- name: Wait for SSH to become available
-  ansible.builtin.wait_for:
-    host: "{{ foray_droplet_ip }}"
-    port: 22
-    delay: 10
-    timeout: 120
+# Deliberately NOT waiting for SSH here: the firewall (provisioned next, in site.yml) is what
+# actually allows port 22 through for foray_ssh_allowed_ips. Waiting here means the very first
+# provision run after the operator's IP changes always times out, since SSH is still blocked
+# at this point in the play - the firewall task hasn't run yet. See "Wait for SSH to become
+# available" in site.yml, which runs after firewall provisioning instead.
