@@ -1,5 +1,6 @@
 .PHONY: db install lint test check frontend check-api-schema start restart stop scheduler clean \
-	ingest genera-refresh ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once
+	ingest genera-refresh bulk-download bulk-filter bulk-load \
+	ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
@@ -69,6 +70,23 @@ ingest: db
 
 genera-refresh: db
 	docker compose run --rm app foray genera-refresh
+
+# One-time (or rebuild-from-scratch) bulk-load path for issue #79 Phase 3 - the nightly
+# ingest cron keeps things fresh day-to-day, so these are opt-in, not part of `check`/`start`.
+# ~25.5GB download, run on the host (not in a container) since it just needs `curl` and a
+# place to land data/ - `-C -` resumes an interrupted download instead of restarting it.
+bulk-download:
+	mkdir -p data
+	curl -L -C - --fail -o data/gbif-observations-dwca.zip \
+		https://static.inaturalist.org/observations/gbif-observations-dwca.zip
+
+# Multi-hour full scan of the ~208M-row archive - needs the fungi_genera catalog populated
+# first (`make genera-refresh`).
+bulk-filter:
+	uv run python scripts/inat_dwca_filter.py
+
+bulk-load: db
+	uv run python scripts/load_inat_bulk.py
 
 clean:
 	docker compose --profile scheduler down -v
