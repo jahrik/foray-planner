@@ -86,7 +86,12 @@ def main() -> None:
             # CallbackIOWrapper proxies every attribute to `raw` (including close/readable/etc via
             # ObjectWrapper.__getattr__), so it satisfies TextIOWrapper's buffer protocol at
             # runtime even though the type checker can't see that through the dynamic proxy.
-            wrapped = cast(BinaryIO, CallbackIOWrapper(bar.update, raw, "read"))
+            io_wrapper = CallbackIOWrapper(bar.update, raw, "read")
+            # TextIOWrapper calls buffer.read1(), not .read() - only wrapping "read" leaves
+            # read1() falling through __getattr__ straight to `raw`, silently bypassing the
+            # progress callback entirely (bar sits at 0% while the scan runs fine underneath).
+            io_wrapper.wrapper_setattr("read1", io_wrapper.read)
+            wrapped = cast(BinaryIO, io_wrapper)
             # errors="replace": a single bad byte shouldn't abort a multi-hour scan of an
             # external archive we don't control.
             text = io.TextIOWrapper(wrapped, encoding="utf-8", newline="", errors="replace")
