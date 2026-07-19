@@ -190,5 +190,5 @@ make frontend
 
 This is a trip-planning and mapping tool. Make **no** identification, edibility, or safety
 claims anywhere - no authored species descriptions, no toxicity/lookalike text. Any such
-information is deferred to each taxon's iNaturalist page (`Species.inat_url`), which the UI
-links. Keep it that way.
+information is deferred to each taxon's iNaturalist page (`inatUrl()` in `state.ts`), which
+the UI links. Keep it that way.

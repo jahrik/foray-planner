@@ -18,7 +18,7 @@ from typing import Any
 import psycopg
 
 from foray.cache import (
-    genus_taxon_ids,
+    known_genus_taxon_ids,
     latest_obs_date,
     latest_obs_date_by_place,
     record_ingest,
@@ -84,6 +84,17 @@ def _resolve_genus_taxon_id(obs: dict[str, Any], known_genus_ids: set[int]) -> i
     return None
 
 
+def _load_known_genus_ids(db: psycopg.Connection) -> set[int]:
+    """The genus-ancestry resolver's membership set - fails fast on an empty catalog rather
+    than silently ingesting only already-genus-rank observations and skipping every finer-rank
+    one (a misconfigured/never-refreshed fungi_genera would otherwise look like a working but
+    quietly-partial ingest)."""
+    known_genus_ids = known_genus_taxon_ids(db)
+    if not known_genus_ids:
+        raise RuntimeError("fungi_genera catalog is empty - run `foray genera-refresh` first.")
+    return known_genus_ids
+
+
 def _to_row(obs: dict[str, Any], genus_taxon_id: int) -> tuple[Any, ...] | None:
     lat, lng = _coords(obs)
     day = _observed_date(obs)
@@ -112,7 +123,7 @@ def ingest(
     abort_event: threading.Event | None = None,
 ) -> dict[int, int]:
     """Pull every Fungi observation within the home radius. Returns {genus_taxon_id: rows}."""
-    known_genus_ids = set(genus_taxon_ids(db).values())
+    known_genus_ids = _load_known_genus_ids(db)
     start_date = f"{cfg.since_year}-01-01"
     end_date = dt.date.today().isoformat()
     home = cfg.home
@@ -196,7 +207,7 @@ def ingest_region(
     backfill on first run is what repeatedly crashed the droplet with ENOSPC before this was
     capped.
     """
-    known_genus_ids = set(genus_taxon_ids(db).values())
+    known_genus_ids = _load_known_genus_ids(db)
     recent_cutoff = (dt.date.today() - dt.timedelta(days=cfg.region_sync_days)).isoformat()
     end_date = dt.date.today().isoformat()
 

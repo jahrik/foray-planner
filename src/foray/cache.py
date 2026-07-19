@@ -239,6 +239,14 @@ def genus_taxon_ids(con: psycopg.Connection) -> dict[str, int]:
     return genera
 
 
+def known_genus_taxon_ids(con: psycopg.Connection) -> set[int]:
+    """The full set of catalog taxon_ids, for callers (ingest.py's genus-ancestry resolver)
+    that only need membership, not the name map - unlike ``genus_taxon_ids()``, this never
+    raises on a duplicate ``name`` (irrelevant here; taxon_id is already the schema's PK)."""
+    rows = con.execute("SELECT taxon_id FROM fungi_genera").fetchall()
+    return {taxon_id for (taxon_id,) in rows}
+
+
 def search_fungi_genera(con: psycopg.Connection, query: str, limit: int = 20) -> list[dict[str, Any]]:
     """Genus catalog search by scientific or common name, ranked by iNat's observation count.
 

@@ -113,3 +113,15 @@ def test_ingest_incremental_overlaps_by_a_week(con: psycopg.Connection, cfg_with
 
     call_kwargs = mock_iter.call_args.kwargs
     assert call_kwargs["d1"] >= "2024-05-25"
+
+
+def test_ingest_fails_fast_on_empty_catalog(con: psycopg.Connection, monkeypatch) -> None:
+    """A never-refreshed/misconfigured fungi_genera catalog must abort loudly, not silently
+    ingest only already-genus-rank observations while dropping every finer-rank one."""
+    monkeypatch.setenv("FORAY_HOME__LAT", "47.6")
+    monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
+    monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
+    cfg = Settings()
+
+    with pytest.raises(RuntimeError, match="genera-refresh"):
+        ingest(cfg, con)

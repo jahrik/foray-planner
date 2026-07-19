@@ -170,6 +170,62 @@ def test_place_calendar_empty_taxon_ids_means_no_filter(con: psycopg.Connection)
     assert calendar[10]["species"]["Chanterelles"] == 30
 
 
+def test_place_calendar_caps_species_breakdown_when_unfiltered(con: psycopg.Connection) -> None:
+    # 20 more distinct genera, all observed in the OCT region in October - well over the cap,
+    # simulating an unfiltered device seeing the full ~6,018-genus catalog (issue #79).
+    extra_taxa = [(1000 + i, f"Genus{i}", f"Common{i}") for i in range(20)]
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            extra_taxa,
+        )
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            [
+                (20000 + i, taxon_id, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, 2022, "research", 10)
+                for i, (taxon_id, _, _) in enumerate(extra_taxa)
+            ],
+        )
+    build_phenology(con, CELL)
+
+    row = con.execute("SELECT region_id FROM regions ORDER BY abs(center_lat - %s) LIMIT 1", [OCT_LAT]).fetchone()
+    assert row is not None
+    region_id = row[0]
+    calendar = place_calendar(con, region_id=region_id, taxon_ids=[])
+
+    assert len(calendar[10]["species"]) <= 15
+    # total still reflects every matching row, not just the capped breakdown.
+    assert calendar[10]["total"] == 30 + 20
+
+
+def test_place_calendar_disambiguates_duplicate_display_names(con: psycopg.Connection) -> None:
+    dup_a, dup_b = 2001, 2002
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            [(dup_a, "Amanitopsis", "Ringless Amanitas"), (dup_b, "Vaginata", "Ringless Amanitas")],
+        )
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            [
+                (30001, dup_a, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, 2022, "research", 10),
+                (30002, dup_b, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, 2022, "research", 10),
+            ],
+        )
+    build_phenology(con, CELL)
+
+    row = con.execute("SELECT region_id FROM regions ORDER BY abs(center_lat - %s) LIMIT 1", [OCT_LAT]).fetchone()
+    assert row is not None
+    region_id = row[0]
+    calendar = place_calendar(con, region_id=region_id, taxon_ids=[dup_a, dup_b])
+
+    assert calendar[10]["species"]["Ringless Amanitas"] == 1
+    disambiguated = [key for key in calendar[10]["species"] if key.startswith("Ringless Amanitas (")]
+    assert len(disambiguated) == 1
+
+
 def test_alerts_only_recent(con: psycopg.Connection) -> None:
     # Fixture observations are from 2022 -> nothing within the trailing window.
     active = alerts(
