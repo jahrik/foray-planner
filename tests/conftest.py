@@ -27,7 +27,6 @@ from foray.cache import connect
 
 _TABLES = (
     "observations",
-    "taxa",
     "campsites",
     "public_land",
     "trails",

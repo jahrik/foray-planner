@@ -31,13 +31,6 @@ logger = logging.getLogger(__name__)
 _ENABLE_POSTGIS = "CREATE EXTENSION IF NOT EXISTS postgis;"
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS taxa (
-    taxon_id     BIGINT PRIMARY KEY,
-    name         TEXT,
-    common_name  TEXT,
-    rank         TEXT
-);
-
 CREATE TABLE IF NOT EXISTS observations (
     id                  BIGINT PRIMARY KEY,
     taxon_id            BIGINT,
@@ -206,22 +199,13 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS place_guess TEXT")
     con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS uri TEXT")
     con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS obscured BOOLEAN")
+    # `taxa` is retired (issue #79 Phase 4): superseded by fungi_genera, the full catalog
+    # every name lookup now reads from (see scoring.py's _genus_name_map). Left in place
+    # rather than dropped here - a DROP TABLE running unconditionally on every connect() is a
+    # disruptive side effect for a rolling deploy where an older instance might still be
+    # running against it. Drop it manually (`DROP TABLE IF EXISTS taxa;`) once nothing older
+    # than this change is running.
     return con
-
-
-def upsert_taxa(con: psycopg.Connection, rows: Iterable[dict[str, Any]]) -> None:
-    with con.cursor() as cur:
-        cur.executemany(
-            """
-            INSERT INTO taxa (taxon_id, name, common_name, rank)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (taxon_id) DO UPDATE SET
-                name = EXCLUDED.name,
-                common_name = EXCLUDED.common_name,
-                rank = EXCLUDED.rank
-            """,
-            [(row["taxon_id"], row["name"], row["common_name"], row["rank"]) for row in rows],
-        )
 
 
 def upsert_fungi_genera(con: psycopg.Connection, rows: Iterable[dict[str, Any]]) -> None:
@@ -255,6 +239,14 @@ def genus_taxon_ids(con: psycopg.Connection) -> dict[str, int]:
             raise ValueError(f"fungi_genera has duplicate name {name!r} (taxon_ids {genera[name]} and {taxon_id})")
         genera[name] = taxon_id
     return genera
+
+
+def known_genus_taxon_ids(con: psycopg.Connection) -> set[int]:
+    """The full set of catalog taxon_ids, for callers (ingest.py's genus-ancestry resolver)
+    that only need membership, not the name map - unlike ``genus_taxon_ids()``, this never
+    raises on a duplicate ``name`` (irrelevant here; taxon_id is already the schema's PK)."""
+    rows = con.execute("SELECT taxon_id FROM fungi_genera").fetchall()
+    return {taxon_id for (taxon_id,) in rows}
 
 
 def search_fungi_genera(con: psycopg.Connection, query: str, limit: int = 20) -> list[dict[str, Any]]:
@@ -457,10 +449,12 @@ def is_area_covered(con: psycopg.Connection, prefix: str, lat: float, lng: float
     return False
 
 
-def latest_obs_date(con: psycopg.Connection, taxon_id: int, lat: float, lng: float, radius_km: float) -> str | None:
+def latest_obs_date(con: psycopg.Connection, token: int | str, lat: float, lng: float, radius_km: float) -> str | None:
+    """Latest end-date from ingest_log for a home-radius pull matching ``token`` (a taxon_id,
+    or "fungi" for the whole-kingdom ingest, see ingest.py)."""
     rows = con.execute(
         "SELECT key, lat AS rlat, lng AS rlng, radius_km AS rr FROM ingest_log WHERE key LIKE %s AND lat IS NOT NULL",
-        [f"obs:{taxon_id}:%"],
+        [f"obs:{token}:%"],
     ).fetchall()
     if not rows:
         return None
@@ -474,11 +468,11 @@ def latest_obs_date(con: psycopg.Connection, taxon_id: int, lat: float, lng: flo
     return max(dates)
 
 
-def latest_obs_date_by_place(con: psycopg.Connection, taxon_id: int, place_id: int) -> str | None:
+def latest_obs_date_by_place(con: psycopg.Connection, token: int | str, place_id: int) -> str | None:
     """Return the latest end-date from ingest_log for a place_id-based pull, or None."""
     row = con.execute(
         "SELECT max(split_part(key, ':', 6)) FROM ingest_log WHERE key LIKE %s",
-        [f"obs:{taxon_id}:place:{place_id}:%"],
+        [f"obs:{token}:place:{place_id}:%"],
     ).fetchone()
     if row is None or row[0] is None:
         return None

@@ -1,6 +1,6 @@
 import { getJson } from "./api/client";
 import type { GenusResult } from "./api/types";
-import { errorDetail, escapeHtml, qs, setStatus } from "./state";
+import { displayName, errorDetail, escapeHtml, qs, setStatus } from "./state";
 
 const DEBOUNCE_MS = 300;
 
@@ -28,7 +28,7 @@ function renderSuggestions(results: GenusResult[], list: HTMLUListElement): void
   }
   candidates.forEach((genus, i) => {
     const li = document.createElement("li");
-    li.textContent = genus.common_name ? `${genus.name} (${genus.common_name})` : genus.name;
+    li.textContent = displayName(genus);
     li.dataset.index = String(i);
     li.onmousedown = (e) => {
       e.preventDefault();
@@ -45,7 +45,7 @@ function renderChips(): void {
     .map(
       (genus) => `
       <span class="chip removable" data-taxon-id="${genus.taxon_id}">
-        ${escapeHtml(genus.common_name ? `${genus.name} (${genus.common_name})` : genus.name)}
+        ${escapeHtml(displayName(genus))}
         <button type="button" aria-label="Remove ${escapeHtml(genus.name)}">×</button>
       </span>`,
     )

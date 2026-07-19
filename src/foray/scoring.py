@@ -102,10 +102,22 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 @dataclass
 class SpeciesHit:
     taxon_id: int
-    common_name: str
+    name: str
+    common_name: str | None
     month_count: int
     total_count: int
     w_pheno: float
+
+
+def _genus_name_map(con: psycopg.Connection) -> dict[int, tuple[str, str | None]]:
+    """taxon_id -> (scientific name, common name or None) from the full genus catalog.
+
+    ``name`` is the primary display label (every ~6,018-genus catalog row has one);
+    ``common_name`` is optional secondary enrichment - most genera outside the old curated
+    21 lack an English common name on iNat (see fungi_genera's schema comment).
+    """
+    rows = con.execute("SELECT taxon_id, name, common_name FROM fungi_genera").fetchall()
+    return {taxon_id: (name, common_name) for taxon_id, name, common_name in rows}
 
 
 @dataclass
@@ -199,7 +211,7 @@ def rank_destinations(
         [*taxon_ids, *taxon_ids, *months],
     ).fetchall()
 
-    names = dict(con.execute("SELECT taxon_id, common_name FROM taxa").fetchall())
+    genera = _genus_name_map(con)
     recent = _recent_counts(con, cell_deg, taxon_ids, recent_weeks)
 
     # Group per region, applying the distance filter and the score formula.
@@ -214,7 +226,8 @@ def rank_destinations(
             {"clat": clat, "clng": clng, "dist": dist, "score": 0.0, "species": []},
         )
         agg["score"] += w_pheno * math.log1p(month_cnt)
-        agg["species"].append(SpeciesHit(taxon_id, names.get(taxon_id, str(taxon_id)), month_cnt, total_cnt, w_pheno))
+        name, common_name = genera.get(taxon_id, (str(taxon_id), None))
+        agg["species"].append(SpeciesHit(taxon_id, name, common_name, month_cnt, total_cnt, w_pheno))
 
     results: list[RegionScore] = []
     for region_id, agg in regions.items():
@@ -418,8 +431,18 @@ def trails_near(con: psycopg.Connection, *, lat: float, lng: float, radius_km: f
     return [trail for _, trail in scored]
 
 
+_CALENDAR_SPECIES_PER_MONTH = 15
+
+
 def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[int]) -> dict[int, dict[str, Any]]:
-    """12-month activity for a region: total count + per-species breakdown per month."""
+    """12-month activity for a region: total count + per-species breakdown per month.
+
+    ``total`` always reflects every matching row, but the breakdown itself is capped to the
+    top ``_CALENDAR_SPECIES_PER_MONTH`` taxa per month - with an empty ``taxon_ids`` filter
+    (issue #79: "no genus selected" means every catalog genus, ~6,018 of them), an uncapped
+    breakdown would both bloat the response and key `dict[str, int]` by display name, where
+    two genera sharing the same label would silently overwrite each other.
+    """
     rows = con.execute(
         cast(
             LiteralString,
@@ -430,12 +453,23 @@ def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[i
         ),
         [region_id, *taxon_ids],
     ).fetchall()
-    names = dict(con.execute("SELECT taxon_id, common_name FROM taxa").fetchall())
+    genera = _genus_name_map(con)
     calendar: dict[int, dict[str, Any]] = {month: {"total": 0, "species": {}} for month in range(1, 13)}
+    per_month_counts: dict[int, dict[int, int]] = {month: {} for month in range(1, 13)}
     for month, taxon_id, cnt in rows:
-        bucket = calendar[month]
-        bucket["total"] += cnt
-        bucket["species"][names.get(taxon_id, str(taxon_id))] = cnt
+        calendar[month]["total"] += cnt
+        per_month_counts[month][taxon_id] = cnt
+
+    for month, counts in per_month_counts.items():
+        top = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:_CALENDAR_SPECIES_PER_MONTH]
+        species: dict[str, int] = {}
+        for taxon_id, cnt in top:
+            name, common_name = genera.get(taxon_id, (str(taxon_id), None))
+            label = f"{name} ({common_name})" if common_name else name
+            if label in species:
+                label = f"{label} #{taxon_id}"  # disambiguate a display-name collision
+            species[label] = cnt
+        calendar[month]["species"] = species
     return calendar
 
 
@@ -457,19 +491,23 @@ def recent_observations(
         ),
         [region_id, *taxon_ids, limit],
     ).fetchall()
-    names = dict(con.execute("SELECT taxon_id, common_name FROM taxa").fetchall())
-    return [
-        {
-            "id": obs_id,
-            "taxon_id": taxon_id,
-            "common_name": names.get(taxon_id, str(taxon_id)),
-            "observed_on": observed_on.isoformat() if observed_on else None,
-            "place_guess": place_guess,
-            "uri": uri,
-            "obscured": bool(obscured),
-        }
-        for obs_id, taxon_id, observed_on, place_guess, uri, obscured in rows
-    ]
+    genera = _genus_name_map(con)
+    results = []
+    for obs_id, taxon_id, observed_on, place_guess, uri, obscured in rows:
+        name, common_name = genera.get(taxon_id, (str(taxon_id), None))
+        results.append(
+            {
+                "id": obs_id,
+                "taxon_id": taxon_id,
+                "name": name,
+                "common_name": common_name,
+                "observed_on": observed_on.isoformat() if observed_on else None,
+                "place_guess": place_guess,
+                "uri": uri,
+                "obscured": bool(obscured),
+            }
+        )
+    return results
 
 
 def alerts(
@@ -504,7 +542,7 @@ def alerts(
         ),
         [cutoff, *taxon_ids],
     ).fetchall()
-    names = dict(con.execute("SELECT taxon_id, common_name FROM taxa").fetchall())
+    genera = _genus_name_map(con)
 
     by_region: dict[str, dict[str, Any]] = {}
     for region_id, clat, clng, taxon_id, cnt, last_seen, place_guess, uri, obscured in rows:
@@ -523,10 +561,12 @@ def alerts(
             },
         )
         entry["total"] += cnt
+        name, common_name = genera.get(taxon_id, (str(taxon_id), None))
         entry["species"].append(
             {
                 "taxon_id": taxon_id,
-                "common_name": names.get(taxon_id, str(taxon_id)),
+                "name": name,
+                "common_name": common_name,
                 "count": cnt,
                 "last_seen": str(last_seen),
                 "place_guess": place_guess,

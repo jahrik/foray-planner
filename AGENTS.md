@@ -22,11 +22,14 @@ Guiding principles - keep these in mind for any feature work:
 ## Layout
 
 - `src/foray/config.py` - pydantic-settings (`Settings(BaseSettings)`) with `Home`, `Ingest`,
-  `Species`, `CoverageRegion` models. All config comes from env vars (prefix `FORAY_`, nested
+  `CoverageRegion` models. All config comes from env vars (prefix `FORAY_`, nested
   delimiter `__`) or `.env` file. The runtime location override lives in Postgres
-  (`app_location` table, `foray.cache.load_location`/`save_location`), not a file.
-- `src/foray/defaults.py` - built-in species list (21 genera) and coverage regions (WA/OR/ID).
-  Overridden via `FORAY_SPECIES` or `FORAY_COVERAGE` env vars.
+  (`app_location` table, `foray.cache.load_location`/`save_location`), not a file. There's no
+  fixed target-genus list (issue #79) - the full Fungi catalog lives in `fungi_genera`
+  (refreshed via `foray genera-refresh`), and each device picks its own targets in
+  `app_genera`.
+- `src/foray/defaults.py` - built-in home location and coverage regions (WA/OR/ID).
+  Overridden via `FORAY_COVERAGE` env var.
 - `src/foray/inat.py` - throttled pyinaturalist wrapper (observations, species_counts,
   monthly histogram). Descriptive User-Agent; deep-paginates via `id_above`; `_with_retries`
   backs off on transient network errors so one blip doesn't abort a long ingest.
@@ -179,12 +182,13 @@ make frontend
   NULL (unknown).
 - `observations` includes `place_guess`, `uri`, and `obscured` columns enriched from iNat
   during ingest. Existing rows backfill via ON CONFLICT DO UPDATE with COALESCE on next ingest.
-- Adding species: edit `src/foray/defaults.py` or set `FORAY_SPECIES` env var (JSON array),
-  then run `make ingest`.
+- Target genera aren't configured in code - `foray genera-refresh` keeps the full catalog
+  synced, `foray ingest` pulls every Fungi observation and resolves each one's own genus from
+  its taxon ancestry, and users pick their targets in the search UI (per-device, `app_genera`).
 
 ## Not in scope
 
 This is a trip-planning and mapping tool. Make **no** identification, edibility, or safety
 claims anywhere - no authored species descriptions, no toxicity/lookalike text. Any such
-information is deferred to each taxon's iNaturalist page (`Species.inat_url`), which the UI
-links. Keep it that way.
+information is deferred to each taxon's iNaturalist page (`inatUrl()` in `state.ts`), which
+the UI links. Keep it that way.

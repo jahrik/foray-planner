@@ -23,7 +23,9 @@ FAR = (47.0, -121.0)  # ~333 km N of home
 
 @pytest.fixture(autouse=True)
 def _seed(con: psycopg.Connection) -> None:
-    con.execute("INSERT INTO taxa VALUES (%s, %s, %s, %s)", (MOREL, "Morchella", "Morels", "genus"))
+    con.execute(
+        "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)", (MOREL, "Morchella", "Morels")
+    )
 
     rows: list[tuple] = []
     obs_id = 1

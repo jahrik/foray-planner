@@ -37,7 +37,6 @@ from foray.api_models import (
     LocationResponse,
     RecentObservation,
     RegionScore,
-    SpeciesResponse,
     StatusResponse,
     Trail,
     TripPlan,
@@ -390,10 +389,6 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             last_error=state["last_error"],
         )
 
-    @app.get("/api/species")
-    def get_species() -> list[SpeciesResponse]:
-        return [SpeciesResponse(**species.model_dump(), inat_url=species.inat_url) for species in current().species]
-
     @app.get("/api/genera")
     def get_genera(query: str = Query("", alias="q", max_length=200)) -> list[GenusResult]:
         """Genus catalog search (issue #79) - empty query returns the most-observed genera."""
@@ -436,21 +431,22 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         with pool.connection() as conn:
             results = []
             for region in cfg.coverage:
+                # Since issue #79 Phase 4, ingest_region() writes one whole-Fungi-kingdom
+                # ingest_log row per (place, window) rather than one per taxon, and each
+                # incremental run's window overlaps the previous one by 7 days - summing
+                # row_count across every historical row would double-count that overlap (and
+                # pull in pre-Phase-4 per-taxon keys on an already-deployed database). The
+                # latest run's own row_count is what "observations ingested" should mean.
                 row = conn.execute(
-                    "SELECT max(fetched_at) FROM ingest_log WHERE key LIKE %s",
-                    [f"obs:%:place:{region.place_id}:%"],
-                ).fetchone()
-                last_ingest = row[0].isoformat() if row and row[0] else None
-                count_row = conn.execute(
-                    "SELECT count(DISTINCT split_part(key, ':', 2)) FROM ingest_log WHERE key LIKE %s",
-                    [f"obs:%:place:{region.place_id}:%"],
+                    "SELECT fetched_at, row_count FROM ingest_log WHERE key LIKE %s ORDER BY fetched_at DESC LIMIT 1",
+                    [f"obs:fungi:place:{region.place_id}:%"],
                 ).fetchone()
                 results.append(
                     CoverageRegionResponse(
                         name=region.name,
                         place_id=region.place_id,
-                        last_ingest=last_ingest,
-                        taxa_ingested=count_row[0] if count_row else 0,
+                        last_ingest=row[0].isoformat() if row else None,
+                        observations_ingested=row[1] if row else 0,
                     )
                 )
         return results

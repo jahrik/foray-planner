@@ -64,6 +64,12 @@ export const errorDetail = (error: unknown): string => (error as ApiError)?.deta
 
 export const inatUrl = (taxonId: number): string => `https://www.inaturalist.org/taxa/${taxonId}`;
 
+/** Scientific name, with the common name parenthesized when the genus has one on iNat (same
+ * format as genera.ts's search results) - most of the ~6,018-genus catalog lacks an English
+ * common name, so the scientific name is always the primary, reliable label. */
+export const displayName = (entry: { name: string; common_name?: string | null }): string =>
+  entry.common_name ? `${entry.name} (${entry.common_name})` : entry.name;
+
 /** Escape text destined for an HTML string template (innerHTML / Leaflet popup strings). */
 export function escapeHtml(text: string): string {
   return text
