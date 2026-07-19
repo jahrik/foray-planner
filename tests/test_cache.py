@@ -8,6 +8,7 @@ import psycopg
 
 from foray.cache import (
     add_genus,
+    genus_taxon_ids,
     list_selected_genera,
     load_genera,
     remove_genus,
@@ -118,6 +119,16 @@ def test_upsert_fungi_genera_reupsert_updates_in_place(con: psycopg.Connection) 
 
     row = con.execute("SELECT common_name, observations_count FROM fungi_genera WHERE taxon_id = 1").fetchone()
     assert row == ("Foos", 2)
+
+
+def test_genus_taxon_ids_maps_full_catalog(con: psycopg.Connection) -> None:
+    upsert_fungi_genera(con, _GENERA)
+
+    assert genus_taxon_ids(con) == {
+        "Cantharellus": 47348,
+        "Entoloma": 47165,
+        "Obscurella": 999999,
+    }
 
 
 def test_load_genera_empty_for_fresh_device(con: psycopg.Connection) -> None:

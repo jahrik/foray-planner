@@ -1,5 +1,5 @@
 .PHONY: db install lint test check frontend check-api-schema start restart stop scheduler clean \
-	ingest ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once
+	ingest genera-refresh ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
@@ -66,6 +66,9 @@ stop:
 
 ingest: db
 	docker compose run --rm app foray ingest --countries
+
+genera-refresh: db
+	docker compose run --rm app foray genera-refresh
 
 clean:
 	docker compose --profile scheduler down -v

@@ -239,6 +239,13 @@ def upsert_fungi_genera(con: psycopg.Connection, rows: Iterable[dict[str, Any]])
         )
 
 
+def genus_taxon_ids(con: psycopg.Connection) -> dict[str, int]:
+    """Full genus-name -> taxon_id map from the catalog (issue #79 Phase 3: the bulk loader
+    matches every catalog genus now, not just the old 21-genus seed list)."""
+    rows = con.execute("SELECT name, taxon_id FROM fungi_genera").fetchall()
+    return dict(rows)
+
+
 def search_fungi_genera(con: psycopg.Connection, query: str, limit: int = 20) -> list[dict[str, Any]]:
     """Genus catalog search by scientific or common name, ranked by iNat's observation count.
 
