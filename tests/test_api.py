@@ -505,3 +505,30 @@ def test_index_serves_built_frontend_or_hint(client: TestClient) -> None:
     response = client.get("/")
     assert response.status_code in (200, 503)
     assert "Foray Planner" in response.text or "<!doctype html>" in response.text.lower()
+
+
+def test_get_coverage_reports_latest_run_not_a_cumulative_sum(client: TestClient, con: psycopg.Connection) -> None:
+    """issue #79 Phase 4: ingest_region() writes one obs:fungi:place:{id}:{window} row per
+    incremental run (overlapping windows), plus a pre-Phase-4 database may still carry old
+    per-taxon obs:{taxon_id}:place:{id}:{window} rows. Neither should be summed together -
+    the response should reflect only the latest obs:fungi run for that region."""
+    place_id = 46  # Washington, in Settings' default 50-state coverage list
+    con.execute(
+        "INSERT INTO ingest_log (key, fetched_at, row_count) VALUES (%s, now() - interval '1 day', %s)",
+        [f"obs:fungi:place:{place_id}:2024-01-01:2024-06-01", 100],
+    )
+    con.execute(
+        "INSERT INTO ingest_log (key, fetched_at, row_count) VALUES (%s, now(), %s)",
+        [f"obs:fungi:place:{place_id}:2024-05-25:2024-06-08", 40],
+    )
+    # A legacy pre-Phase-4 per-taxon key for the same place - must not be counted at all.
+    con.execute(
+        "INSERT INTO ingest_log (key, fetched_at, row_count) VALUES (%s, now(), %s)",
+        [f"obs:111:place:{place_id}:2024-01-01:2024-06-01", 9999],
+    )
+
+    response = client.get("/api/coverage")
+    assert response.status_code == 200
+    body = response.json()
+    washington = next(region for region in body if region["place_id"] == place_id)
+    assert washington["observations_ingested"] == 40

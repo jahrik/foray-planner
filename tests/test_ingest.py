@@ -3,6 +3,7 @@ resolved per observation via its own taxon ancestry) - no network; iNat calls mo
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import patch
 
 import psycopg
@@ -125,3 +126,29 @@ def test_ingest_fails_fast_on_empty_catalog(con: psycopg.Connection, monkeypatch
 
     with pytest.raises(RuntimeError, match="genera-refresh"):
         ingest(cfg, con)
+
+
+def test_ingest_cancelled_run_keeps_rows_but_skips_record_ingest(
+    con: psycopg.Connection, cfg_with_home: Settings
+) -> None:
+    """A cancelled run must not advance the incremental cursor (record_ingest) - a later run's
+    latest_obs_date() would otherwise treat the un-fetched rest of the window as already
+    covered. Rows already upserted before cancellation are real data and stay."""
+    abort_event = threading.Event()
+
+    def obs_stream():
+        yield _fake_obs(1, MOREL)
+        abort_event.set()  # cancelled after the first observation is queued for upsert
+        yield _fake_obs(2, CHANTERELLE)  # never reached - loop checks abort_event first
+
+    with patch("foray.ingest.iter_observations") as mock_iter:
+        mock_iter.return_value = obs_stream()
+        counts = ingest(cfg_with_home, con, abort_event=abort_event)
+
+    assert counts == {MOREL: 1}
+    row = con.execute("SELECT count(*) FROM observations").fetchone()
+    assert row is not None
+    assert row[0] == 1
+
+    log_row = con.execute("SELECT key FROM ingest_log WHERE key LIKE %s", ["obs:fungi:%"]).fetchone()
+    assert log_row is None

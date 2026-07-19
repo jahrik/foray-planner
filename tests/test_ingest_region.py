@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from unittest.mock import patch
 
 import psycopg
@@ -91,6 +92,33 @@ def test_ingest_region_skips_observations_with_no_known_genus_ancestor(
     row = con.execute("SELECT count(*) FROM observations").fetchone()
     assert row is not None
     assert row[0] == 1
+
+
+def test_ingest_region_cancelled_run_keeps_rows_but_skips_record_ingest(
+    con: psycopg.Connection, env_with_coverage
+) -> None:
+    """Mirrors ingest.py's home-radius test: a cancelled region run must not advance the
+    incremental cursor, or a later run's latest_obs_date_by_place() would skip the gap."""
+    cfg = Settings()
+    region = CoverageRegion(name="Washington", place_id=46)
+    abort_event = threading.Event()
+
+    def obs_stream():
+        yield _fake_obs(1, MOREL)
+        abort_event.set()
+        yield _fake_obs(2, MOREL)  # never reached
+
+    with patch("foray.ingest.iter_observations") as mock_iter:
+        mock_iter.return_value = obs_stream()
+        counts = ingest_region(cfg, con, region, abort_event=abort_event)
+
+    assert counts == {MOREL: 1}
+    row = con.execute("SELECT count(*) FROM observations").fetchone()
+    assert row is not None
+    assert row[0] == 1
+
+    log_row = con.execute("SELECT key FROM ingest_log WHERE key LIKE %s", ["obs:fungi:place:46:%"]).fetchone()
+    assert log_row is None
 
 
 def test_ingest_region_incremental(con: psycopg.Connection, env_with_coverage) -> None:

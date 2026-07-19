@@ -146,6 +146,7 @@ def ingest(
     counts: dict[int, int] = {}
     scanned = 0
     skipped_no_genus = 0
+    cancelled = False
     chunk: list[tuple[Any, ...]] = []
     for obs in iter_observations(
         taxon_id=FUNGI_TAXON_ID,
@@ -158,6 +159,7 @@ def ingest(
     ):
         if abort_event and abort_event.is_set():
             logger.info("ingest: cancelled at %d observations", scanned)
+            cancelled = True
             break
         scanned += 1
         if progress_cb and scanned % _CHUNK_SIZE == 0:
@@ -181,8 +183,16 @@ def ingest(
     if chunk:
         upsert_observations(db, chunk)
 
-    key = f"obs:fungi:{home.lat}:{home.lng}:{home.radius_km}:{window_start}:{end_date}"
-    record_ingest(db, key, sum(counts.values()), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
+    if cancelled:
+        # A partial run must not advance the incremental cursor - record_ingest would mark
+        # this whole window as covered through end_date, so a later run's latest_obs_date()
+        # would skip the gap this run never actually fetched. The rows already upserted above
+        # are kept (idempotent, still real data); only the "this window is done" bookkeeping
+        # is skipped.
+        logger.info("ingest: skipping record_ingest for cancelled run")
+    else:
+        key = f"obs:fungi:{home.lat}:{home.lng}:{home.radius_km}:{window_start}:{end_date}"
+        record_ingest(db, key, sum(counts.values()), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
     logger.info(
         "ingest: done - %d observations across %d genera (%d skipped, no genus ancestor)",
         sum(counts.values()),
@@ -229,6 +239,7 @@ def ingest_region(
     counts: dict[int, int] = {}
     scanned = 0
     skipped_no_genus = 0
+    cancelled = False
     chunk: list[tuple[Any, ...]] = []
     for obs in iter_observations(
         taxon_id=FUNGI_TAXON_ID,
@@ -239,6 +250,7 @@ def ingest_region(
     ):
         if abort_event and abort_event.is_set():
             logger.info("ingest_region: cancelled at %d observations", scanned)
+            cancelled = True
             break
         scanned += 1
         if progress_cb and scanned % _CHUNK_SIZE == 0:
@@ -262,8 +274,12 @@ def ingest_region(
     if chunk:
         upsert_observations(db, chunk)
 
-    key = f"obs:fungi:place:{region.place_id}:{window_start}:{end_date}"
-    record_ingest(db, key, sum(counts.values()))
+    if cancelled:
+        # See ingest()'s matching comment: don't advance the incremental cursor on a partial run.
+        logger.info("ingest_region: skipping record_ingest for cancelled run")
+    else:
+        key = f"obs:fungi:place:{region.place_id}:{window_start}:{end_date}"
+        record_ingest(db, key, sum(counts.values()))
     logger.info(
         "ingest_region: done %s - %d observations across %d genera (%d skipped, no genus ancestor)",
         region.name,
