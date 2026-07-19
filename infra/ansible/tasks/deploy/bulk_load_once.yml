@@ -1,0 +1,68 @@
+---
+# Manual/opt-in only - not part of foray:deploy. Loads the already-filtered, already-verified
+# (against local dev Postgres) GBIF DwC-A dump straight into prod, instead of waiting on the
+# nightly ingest cron to backfill history observation-by-observation via the iNat API (issue
+# #79 Phase 3b). Depends on foray:genera-once having run at least once - load_inat_bulk.py
+# resolves genus ids against fungi_genera just like live ingest does.
+- name: Check for the deploy-rendered env file
+  ansible.builtin.stat:
+    path: /opt/foray-planner/foray.env
+  register: foray_bulk_load_once_env_stat
+
+- name: Fail fast if this droplet has never been deployed to
+  ansible.builtin.fail:
+    msg: >-
+      /opt/foray-planner/foray.env not found - run `make ansible-deploy` at least once on
+      this droplet first (foray:bulk-load-once depends on the env file it renders).
+  when: not foray_bulk_load_once_env_stat.stat.exists
+
+- name: Check for the filtered observations file on the controller
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/../../data/inat_us_observations.jsonl"
+  register: foray_bulk_load_once_local_stat
+  delegate_to: localhost
+  become: false
+
+- name: Fail fast if the filtered observations file doesn't exist locally
+  ansible.builtin.fail:
+    msg: >-
+      data/inat_us_observations.jsonl not found on the controller - run `make bulk-filter`
+      first (see scripts/inat_dwca_filter.py).
+  when: not foray_bulk_load_once_local_stat.stat.exists
+
+- name: Ensure the remote data directory exists
+  ansible.builtin.file:
+    path: /opt/foray-planner/data
+    state: directory
+    mode: "0755"
+
+# World-readable: the app container runs as a non-root `foray` user (uid 1000, see
+# Dockerfile), which needs read access to this bind-mounted file from outside its own uid
+# namespace - the file is written by the (root) ansible connection user on the host side.
+- name: Copy the filtered observations file to the droplet
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../data/inat_us_observations.jsonl"
+    dest: /opt/foray-planner/data/inat_us_observations.jsonl
+    mode: "0644"
+
+# Wrapped in a block so the 390MB+ copy always gets removed from the droplet's disk
+# afterwards, even if the load itself fails - it's a one-shot input file, not something
+# that belongs sitting there long-term either way.
+- name: Run one-off bulk load and clean up the copy afterwards
+  block:
+    - name: Run one-off bulk load
+      community.docker.docker_container:
+        name: foray-bulk-load-once
+        image: "{{ foray_app_image }}"
+        state: started
+        detach: false
+        cleanup: true
+        env_file: /opt/foray-planner/foray.env
+        volumes:
+          - /opt/foray-planner/data:/app/data:ro
+        command: "python scripts/load_inat_bulk.py"
+  always:
+    - name: Remove the copied observations file from the droplet
+      ansible.builtin.file:
+        path: /opt/foray-planner/data/inat_us_observations.jsonl
+        state: absent
