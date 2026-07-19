@@ -6,7 +6,7 @@ import datetime as dt
 
 import psycopg
 
-from foray.cache import upsert_observations
+from foray.cache import search_fungi_genera, upsert_fungi_genera, upsert_observations
 
 _ROW = (
     1,  # id
@@ -71,3 +71,42 @@ def test_reupsert_preserves_taxon_id_and_quality_grade_when_new_value_is_null(co
     taxon_id, quality_grade = row
     assert taxon_id == _ROW[1]
     assert quality_grade == _ROW[7]
+
+
+_GENERA = [
+    {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "observations_count": 90000},
+    {"taxon_id": 47165, "name": "Entoloma", "common_name": "Pinkgills", "observations_count": 40000},
+    {"taxon_id": 999999, "name": "Obscurella", "common_name": None, "observations_count": 3},
+]
+
+
+def test_search_fungi_genera_matches_scientific_or_common_name(con: psycopg.Connection) -> None:
+    upsert_fungi_genera(con, _GENERA)
+
+    by_scientific = search_fungi_genera(con, "cantharell")
+    assert [hit["taxon_id"] for hit in by_scientific] == [47348]
+
+    by_common = search_fungi_genera(con, "pinkgill")
+    assert [hit["taxon_id"] for hit in by_common] == [47165]
+
+
+def test_search_fungi_genera_empty_query_ranks_by_observation_count(con: psycopg.Connection) -> None:
+    upsert_fungi_genera(con, _GENERA)
+
+    hits = search_fungi_genera(con, "")
+    assert [hit["taxon_id"] for hit in hits] == [47348, 47165, 999999]
+
+
+def test_search_fungi_genera_common_name_is_optional(con: psycopg.Connection) -> None:
+    upsert_fungi_genera(con, _GENERA)
+
+    hits = search_fungi_genera(con, "obscurella")
+    assert hits == [{"taxon_id": 999999, "name": "Obscurella", "common_name": None}]
+
+
+def test_upsert_fungi_genera_reupsert_updates_in_place(con: psycopg.Connection) -> None:
+    upsert_fungi_genera(con, [{"taxon_id": 1, "name": "Foo", "common_name": None, "observations_count": 1}])
+    upsert_fungi_genera(con, [{"taxon_id": 1, "name": "Foo", "common_name": "Foos", "observations_count": 2}])
+
+    row = con.execute("SELECT common_name, observations_count FROM fungi_genera WHERE taxon_id = 1").fetchone()
+    assert row == ("Foos", 2)

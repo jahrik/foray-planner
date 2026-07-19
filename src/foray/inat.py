@@ -16,6 +16,7 @@ from pyinaturalist import (
     get_observation_histogram,
     get_observation_species_counts,
     get_observations,
+    get_taxa,
 )
 
 # Photo license codes iNat's API returns that are safe to redisplay (with attribution) under
@@ -25,6 +26,10 @@ from pyinaturalist import (
 DISPLAYABLE_PHOTO_LICENSES = frozenset({"cc0", "cc-by", "cc-by-sa", "cc-by-nc", "cc-by-nc-sa"})
 
 USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
+
+# iNat's Fungi kingdom taxon id - root of the full genus catalog (issue #79), replacing the
+# old hardcoded 21-genus seed list.
+FUNGI_TAXON_ID = 47170
 
 # iNat caps deep offset paging; ``id_above`` walks past that. 200 is the max page size.
 _PAGE_SIZE = 200
@@ -89,6 +94,35 @@ def iter_observations(
                 d1=d1,
                 d2=d2,
                 quality_grade=quality_grade,
+                per_page=_PAGE_SIZE,
+                order_by="id",
+                order="asc",
+                id_above=id_above,  # noqa: B023 (sync loop; lambda called immediately)
+                user_agent=USER_AGENT,
+            )
+        )
+        results = page.get("results", [])
+        if not results:
+            return
+        yield from results
+        if len(results) < _PAGE_SIZE:
+            return
+        id_above = results[-1]["id"]
+
+
+def iter_fungi_genera() -> Iterator[dict[str, Any]]:
+    """Yield every genus-rank taxon under Fungi - the full catalog behind genus search/#79.
+
+    Same ``id_above`` deep-paging idiom as ``iter_observations`` (verified live: ``/v1/taxa``
+    accepts it too). ~6,018 results as of 2026-07 - well past a single page, so this always
+    walks more than one request.
+    """
+    id_above = 0
+    while True:
+        page = _with_retries(
+            lambda: get_taxa(
+                taxon_id=FUNGI_TAXON_ID,
+                rank="genus",
                 per_page=_PAGE_SIZE,
                 order_by="id",
                 order="asc",

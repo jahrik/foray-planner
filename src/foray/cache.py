@@ -145,6 +145,20 @@ CREATE TABLE IF NOT EXISTS app_location (
     radius_km DOUBLE PRECISION NOT NULL
 );
 
+-- Full genus catalog (issue #79): every Fungi genus on iNat, refreshed weekly by
+-- `foray genera-refresh` (see foray.inat.iter_fungi_genera). Replaces the old hardcoded
+-- 21-genus seed list - `common_name` is NULL for most rows (only well-known genera have an
+-- English common name on iNat), so callers must treat `name` (scientific) as the primary
+-- label, not an optional fallback.
+CREATE TABLE IF NOT EXISTS fungi_genera (
+    taxon_id            BIGINT PRIMARY KEY,
+    name                TEXT NOT NULL,
+    common_name         TEXT,
+    observations_count  INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS ix_fungi_genera_name ON fungi_genera (name);
+
 CREATE INDEX IF NOT EXISTS ix_observations_lat_lng ON observations (lat, lng);
 
 -- Scoring's shared _BINNED fragment (scoring.py) filters on taxon_id + observed_on
@@ -197,6 +211,52 @@ def upsert_taxa(con: psycopg.Connection, rows: Iterable[dict[str, Any]]) -> None
             """,
             [(row["taxon_id"], row["name"], row["common_name"], row["rank"]) for row in rows],
         )
+
+
+def upsert_fungi_genera(con: psycopg.Connection, rows: Iterable[dict[str, Any]]) -> None:
+    with con.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO fungi_genera (taxon_id, name, common_name, observations_count)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (taxon_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                common_name = EXCLUDED.common_name,
+                observations_count = EXCLUDED.observations_count
+            """,
+            [(row["taxon_id"], row["name"], row.get("common_name"), row.get("observations_count")) for row in rows],
+        )
+
+
+def search_fungi_genera(con: psycopg.Connection, query: str, limit: int = 20) -> list[dict[str, Any]]:
+    """Genus catalog search by scientific or common name, ranked by iNat's observation count.
+
+    Empty ``query`` returns the most-observed genera (a sane browse default), not everything -
+    the catalog has ~6,018 rows, too many to dump into a dropdown unfiltered.
+    """
+    stripped = query.strip()
+    if stripped:
+        rows = con.execute(
+            """
+            SELECT taxon_id, name, common_name
+            FROM fungi_genera
+            WHERE name ILIKE %s OR common_name ILIKE %s
+            ORDER BY observations_count DESC NULLS LAST, name
+            LIMIT %s
+            """,
+            [f"%{stripped}%", f"%{stripped}%", limit],
+        ).fetchall()
+    else:
+        rows = con.execute(
+            """
+            SELECT taxon_id, name, common_name
+            FROM fungi_genera
+            ORDER BY observations_count DESC NULLS LAST, name
+            LIMIT %s
+            """,
+            [limit],
+        ).fetchall()
+    return [{"taxon_id": taxon_id, "name": name, "common_name": common_name} for taxon_id, name, common_name in rows]
 
 
 def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:

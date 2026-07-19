@@ -17,6 +17,12 @@
     dest: /opt/foray-planner/scripts/cron-layers.sh
     mode: "0755"
 
+- name: Deploy genera catalog refresh cron script
+  ansible.builtin.template:
+    src: cron-genera.sh.j2
+    dest: /opt/foray-planner/scripts/cron-genera.sh
+    mode: "0755"
+
 - name: Schedule daily observation ingest
   ansible.builtin.cron:
     name: foray-ingest
@@ -31,3 +37,11 @@
     minute: "{{ foray_layers_cron_minute }}"
     weekday: "{{ foray_layers_cron_weekday }}"
     job: /opt/foray-planner/scripts/cron-layers.sh >> /var/log/foray-layers.log 2>&1
+
+- name: Schedule weekly genera catalog refresh
+  ansible.builtin.cron:
+    name: foray-genera
+    hour: "{{ foray_genera_cron_hour }}"
+    minute: "{{ foray_genera_cron_minute }}"
+    weekday: "{{ foray_genera_cron_weekday }}"
+    job: /opt/foray-planner/scripts/cron-genera.sh >> /var/log/foray-genera.log 2>&1

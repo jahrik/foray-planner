@@ -46,6 +46,18 @@ class SpeciesResponse(BaseModel):
     inat_url: str
 
 
+class GenusResult(BaseModel):
+    """A genus catalog search hit (issue #79).
+
+    ``common_name`` is optional - most of the ~6,018 Fungi genera lack an English common name
+    on iNat, so ``name`` (scientific) is the primary label, not a fallback.
+    """
+
+    taxon_id: int
+    name: str
+    common_name: str | None
+
+
 class CoverageRegionResponse(BaseModel):
     name: str
     place_id: int

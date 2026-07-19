@@ -111,3 +111,15 @@ argument_specs:
         type: str
         description: Day of week (0=Sunday) for weekly layers refresh
         default: "0"
+      foray_genera_cron_hour:
+        type: str
+        description: Hour (UTC) for weekly Fungi genus catalog refresh
+        default: "2"
+      foray_genera_cron_minute:
+        type: str
+        description: Minute for weekly Fungi genus catalog refresh
+        default: "0"
+      foray_genera_cron_weekday:
+        type: str
+        description: Day of week (0=Sunday) for weekly Fungi genus catalog refresh
+        default: "0"

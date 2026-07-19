@@ -53,6 +53,11 @@ foray_layers_cron_hour: "3"
 foray_layers_cron_minute: "0"
 foray_layers_cron_weekday: "0"
 
+# Cron: Fungi genus catalog refresh (weekly Sunday at 02:00 UTC, ahead of layers)
+foray_genera_cron_hour: "2"
+foray_genera_cron_minute: "0"
+foray_genera_cron_weekday: "0"
+
 # Firewall rules — restrict SSH to your IP/VPN CIDR (required, no default)
 foray_do_firewall_name: foray-planner-fw
 foray_ssh_allowed_ips: []

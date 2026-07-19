@@ -32,6 +32,7 @@ from foray.api_models import (
     CampSite,
     ConfigResponse,
     CoverageRegionResponse,
+    GenusResult,
     LandUnit,
     LocationResponse,
     RecentObservation,
@@ -41,7 +42,7 @@ from foray.api_models import (
     Trail,
     TripPlan,
 )
-from foray.cache import _ENABLE_POSTGIS, SCHEMA
+from foray.cache import _ENABLE_POSTGIS, SCHEMA, search_fungi_genera
 from foray.cache import load_location as db_load_location
 from foray.cache import save_location as db_save_location
 from foray.config import Config, Home, Settings
@@ -380,6 +381,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     @app.get("/api/species")
     def get_species() -> list[SpeciesResponse]:
         return [SpeciesResponse(**species.model_dump(), inat_url=species.inat_url) for species in current().species]
+
+    @app.get("/api/genera")
+    def get_genera(query: str = Query("", alias="q", max_length=200)) -> list[GenusResult]:
+        """Genus catalog search (issue #79) - empty query returns the most-observed genera."""
+        with pool.connection() as conn:
+            hits = search_fungi_genera(conn, query)
+        return [GenusResult(**hit) for hit in hits]
 
     @app.get("/api/coverage")
     def get_coverage() -> list[CoverageRegionResponse]:
