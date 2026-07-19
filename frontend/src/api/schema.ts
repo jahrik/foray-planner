@@ -58,6 +58,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/genera/selected": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Selected Genera
+         * @description This device's selected genera (issue #79 Phase 2) - empty means "everything nearby".
+         */
+        get: operations["get_selected_genera_api_genera_selected_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/genera/{taxon_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add Selected Genus */
+        post: operations["add_selected_genus_api_genera__taxon_id__post"];
+        /** Remove Selected Genus */
+        delete: operations["remove_selected_genus_api_genera__taxon_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/coverage": {
         parameters: {
             query?: never;
@@ -697,6 +735,88 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GenusResult"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_selected_genera_api_genera_selected_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenusResult"][];
+                };
+            };
+        };
+    };
+    add_selected_genus_api_genera__taxon_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_selected_genus_api_genera__taxon_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taxon_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
                 };
             };
             /** @description Validation Error */

@@ -71,6 +71,19 @@
           <label>Months</label>
           <div id="months" class="months"></div>
         </div>
+        <div class="field" id="genus-field">
+          <label>Target genera</label>
+          <form id="genusform" autocomplete="off">
+            <input
+              id="genus"
+              type="text"
+              placeholder="Search genus (e.g. Cantharellus)…"
+              autocomplete="off"
+            />
+            <ul id="genus-suggestions" class="loc-suggestions"></ul>
+          </form>
+          <div id="genus-chips" class="chips"></div>
+        </div>
         <div class="field">
           <label>Layers</label>
           <div class="toggle-group">

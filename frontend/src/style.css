@@ -179,6 +179,19 @@ main { display: grid; grid-template-columns: 1fr 380px; gap: 0; flex: 1; min-hei
 .chip { font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 2px 8px; color: var(--ink); text-decoration: none; display: inline-block; }
 a.chip:hover { border-color: var(--accent); }
 .chip.live { border-color: #22c3e6; color: #22c3e6; }
+.chip.removable { display: inline-flex; align-items: center; gap: 4px; }
+.chip.removable button {
+  padding: 0; border: none; background: none; color: var(--muted); cursor: pointer;
+  font-size: 12px; line-height: 1;
+}
+.chip.removable button:hover { color: var(--ink); }
+
+#genus-field { min-width: 200px; }
+#genus-field form { position: relative; }
+#genus-field input {
+  width: 100%; padding: 5px 10px; border-radius: 6px; font-size: 13px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--ink);
+}
 
 .rank-tabs { display: flex; gap: 4px; margin-top: 8px; }
 .rank-tab {

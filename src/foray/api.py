@@ -43,7 +43,11 @@ from foray.api_models import (
     TripPlan,
 )
 from foray.cache import _ENABLE_POSTGIS, SCHEMA, search_fungi_genera
+from foray.cache import add_genus as db_add_genus
+from foray.cache import list_selected_genera as db_list_selected_genera
+from foray.cache import load_genera as db_load_genera
 from foray.cache import load_location as db_load_location
+from foray.cache import remove_genus as db_remove_genus
 from foray.cache import save_location as db_save_location
 from foray.config import Config, Home, Settings
 from foray.ingest import ingest
@@ -232,6 +236,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         override = db_load_location(conn, device_id)
         return Home(**override) if override is not None else current().home
 
+    def resolve_genera(conn: psycopg.Connection, device_id: str) -> list[int]:
+        """This visitor's selected genera.
+
+        Empty means "everything nearby" (no filter), not the old curated 21 - see
+        ``scoring.py``'s ``_taxon_filter`` for how that's honored in SQL.
+        """
+        return db_load_genera(conn, device_id)
+
     def require_idle() -> None:
         if state["refreshing"]:
             raise HTTPException(409, "refreshing data for this area - try again shortly")
@@ -263,9 +275,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(400, "months must be 1-12")
         return values or list(range(1, 13))
 
-    def parse_species(species: str) -> list[int]:
+    def parse_species(species: str, conn: psycopg.Connection, device_id: str) -> list[int]:
         if species == "all" or not species:
-            return current().taxon_ids
+            return resolve_genera(conn, device_id)
         try:
             return [int(token) for token in species.split(",") if token.strip()]
         except ValueError as error:
@@ -389,6 +401,34 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             hits = search_fungi_genera(conn, query)
         return [GenusResult(**hit) for hit in hits]
 
+    @app.get("/api/genera/selected")
+    def get_selected_genera(request: Request, response: Response) -> list[GenusResult]:
+        """This device's selected genera (issue #79 Phase 2) - empty means "everything nearby"."""
+        device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(request, response, device_id)
+        with pool.connection() as conn:
+            hits = db_list_selected_genera(conn, device_id)
+        return [GenusResult(**hit) for hit in hits]
+
+    @app.post("/api/genera/{taxon_id}")
+    def add_selected_genus(taxon_id: int, request: Request, response: Response) -> StatusResponse:
+        device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(request, response, device_id)
+        with pool.connection() as conn:
+            db_add_genus(conn, device_id, taxon_id)
+        return StatusResponse(status="added")
+
+    @app.delete("/api/genera/{taxon_id}")
+    def remove_selected_genus(taxon_id: int, request: Request, response: Response) -> StatusResponse:
+        device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(request, response, device_id)
+        with pool.connection() as conn:
+            db_remove_genus(conn, device_id, taxon_id)
+        return StatusResponse(status="removed")
+
     @app.get("/api/coverage")
     def get_coverage() -> list[CoverageRegionResponse]:
         """Coverage regions with their latest ingest timestamps."""
@@ -436,7 +476,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 ranked = scoring.rank_destinations(
                     conn,
                     months=selected_months,
-                    taxon_ids=parse_species(species),
+                    taxon_ids=parse_species(species, conn, device_id),
                     home_lat=home.lat,
                     home_lng=home.lng,
                     radius_km=radius_km or home.radius_km,
@@ -448,23 +488,38 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         return [RegionScore.model_validate(region) for region in ranked]
 
     @app.get("/api/calendar")
-    def calendar(region_id: str, species: str = Query("all")) -> dict[str, CalendarBucket]:
+    def calendar(
+        region_id: str, request: Request, response: Response, species: str = Query("all")
+    ) -> dict[str, CalendarBucket]:
         require_idle()
+        device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(request, response, device_id)
         try:
             with pool.connection() as conn:
-                calendar = scoring.place_calendar(conn, region_id=region_id, taxon_ids=parse_species(species))
+                calendar = scoring.place_calendar(
+                    conn, region_id=region_id, taxon_ids=parse_species(species, conn, device_id)
+                )
         except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
         return {str(month): CalendarBucket.model_validate(bucket) for month, bucket in calendar.items()}
 
     @app.get("/api/observations/photos")
-    def observation_photos(region_id: str, species: str = Query("all")) -> list[RecentObservation]:
+    def observation_photos(
+        region_id: str, request: Request, response: Response, species: str = Query("all")
+    ) -> list[RecentObservation]:
         require_idle()
         cfg = current()
+        device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(request, response, device_id)
         try:
             with pool.connection() as conn:
                 recent = scoring.recent_observations(
-                    conn, region_id=region_id, taxon_ids=parse_species(species), cell_deg=cfg.cell_deg
+                    conn,
+                    region_id=region_id,
+                    taxon_ids=parse_species(species, conn, device_id),
+                    cell_deg=cfg.cell_deg,
                 )
         except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
@@ -497,7 +552,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 home = resolve_home(conn, device_id)
                 regions = scoring.alerts(
                     conn,
-                    taxon_ids=parse_species(species),
+                    taxon_ids=parse_species(species, conn, device_id),
                     home_lat=home.lat,
                     home_lng=home.lng,
                     radius_km=radius_km or home.radius_km,
@@ -597,7 +652,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 trip = scoring.plan_route(
                     conn,
                     months=selected_months,
-                    taxon_ids=parse_species(species),
+                    taxon_ids=parse_species(species, conn, device_id),
                     home_lat=home.lat,
                     home_lng=home.lng,
                     radius_km=radius_km or home.radius_km,

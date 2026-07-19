@@ -6,7 +6,15 @@ import datetime as dt
 
 import psycopg
 
-from foray.cache import search_fungi_genera, upsert_fungi_genera, upsert_observations
+from foray.cache import (
+    add_genus,
+    list_selected_genera,
+    load_genera,
+    remove_genus,
+    search_fungi_genera,
+    upsert_fungi_genera,
+    upsert_observations,
+)
 
 _ROW = (
     1,  # id
@@ -110,3 +118,51 @@ def test_upsert_fungi_genera_reupsert_updates_in_place(con: psycopg.Connection) 
 
     row = con.execute("SELECT common_name, observations_count FROM fungi_genera WHERE taxon_id = 1").fetchone()
     assert row == ("Foos", 2)
+
+
+def test_load_genera_empty_for_fresh_device(con: psycopg.Connection) -> None:
+    assert load_genera(con, "device-a") == []
+
+
+def test_add_and_load_genera_is_scoped_per_device(con: psycopg.Connection) -> None:
+    add_genus(con, "device-a", 47348)
+    add_genus(con, "device-a", 47165)
+    add_genus(con, "device-b", 999999)
+
+    assert sorted(load_genera(con, "device-a")) == [47165, 47348]
+    assert load_genera(con, "device-b") == [999999]
+
+
+def test_add_genus_is_idempotent(con: psycopg.Connection) -> None:
+    add_genus(con, "device-a", 47348)
+    add_genus(con, "device-a", 47348)
+
+    assert load_genera(con, "device-a") == [47348]
+
+
+def test_remove_genus(con: psycopg.Connection) -> None:
+    add_genus(con, "device-a", 47348)
+    add_genus(con, "device-a", 47165)
+
+    remove_genus(con, "device-a", 47348)
+
+    assert load_genera(con, "device-a") == [47165]
+
+
+def test_list_selected_genera_joins_catalog_names(con: psycopg.Connection) -> None:
+    upsert_fungi_genera(
+        con,
+        [
+            {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "observations_count": 90000},
+            {"taxon_id": 999999, "name": "Obscurella", "common_name": None, "observations_count": 3},
+        ],
+    )
+    add_genus(con, "device-a", 47348)
+    add_genus(con, "device-a", 999999)
+
+    hits = list_selected_genera(con, "device-a")
+
+    assert hits == [
+        {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles"},
+        {"taxon_id": 999999, "name": "Obscurella", "common_name": None},
+    ]

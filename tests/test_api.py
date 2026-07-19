@@ -111,6 +111,50 @@ def test_get_genera_searches_by_scientific_or_common_name(client: TestClient, co
     assert no_common_name.json() == [{"taxon_id": 999999, "name": "Obscurella", "common_name": None}]
 
 
+def test_selected_genera_empty_for_fresh_device(client: TestClient) -> None:
+    client.cookies.set("device_id", "device-genera-fresh0000")
+    response = client.get("/api/genera/selected")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_add_and_remove_selected_genus_round_trip(client: TestClient, con: psycopg.Connection) -> None:
+    upsert_fungi_genera(con, [{"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles"}])
+    client.cookies.set("device_id", "device-genera-roundtrip")
+
+    added = client.post("/api/genera/47348")
+    assert added.status_code == 200
+    assert added.json() == {"status": "added"}
+
+    selected = client.get("/api/genera/selected")
+    assert selected.json() == [{"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles"}]
+
+    removed = client.delete("/api/genera/47348")
+    assert removed.status_code == 200
+    assert removed.json() == {"status": "removed"}
+    assert client.get("/api/genera/selected").json() == []
+
+
+def test_selected_genera_is_scoped_per_device(client: TestClient) -> None:
+    client.cookies.set("device_id", "device-genera-aaaaaaaaaa")
+    client.post("/api/genera/47348")
+
+    client.cookies.set("device_id", "device-genera-bbbbbbbbbb")
+    assert client.get("/api/genera/selected").json() == []
+
+
+def test_destinations_defaults_to_selected_genera(client: TestClient) -> None:
+    """The 'all' default now means this device's picks, or everything if none are picked."""
+    client.cookies.set("device_id", "device-genera-filter000")
+    client.post(f"/api/genera/{CHANT}")
+
+    response = client.get("/api/destinations", params={"months": "7"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body, "expected at least one ranked region"
+    assert all(hit["taxon_id"] == CHANT for region in body for hit in region["species"])
+
+
 def test_destinations_ranks_morel_region(client: TestClient) -> None:
     response = client.get("/api/destinations", params={"months": "4"})
     assert response.status_code == 200
@@ -164,7 +208,9 @@ def test_observation_photos_filters_by_license(client: TestClient, monkeypatch: 
         }
 
     monkeypatch.setattr("foray.api.inat.photos_for_observations", fake_photos)
-    response = client.get("/api/observations/photos", params={"region_id": region_id})
+    # Explicit species scope: a device with no genus selection now defaults to "everything
+    # nearby" (issue #79 Phase 2), not just this fixture's one configured species.
+    response = client.get("/api/observations/photos", params={"region_id": region_id, "species": str(MOREL)})
     assert response.status_code == 200
     body = response.json()
     assert len(body) == 10  # every Morel observation in the fixture is in this region

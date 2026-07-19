@@ -75,6 +75,22 @@ def test_april_ranks_morel_region_first(con: psycopg.Connection) -> None:
     assert top.score_norm == 1.0
 
 
+def test_empty_taxon_ids_means_no_filter_not_no_results(con: psycopg.Connection) -> None:
+    # issue #79 Phase 2: a device with zero genus selections must see everything nearby, not
+    # nothing - `taxon_ids=[]` has to mean "no restriction", not "match no taxon".
+    ranked = rank_destinations(
+        con,
+        months=[4, 10],
+        taxon_ids=[],
+        home_lat=46.0,
+        home_lng=-121.6,
+        radius_km=500,
+        cell_deg=CELL,
+    )
+    seen_taxa = {hit.taxon_id for region in ranked for hit in region.species}
+    assert seen_taxa == {MOREL, CHANTERELLE}
+
+
 def test_october_ranks_chanterelle_region_first(con: psycopg.Connection) -> None:
     ranked = rank_destinations(
         con,
@@ -140,6 +156,14 @@ def test_place_calendar_peaks_in_expected_month(con: psycopg.Connection) -> None
     calendar = place_calendar(con, region_id=region_id, taxon_ids=[MOREL, CHANTERELLE])
     peak_month = max(calendar, key=lambda month: calendar[month]["total"])
     assert peak_month == 10
+    assert calendar[10]["species"]["Chanterelles"] == 30
+
+
+def test_place_calendar_empty_taxon_ids_means_no_filter(con: psycopg.Connection) -> None:
+    row = con.execute("SELECT region_id FROM regions ORDER BY abs(center_lat - %s) LIMIT 1", [OCT_LAT]).fetchone()
+    assert row is not None
+    region_id = row[0]
+    calendar = place_calendar(con, region_id=region_id, taxon_ids=[])
     assert calendar[10]["species"]["Chanterelles"] == 30
 
 
