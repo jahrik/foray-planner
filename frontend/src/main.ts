@@ -3,6 +3,7 @@ import "./style.css";
 
 import { getJson, postJson } from "./api/client";
 import type { Home } from "./api/types";
+import { initGenusSelection } from "./genera";
 import { loadCamps, loadLand, loadTrails } from "./layers";
 import { initLocationAutocomplete } from "./location";
 import { currentTheme, initMap, setMapClickHandler, setTiles, updateHome } from "./map";
@@ -189,6 +190,7 @@ async function main(): Promise<void> {
     else { cancelLayerRefresh("trails"); loadTrails(); }
   };
   initLocationAutocomplete();
+  initGenusSelection(refreshCurrentView);
   // If a refresh is already running (e.g. page reload mid-fetch), reflect it.
   if (config.refreshing) {
     startRefresh("Fetching data…").then((succeeded) => {

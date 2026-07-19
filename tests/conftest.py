@@ -28,6 +28,7 @@ _TABLES = (
     "ingest_log",
     "app_location",
     "fungi_genera",
+    "app_genera",
 )
 
 

@@ -132,7 +132,7 @@ def _recent_counts(con: psycopg.Connection, cell_deg: float, taxon_ids: list[int
             f"""
             SELECT region_id, count(*) AS cnt
             FROM ({binned})
-            WHERE observed_on >= %s AND taxon_id IN ({_in(taxon_ids)})
+            WHERE observed_on >= %s AND {_taxon_filter(taxon_ids)}
             GROUP BY region_id
             """,
         ),
@@ -144,9 +144,18 @@ def _recent_counts(con: psycopg.Connection, cell_deg: float, taxon_ids: list[int
 def _in(ids: list[int]) -> str:
     """SQL fragment for ``IN (...)``. An empty list becomes the literal ``NULL`` (matches
     nothing, valid SQL) rather than an empty ``IN ()``, which Postgres rejects as a syntax
-    error - e.g. when ``Config.species`` is empty and ``taxon_ids`` comes back ``[]``.
+    error - e.g. when ``months`` is empty.
     """
     return ",".join("%s" for _ in ids) if ids else "NULL"
+
+
+def _taxon_filter(taxon_ids: list[int], column: str = "taxon_id") -> str:
+    """SQL condition for a ``taxon_id`` restriction. An empty list means "no genera selected"
+    (issue #79 Phase 2) - unlike ``_in()``, that must mean "no filter" (``TRUE``, match every
+    taxon), not "match nothing", so a fresh device with no selection sees everything nearby
+    instead of an empty result.
+    """
+    return f"{column} IN ({_in(taxon_ids)})" if taxon_ids else "TRUE"
 
 
 def rank_destinations(
@@ -172,13 +181,13 @@ def rank_destinations(
                        (sum(center_lng * cnt) / sum(cnt))::double precision AS center_lng,
                        sum(cnt)::bigint AS total_cnt
                 FROM phenology
-                WHERE taxon_id IN ({_in(taxon_ids)})
+                WHERE {_taxon_filter(taxon_ids)}
                 GROUP BY region_id, taxon_id
             ),
             win AS (
                 SELECT region_id, taxon_id, sum(cnt)::bigint AS month_cnt
                 FROM phenology
-                WHERE taxon_id IN ({_in(taxon_ids)}) AND month IN ({_in(months)})
+                WHERE {_taxon_filter(taxon_ids)} AND month IN ({_in(months)})
                 GROUP BY region_id, taxon_id
             )
             SELECT tot.region_id, tot.center_lat, tot.center_lng, tot.taxon_id,
@@ -416,7 +425,7 @@ def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[i
             LiteralString,
             f"""
             SELECT month, taxon_id, cnt FROM phenology
-            WHERE region_id = %s AND taxon_id IN ({_in(taxon_ids)})
+            WHERE region_id = %s AND {_taxon_filter(taxon_ids)}
             """,
         ),
         [region_id, *taxon_ids],
@@ -441,7 +450,7 @@ def recent_observations(
             f"""
             SELECT o.id, o.taxon_id, o.observed_on, o.place_guess, o.uri, o.obscured
             FROM ({binned}) o
-            WHERE o.region_id = %s AND o.taxon_id IN ({_in(taxon_ids)})
+            WHERE o.region_id = %s AND {_taxon_filter(taxon_ids, "o.taxon_id")}
             ORDER BY o.observed_on DESC
             LIMIT %s
             """,
@@ -489,7 +498,7 @@ def alerts(
                    (array_agg(uri ORDER BY observed_on DESC))[1] AS uri,
                    (array_agg(obscured ORDER BY observed_on DESC))[1] AS obscured
             FROM ({binned})
-            WHERE observed_on >= %s AND taxon_id IN ({_in(taxon_ids)})
+            WHERE observed_on >= %s AND {_taxon_filter(taxon_ids)}
             GROUP BY region_id, taxon_id
             """,
         ),
