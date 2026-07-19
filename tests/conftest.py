@@ -8,10 +8,16 @@ connection *pool* post-migration, so a test seeding data on one connection and a
 reading via a different pooled connection would see nothing under naive rollback isolation.
 Not fresh-schema-per-test either: recreating the `postgis` extension per test adds real
 overhead across this many test files. Truncate is the standard, fast, pool-safe answer.
+
+Runs against its own `foray_test` database (created here on first run if missing), not the
+`foray` database local dev/QA uses - so `make test` truncating tables can't wipe real data
+you loaded into local dev Postgres (e.g. via `make genera-refresh`). Same Postgres server/
+container either way, just a different database on it.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 
 import psycopg
@@ -31,9 +37,20 @@ _TABLES = (
     "app_genera",
 )
 
+_TEST_DB_NAME = "foray_test"
+
+
+def _ensure_test_database() -> None:
+    with psycopg.connect(dbname="postgres", autocommit=True) as admin:
+        exists = admin.execute("SELECT 1 FROM pg_database WHERE datname = %s", [_TEST_DB_NAME]).fetchone()
+        if not exists:
+            admin.execute(f"CREATE DATABASE {_TEST_DB_NAME}")
+
 
 @pytest.fixture(scope="session")
 def _pg_session() -> Iterator[psycopg.Connection]:
+    _ensure_test_database()
+    os.environ["PGDATABASE"] = _TEST_DB_NAME
     conn = connect()
     yield conn
     conn.close()
