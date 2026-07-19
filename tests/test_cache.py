@@ -5,9 +5,11 @@ from __future__ import annotations
 import datetime as dt
 
 import psycopg
+import pytest
 
 from foray.cache import (
     add_genus,
+    genus_taxon_ids,
     list_selected_genera,
     load_genera,
     remove_genus,
@@ -118,6 +120,31 @@ def test_upsert_fungi_genera_reupsert_updates_in_place(con: psycopg.Connection) 
 
     row = con.execute("SELECT common_name, observations_count FROM fungi_genera WHERE taxon_id = 1").fetchone()
     assert row == ("Foos", 2)
+
+
+def test_genus_taxon_ids_maps_full_catalog(con: psycopg.Connection) -> None:
+    upsert_fungi_genera(con, _GENERA)
+
+    assert genus_taxon_ids(con) == {
+        "Cantharellus": 47348,
+        "Entoloma": 47165,
+        "Obscurella": 999999,
+    }
+
+
+def test_genus_taxon_ids_rejects_duplicate_names(con: psycopg.Connection) -> None:
+    # `name` has no uniqueness constraint - a duplicate must raise, not silently drop one
+    # of the two taxon_ids from the map.
+    upsert_fungi_genera(
+        con,
+        [
+            {"taxon_id": 1, "name": "Amanita", "common_name": None, "observations_count": 1},
+            {"taxon_id": 2, "name": "Amanita", "common_name": None, "observations_count": 1},
+        ],
+    )
+
+    with pytest.raises(ValueError, match="duplicate name"):
+        genus_taxon_ids(con)
 
 
 def test_load_genera_empty_for_fresh_device(con: psycopg.Connection) -> None:

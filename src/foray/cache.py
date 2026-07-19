@@ -239,6 +239,24 @@ def upsert_fungi_genera(con: psycopg.Connection, rows: Iterable[dict[str, Any]])
         )
 
 
+def genus_taxon_ids(con: psycopg.Connection) -> dict[str, int]:
+    """Full genus-name -> taxon_id map from the catalog (issue #79 Phase 3: the bulk loader
+    matches every catalog genus now, not just the old 21-genus seed list).
+
+    ``name`` has no uniqueness constraint in the schema, so this checks for duplicates
+    rather than silently keeping whichever row happens to win a dict build - a silent drop
+    here would make the bulk-filter script quietly skip that genus's observations with no
+    error to explain why.
+    """
+    rows = con.execute("SELECT name, taxon_id FROM fungi_genera").fetchall()
+    genera: dict[str, int] = {}
+    for name, taxon_id in rows:
+        if name in genera:
+            raise ValueError(f"fungi_genera has duplicate name {name!r} (taxon_ids {genera[name]} and {taxon_id})")
+        genera[name] = taxon_id
+    return genera
+
+
 def search_fungi_genera(con: psycopg.Connection, query: str, limit: int = 20) -> list[dict[str, Any]]:
     """Genus catalog search by scientific or common name, ranked by iNat's observation count.
 
