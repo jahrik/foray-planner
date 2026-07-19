@@ -166,7 +166,7 @@ def test_calendar_for_ranked_region(client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert "4" in body
-    assert body["4"]["species"]["Morels"] == 10
+    assert body["4"]["species"]["Morchella (Morels)"] == 10
 
 
 def test_observation_photos_filters_by_license(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -441,7 +441,7 @@ def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[i
     top ``_CALENDAR_SPECIES_PER_MONTH`` taxa per month - with an empty ``taxon_ids`` filter
     (issue #79: "no genus selected" means every catalog genus, ~6,018 of them), an uncapped
     breakdown would both bloat the response and key `dict[str, int]` by display name, where
-    two genera sharing a common/scientific name would silently overwrite each other.
+    two genera sharing the same label would silently overwrite each other.
     """
     rows = con.execute(
         cast(
@@ -465,9 +465,9 @@ def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[i
         species: dict[str, int] = {}
         for taxon_id, cnt in top:
             name, common_name = genera.get(taxon_id, (str(taxon_id), None))
-            label = common_name or name
+            label = f"{name} ({common_name})" if common_name else name
             if label in species:
-                label = f"{label} ({name})"  # disambiguate a display-name collision
+                label = f"{label} #{taxon_id}"  # disambiguate a display-name collision
             species[label] = cnt
         calendar[month]["species"] = species
     return calendar
