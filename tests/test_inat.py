@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from foray.inat import FUNGI_TAXON_ID, iter_fungi_genera
+import pytest
+
+from foray.inat import FUNGI_TAXON_ID, _with_retries, iter_fungi_genera
 
 
 def _page(ids: list[int]) -> dict:
@@ -36,3 +38,11 @@ def test_iter_fungi_genera_empty_result_stops_immediately() -> None:
 
     assert results == []
     mock_get_taxa.assert_called_once()
+
+
+@pytest.mark.parametrize("attempts", [0, -1])
+def test_with_retries_rejects_non_positive_attempts(attempts: int) -> None:
+    fn = Mock()
+    with pytest.raises(ValueError, match="attempts must be >= 1"):
+        _with_retries(fn, attempts=attempts)
+    fn.assert_not_called()
