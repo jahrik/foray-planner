@@ -45,6 +45,8 @@ _TRANSIENT = (
 
 def _with_retries[T](fn: Callable[[], T], *, attempts: int = 5, base_delay: float = 2.0) -> T:
     """Call ``fn``, retrying transient network errors with exponential backoff."""
+    if attempts < 1:
+        raise ValueError(f"attempts must be >= 1, got {attempts}")
     for attempt in range(1, attempts + 1):
         try:
             return fn()
