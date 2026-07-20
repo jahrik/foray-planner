@@ -32,9 +32,10 @@
   ansible.builtin.set_fact:
     foray_firewall_ssh_addresses: >-
       {{ foray_firewall_matches[0].inbound_rules
+         | selectattr('protocol', 'equalto', 'tcp')
          | selectattr('ports', 'equalto', '22')
          | map(attribute='sources')
-         | map(attribute='addresses')
+         | map(attribute='addresses', default=[])
          | first }}
 
 - name: Add the runner's IP to the SSH allowlist
@@ -44,7 +45,7 @@
       ansible.builtin.set_fact:
         foray_firewall_inbound_rules_updated: >-
           {{ foray_firewall_inbound_rules_updated | default([]) +
-             [(item.ports == '22')
+             [(item.protocol == 'tcp' and item.ports == '22')
               | ternary(item | combine({'sources': {'addresses': (foray_firewall_ssh_addresses + [foray_ci_runner_ip + '/32']) | unique}}, recursive=True), item)] }}
       loop: "{{ foray_firewall_matches[0].inbound_rules }}"
       loop_control:

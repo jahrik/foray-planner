@@ -1,13 +1,15 @@
 ---
-- name: Fail if neither TLS cert/key source is set
+- name: Fail unless exactly one TLS cert/key source is set
   ansible.builtin.assert:
     that: >-
-      (foray_tls_cert_path | length > 0 and foray_tls_key_path | length > 0)
-      or (foray_tls_cert_content | length > 0 and foray_tls_key_content | length > 0)
+      (foray_tls_cert_path | length > 0 and foray_tls_key_path | length > 0
+       and foray_tls_cert_content | length == 0 and foray_tls_key_content | length == 0)
+      or (foray_tls_cert_content | length > 0 and foray_tls_key_content | length > 0
+          and foray_tls_cert_path | length == 0 and foray_tls_key_path | length == 0)
     fail_msg: >-
-      Set FORAY_TLS_CERT_PATH/FORAY_TLS_KEY_PATH (local cert/key files, for the operator's
-      manual deploy) or FORAY_TLS_CERT/FORAY_TLS_KEY (inline cert/key content, used by CI) -
-      see .env / docs/deployment.md.
+      Set exactly one TLS source - either FORAY_TLS_CERT_PATH + FORAY_TLS_KEY_PATH (local
+      cert/key files, for the operator's manual deploy) or FORAY_TLS_CERT + FORAY_TLS_KEY
+      (inline cert/key content, used by CI) - not a mix of both. See .env / docs/deployment.md.
 
 # Local-operator path: cert/key live as files on the machine running ansible-playbook.
 - name: Check the cert/key files exist locally
