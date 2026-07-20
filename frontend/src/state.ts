@@ -60,7 +60,10 @@ export function qs<T extends HTMLElement = HTMLElement>(selector: string): T {
   return element;
 }
 
-export const errorDetail = (error: unknown): string => (error as ApiError)?.detail ?? "error";
+export const errorDetail = (error: unknown): string => {
+  console.error(error);
+  return (error as ApiError)?.detail ?? "error";
+};
 
 export const inatUrl = (taxonId: number): string => `https://www.inaturalist.org/taxa/${taxonId}`;
 
