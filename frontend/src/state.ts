@@ -60,9 +60,15 @@ export function qs<T extends HTMLElement = HTMLElement>(selector: string): T {
   return element;
 }
 
+const isApiError = (error: unknown): error is ApiError & { detail: string } =>
+  typeof error === "object" && error !== null && typeof (error as ApiError).detail === "string";
+
 export const errorDetail = (error: unknown): string => {
-  console.error(error);
-  return (error as ApiError)?.detail ?? "error";
+  if (!isApiError(error)) {
+    console.error(error);
+    return "error";
+  }
+  return error.detail;
 };
 
 export const inatUrl = (taxonId: number): string => `https://www.inaturalist.org/taxa/${taxonId}`;
