@@ -14,11 +14,12 @@ transactions for) - callers that need atomicity across statements (e.g.
 from __future__ import annotations
 
 import logging
-import math
 from collections.abc import Iterable, Sequence
 from typing import Any
 
 import psycopg
+
+from foray.scoring import haversine_km
 
 logger = logging.getLogger(__name__)
 
@@ -427,15 +428,6 @@ def is_ingested(con: psycopg.Connection, key: str) -> bool:
     return row is not None
 
 
-def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    earth_radius_km = 6371.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    delta_phi = math.radians(lat2 - lat1)
-    delta_lambda = math.radians(lng2 - lng1)
-    inner = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
-    return 2 * earth_radius_km * math.asin(math.sqrt(inner))
-
-
 def is_area_covered(con: psycopg.Connection, prefix: str, lat: float, lng: float, radius_km: float) -> bool:
     """Check if any previously ingested disk (matching prefix) fully contains the requested disk."""
     rows = con.execute(
@@ -443,7 +435,7 @@ def is_area_covered(con: psycopg.Connection, prefix: str, lat: float, lng: float
         [f"{prefix}%"],
     ).fetchall()
     for row_lat, row_lng, row_radius in rows:
-        dist = _haversine_km(row_lat, row_lng, lat, lng)
+        dist = haversine_km(row_lat, row_lng, lat, lng)
         if dist + radius_km <= row_radius:
             return True
     return False
@@ -460,7 +452,7 @@ def latest_obs_date(con: psycopg.Connection, token: int | str, lat: float, lng: 
         return None
     dates: list[str] = []
     for key, rlat, rlng, rr in rows:
-        dist = _haversine_km(rlat, rlng, lat, lng)
+        dist = haversine_km(rlat, rlng, lat, lng)
         if dist + radius_km <= rr:
             dates.append(key.split(":")[-1])
     if not dates:
