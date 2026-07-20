@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/jahrik/foray-planner/actions/workflows/ci.yml/badge.svg)](https://github.com/jahrik/foray-planner/actions/workflows/ci.yml)
 [![CD](https://github.com/jahrik/foray-planner/actions/workflows/cd.yml/badge.svg)](https://github.com/jahrik/foray-planner/actions/workflows/cd.yml)
+[![forayplanner.com](https://img.shields.io/badge/forayplanner.com-2e7d32)](https://forayplanner.com)
 
 A trip-planning tool for mushroom hunters. Point it at where you are or want to go,
 and it tells you which areas near you are most likely to be fruiting this month
