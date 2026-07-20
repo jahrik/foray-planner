@@ -163,3 +163,36 @@
     - name: Include handlers
       ansible.builtin.import_tasks:
         file: handlers/main.yml
+
+# CI-internal only: adds/removes the CI runner's own IP from the live SSH firewall rule around
+# an automated foray:deploy run. Never bundled into the `foray` or `foray:deploy` tag groups -
+# always invoked as its own separate ansible-playbook run so a workflow-level `if: always()`
+# cleanup step can reliably revoke access regardless of how the deploy run exited.
+- name: Manage CI runner IP in the firewall (deploy pipeline only)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - defaults/main.yml
+  tasks:
+    - name: Allow the CI runner's IP in the SSH allowlist
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/firewall_allow_runner.yml
+        apply:
+          tags:
+            - "foray:firewall-allow-runner"
+            - never
+      tags:
+        - "foray:firewall-allow-runner"
+        - never
+
+    - name: Revoke the CI runner's IP from the SSH allowlist
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/firewall_revoke_runner.yml
+        apply:
+          tags:
+            - "foray:firewall-revoke-runner"
+            - never
+      tags:
+        - "foray:firewall-revoke-runner"
+        - never
