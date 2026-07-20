@@ -137,7 +137,12 @@ Secrets go in the instance environment or a gitignored `.env` file locally.
 
 Infrastructure lives in `infra/ansible/`. The playbook provisions a DO Droplet (Docker
 pre-installed) and a managed Postgres cluster, then deploys the GHCR container with cron
-jobs for data refresh.
+jobs for data refresh. `inventory/hosts.yml` pins `ansible_python_interpreter` to
+`/usr/bin/python3` explicitly (rather than relying on Ansible's interpreter auto-discovery) so
+a second Python install on the droplet can't change which interpreter gets *discovered*, and
+the discovery warning is silenced. This doesn't lock the Python version itself -
+`/usr/bin/python3` is a distro-managed symlink that can still repoint to a different minor
+version on an OS/package update.
 
 ### Prerequisites
 
@@ -196,7 +201,22 @@ firewall isn't opened permanently for them. Each deploy run: resolves its own ru
 IP, adds it to the DO firewall's SSH rule (`foray:firewall-allow-runner`), runs `foray:deploy`
 over SSH using a dedicated deploy key (not the operator's personal key), then removes its IP
 again (`foray:firewall-revoke-runner`, run with `if: always()` so a failed deploy never leaves
-port 22 open).
+port 22 open). The runner's IP alone isn't allowed as a bare `/32` - GitHub-hosted runners
+don't reliably egress from one stable address for the whole job, so `cd.yml` looks up which of
+GitHub's published Actions CIDR blocks (`api.github.com/meta`) contains the detected IP and
+allows that whole block instead, covering the runner's actual address pool with one firewall
+rule entry.
+
+**No `ssh-keyscan`, host-key checking disabled for this connection.** The droplet's UFW ships
+`22/tcp LIMIT` by default (DigitalOcean's `docker-20-04` image, not something this repo
+configures) - it silently drops a source after 6 new connections within 30s. `ssh-keyscan`
+makes several rapid probe connections to populate `known_hosts`, which is enough on its own to
+trip that limit and make the *real* deploy connection a few seconds later fail with a
+misleading `Connection timed out` (this cost real debugging time - see PRs #148-150). Instead,
+the `Deploy` step sets `ANSIBLE_HOST_KEY_CHECKING=false` and skips host-key TOFU entirely for
+this one ephemeral connection - the SSH private key is already the real trust boundary here.
+Local operator deploys via `make ansible-deploy` are unaffected; `ansible.cfg`'s default
+host-key-checking behavior only changes for the CI job.
 
 **Image pinning.** The `deploy` job passes `foray_app_image` as the exact digest the `publish`
 job just built (`ghcr.io/jahrik/foray-planner@sha256:...`), not `:latest` - this closes the
@@ -215,6 +235,22 @@ These are GitHub UI / DigitalOcean steps that can't be made by a code change:
    Registering the key with DO by name isn't necessary - that's only consulted when a droplet
    is first created (`FORAY_SSH_KEY_NAME`); appending the public half to the droplet's
    `/root/.ssh/authorized_keys` directly is what actually grants SSH access to a running host.
+
+   **Gotcha:** `ssh-copy-id` (and any `ssh -i foray_ci_deploy_key ...` test) can silently
+   succeed via a *different* key than the one you intended, if your local `~/.ssh/config` has
+   a `Host`/`IdentityFile` entry matching the droplet's hostname/IP from an earlier manual
+   setup - SSH merges config-file identities with `-i`/agent-offered ones rather than
+   restricting to just what you passed. `ssh-copy-id` then reports "all keys were skipped,
+   already exist" without ever actually installing the new key, so a test that "works" isn't
+   proof the CI key specifically is authorized. Verify with a clean config instead:
+   ```bash
+   ssh -F /dev/null -i foray_ci_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
+     root@$FORAY_DROPLET_IP 'echo OK'
+   ```
+   If that fails, append the public key directly rather than relying on `ssh-copy-id`:
+   ```bash
+   ssh root@$FORAY_DROPLET_IP "cat >> /root/.ssh/authorized_keys" < foray_ci_deploy_key.pub
+   ```
 2. In the repo's **Settings → Environments**, create an environment named `production` and add
    at least one required reviewer. Optionally restrict deployment branches to `main`.
 3. Add these **environment-scoped** secrets on `production` (not repo-level secrets, so

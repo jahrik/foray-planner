@@ -126,7 +126,7 @@ Run `make check` before pushing (lint + type-check + tests). See the
 
 - [Development guide](docs/development.md) - setup, config, CLI, architecture, scoring formula, adding species, testing
 - [Data sources](docs/data-sources.md) - iNaturalist, RIDB, OSM/Overpass, ArcGIS BLM/USFS, Nominatim - licenses, rate limits, what's off-limits
-- [Deployment](docs/deployment.md) - Docker, ECS/RDS + Cloudflare setup, scheduler, refresh patterns
+- [Deployment](docs/deployment.md) - Docker, Digital Ocean + Ansible + Cloudflare setup, scheduler, refresh patterns
 
 ---
 
