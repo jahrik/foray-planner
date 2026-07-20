@@ -147,6 +147,8 @@ def _get_page(
     base_delay: float = 2.0,
 ) -> httpx.Response:
     """GET one page, pacing requests and backing off on a 429 (honoring Retry-After)."""
+    if attempts < 1:
+        raise ValueError(f"attempts must be >= 1, got {attempts}")
     resp = None
     for attempt in range(1, attempts + 1):
         throttle()

@@ -29,6 +29,7 @@ export function initMonths(): void {
     const month = index + 1;
     const button = document.createElement("button");
     button.textContent = label;
+    button.setAttribute("aria-pressed", String(state.months.has(month)));
     if (state.months.has(month)) button.classList.add("on");
     button.onclick = () => {
       if (state.months.has(month)) {
@@ -38,6 +39,7 @@ export function initMonths(): void {
         state.months.add(month);
         button.classList.add("on");
       }
+      button.setAttribute("aria-pressed", String(state.months.has(month)));
       if (state.view === "destinations") runDestinations();
     };
     box.appendChild(button);

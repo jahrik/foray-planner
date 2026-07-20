@@ -6,6 +6,7 @@ const DEBOUNCE_MS = 300;
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let activeIndex = -1;
+let activeAbort: AbortController | null = null;
 
 interface NominatimResult {
   display_name: string;
@@ -13,12 +14,24 @@ interface NominatimResult {
   lon: string;
 }
 
-async function fetchSuggestions(query: string): Promise<NominatimResult[]> {
+// Aborts any in-flight request before starting a new one, so a slow older response (real risk
+// on the flaky RV/Starlink connections this app targets) can't resolve after a newer keystroke
+// and overwrite the suggestion list with stale results (issue #99). Returns null (rather than
+// []) on abort so the caller can tell "superseded" apart from "no matches" and skip re-rendering.
+async function fetchSuggestions(query: string): Promise<NominatimResult[] | null> {
   if (query.length < 2) return [];
+  activeAbort?.abort();
+  const controller = new AbortController();
+  activeAbort = controller;
   const params = new URLSearchParams({ q: query, format: "json", limit: "5" });
-  const resp = await fetch(`${NOMINATIM}?${params}`);
-  if (!resp.ok) return [];
-  return resp.json();
+  try {
+    const resp = await fetch(`${NOMINATIM}?${params}`, { signal: controller.signal });
+    if (!resp.ok) return [];
+    return await resp.json();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") return null;
+    throw error;
+  }
 }
 
 function renderSuggestions(results: NominatimResult[], list: HTMLUListElement): void {
@@ -63,7 +76,9 @@ export function initLocationAutocomplete(): void {
       return;
     }
     debounceTimer = setTimeout(async () => {
-      results = await fetchSuggestions(query);
+      const fetched = await fetchSuggestions(query);
+      if (fetched === null) return; // superseded by a newer request
+      results = fetched;
       renderSuggestions(results, list);
     }, DEBOUNCE_MS);
   });

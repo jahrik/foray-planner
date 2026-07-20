@@ -122,6 +122,8 @@ def _trails_query_bbox(min_lat: float, min_lng: float, max_lat: float, max_lng: 
 
 def _post_overpass(client: httpx.Client, query: str, *, attempts: int = 4, base_delay: float = 2.0) -> dict[str, Any]:
     """POST a query, backing off on Overpass's throttle (429) / timeout (504) responses."""
+    if attempts < 1:
+        raise ValueError(f"attempts must be >= 1, got {attempts}")
     resp: httpx.Response | None = None
     for attempt in range(1, attempts + 1):
         resp = client.post(OVERPASS_URL, data={"data": query}, headers={"User-Agent": USER_AGENT})

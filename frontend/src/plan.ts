@@ -11,12 +11,10 @@ export async function runPlan(): Promise<void> {
   setStatus("Planning route…");
   clearMarkers();
 
-  const maxStops = Math.max(1, Math.min(20,
-    Math.round((document.getElementById("plan-stops") as HTMLInputElement).valueAsNumber) || 5,
-  ));
-  const maxDrive = Math.max(50,
-    (document.getElementById("plan-drive") as HTMLInputElement).valueAsNumber || 400,
-  );
+  const stopsInput = Math.round((document.getElementById("plan-stops") as HTMLInputElement).valueAsNumber);
+  const maxStops = Math.max(1, Math.min(20, Number.isNaN(stopsInput) ? 5 : stopsInput));
+  const driveInput = (document.getElementById("plan-drive") as HTMLInputElement).valueAsNumber;
+  const maxDrive = Math.max(50, Number.isNaN(driveInput) ? 400 : driveInput);
   const requireFree = (document.getElementById("plan-free-camp") as HTMLInputElement).checked;
 
   let trip: TripPlan;
