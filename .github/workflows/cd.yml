@@ -102,7 +102,8 @@ jobs:
           DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
         run: |
           uv run ansible-playbook site.yml --tags foray:firewall-allow-runner \
-            -e foray_ci_runner_ip="${{ steps.whoami.outputs.ip }}"
+            -e foray_ci_runner_ip="${{ steps.whoami.outputs.ip }}" \
+            -e foray_droplet_ip="${{ secrets.FORAY_DROPLET_IP }}"
 
       # Only reachable now that the runner's IP is allowlisted - scanning before the firewall
       # step would fail/hang against a locked-down droplet.
