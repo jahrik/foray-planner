@@ -1,0 +1,63 @@
+---
+# Removes the CI runner's own public IP from the live DO firewall's SSH (tcp/22) rule. Mirrors
+# firewall_allow_runner.yml; safe to run even if the "allow" step never ran or ran twice
+# (idempotent no-op if the IP isn't present).
+
+- name: Fail if foray_ci_runner_ip isn't set
+  ansible.builtin.fail:
+    msg: "foray_ci_runner_ip must be set (the CI runner's own public IP) to use this tag."
+  when: foray_ci_runner_ip | length == 0
+
+- name: Look up firewalls by name
+  digitalocean.cloud.firewalls_info:
+    token: "{{ foray_do_token }}"
+  register: foray_firewalls_lookup
+
+- name: Find this firewall by name
+  ansible.builtin.set_fact:
+    foray_firewall_matches: >-
+      {{ foray_firewalls_lookup.firewalls | selectattr('name', 'equalto', foray_do_firewall_name) | list }}
+
+- name: Fail if the name lookup didn't resolve to exactly one firewall
+  ansible.builtin.assert:
+    that:
+      - foray_firewall_matches | length == 1
+    fail_msg: >-
+      Expected exactly one firewall named {{ foray_do_firewall_name }}, found
+      {{ foray_firewall_matches | length }} - has foray:provision been run yet?
+
+- name: Extract the SSH (tcp/22) rule's current allowed addresses
+  ansible.builtin.set_fact:
+    foray_firewall_ssh_addresses: >-
+      {{ foray_firewall_matches[0].inbound_rules
+         | selectattr('ports', 'equalto', '22')
+         | map(attribute='sources')
+         | map(attribute='addresses')
+         | first }}
+
+- name: Remove the runner's IP from the SSH allowlist
+  when: (foray_ci_runner_ip + '/32') in foray_firewall_ssh_addresses
+  block:
+    - name: Build updated inbound rules with the runner IP removed from the SSH rule
+      ansible.builtin.set_fact:
+        foray_firewall_inbound_rules_updated: >-
+          {{ foray_firewall_inbound_rules_updated | default([]) +
+             [(item.ports == '22')
+              | ternary(item | combine({'sources': {'addresses': foray_firewall_ssh_addresses | reject('equalto', foray_ci_runner_ip + '/32') | list}}, recursive=True), item)] }}
+      loop: "{{ foray_firewall_matches[0].inbound_rules }}"
+      loop_control:
+        label: "{{ item.ports }}"
+
+    - name: Reconcile the firewall with the runner IP removed
+      ansible.builtin.uri:
+        url: "https://api.digitalocean.com/v2/firewalls/{{ foray_firewall_matches[0].id }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ foray_do_token }}"
+        body_format: json
+        body:
+          name: "{{ foray_do_firewall_name }}"
+          droplet_ids: "{{ foray_firewall_matches[0].droplet_ids }}"
+          inbound_rules: "{{ foray_firewall_inbound_rules_updated }}"
+          outbound_rules: "{{ foray_firewall_matches[0].outbound_rules }}"
+        status_code: [200]

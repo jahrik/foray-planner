@@ -15,7 +15,11 @@ Every push to `main` triggers `.github/workflows/cd.yml`, which builds a multi-a
 ghcr.io/jahrik/foray-planner:latest
 ```
 
-The package is public and linked to the repo. No manual build step needed for deployment.
+The package is public and linked to the repo. No manual build step needed to publish it.
+
+Once the image is published, the same workflow's `deploy` job runs `foray:deploy` against
+prod automatically - see [CI/CD deploy (automated)](#cicd-deploy-automated) below. Building
+and publishing the image is unconditional; deploying it is gated behind manual approval.
 
 ---
 
@@ -171,6 +175,58 @@ make ansible-deploy
 | `foray:deploy` | Pull image, restart container |
 | `foray:cron` | Update cron schedules |
 | `foray:ingest-once` | Manual/opt-in full data ingest (`make ansible-ingest-once`) - not part of `foray:deploy` or the `foray` umbrella; the daily `foray-ingest` cron job already keeps data fresh, so this only exists for warming a fresh droplet's data immediately instead of waiting for the next cron run. **Run this only after the first `foray:deploy`** - it depends on the env file that deploy renders (`/opt/foray-planner/foray.env`) and fails fast with a clear message if that hasn't happened yet. |
+| `foray:firewall-allow-runner` / `foray:firewall-revoke-runner` | CI-internal only - adds/removes the GitHub Actions runner's own IP from the live SSH firewall rule around an automated `foray:deploy` run (see below). Not something an operator runs directly. |
+
+---
+
+## CI/CD deploy (automated)
+
+`.github/workflows/cd.yml`'s `deploy` job runs `foray:deploy` against prod automatically
+after every image publish on `main`, replacing the need to manually run `make ansible-deploy`
+for routine app updates. `foray:provision` and the one-off tags stay manual/local - only the
+app-update path (`foray:deploy`) is automated.
+
+**Manual approval gate.** The `deploy` job targets a GitHub `production` Environment with
+required reviewers, so it pauses after the image is published and waits for someone to
+approve it in the Actions tab before touching the droplet - merging to `main` alone never
+silently redeploys prod.
+
+**No standing SSH access for CI.** GitHub-hosted runners don't have a stable IP, so the
+firewall isn't opened permanently for them. Each deploy run: resolves its own runner's public
+IP, adds it to the DO firewall's SSH rule (`foray:firewall-allow-runner`), runs `foray:deploy`
+over SSH using a dedicated deploy key (not the operator's personal key), then removes its IP
+again (`foray:firewall-revoke-runner`, run with `if: always()` so a failed deploy never leaves
+port 22 open).
+
+**Image pinning.** The `deploy` job passes `foray_app_image` as the exact digest the `publish`
+job just built (`ghcr.io/jahrik/foray-planner@sha256:...`), not `:latest` - this closes the
+race where a second push to `main` lands between build and deploy and the deploy step ends up
+pulling a different image than the one that was just approved.
+
+### One-time setup (operator, not part of any PR)
+
+These are GitHub UI / DigitalOcean steps that can't be made by a code change:
+
+1. **Generate a dedicated deploy keypair** - do not reuse your personal SSH key:
+   ```bash
+   ssh-keygen -t ed25519 -C foray-ci-deploy -f foray_ci_deploy_key -N ""
+   ssh-copy-id -i foray_ci_deploy_key.pub root@$FORAY_DROPLET_IP   # run from an already-allowlisted machine
+   ```
+   Registering the key with DO by name isn't necessary - that's only consulted when a droplet
+   is first created (`FORAY_SSH_KEY_NAME`); appending the public half to the droplet's
+   `/root/.ssh/authorized_keys` directly is what actually grants SSH access to a running host.
+2. In the repo's **Settings → Environments**, create an environment named `production` and add
+   at least one required reviewer. Optionally restrict deployment branches to `main`.
+3. Add these **environment-scoped** secrets on `production` (not repo-level secrets, so
+   PR-triggered workflows from forks can't read them):
+
+   | Secret | Value |
+   |---|---|
+   | `FORAY_DEPLOY_SSH_KEY` | Private half of the keypair from step 1 |
+   | `DO_API_TOKEN` | Same DigitalOcean API token used for `make ansible-provision` |
+   | `FORAY_DROPLET_IP` | The droplet's public IP |
+   | `FORAY_TLS_CERT` / `FORAY_TLS_KEY` | Contents (not paths) of the Cloudflare Origin CA cert/key - the CI equivalent of the local `FORAY_TLS_CERT_PATH`/`FORAY_TLS_KEY_PATH` files |
+   | `RIDB_API_KEY` | Optional, same as the local `.env` value |
 
 ---
 

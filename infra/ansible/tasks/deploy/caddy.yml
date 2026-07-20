@@ -1,14 +1,15 @@
 ---
-- name: Fail if the TLS cert/key paths aren't set
+- name: Fail if neither TLS cert/key source is set
   ansible.builtin.assert:
-    that:
-      - foray_tls_cert_path | length > 0
-      - foray_tls_key_path | length > 0
+    that: >-
+      (foray_tls_cert_path | length > 0 and foray_tls_key_path | length > 0)
+      or (foray_tls_cert_content | length > 0 and foray_tls_key_content | length > 0)
     fail_msg: >-
-      FORAY_TLS_CERT_PATH / FORAY_TLS_KEY_PATH must point at the Cloudflare Origin CA
-      cert/key saved locally (SSL/TLS -> Origin Server in the Cloudflare dashboard) -
-      see .env.
+      Set FORAY_TLS_CERT_PATH/FORAY_TLS_KEY_PATH (local cert/key files, for the operator's
+      manual deploy) or FORAY_TLS_CERT/FORAY_TLS_KEY (inline cert/key content, used by CI) -
+      see .env / docs/deployment.md.
 
+# Local-operator path: cert/key live as files on the machine running ansible-playbook.
 - name: Check the cert/key files exist locally
   ansible.builtin.stat:
     path: "{{ item }}"
@@ -18,6 +19,7 @@
   register: foray_tls_file_stats
   delegate_to: localhost
   become: false
+  when: foray_tls_cert_content | length == 0
 
 - name: Fail if either file is missing
   ansible.builtin.assert:
@@ -26,6 +28,7 @@
   loop: "{{ foray_tls_file_stats.results }}"
   loop_control:
     label: "{{ item.item }}"
+  when: foray_tls_cert_content | length == 0
 
 - name: Ensure the TLS directory exists
   ansible.builtin.file:
@@ -35,22 +38,46 @@
     owner: root
     group: root
 
-- name: Copy the origin certificate
+- name: Copy the origin certificate (from local path)
   ansible.builtin.copy:
     src: "{{ foray_tls_cert_path }}"
     dest: /opt/foray-planner/tls/origin.pem
     mode: "0600"
     owner: root
     group: root
+  when: foray_tls_cert_content | length == 0
   notify: restart caddy
 
-- name: Copy the origin private key
+- name: Copy the origin private key (from local path)
   ansible.builtin.copy:
     src: "{{ foray_tls_key_path }}"
     dest: /opt/foray-planner/tls/origin.key
     mode: "0600"
     owner: root
     group: root
+  when: foray_tls_key_content | length == 0
+  notify: restart caddy
+
+# CI path: cert/key content comes from a secret and is written straight to the remote host -
+# never touches disk on the CI runner.
+- name: Write the origin certificate (from inline content)
+  ansible.builtin.copy:
+    content: "{{ foray_tls_cert_content }}"
+    dest: /opt/foray-planner/tls/origin.pem
+    mode: "0600"
+    owner: root
+    group: root
+  when: foray_tls_cert_content | length > 0
+  notify: restart caddy
+
+- name: Write the origin private key (from inline content)
+  ansible.builtin.copy:
+    content: "{{ foray_tls_key_content }}"
+    dest: /opt/foray-planner/tls/origin.key
+    mode: "0600"
+    owner: root
+    group: root
+  when: foray_tls_key_content | length > 0
   notify: restart caddy
 
 - name: Write the Caddyfile

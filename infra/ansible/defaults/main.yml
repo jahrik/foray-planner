@@ -32,8 +32,14 @@ foray_caddy_image: caddy:2-alpine
 
 # Cloudflare Origin CA cert/key - generated in the Cloudflare dashboard, saved locally, and
 # referenced here by path only; never committed or pasted into this repo.
-foray_tls_cert_path: "{{ lookup('ansible.builtin.env', 'FORAY_TLS_CERT_PATH') }}"
-foray_tls_key_path: "{{ lookup('ansible.builtin.env', 'FORAY_TLS_KEY_PATH') }}"
+foray_tls_cert_path: "{{ lookup('ansible.builtin.env', 'FORAY_TLS_CERT_PATH', default='') }}"
+foray_tls_key_path: "{{ lookup('ansible.builtin.env', 'FORAY_TLS_KEY_PATH', default='') }}"
+
+# Cloudflare Origin CA cert/key as inline content instead of a local path - used by CI, which
+# has no access to the operator's filesystem. Sourced from FORAY_TLS_CERT/FORAY_TLS_KEY secrets.
+# Leave unset for the local operator flow, which uses the *_path vars above instead.
+foray_tls_cert_content: "{{ lookup('ansible.builtin.env', 'FORAY_TLS_CERT', default='') }}"
+foray_tls_key_content: "{{ lookup('ansible.builtin.env', 'FORAY_TLS_KEY', default='') }}"
 
 # RIDB API key — optional, campground ingest is skipped without it.
 # Pass via environment or --extra-vars; never commit.
@@ -61,6 +67,10 @@ foray_genera_cron_weekday: "0"
 # Firewall rules — restrict SSH to your IP/VPN CIDR (required, no default)
 foray_do_firewall_name: foray-planner-fw
 foray_ssh_allowed_ips: []
+
+# CI runner's public IP, added to/removed from the live SSH firewall rule around an automated
+# deploy (foray:firewall-allow-runner / foray:firewall-revoke-runner tags). Never set locally.
+foray_ci_runner_ip: ""
 
 # Cloudflare's published edge IP ranges — 80/443 on the droplet are restricted to these so the
 # origin can't be reached directly, bypassing Cloudflare's TLS/WAF/rate-limiting. Sourced from

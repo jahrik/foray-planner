@@ -69,12 +69,30 @@ argument_specs:
         default: caddy:2-alpine
       foray_tls_cert_path:
         type: str
-        description: Local path to the Cloudflare Origin CA certificate (read from FORAY_TLS_CERT_PATH env var)
-        required: true
+        description: >-
+          Local path to the Cloudflare Origin CA certificate (read from FORAY_TLS_CERT_PATH env
+          var). Either this + foray_tls_key_path, or foray_tls_cert_content + foray_tls_key_content,
+          must be set.
+        default: ""
       foray_tls_key_path:
         type: str
-        description: Local path to the Cloudflare Origin CA private key (read from FORAY_TLS_KEY_PATH env var)
-        required: true
+        description: >-
+          Local path to the Cloudflare Origin CA private key (read from FORAY_TLS_KEY_PATH env
+          var). Either this + foray_tls_cert_path, or foray_tls_cert_content + foray_tls_key_content,
+          must be set.
+        default: ""
+      foray_tls_cert_content:
+        type: str
+        description: >-
+          Cloudflare Origin CA certificate content, inline (read from FORAY_TLS_CERT env var) -
+          used by CI in place of foray_tls_cert_path, which needs a local file.
+        default: ""
+      foray_tls_key_content:
+        type: str
+        description: >-
+          Cloudflare Origin CA private key content, inline (read from FORAY_TLS_KEY env var) -
+          used by CI in place of foray_tls_key_path, which needs a local file.
+        default: ""
       foray_ridb_api_key:
         type: str
         description: Recreation.gov API key (optional, campground ingest skipped without it)

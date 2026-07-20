@@ -49,6 +49,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Build + push (amd64, arm64)
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -58,3 +59,67 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+
+  deploy:
+    name: Deploy to production
+    needs: publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: cd-deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Determine this runner's public IP
+        id: whoami
+        run: echo "ip=$(curl -sf https://api.ipify.org)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Ansible
+        working-directory: infra/ansible
+        run: |
+          pip install uv
+          uv sync
+          uv run ansible-galaxy collection install -r requirements.yml
+
+      - name: Set up the deploy SSH key
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${{ secrets.FORAY_DEPLOY_SSH_KEY }}" > ~/.ssh/foray_deploy_key
+          chmod 600 ~/.ssh/foray_deploy_key
+          ssh-keyscan -H "${{ secrets.FORAY_DROPLET_IP }}" >> ~/.ssh/known_hosts
+
+      - name: Allow this runner's IP through the DO firewall
+        working-directory: infra/ansible
+        run: |
+          uv run ansible-playbook site.yml --tags foray:firewall-allow-runner \
+            -e foray_do_token="${{ secrets.DO_API_TOKEN }}" \
+            -e foray_ci_runner_ip="${{ steps.whoami.outputs.ip }}"
+
+      - name: Deploy
+        working-directory: infra/ansible
+        run: |
+          uv run ansible-playbook site.yml --tags foray:deploy \
+            -i inventory/hosts.yml \
+            -e foray_droplet_ip="${{ secrets.FORAY_DROPLET_IP }}" \
+            -e ansible_ssh_private_key_file=~/.ssh/foray_deploy_key \
+            -e foray_app_image="ghcr.io/${{ github.repository }}@${{ needs.publish.outputs.image_digest }}" \
+            -e foray_tls_cert_content="${{ secrets.FORAY_TLS_CERT }}" \
+            -e foray_tls_key_content="${{ secrets.FORAY_TLS_KEY }}" \
+            -e foray_ridb_api_key="${{ secrets.RIDB_API_KEY }}"
+
+      - name: Revoke this runner's IP from the DO firewall
+        if: always()
+        working-directory: infra/ansible
+        run: |
+          uv run ansible-playbook site.yml --tags foray:firewall-revoke-runner \
+            -e foray_do_token="${{ secrets.DO_API_TOKEN }}" \
+            -e foray_ci_runner_ip="${{ steps.whoami.outputs.ip }}"
