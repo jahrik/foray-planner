@@ -139,7 +139,10 @@ Infrastructure lives in `infra/ansible/`. The playbook provisions a DO Droplet (
 pre-installed) and a managed Postgres cluster, then deploys the GHCR container with cron
 jobs for data refresh. `inventory/hosts.yml` pins `ansible_python_interpreter` to
 `/usr/bin/python3` explicitly (rather than relying on Ansible's interpreter auto-discovery) so
-a future Python install on the droplet can't silently change which interpreter gets picked.
+a second Python install on the droplet can't change which interpreter gets *discovered*, and
+the discovery warning is silenced. This doesn't lock the Python version itself -
+`/usr/bin/python3` is a distro-managed symlink that can still repoint to a different minor
+version on an OS/package update.
 
 ### Prerequisites
 
