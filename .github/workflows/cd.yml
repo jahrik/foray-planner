@@ -87,15 +87,18 @@ jobs:
           IP=$(curl -sf https://api.ipify.org)
           echo "ip=$IP" >> "$GITHUB_OUTPUT"
           CIDR=$(python3 -c "
-          import ipaddress, json, urllib.request, sys
+          import ipaddress, json, urllib.request
           ip = ipaddress.ip_address('$IP')
-          with urllib.request.urlopen('https://api.github.com/meta') as r:
-              meta = json.load(r)
-          for block in meta.get('actions', []):
-              if ip in ipaddress.ip_network(block, strict=False):
-                  print(block)
-                  sys.exit(0)
-          print('$IP/32')
+          try:
+              with urllib.request.urlopen('https://api.github.com/meta', timeout=10) as r:
+                  meta = json.load(r)
+              for block in meta.get('actions', []):
+                  if ip in ipaddress.ip_network(block, strict=False):
+                      print(block)
+                      raise SystemExit
+              print('$IP/32')
+          except Exception:
+              print('$IP/32')
           ")
           echo "cidr=$CIDR" >> "$GITHUB_OUTPUT"
 
