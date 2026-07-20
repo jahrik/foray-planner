@@ -64,3 +64,17 @@
           inbound_rules: "{{ foray_firewall_inbound_rules_updated }}"
           outbound_rules: "{{ foray_firewall_matches[0].outbound_rules }}"
         status_code: [200]
+
+# A single successful ssh-keyscan right after the PUT above isn't a reliable readiness
+# signal - DO's firewall rule propagation has a short lag, and the first real SSH
+# connection attempt in the deploy play can still hit "Connection timed out" a few seconds
+# later even though ssh-keyscan just succeeded. Mirrors the "Wait for SSH to become
+# available" task in tasks/provision/firewall.yml's caller (site.yml), which exists for the
+# identical reason on the provisioning path.
+- name: Wait for SSH to accept connections through the updated firewall rule
+  ansible.builtin.wait_for:
+    host: "{{ foray_droplet_ip }}"
+    port: 22
+    delay: 5
+    timeout: 60
+  when: foray_droplet_ip | default('') | length > 0
