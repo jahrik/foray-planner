@@ -75,9 +75,29 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Determine this runner's public IP
+      # GitHub-hosted runners don't egress from a single stable IP for the whole job - a
+      # connection made a few seconds after another can come from a different address in the
+      # same NAT pool. A bare /32 allowlist entry for one detected IP isn't reliable, so this
+      # looks up which of GitHub's published Actions CIDR blocks (api.github.com/meta) contains
+      # the detected IP and allows that whole block instead - falls back to a /32 if it isn't
+      # found in the list (e.g. GitHub's list omitted it) rather than failing the job.
+      - name: Determine this runner's public IP and containing GitHub Actions CIDR
         id: whoami
-        run: echo "ip=$(curl -sf https://api.ipify.org)" >> "$GITHUB_OUTPUT"
+        run: |
+          IP=$(curl -sf https://api.ipify.org)
+          echo "ip=$IP" >> "$GITHUB_OUTPUT"
+          CIDR=$(python3 -c "
+          import ipaddress, json, urllib.request, sys
+          ip = ipaddress.ip_address('$IP')
+          with urllib.request.urlopen('https://api.github.com/meta') as r:
+              meta = json.load(r)
+          for block in meta.get('actions', []):
+              if ip in ipaddress.ip_network(block, strict=False):
+                  print(block)
+                  sys.exit(0)
+          print('$IP/32')
+          ")
+          echo "cidr=$CIDR" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
         with:
@@ -102,7 +122,7 @@ jobs:
           DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
         run: |
           uv run ansible-playbook site.yml --tags foray:firewall-allow-runner \
-            -e foray_ci_runner_ip="${{ steps.whoami.outputs.ip }}" \
+            -e foray_ci_runner_cidr="${{ steps.whoami.outputs.cidr }}" \
             -e foray_droplet_ip="${{ secrets.FORAY_DROPLET_IP }}"
 
       # Only reachable now that the runner's IP is allowlisted - scanning before the firewall
@@ -131,4 +151,4 @@ jobs:
           DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
         run: |
           uv run ansible-playbook site.yml --tags foray:firewall-revoke-runner \
-            -e foray_ci_runner_ip="${{ steps.whoami.outputs.ip }}"
+            -e foray_ci_runner_cidr="${{ steps.whoami.outputs.cidr }}"
