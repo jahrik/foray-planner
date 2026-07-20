@@ -112,6 +112,7 @@ jobs:
       - name: Deploy
         working-directory: infra/ansible
         env:
+          DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
           FORAY_TLS_CERT: ${{ secrets.FORAY_TLS_CERT }}
           FORAY_TLS_KEY: ${{ secrets.FORAY_TLS_KEY }}
           RIDB_API_KEY: ${{ secrets.RIDB_API_KEY }}
