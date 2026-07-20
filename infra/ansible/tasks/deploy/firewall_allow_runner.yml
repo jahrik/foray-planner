@@ -1,14 +1,32 @@
 ---
-# Adds the CI runner's own public IP to the live DO firewall's SSH (tcp/22) rule, without
-# touching any other inbound/outbound rule. This is deliberately separate from
-# tasks/provision/firewall.yml, which recomputes the *entire* rule set from
+# Adds the CI runner's address (a CIDR block, ideally - see below) to the live DO firewall's
+# SSH (tcp/22) rule, without touching any other inbound/outbound rule. This is deliberately
+# separate from tasks/provision/firewall.yml, which recomputes the *entire* rule set from
 # foray_ssh_allowed_ips - CI doesn't know the operator's own CIDR that's already live there,
-# so it must only ever add/remove its own single address.
+# so it must only ever add/remove its own address(es).
+#
+# GitHub-hosted runners don't egress from one stable IP for a whole job - a connection made a
+# few seconds after another can come from a different address in the same NAT pool (observed
+# directly: ssh-keyscan and a wait_for probe both succeeded, then the real deploy SSH
+# connection timed out a few seconds later in the same job). foray_ci_runner_cidr should be
+# the GitHub-published Actions CIDR block containing the runner's detected IP (computed by the
+# cd.yml workflow via api.github.com/meta), not a bare /32 - that covers the whole NAT pool the
+# runner may draw from instead of just the one address it happened to report. foray_ci_runner_ip
+# + a plain /32 remains a fallback for manual/local invocations that don't compute a CIDR.
 
-- name: Fail if foray_ci_runner_ip isn't set
+- name: Fail if neither foray_ci_runner_cidr nor foray_ci_runner_ip is set
   ansible.builtin.fail:
-    msg: "foray_ci_runner_ip must be set (the CI runner's own public IP) to use this tag."
-  when: foray_ci_runner_ip | length == 0
+    msg: >-
+      foray_ci_runner_cidr (preferred) or foray_ci_runner_ip must be set to use this tag.
+  when:
+    - foray_ci_runner_cidr | default('') | length == 0
+    - foray_ci_runner_ip | default('') | length == 0
+
+- name: Resolve the address to allow
+  ansible.builtin.set_fact:
+    foray_ci_runner_address: >-
+      {{ (foray_ci_runner_cidr | default('') | length > 0)
+         | ternary(foray_ci_runner_cidr, foray_ci_runner_ip + '/32') }}
 
 - name: Look up firewalls by name
   digitalocean.cloud.firewalls_info:
@@ -38,20 +56,20 @@
          | map(attribute='addresses', default=[])
          | first }}
 
-- name: Add the runner's IP to the SSH allowlist
-  when: (foray_ci_runner_ip + '/32') not in foray_firewall_ssh_addresses
+- name: Add the runner's address to the SSH allowlist
+  when: foray_ci_runner_address not in foray_firewall_ssh_addresses
   block:
-    - name: Build updated inbound rules with the runner IP appended to the SSH rule
+    - name: Build updated inbound rules with the runner's address appended to the SSH rule
       ansible.builtin.set_fact:
         foray_firewall_inbound_rules_updated: >-
           {{ foray_firewall_inbound_rules_updated | default([]) +
              [(item.protocol == 'tcp' and item.ports == '22')
-              | ternary(item | combine({'sources': {'addresses': (foray_firewall_ssh_addresses + [foray_ci_runner_ip + '/32']) | unique}}, recursive=True), item)] }}
+              | ternary(item | combine({'sources': {'addresses': (foray_firewall_ssh_addresses + [foray_ci_runner_address]) | unique}}, recursive=True), item)] }}
       loop: "{{ foray_firewall_matches[0].inbound_rules }}"
       loop_control:
         label: "{{ item.ports }}"
 
-    - name: Reconcile the firewall with the runner IP added
+    - name: Reconcile the firewall with the runner's address added
       ansible.builtin.uri:
         url: "https://api.digitalocean.com/v2/firewalls/{{ foray_firewall_matches[0].id }}"
         method: PUT

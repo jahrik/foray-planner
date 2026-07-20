@@ -72,6 +72,11 @@ foray_ssh_allowed_ips: []
 # deploy (foray:firewall-allow-runner / foray:firewall-revoke-runner tags). Never set locally.
 foray_ci_runner_ip: ""
 
+# CI runner's containing GitHub Actions CIDR block (computed by cd.yml from
+# api.github.com/meta) - preferred over foray_ci_runner_ip since GitHub-hosted runners don't
+# egress from one stable IP for a whole job. Never set locally.
+foray_ci_runner_cidr: ""
+
 # Cloudflare's published edge IP ranges — 80/443 on the droplet are restricted to these so the
 # origin can't be reached directly, bypassing Cloudflare's TLS/WAF/rate-limiting. Sourced from
 # https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6 (checked 2026-07-14).
