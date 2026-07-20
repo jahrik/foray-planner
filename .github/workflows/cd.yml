@@ -128,14 +128,23 @@ jobs:
             -e foray_ci_runner_cidr="${{ steps.whoami.outputs.cidr }}" \
             -e foray_droplet_ip="${{ secrets.FORAY_DROPLET_IP }}"
 
-      # Only reachable now that the runner's IP is allowlisted - scanning before the firewall
-      # step would fail/hang against a locked-down droplet.
-      - name: Collect the droplet's SSH host key
-        run: ssh-keyscan -H "${{ secrets.FORAY_DROPLET_IP }}" >> ~/.ssh/known_hosts
-
+      # No ssh-keyscan here (deliberately) - the droplet's UFW ships with a default
+      # `22/tcp LIMIT` rule (DigitalOcean's docker-20-04 base image, not something this repo
+      # configures) that silently drops a source after 6 new connections in 30s. Confirmed via
+      # the droplet's own kernel log (`UFW LIMIT BLOCK`, exact timestamp/source IP match) after
+      # three consecutive deploy failures: ssh-keyscan's several rapid probe connections plus
+      # the wait_for check above tripped that limit, and the real deploy SSH connection a few
+      # seconds later got silently dropped - indistinguishable from a firewall/network problem
+      # from the client side ("Connection timed out"), which is what sent the last two fixes
+      # down the wrong path (firewall propagation lag, then NAT-pool IP variability - neither
+      # was the actual cause). Skip host-key TOFU instead of scanning for it: the SSH private
+      # key is already the real trust boundary for this ephemeral, single-purpose connection,
+      # and cutting ssh-keyscan's ~4 connection attempts keeps the deploy step's own connection
+      # comfortably clear of the rate limit.
       - name: Deploy
         working-directory: infra/ansible
         env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
           DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
           FORAY_TLS_CERT: ${{ secrets.FORAY_TLS_CERT }}
           FORAY_TLS_KEY: ${{ secrets.FORAY_TLS_KEY }}
