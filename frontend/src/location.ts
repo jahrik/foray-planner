@@ -14,13 +14,9 @@ interface NominatimResult {
   lon: string;
 }
 
-// Aborts any in-flight request before starting a new one, so a slow older response (real risk
-// on the flaky RV/Starlink connections this app targets) can't resolve after a newer keystroke
-// and overwrite the suggestion list with stale results (issue #99). Returns null (rather than
-// []) on abort so the caller can tell "superseded" apart from "no matches" and skip re-rendering.
+// Returns null (rather than []) on abort so the caller can tell "superseded" apart from "no
+// matches" and skip re-rendering.
 async function fetchSuggestions(query: string): Promise<NominatimResult[] | null> {
-  if (query.length < 2) return [];
-  activeAbort?.abort();
   const controller = new AbortController();
   activeAbort = controller;
   const params = new URLSearchParams({ q: query, format: "json", limit: "5" });
@@ -71,6 +67,11 @@ export function initLocationAutocomplete(): void {
   input.addEventListener("input", () => {
     const query = input.value.trim();
     if (debounceTimer) clearTimeout(debounceTimer);
+    // Abort immediately, not just when a new fetch actually starts below - otherwise a request
+    // already in flight when the debounce clock is still running (e.g. the user deletes back
+    // below 2 chars, or types again before the previous fetch resolves) survives untouched and
+    // can still resolve later, re-opening the list with stale results (issue #99 follow-up).
+    activeAbort?.abort();
     if (query.length < 2) {
       list.classList.remove("open");
       return;
