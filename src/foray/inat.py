@@ -47,26 +47,69 @@ OBSCURED_ACCURACY_HIGH = 31000
 _PAGE_SIZE = 200
 
 # Transient network failures (DNS blips, timeouts, dropped connections) should not abort a
-# long ingest - retry with backoff before giving up.
+# long ingest - retry with backoff before giving up. A 429/5xx HTTPError is transient too (iNat's
+# own rate limiter or a momentary upstream hiccup) - a long `resync --until-done` run making
+# thousands of requests will hit 429 sooner or later, and letting it propagate crashes the whole
+# batch instead of just pausing (this is exactly what took down a real resync run - see git log).
 _TRANSIENT = (
     requests.exceptions.ConnectionError,
     requests.exceptions.Timeout,
     requests.exceptions.ChunkedEncodingError,
 )
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+# A 429 ("normal_throttling") is guaranteed-eventually-fine, not a real failure - the plain
+# exponential backoff below (capped at 30s over 5 attempts) proved too short for a sustained
+# throttle window and crashed a live `resync --until-done` run twice in a row. Cap each sleep at
+# a minute and allow many more attempts specifically for 429 so a long batch job waits it out
+# instead of giving up (worst case ~10min: 2+4+8+16+32+60*6 seconds).
+_RATE_LIMIT_ATTEMPTS = 10
+_MAX_RETRY_DELAY = 60.0
+
+
+def _retry_delay(exc: Exception, attempt: int, base_delay: float) -> float:
+    response = getattr(exc, "response", None)
+    retry_after = response.headers.get("Retry-After") if response is not None else None
+    if retry_after is not None:
+        try:
+            return max(float(retry_after), 0.0)
+        except ValueError:
+            pass
+    return min(base_delay * 2 ** (attempt - 1), _MAX_RETRY_DELAY)
 
 
 def _with_retries[T](fn: Callable[[], T], *, attempts: int = 5, base_delay: float = 2.0) -> T:
-    """Call ``fn``, retrying transient network errors with exponential backoff."""
+    """Call ``fn``, retrying transient network errors (and 429/5xx responses) with backoff.
+
+    A 429 gets its own, larger attempt budget (``_RATE_LIMIT_ATTEMPTS``) regardless of
+    ``attempts`` - it always eventually clears, unlike a real server error.
+    """
     if attempts < 1:
         raise ValueError(f"attempts must be >= 1, got {attempts}")
-    for attempt in range(1, attempts + 1):
+    attempt = 0
+    rate_limit_attempt = 0
+    while True:
         try:
             return fn()
         except _TRANSIENT:
+            attempt += 1
             if attempt == attempts:
                 raise
-            time.sleep(base_delay * 2 ** (attempt - 1))
-    raise AssertionError("unreachable")
+            time.sleep(min(base_delay * 2 ** (attempt - 1), _MAX_RETRY_DELAY))
+        except requests.exceptions.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status not in _RETRYABLE_STATUS:
+                raise
+            if status == 429:
+                rate_limit_attempt += 1
+                if rate_limit_attempt == _RATE_LIMIT_ATTEMPTS:
+                    raise
+                time.sleep(_retry_delay(exc, rate_limit_attempt, base_delay))
+            else:
+                attempt += 1
+                if attempt == attempts:
+                    raise
+                time.sleep(_retry_delay(exc, attempt, base_delay))
 
 
 def iter_observations(
