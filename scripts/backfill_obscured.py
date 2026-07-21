@@ -6,7 +6,7 @@ The ~1.9M-row bulk historical import never set `observations.obscured` (NULL), a
 observation's cached point (iNat's *randomized decoy* coordinate, not the real find location)
 gets served to the UI as if it were precise. Confirmed as a real user-facing bug, 2026-07-21: a
 reported observation's cached location didn't match anywhere iNat shows that species actually
-observed, because the point was the decoy (see TODO.md's iNat data verification notes).
+observed, because the point was the decoy.
 
 `ingest.resync` (see foray.ingest) is the permanent, recurring fix - it re-fetches every cached
 row from iNat over time and writes the real flag. But at its deliberately-small batch size that

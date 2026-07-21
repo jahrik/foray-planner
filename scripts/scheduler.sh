@@ -41,7 +41,7 @@ while true; do
   # Slow whole-table grind (small batch, frequent interval) - the only path that eventually
   # re-verifies every column of every cached row, including `obscured` (NULL for the bulk
   # historical import) and misidentifications too rare within their genus for revalidate's
-  # ratio check to catch (see ingest.resync, TODO.md).
+  # ratio check to catch (see ingest.resync).
   if [ $((now - resync_last)) -ge $((RESYNC_INTERVAL * 3600)) ]; then
     echo "[scheduler] $(date -Iseconds) Starting observation resync (batch of $RESYNC_BATCH_SIZE)…"
     foray resync --batch-size "$RESYNC_BATCH_SIZE" && resync_last=$(date +%s) || echo "[scheduler] resync failed"

@@ -204,7 +204,13 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     # bulk historical import, which is why it's used as the resync cursor (oldest/never-checked
     # first, see stale_observation_ids) rather than a plain "last modified" timestamp.
     con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS revalidated_at TIMESTAMPTZ")
-    con.execute("CREATE INDEX IF NOT EXISTS ix_observations_revalidated_at ON observations (revalidated_at)")
+    # CONCURRENTLY: this runs on every connect() (app startup included), and a plain CREATE
+    # INDEX on prod's 2M+-row observations table would hold a write lock for the build's
+    # duration - real downtime on a rolling deploy. Safe outside an explicit transaction block
+    # since connect() uses autocommit=True (each statement is its own implicit transaction).
+    con.execute(
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_revalidated_at ON observations (revalidated_at)"
+    )
     # `taxa` is retired (issue #79 Phase 4): superseded by fungi_genera, the full catalog
     # every name lookup now reads from (see scoring.py's _genus_name_map). Left in place
     # rather than dropped here - a DROP TABLE running unconditionally on every connect() is a
@@ -334,9 +340,8 @@ def suspect_genus_taxon_ids(con: psycopg.Connection, ratio: float = 3.0) -> list
     ever have as many cached rows as fit inside our home-radius/region scoping, which is always
     a fraction of iNat's global total - so "cached far exceeds live" only happens when
     observations of the *other* (non-fungal) taxon got attributed to this taxon_id at ingest
-    time and never got re-synced since (see ``ingest.revalidate``, and TODO.md's iNat data
-    verification notes for how this was discovered: a live census found 19 such genera
-    accounting for ~24k/1.97M cached rows).
+    time and never got re-synced since (see ``ingest.revalidate`` - a live census found 19 such
+    genera accounting for ~24k/1.97M cached rows).
     """
     rows = con.execute(
         """

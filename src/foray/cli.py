@@ -215,7 +215,7 @@ def revalidate_cmd(ctx: click.Context) -> None:
 @click.pass_context
 def resync_cmd(ctx: click.Context, batch_size: int, until_done: bool) -> None:
     """Re-check the observations cache against iNat, oldest/never-checked first - the only path
-    that eventually true's up every column (including `obscured`, never set by the bulk
+    that eventually trues up every column (including `obscured`, never set by the bulk
     historical import) and catches a misidentification too rare within its genus for
     `revalidate`'s ratio check to flag. Meant to run frequently in small batches on a schedule
     (see scripts/scheduler.sh), grinding through the whole cache over time - or pass

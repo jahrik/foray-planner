@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import patch
 
 import psycopg
@@ -231,3 +232,48 @@ def test_resync_returns_zero_when_cache_empty(con: psycopg.Connection, cfg_with_
 
     mock_fetch.assert_not_called()
     assert result == {"checked": 0, "purged": 0, "reassigned": 0}
+
+
+def test_resync_cancels_mid_batch_and_only_touches_seen_rows(con: psycopg.Connection, cfg_with_home: Settings) -> None:
+    """A single resync/_recheck_ids call can cover thousands of ids (resync --until-done's large
+    batches) - abort_event must be checked inside the fetch loop itself, not just between calls,
+    or cancellation sits unresponsive for the whole batch."""
+    upsert_observations(con, [_cached_row(1, taxon_id=CANTHARELLUS), _cached_row(2, taxon_id=CANTHARELLUS)])
+    abort_event = threading.Event()
+
+    def obs_stream():
+        yield _live_obs(1, iconic_taxon_id=47170, taxon_id=CANTHARELLUS)
+        abort_event.set()
+        yield _live_obs(2, iconic_taxon_id=47170, taxon_id=CANTHARELLUS)  # never reached
+
+    with patch("foray.ingest.fetch_observations") as mock_fetch:
+        mock_fetch.return_value = obs_stream()
+        result = resync(cfg_with_home, con, batch_size=10, abort_event=abort_event)
+
+    assert result == {"checked": 1, "purged": 0, "reassigned": 0}
+    row = con.execute("SELECT revalidated_at FROM observations WHERE id = 1").fetchone()
+    assert row is not None
+    assert row[0] is not None
+    # obs 2 was never checked this call - must not be purged as "iNat no longer returns it".
+    remaining = con.execute("SELECT id FROM observations ORDER BY id").fetchall()
+    assert remaining == [(1,), (2,)]
+
+
+def test_revalidate_cancels_mid_genus_and_only_touches_seen_rows(
+    con: psycopg.Connection, cfg_with_home: Settings
+) -> None:
+    upsert_observations(con, [_cached_row(1), _cached_row(2)])
+    abort_event = threading.Event()
+
+    def obs_stream():
+        yield _live_obs(1, iconic_taxon_id=47170, taxon_id=OLLA_FUNGUS)
+        abort_event.set()
+        yield _live_obs(2, iconic_taxon_id=47170, taxon_id=OLLA_FUNGUS)  # never reached
+
+    with patch("foray.ingest.fetch_observations") as mock_fetch:
+        mock_fetch.return_value = obs_stream()
+        stats = revalidate(cfg_with_home, con, abort_event=abort_event)
+
+    assert stats == {OLLA_FUNGUS: {"checked": 1, "purged": 0, "reassigned": 0}}
+    remaining = con.execute("SELECT id FROM observations ORDER BY id").fetchall()
+    assert remaining == [(1,), (2,)]

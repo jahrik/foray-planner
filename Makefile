@@ -78,15 +78,14 @@ genera-refresh: db
 	docker compose run --rm app foray genera-refresh
 
 # Re-checks cached observations under genera whose cache count has drifted from iNat's live
-# count (see ingest.revalidate / TODO.md's iNat data verification notes) - purges/reassigns
-# rows misidentified into a homonymous non-fungal genus (e.g. fungal Olla vs. the ladybug
-# genus Olla). Meant to run on a recurring schedule (scripts/scheduler.sh), this target is for
-# running it on demand against local dev data.
+# count (see ingest.revalidate) - purges/reassigns rows misidentified into a homonymous
+# non-fungal genus (e.g. fungal Olla vs. the ladybug genus Olla). Meant to run on a recurring
+# schedule (scripts/scheduler.sh), this target is for running it on demand against local dev data.
 revalidate: db
 	docker compose run --rm app foray revalidate
 
 # Re-checks the *whole* observations cache against iNat, oldest/never-checked first (see
-# ingest.resync / TODO.md) - the only path that eventually true's up every column (including
+# ingest.resync) - the only path that eventually trues up every column (including
 # `obscured`, never set by the bulk historical import) and catches a misidentification too rare
 # within its genus for `revalidate`'s ratio check to flag. Default: one on-demand batch, same
 # shape scripts/scheduler.sh runs hourly. Pass ARGS for a deliberate catch-up run instead - e.g.
@@ -97,9 +96,9 @@ resync: db
 	docker compose run --rm app foray resync $(ARGS)
 
 # One-time heuristic fix for the bulk-historical-import rows whose `obscured` flag was never set
-# (see scripts/backfill_obscured.py / TODO.md) - a NULL flag makes the UI show iNat's randomized
-# decoy coordinate for a geoprivacy-obscured observation as if it were the real, precise
-# location. Safe to re-run (only touches still-NULL rows); `make resync`'s ongoing grind corrects
+# (see scripts/backfill_obscured.py) - a NULL flag makes the UI show iNat's randomized decoy
+# coordinate for a geoprivacy-obscured observation as if it were the real, precise location.
+# Safe to re-run (only touches still-NULL rows); `make resync`'s ongoing grind corrects
 # the ~1.7% heuristic false positives with the real flag over time. Not part of the foray CLI -
 # same one-time-script pattern as bulk-load (see that target's comment).
 backfill-obscured: db

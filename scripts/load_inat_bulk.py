@@ -12,8 +12,7 @@ Reads data/inat_us_observations.jsonl (produced by inat_dwca_filter.py) and:
      via the same coordinate_uncertainty_m fingerprint heuristic as
      scripts/backfill_obscured.py (see foray.inat.OBSCURED_ACCURACY_LOW/HIGH) rather than left
      NULL - a past run of this script is exactly how ~1.9M rows ended up with a NULL `obscured`
-     in the first place (see TODO.md's iNat data verification notes), so a future run of this
-     script should not reintroduce the same gap.
+     in the first place, so a future run of this script should not reintroduce the same gap.
   2. Writes a single ingest_log row for the whole load, in the same "obs:fungi:place:
      {place_id}:{start}:{end}" shape ingest_region() itself produces (issue #79 Phase 4:
      one whole-Fungi-kingdom key per place, not one per genus), so the nightly cron (capped
