@@ -18,14 +18,17 @@ from typing import Any
 import psycopg
 
 from foray.cache import (
+    delete_observations,
     known_genus_taxon_ids,
     latest_obs_date,
     latest_obs_date_by_place,
+    observation_ids_for_genus,
     record_ingest,
+    suspect_genus_taxon_ids,
     upsert_observations,
 )
 from foray.config import Config, CoverageRegion
-from foray.inat import FUNGI_TAXON_ID, iter_observations
+from foray.inat import FUNGI_TAXON_ID, fetch_observations, iter_observations
 
 logger = logging.getLogger(__name__)
 
@@ -300,3 +303,89 @@ def ingest_region(
         skipped_no_genus,
     )
     return counts
+
+
+def revalidate(
+    cfg: Config,
+    db: psycopg.Connection,
+    progress_cb: Callable[[str, float], None] | None = None,
+    abort_event: threading.Event | None = None,
+) -> dict[int, dict[str, int]]:
+    """Re-check cached observations under "suspect" genera against iNat's current state.
+
+    This is a recurring job, not a one-time cleanup - the underlying problem keeps recurring on
+    its own. A handful of fungal genus names happen to be homonyms of established, common
+    animal genera (fungal *Olla* vs. the ladybug genus *Olla*, fungal *Stigmella* vs. the
+    leaf-mining-moth genus, etc). Observations of the animal occasionally get attributed to the
+    fungal taxon_id at ingest time (the identification was, or briefly registered as, the
+    fungal homonym); iNat's community corrects these over time, but ``ingest``/``ingest_region``
+    only ever touch a row again within their narrow incremental overlap window, so a correction
+    on an older observation is never seen. Left unchecked, misidentified non-fungal
+    observations accumulate in the cache and feed phenology scoring indefinitely (see
+    TODO.md's iNat data verification notes - a live census found 19 such genera, ~24k affected
+    rows out of 1.97M, as of 2026-07-20).
+
+    ``cache.suspect_genus_taxon_ids`` finds genus taxon_ids to check without any iNat call (it
+    compares our cached-row count to ``fungi_genera.observations_count``, already kept fresh by
+    the weekly ``foray genera-refresh``), so the recurring cost here stays proportional to the
+    size of the problem, not the whole cache. Only cached observations under a flagged genus
+    get re-fetched from iNat.
+
+    Returns ``{genus_taxon_id: {"checked": n, "purged": n, "reassigned": n}}``.
+    """
+    known_genus_ids = _load_known_genus_ids(db)
+    suspects = suspect_genus_taxon_ids(db)
+    stats: dict[int, dict[str, int]] = {}
+    for i, genus_taxon_id in enumerate(suspects):
+        if abort_event and abort_event.is_set():
+            logger.info("revalidate: cancelled after %d/%d suspect genera", i, len(suspects))
+            break
+        ids = observation_ids_for_genus(db, genus_taxon_id)
+        if not ids:
+            continue
+        if progress_cb:
+            progress_cb(
+                f"Revalidating genus {genus_taxon_id} ({len(ids)} cached observations)…",
+                90.0 * i / max(len(suspects), 1),
+            )
+        live = fetch_observations(ids)
+        seen_ids: set[int] = set()
+        purge_ids: list[int] = []
+        reassign_rows: list[tuple[Any, ...]] = []
+        for obs in live:
+            seen_ids.add(obs["id"])
+            taxon = obs.get("taxon") or {}
+            # FUNGI_TAXON_ID doubles as the Fungi kingdom's own iconic_taxon_id (verified live
+            # against /v1/observations, 2026-07-20) - the cheapest possible non-Fungi check,
+            # no ancestor walk needed.
+            if taxon.get("iconic_taxon_id") != FUNGI_TAXON_ID:
+                purge_ids.append(obs["id"])
+                continue
+            new_genus = _resolve_genus_taxon_id(obs, known_genus_ids)
+            if new_genus is None:
+                purge_ids.append(obs["id"])
+                continue
+            row = _to_row(obs, new_genus)
+            if row is not None:
+                reassign_rows.append(row)
+        # ids iNat no longer returns at all (deleted, or made private/inaccessible) - drop them.
+        purge_ids.extend(set(ids) - seen_ids)
+
+        if purge_ids:
+            delete_observations(db, purge_ids)
+        if reassign_rows:
+            upsert_observations(db, reassign_rows)
+
+        stats[genus_taxon_id] = {
+            "checked": len(ids),
+            "purged": len(purge_ids),
+            "reassigned": len(reassign_rows),
+        }
+        logger.info(
+            "revalidate: genus %d - %d checked, %d purged (no longer Fungi), %d reassigned",
+            genus_taxon_id,
+            len(ids),
+            len(purge_ids),
+            len(reassign_rows),
+        )
+    return stats

@@ -282,7 +282,15 @@ def search_fungi_genera(con: psycopg.Connection, query: str, limit: int = 20) ->
 
 
 def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
-    """Insert observation tuples, backfilling metadata on conflict. Returns rows attempted."""
+    """Insert observation tuples, backfilling metadata on conflict. Returns rows attempted.
+
+    Every column is refreshed on conflict (not just taxon_id/quality_grade/etc) - a cached
+    observation is only ever touched again by a later incremental window or by
+    ``ingest.revalidate``, so if a re-fetch happens at all its lat/lng/observed_on/
+    positional_accuracy must win too, or a since-corrected location/accuracy on iNat's side
+    stays wrong here forever. COALESCE still guards against a partial-loader re-upsert (one
+    that doesn't carry every column) blanking out a previously-healed value.
+    """
     if not rows:
         return 0
     with con.cursor() as cur:
@@ -294,7 +302,13 @@ def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 taxon_id = COALESCE(EXCLUDED.taxon_id, observations.taxon_id),
+                lat = COALESCE(EXCLUDED.lat, observations.lat),
+                lng = COALESCE(EXCLUDED.lng, observations.lng),
+                observed_on = COALESCE(EXCLUDED.observed_on, observations.observed_on),
+                month = COALESCE(EXCLUDED.month, observations.month),
+                year = COALESCE(EXCLUDED.year, observations.year),
                 quality_grade = COALESCE(EXCLUDED.quality_grade, observations.quality_grade),
+                positional_accuracy = COALESCE(EXCLUDED.positional_accuracy, observations.positional_accuracy),
                 place_guess = COALESCE(EXCLUDED.place_guess, observations.place_guess),
                 uri = COALESCE(EXCLUDED.uri, observations.uri),
                 obscured = COALESCE(EXCLUDED.obscured, observations.obscured)
@@ -302,6 +316,48 @@ def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
             rows,
         )
     return len(rows)
+
+
+def suspect_genus_taxon_ids(con: psycopg.Connection, ratio: float = 3.0) -> list[int]:
+    """Genus taxon_ids whose cached observation count has drifted implausibly far above iNat's
+    own live count for that genus (``fungi_genera.observations_count``, refreshed weekly by
+    ``foray genera-refresh`` - no iNat call needed here, this is DB-only).
+
+    This is the fingerprint of a cross-kingdom name homonym: a fungal genus taxon_id that
+    happens to share its scientific name with an established, common, completely unrelated
+    animal genus (e.g. fungal *Olla* vs. the ladybug genus *Olla*). A legitimate genus can only
+    ever have as many cached rows as fit inside our home-radius/region scoping, which is always
+    a fraction of iNat's global total - so "cached far exceeds live" only happens when
+    observations of the *other* (non-fungal) taxon got attributed to this taxon_id at ingest
+    time and never got re-synced since (see ``ingest.revalidate``, and TODO.md's iNat data
+    verification notes for how this was discovered: a live census found 19 such genera
+    accounting for ~24k/1.97M cached rows).
+    """
+    rows = con.execute(
+        """
+        SELECT o.taxon_id
+        FROM observations o
+        JOIN fungi_genera g ON g.taxon_id = o.taxon_id
+        GROUP BY o.taxon_id, g.observations_count
+        HAVING count(*) > %s * COALESCE(g.observations_count, 0)
+        """,
+        [ratio],
+    ).fetchall()
+    return [taxon_id for (taxon_id,) in rows]
+
+
+def observation_ids_for_genus(con: psycopg.Connection, taxon_id: int) -> list[int]:
+    rows = con.execute("SELECT id FROM observations WHERE taxon_id = %s", [taxon_id]).fetchall()
+    return [row[0] for row in rows]
+
+
+def delete_observations(con: psycopg.Connection, ids: Sequence[int]) -> int:
+    """Remove cached rows by id (``ingest.revalidate`` purging observations no longer Fungi).
+    Returns rows attempted (not the actual delete count - ids may already be gone)."""
+    if not ids:
+        return 0
+    con.execute("DELETE FROM observations WHERE id = ANY(%s)", [list(ids)])
+    return len(ids)
 
 
 def upsert_campsites(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:

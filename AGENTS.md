@@ -41,6 +41,13 @@ Guiding principles - keep these in mind for any feature work:
 - `src/foray/ingest.py` - pulls per seed taxon within the home radius or by coverage region
   (`place_id`). Tags each obs with the **seed** taxon_id (not leaf species) so phenology is
   per foraging target. Region ingest uses chunked inserts (5000 rows) for bounded memory.
+  `revalidate()` is a separate, recurring re-check pass: a handful of fungal genus names are
+  homonyms of common animal genera (fungal *Olla* vs. the ladybug genus, etc), so observations
+  occasionally get cached under the wrong (non-fungal) taxon_id and never self-correct since
+  `ingest`/`ingest_region` only ever revisit a narrow incremental overlap window. It targets
+  only genus taxon_ids flagged by `cache.suspect_genus_taxon_ids` (cached-count vs.
+  `fungi_genera.observations_count`, DB-only, no iNat call) and re-fetches just those cached
+  observations to purge/reassign anything no longer Fungi.
 - `src/foray/camps.py` - developed-campground ingest from the Recreation.gov **RIDB API**
   (httpx, key from env `RIDB_API_KEY`). Tiles the home radius into <=50-mi query circles,
   dedupes facilities, clips to the true radius with `haversine_km`. Skipped (no-op) when the
@@ -66,10 +73,12 @@ Guiding principles - keep these in mind for any feature work:
   against cached data. `set_location` does not trigger refresh. A `psycopg_pool.ConnectionPool`
   opened/closed via FastAPI `lifespan`; `refresh` runs in a background thread with SSE progress.
 - `src/foray/cli.py` - Click CLI: `foray ingest | camps | land | dispersed | trails | refresh |
-  plan | serve | openapi`. `ingest --all-regions` is what the scheduler runs.
-- `scripts/scheduler.sh` - shell loop running observation ingest (all regions) every N hours
-  and layer refresh every M hours. Configurable via `FORAY_INGEST_INTERVAL_HOURS` (default 24)
-  and `FORAY_LAYERS_INTERVAL_HOURS` (default 168).
+  revalidate | plan | serve | openapi`. `ingest --all-regions` is what the scheduler runs.
+- `scripts/scheduler.sh` - shell loop running observation ingest (all regions), layer refresh,
+  and observation revalidation (`foray revalidate`, see `ingest.py`) each on their own N-hour
+  interval. Configurable via `FORAY_INGEST_INTERVAL_HOURS` (default 24),
+  `FORAY_LAYERS_INTERVAL_HOURS` (default 168), and `FORAY_REVALIDATE_INTERVAL_HOURS`
+  (default 168).
 - `frontend/` - the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern:
   `src/state.ts` (shared `State`, DOM `qs()`/`setStatus()` helpers), `src/map.ts` (Leaflet init,
   theme/tile switching, marker palette, `clear*()` layer helpers), `src/layers.ts` (camps/land/

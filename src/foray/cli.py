@@ -12,7 +12,7 @@ from foray.camps import ingest_campgrounds
 from foray.config import Settings
 from foray.dispersed import ingest_dispersed
 from foray.inat import iter_fungi_genera
-from foray.ingest import ingest, ingest_region
+from foray.ingest import ingest, ingest_region, revalidate
 from foray.land import ingest_public_land, ingest_public_land_coverage
 from foray.scoring import build_phenology, plan_route
 from foray.trails import ingest_trails, ingest_trails_region
@@ -156,6 +156,34 @@ def trails_cmd(ctx: click.Context, all_coverage: bool) -> None:
         else:
             count = ingest_trails(cfg, con)
             click.echo(f"Cached {count} trails within {cfg.home.radius_km} km of home.")
+    finally:
+        con.close()
+
+
+@cli.command("revalidate")
+@click.pass_context
+def revalidate_cmd(ctx: click.Context) -> None:
+    """Re-check cached observations under genera whose cache count has drifted from iNat's
+    live count - purges/reassigns rows misidentified into a homonymous non-fungal genus (e.g.
+    fungal Olla vs. the ladybug genus Olla) that iNat corrected but this cache never saw.
+    Meant to run on a schedule (see scripts/scheduler.sh), not just once."""
+    cfg = ctx.obj["cfg"]
+    con = connect()
+    try:
+        stats = revalidate(cfg, con)
+        if not stats:
+            click.echo("No suspect genera found - nothing to revalidate.")
+            return
+        total_checked = sum(s["checked"] for s in stats.values())
+        total_purged = sum(s["purged"] for s in stats.values())
+        total_reassigned = sum(s["reassigned"] for s in stats.values())
+        click.echo(
+            f"Revalidated {len(stats)} suspect genera: {total_checked} observations checked, "
+            f"{total_purged} purged (no longer Fungi), {total_reassigned} reassigned."
+        )
+        if total_purged:
+            click.echo("Rebuilding phenology…")
+            build_phenology(con, cfg.cell_deg)
     finally:
         con.close()
 
