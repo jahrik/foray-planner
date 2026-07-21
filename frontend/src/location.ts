@@ -6,6 +6,7 @@ const DEBOUNCE_MS = 300;
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let activeIndex = -1;
+let activeAbort: AbortController | null = null;
 
 interface NominatimResult {
   display_name: string;
@@ -13,12 +14,20 @@ interface NominatimResult {
   lon: string;
 }
 
-async function fetchSuggestions(query: string): Promise<NominatimResult[]> {
-  if (query.length < 2) return [];
+// Returns null (rather than []) on abort so the caller can tell "superseded" apart from "no
+// matches" and skip re-rendering.
+async function fetchSuggestions(query: string): Promise<NominatimResult[] | null> {
+  const controller = new AbortController();
+  activeAbort = controller;
   const params = new URLSearchParams({ q: query, format: "json", limit: "5" });
-  const resp = await fetch(`${NOMINATIM}?${params}`);
-  if (!resp.ok) return [];
-  return resp.json();
+  try {
+    const resp = await fetch(`${NOMINATIM}?${params}`, { signal: controller.signal });
+    if (!resp.ok) return [];
+    return await resp.json();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") return null;
+    throw error;
+  }
 }
 
 function renderSuggestions(results: NominatimResult[], list: HTMLUListElement): void {
@@ -58,12 +67,19 @@ export function initLocationAutocomplete(): void {
   input.addEventListener("input", () => {
     const query = input.value.trim();
     if (debounceTimer) clearTimeout(debounceTimer);
+    // Abort immediately, not just when a new fetch actually starts below - otherwise a request
+    // already in flight when the debounce clock is still running (e.g. the user deletes back
+    // below 2 chars, or types again before the previous fetch resolves) survives untouched and
+    // can still resolve later, re-opening the list with stale results (issue #99 follow-up).
+    activeAbort?.abort();
     if (query.length < 2) {
       list.classList.remove("open");
       return;
     }
     debounceTimer = setTimeout(async () => {
-      results = await fetchSuggestions(query);
+      const fetched = await fetchSuggestions(query);
+      if (fetched === null) return; // superseded by a newer request
+      results = fetched;
       renderSuggestions(results, list);
     }, DEBOUNCE_MS);
   });

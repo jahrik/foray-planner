@@ -81,6 +81,7 @@ function initTheme(): void {
     document.documentElement.dataset.theme = theme;
     toggle.textContent = theme === "dark" ? "🌙" : "☀️";
     toggle.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+    toggle.setAttribute("aria-pressed", String(theme === "dark"));
     setTiles(theme); // no-op until the map exists; initMap lays the first tiles
   };
   apply(currentTheme()); // the inline <head> script already set the attribute (default dark)
@@ -114,6 +115,7 @@ function initUnits(): void {
     state.units = units;
     toggle.textContent = units;
     toggle.title = units === "mi" ? "Switch to kilometers" : "Switch to miles";
+    toggle.setAttribute("aria-pressed", String(units === "mi"));
     if (state.home) updateHome(state.home);
   };
   apply(state.units);
@@ -172,23 +174,23 @@ async function main(): Promise<void> {
     }
   };
 
-  qs("#show-camps").onchange = (e) => {
-    if ((e.target as HTMLInputElement).checked) { currentRefreshTarget = "camps"; ensureLayer("camps", "Fetching campgrounds…"); }
-    else { cancelLayerRefresh("camps"); loadCamps(); }
+  const wireLayerToggle = (id: string, target: string, msg: string, loader: () => void) => {
+    qs(id).onchange = (e) => {
+      if ((e.target as HTMLInputElement).checked) {
+        currentRefreshTarget = target;
+        ensureLayer(target, msg);
+      } else {
+        cancelLayerRefresh(target);
+        loader();
+      }
+    };
   };
-  qs("#show-dispersed").onchange = (e) => {
-    if ((e.target as HTMLInputElement).checked) { currentRefreshTarget = "dispersed"; ensureLayer("dispersed", "Fetching dispersed camping…"); }
-    else { cancelLayerRefresh("dispersed"); loadCamps(); }
-  };
+
+  wireLayerToggle("#show-camps", "camps", "Fetching campgrounds…", loadCamps);
+  wireLayerToggle("#show-dispersed", "dispersed", "Fetching dispersed camping…", loadCamps);
   qs("#free-camps").onchange = () => loadCamps();
-  qs("#show-land").onchange = (e) => {
-    if ((e.target as HTMLInputElement).checked) { currentRefreshTarget = "land"; ensureLayer("land", "Fetching public land…"); }
-    else { cancelLayerRefresh("land"); loadLand(); }
-  };
-  qs("#show-trails").onchange = (e) => {
-    if ((e.target as HTMLInputElement).checked) { currentRefreshTarget = "trails"; ensureLayer("trails", "Fetching trails…"); }
-    else { cancelLayerRefresh("trails"); loadTrails(); }
-  };
+  wireLayerToggle("#show-land", "land", "Fetching public land…", loadLand);
+  wireLayerToggle("#show-trails", "trails", "Fetching trails…", loadTrails);
   initLocationAutocomplete();
   initGenusSelection(refreshCurrentView);
   // If a refresh is already running (e.g. page reload mid-fetch), reflect it.
