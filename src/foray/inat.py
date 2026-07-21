@@ -31,6 +31,18 @@ USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahr
 # old hardcoded 21-genus seed list.
 FUNGI_TAXON_ID = 47170
 
+# iNat's geoprivacy obscuration snaps a coordinate to a fixed-size grid cell, which produces a
+# distinctive positional_accuracy/coordinate_uncertainty_m value - empirically this band,
+# measured against foray-planner's cache (2026-07-21): 98.3% precise (4,441 true / 75 false)
+# against the rows whose real `obscured` flag is already known from a live fetch. Used to
+# heuristically flag likely-obscured rows that a data source doesn't carry the real flag for -
+# see scripts/backfill_obscured.py (a one-time fix for the pre-existing bulk-import cache) and
+# scripts/load_inat_bulk.py (applied at load time, so a *future* bulk-load doesn't reintroduce
+# the same gap). Only ever a hint that a row is obscured, never proof it's precise - resync's
+# live re-check is still the only path to the real flag.
+OBSCURED_ACCURACY_LOW = 26000
+OBSCURED_ACCURACY_HIGH = 31000
+
 # iNat caps deep offset paging; ``id_above`` walks past that. 200 is the max page size.
 _PAGE_SIZE = 200
 

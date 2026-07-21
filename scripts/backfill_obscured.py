@@ -30,9 +30,7 @@ Usage: make backfill-obscured (or `uv run python scripts/backfill_obscured.py` d
 from __future__ import annotations
 
 from foray.cache import connect
-
-LOW = 26000
-HIGH = 31000
+from foray.inat import OBSCURED_ACCURACY_HIGH, OBSCURED_ACCURACY_LOW
 
 
 def main() -> None:
@@ -40,7 +38,7 @@ def main() -> None:
     with con.cursor() as cur:
         cur.execute(
             "UPDATE observations SET obscured = TRUE WHERE obscured IS NULL AND positional_accuracy BETWEEN %s AND %s",
-            [LOW, HIGH],
+            [OBSCURED_ACCURACY_LOW, OBSCURED_ACCURACY_HIGH],
         )
         updated = cur.rowcount
     print(f"Backfilled obscured=true for {updated:,} likely-obscured cached observations.")
