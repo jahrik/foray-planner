@@ -12,7 +12,7 @@ from foray.camps import ingest_campgrounds
 from foray.config import Settings
 from foray.dispersed import ingest_dispersed
 from foray.inat import iter_fungi_genera
-from foray.ingest import ingest, ingest_region, revalidate
+from foray.ingest import ingest, ingest_region, resync, revalidate
 from foray.land import ingest_public_land, ingest_public_land_coverage
 from foray.scoring import build_phenology, plan_route
 from foray.trails import ingest_trails, ingest_trails_region
@@ -189,6 +189,37 @@ def revalidate_cmd(ctx: click.Context) -> None:
         if total_checked:
             click.echo("Rebuilding phenology…")
             build_phenology(con, cfg.cell_deg)
+    finally:
+        con.close()
+
+
+@cli.command("resync")
+@click.option(
+    "--batch-size",
+    default=2000,
+    show_default=True,
+    help="How many of the oldest/never-checked cached observations to re-fetch this run.",
+)
+@click.pass_context
+def resync_cmd(ctx: click.Context, batch_size: int) -> None:
+    """Re-check one batch of the whole observations cache against iNat, oldest/never-checked
+    first - the only path that eventually true's up every column (including `obscured`, never
+    set by the bulk historical import) and catches a misidentification too rare within its genus
+    for `revalidate`'s ratio check to flag. Meant to run frequently in small batches on a
+    schedule (see scripts/scheduler.sh), grinding through the whole cache over time."""
+    cfg = ctx.obj["cfg"]
+    con = connect()
+    try:
+        result = resync(cfg, con, batch_size=batch_size)
+        if result["checked"] == 0:
+            click.echo("Nothing to resync.")
+            return
+        click.echo(
+            f"Resynced {result['checked']} observations: {result['purged']} purged "
+            f"(no longer Fungi/geolocatable), {result['reassigned']} reassigned."
+        )
+        click.echo("Rebuilding phenology…")
+        build_phenology(con, cfg.cell_deg)
     finally:
         con.close()
 

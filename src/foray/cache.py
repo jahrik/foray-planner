@@ -200,6 +200,11 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS place_guess TEXT")
     con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS uri TEXT")
     con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS obscured BOOLEAN")
+    # NULL means "never live-checked since this column was added" - includes every row from the
+    # bulk historical import, which is why it's used as the resync cursor (oldest/never-checked
+    # first, see stale_observation_ids) rather than a plain "last modified" timestamp.
+    con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS revalidated_at TIMESTAMPTZ")
+    con.execute("CREATE INDEX IF NOT EXISTS ix_observations_revalidated_at ON observations (revalidated_at)")
     # `taxa` is retired (issue #79 Phase 4): superseded by fungi_genera, the full catalog
     # every name lookup now reads from (see scoring.py's _genus_name_map). Left in place
     # rather than dropped here - a DROP TABLE running unconditionally on every connect() is a
@@ -358,6 +363,38 @@ def delete_observations(con: psycopg.Connection, ids: Sequence[int]) -> int:
         return 0
     con.execute("DELETE FROM observations WHERE id = ANY(%s)", [list(ids)])
     return len(ids)
+
+
+def stale_observation_ids(con: psycopg.Connection, limit: int) -> list[int]:
+    """The next batch for ``ingest.resync``'s full-table grind: never-live-checked rows first
+    (``revalidated_at IS NULL`` - every bulk-historical-import row starts this way), then the
+    longest-since-checked. Unlike ``suspect_genus_taxon_ids`` (targeted at one known failure
+    pattern), this is what eventually re-verifies every column of every cached row against iNat,
+    including ``obscured`` (never set by the bulk import) and misidentifications too rare within
+    their genus to trip the ratio-based suspect check.
+    """
+    rows = con.execute(
+        "SELECT id FROM observations ORDER BY revalidated_at ASC NULLS FIRST LIMIT %s",
+        [limit],
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def observation_taxon_ids(con: psycopg.Connection, ids: Sequence[int]) -> dict[int, int]:
+    """Current cached taxon_id for each id, so a resync/revalidate pass can tell a genuine genus
+    reassignment (new taxon_id != this) apart from a same-genus refresh."""
+    if not ids:
+        return {}
+    rows = con.execute("SELECT id, taxon_id FROM observations WHERE id = ANY(%s)", [list(ids)]).fetchall()
+    return dict(rows)
+
+
+def mark_revalidated(con: psycopg.Connection, ids: Sequence[int]) -> None:
+    """Stamp ``revalidated_at = now()`` on ids that were just live-checked (whether or not they
+    changed) - advances the ``stale_observation_ids`` cursor past them."""
+    if not ids:
+        return
+    con.execute("UPDATE observations SET revalidated_at = now() WHERE id = ANY(%s)", [list(ids)])
 
 
 def upsert_campsites(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:

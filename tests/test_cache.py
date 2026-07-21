@@ -13,9 +13,12 @@ from foray.cache import (
     genus_taxon_ids,
     list_selected_genera,
     load_genera,
+    mark_revalidated,
     observation_ids_for_genus,
+    observation_taxon_ids,
     remove_genus,
     search_fungi_genera,
+    stale_observation_ids,
     suspect_genus_taxon_ids,
     upsert_fungi_genera,
     upsert_observations,
@@ -150,6 +153,43 @@ def test_delete_observations_removes_rows(con: psycopg.Connection) -> None:
     assert deleted == 1
     remaining = con.execute("SELECT id FROM observations").fetchall()
     assert remaining == [(2,)]
+
+
+def test_stale_observation_ids_prefers_never_checked_then_oldest(con: psycopg.Connection) -> None:
+    _insert(con, (1, 111, *_ROW[2:]))
+    _insert(con, (2, 111, *_ROW[2:]))
+    _insert(con, (3, 111, *_ROW[2:]))
+    # id 2 was checked recently; ids 1 and 3 have never been checked (revalidated_at IS NULL) and
+    # must sort first (NULLS FIRST).
+    mark_revalidated(con, [2])
+
+    assert sorted(stale_observation_ids(con, limit=2)) == [1, 3]
+    assert stale_observation_ids(con, limit=1)[0] in (1, 3)
+    assert sorted(stale_observation_ids(con, limit=10)) == [1, 2, 3]
+
+
+def test_stale_observation_ids_respects_limit(con: psycopg.Connection) -> None:
+    for obs_id in range(5):
+        _insert(con, (obs_id, 111, *_ROW[2:]))
+
+    assert len(stale_observation_ids(con, limit=2)) == 2
+
+
+def test_observation_taxon_ids_maps_current_cached_taxon(con: psycopg.Connection) -> None:
+    _insert(con, (1, 111, *_ROW[2:]))
+    _insert(con, (2, 222, *_ROW[2:]))
+
+    assert observation_taxon_ids(con, [1, 2, 999]) == {1: 111, 2: 222}
+
+
+def test_mark_revalidated_stamps_timestamp(con: psycopg.Connection) -> None:
+    _insert(con, (1, 111, *_ROW[2:]))
+
+    mark_revalidated(con, [1])
+
+    row = con.execute("SELECT revalidated_at FROM observations WHERE id = 1").fetchone()
+    assert row is not None
+    assert row[0] is not None
 
 
 _GENERA = [

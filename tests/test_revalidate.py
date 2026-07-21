@@ -10,7 +10,7 @@ import pytest
 
 from foray.cache import upsert_fungi_genera, upsert_observations
 from foray.config import Settings
-from foray.ingest import revalidate
+from foray.ingest import resync, revalidate
 
 OLLA_FUNGUS = 111  # fungal genus taxon_id, homonymous with the ladybug genus below
 CANTHARELLUS = 222
@@ -137,3 +137,97 @@ def test_revalidate_skips_genera_that_are_not_suspect(con: psycopg.Connection, c
 
     mock_fetch.assert_not_called()
     assert stats == {}
+
+
+def test_revalidate_marks_surviving_rows_revalidated(con: psycopg.Connection, cfg_with_home: Settings) -> None:
+    """Rows revalidate() confirms as still-Fungi should advance the resync cursor too, so
+    resync's slow grind doesn't redundantly recheck what revalidate already handled this run."""
+    upsert_observations(con, [_cached_row(1)])
+
+    with patch("foray.ingest.fetch_observations") as mock_fetch:
+        mock_fetch.return_value = [_live_obs(1, iconic_taxon_id=47170, taxon_id=OLLA_FUNGUS)]
+        revalidate(cfg_with_home, con)
+
+    row = con.execute("SELECT revalidated_at FROM observations WHERE id = 1").fetchone()
+    assert row is not None
+    assert row[0] is not None
+
+
+def test_resync_checks_a_batch_regardless_of_suspect_status(con: psycopg.Connection, cfg_with_home: Settings) -> None:
+    """resync ignores the suspect-genus ratio entirely - it grinds through every cached row,
+    including a perfectly healthy genus, to catch things revalidate structurally can't (a small
+    minority of misidentified rows within an otherwise-legitimate genus, or a stale `obscured`)."""
+    upsert_observations(con, [_cached_row(1, taxon_id=CANTHARELLUS), _cached_row(2, taxon_id=CANTHARELLUS)])
+
+    with patch("foray.ingest.fetch_observations") as mock_fetch:
+        mock_fetch.return_value = [
+            _live_obs(1, iconic_taxon_id=47170, taxon_id=CANTHARELLUS),
+            _live_obs(2, iconic_taxon_id=47170, taxon_id=CANTHARELLUS),
+        ]
+        result = resync(cfg_with_home, con, batch_size=10)
+
+    mock_fetch.assert_called_once()
+    assert result == {"checked": 2, "purged": 0, "reassigned": 0}
+
+
+def test_resync_reassigns_across_a_mixed_genus_batch(con: psycopg.Connection, cfg_with_home: Settings) -> None:
+    """A resync batch can span many different genera at once (unlike revalidate, which only
+    ever looks at one genus's ids per call) - reassignment must be judged per-id against each
+    row's *own* previously-cached taxon_id, not a single genus for the whole batch."""
+    upsert_observations(
+        con,
+        [_cached_row(1, taxon_id=OLLA_FUNGUS), _cached_row(2, taxon_id=CANTHARELLUS)],
+    )
+
+    with patch("foray.ingest.fetch_observations") as mock_fetch:
+        mock_fetch.return_value = [
+            # obs 1 moved from Olla to Cantharellus - a genuine reassignment.
+            _live_obs(1, iconic_taxon_id=47170, taxon_id=CANTHARELLUS),
+            # obs 2 stays Cantharellus - refreshed, not reassigned.
+            _live_obs(2, iconic_taxon_id=47170, taxon_id=CANTHARELLUS),
+        ]
+        result = resync(cfg_with_home, con, batch_size=10)
+
+    assert result == {"checked": 2, "purged": 0, "reassigned": 1}
+    row = con.execute("SELECT taxon_id FROM observations WHERE id = 1").fetchone()
+    assert row is not None
+    assert row[0] == CANTHARELLUS
+
+
+def test_resync_purges_and_marks_survivors_revalidated(con: psycopg.Connection, cfg_with_home: Settings) -> None:
+    upsert_observations(con, [_cached_row(1, taxon_id=CANTHARELLUS), _cached_row(2, taxon_id=CANTHARELLUS)])
+
+    with patch("foray.ingest.fetch_observations") as mock_fetch:
+        mock_fetch.return_value = [
+            _live_obs(1, iconic_taxon_id=47158, taxon_id=999001),  # now Insecta - purge
+            _live_obs(2, iconic_taxon_id=47170, taxon_id=CANTHARELLUS),  # still fungal - survives
+        ]
+        result = resync(cfg_with_home, con, batch_size=10)
+
+    assert result == {"checked": 2, "purged": 1, "reassigned": 0}
+    remaining = con.execute("SELECT id, revalidated_at FROM observations").fetchall()
+    assert len(remaining) == 1
+    survivor_id, revalidated_at = remaining[0]
+    assert survivor_id == 2
+    # The survivor's resync cursor advanced past it - a second batch won't re-pick it immediately.
+    assert revalidated_at is not None
+
+
+def test_resync_respects_batch_size(con: psycopg.Connection, cfg_with_home: Settings) -> None:
+    upsert_observations(con, [_cached_row(i, taxon_id=CANTHARELLUS) for i in range(1, 6)])
+
+    with patch("foray.ingest.fetch_observations") as mock_fetch:
+        mock_fetch.return_value = [_live_obs(i, iconic_taxon_id=47170, taxon_id=CANTHARELLUS) for i in range(1, 3)]
+        result = resync(cfg_with_home, con, batch_size=2)
+
+    fetched_ids = mock_fetch.call_args[0][0]
+    assert len(fetched_ids) == 2
+    assert result["checked"] == 2
+
+
+def test_resync_returns_zero_when_cache_empty(con: psycopg.Connection, cfg_with_home: Settings) -> None:
+    with patch("foray.ingest.fetch_observations") as mock_fetch:
+        result = resync(cfg_with_home, con, batch_size=10)
+
+    mock_fetch.assert_not_called()
+    assert result == {"checked": 0, "purged": 0, "reassigned": 0}
