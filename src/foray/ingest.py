@@ -77,8 +77,19 @@ def _resolve_genus_taxon_id(obs: dict[str, Any], known_genus_ids: set[int]) -> i
     to the observation's own taxon id when it's already genus-rank; returns ``None`` when no
     ancestor matches a known catalog genus (subfamily-rank-or-coarser IDs - see the ~110/2.67M
     count noted when this was designed).
+
+    Belt-and-suspenders check: ``iconic_taxon_id`` (already in every response, no extra call)
+    must actually be Fungi. Ancestor-membership alone isn't sufficient - a handful of fungal
+    genus names are homonyms of established animal genera (fungal *Olla* vs. the ladybug genus,
+    etc, see ``ingest.revalidate``), so a match on genus taxon_id doesn't guarantee the
+    observation is really fungal *right now*. This won't catch a homonym-genus observation that
+    gets re-identified to the animal *after* ingest (nothing here re-checks old rows - that's
+    what ``revalidate`` is for), but it stops anything already wrong at ingest time from ever
+    landing in the cache in the first place.
     """
     taxon = obs.get("taxon") or {}
+    if taxon.get("iconic_taxon_id") != FUNGI_TAXON_ID:
+        return None
     if taxon.get("rank") == "genus":
         return taxon.get("id")
     for ancestor_id in taxon.get("ancestor_ids") or []:

@@ -36,7 +36,17 @@ def env_with_coverage(con: psycopg.Connection, monkeypatch):
     upsert_fungi_genera(con, [{"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels"}])
 
 
-def _fake_obs(obs_id: int, taxon_id: int, *, rank: str = "genus", ancestor_ids: list[int] | None = None) -> dict:
+FUNGI_ICONIC_TAXON_ID = 47170  # foray.inat.FUNGI_TAXON_ID doubles as Fungi's iconic_taxon_id
+
+
+def _fake_obs(
+    obs_id: int,
+    taxon_id: int,
+    *,
+    rank: str = "genus",
+    ancestor_ids: list[int] | None = None,
+    iconic_taxon_id: int = FUNGI_ICONIC_TAXON_ID,
+) -> dict:
     """A fake iNat observation - ``taxon`` carries the ancestry ingest.py's genus resolver
     reads (see foray.ingest._resolve_genus_taxon_id): rank=="genus" uses taxon.id directly,
     otherwise the resolver looks for a known genus id in ancestor_ids."""
@@ -46,7 +56,12 @@ def _fake_obs(obs_id: int, taxon_id: int, *, rank: str = "genus", ancestor_ids: 
         "observed_on": "2024-05-15",
         "quality_grade": "research",
         "positional_accuracy": 10,
-        "taxon": {"id": taxon_id, "rank": rank, "ancestor_ids": ancestor_ids or [taxon_id]},
+        "taxon": {
+            "id": taxon_id,
+            "rank": rank,
+            "ancestor_ids": ancestor_ids or [taxon_id],
+            "iconic_taxon_id": iconic_taxon_id,
+        },
     }
 
 

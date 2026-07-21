@@ -1,5 +1,5 @@
 .PHONY: db install lint test check frontend check-api-schema start restart stop scheduler clean \
-	ingest genera-refresh bulk-download bulk-filter bulk-load \
+	ingest genera-refresh revalidate bulk-download bulk-filter bulk-load \
 	ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once \
 	ansible-genera-once ansible-bulk-load-once
 
@@ -71,6 +71,14 @@ ingest: db
 
 genera-refresh: db
 	docker compose run --rm app foray genera-refresh
+
+# Re-checks cached observations under genera whose cache count has drifted from iNat's live
+# count (see ingest.revalidate / TODO.md's iNat data verification notes) - purges/reassigns
+# rows misidentified into a homonymous non-fungal genus (e.g. fungal Olla vs. the ladybug
+# genus Olla). Meant to run on a recurring schedule (scripts/scheduler.sh), this target is for
+# running it on demand against local dev data.
+revalidate: db
+	docker compose run --rm app foray revalidate
 
 # One-time (or rebuild-from-scratch) bulk-load path for issue #79 Phase 3 - the nightly
 # ingest cron keeps things fresh day-to-day, so these are opt-in, not part of `check`/`start`.
