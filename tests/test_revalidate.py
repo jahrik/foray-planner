@@ -86,7 +86,9 @@ def test_revalidate_purges_observations_no_longer_fungi(con: psycopg.Connection,
         ]
         stats = revalidate(cfg_with_home, con)
 
-    assert stats == {OLLA_FUNGUS: {"checked": 3, "purged": 2, "reassigned": 1}}
+    # obs 3 is confirmed-still-fungal and gets refreshed, but stays in the same genus - not a
+    # reassignment (Copilot review: this counter must only count an actual genus change).
+    assert stats == {OLLA_FUNGUS: {"checked": 3, "purged": 2, "reassigned": 0}}
     remaining = con.execute("SELECT id FROM observations ORDER BY id").fetchall()
     assert remaining == [(3,)]
 
@@ -122,7 +124,7 @@ def test_revalidate_purges_ids_inat_no_longer_returns(con: psycopg.Connection, c
         mock_fetch.return_value = [_live_obs(1, iconic_taxon_id=47170, taxon_id=OLLA_FUNGUS)]
         stats = revalidate(cfg_with_home, con)
 
-    assert stats == {OLLA_FUNGUS: {"checked": 2, "purged": 1, "reassigned": 1}}
+    assert stats == {OLLA_FUNGUS: {"checked": 2, "purged": 1, "reassigned": 0}}
     remaining = con.execute("SELECT id FROM observations ORDER BY id").fetchall()
     assert remaining == [(1,)]
 

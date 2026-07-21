@@ -342,7 +342,10 @@ def revalidate(
     size of the problem, not the whole cache. Only cached observations under a flagged genus
     get re-fetched from iNat.
 
-    Returns ``{genus_taxon_id: {"checked": n, "purged": n, "reassigned": n}}``.
+    Returns ``{genus_taxon_id: {"checked": n, "purged": n, "reassigned": n}}`` - ``reassigned``
+    only counts rows whose genus taxon_id actually changed; a still-Fungi row that keeps the
+    same genus but gets its lat/lng/observed_on/positional_accuracy refreshed is written back
+    too (via the same ``upsert_observations`` call) but isn't counted as a reassignment.
     """
     known_genus_ids = _load_known_genus_ids(db)
     suspects = suspect_genus_taxon_ids(db)
@@ -362,7 +365,8 @@ def revalidate(
         live = fetch_observations(ids)
         seen_ids: set[int] = set()
         purge_ids: list[int] = []
-        reassign_rows: list[tuple[Any, ...]] = []
+        upsert_rows: list[tuple[Any, ...]] = []
+        reassigned = 0
         for obs in live:
             seen_ids.add(obs["id"])
             taxon = obs.get("taxon") or {}
@@ -378,25 +382,29 @@ def revalidate(
                 continue
             row = _to_row(obs, new_genus)
             if row is not None:
-                reassign_rows.append(row)
+                upsert_rows.append(row)
+                # Every id here came from observation_ids_for_genus(genus_taxon_id), so that's
+                # each row's *old* taxon_id - only count it as reassigned if it actually moved.
+                if new_genus != genus_taxon_id:
+                    reassigned += 1
         # ids iNat no longer returns at all (deleted, or made private/inaccessible) - drop them.
         purge_ids.extend(set(ids) - seen_ids)
 
         if purge_ids:
             delete_observations(db, purge_ids)
-        if reassign_rows:
-            upsert_observations(db, reassign_rows)
+        if upsert_rows:
+            upsert_observations(db, upsert_rows)
 
         stats[genus_taxon_id] = {
             "checked": len(ids),
             "purged": len(purge_ids),
-            "reassigned": len(reassign_rows),
+            "reassigned": reassigned,
         }
         logger.info(
             "revalidate: genus %d - %d checked, %d purged (no longer Fungi), %d reassigned",
             genus_taxon_id,
             len(ids),
             len(purge_ids),
-            len(reassign_rows),
+            reassigned,
         )
     return stats

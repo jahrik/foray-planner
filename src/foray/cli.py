@@ -181,7 +181,12 @@ def revalidate_cmd(ctx: click.Context) -> None:
             f"Revalidated {len(stats)} suspect genera: {total_checked} observations checked, "
             f"{total_purged} purged (no longer Fungi), {total_reassigned} reassigned."
         )
-        if total_purged:
+        # Rebuild whenever any suspect genus actually had cached rows to check, not just when
+        # something was purged - a row that stayed Fungi but got its lat/lng/observed_on
+        # refreshed (cache.upsert_observations) can still shift which region/month bucket it
+        # falls into, and a reassignment changes its taxon_id outright. Gating on purges alone
+        # left phenology/regions stale after a refresh-only or reassign-only run.
+        if total_checked:
             click.echo("Rebuilding phenology…")
             build_phenology(con, cfg.cell_deg)
     finally:
