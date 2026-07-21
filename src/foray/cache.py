@@ -208,9 +208,20 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     # INDEX on prod's 2M+-row observations table would hold a write lock for the build's
     # duration - real downtime on a rolling deploy. Safe outside an explicit transaction block
     # since connect() uses autocommit=True (each statement is its own implicit transaction).
-    con.execute(
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_revalidated_at ON observations (revalidated_at)"
-    )
+    # IF NOT EXISTS doesn't fully protect against two processes racing on a first deploy/rolling
+    # restart (both can see it missing and one loses the race) - caught and logged rather than
+    # failing startup, same as the postgis handling above; the index is a query-speed
+    # optimization for stale_observation_ids, not something anything else depends on existing.
+    try:
+        con.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_revalidated_at ON observations (revalidated_at)"
+        )
+    except psycopg.Error:
+        logger.warning(
+            "cache: could not create ix_observations_revalidated_at (likely a concurrent "
+            "CREATE INDEX race with another starting instance) - resync will still work, just "
+            "without the index speeding up its stale-row lookup until a later connect() retries it."
+        )
     # `taxa` is retired (issue #79 Phase 4): superseded by fungi_genera, the full catalog
     # every name lookup now reads from (see scoring.py's _genus_name_map). Left in place
     # rather than dropped here - a DROP TABLE running unconditionally on every connect() is a

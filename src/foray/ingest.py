@@ -429,7 +429,7 @@ def revalidate(
         if progress_cb:
             progress_cb(
                 f"Revalidating genus {genus_taxon_id} ({len(ids)} cached observations)…",
-                90.0 * position / max(len(suspects), 1),
+                90.0 * (position + 1) / max(len(suspects), 1),
             )
         result = _recheck_ids(db, known_genus_ids, ids, dict.fromkeys(ids, genus_taxon_id), abort_event)
         stats[genus_taxon_id] = result

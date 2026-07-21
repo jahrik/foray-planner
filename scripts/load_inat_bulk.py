@@ -3,8 +3,10 @@
 
 Reads data/inat_us_observations.jsonl (produced by inat_dwca_filter.py) and:
   1. Upserts every row into `observations` via cache.upsert_observations() - idempotent
-     (ON CONFLICT DO UPDATE on id; existing lat/lng/date/quality fields from a live ingest
-     are never clobbered, only place_guess/uri/obscured get backfilled when missing).
+     (ON CONFLICT DO UPDATE on id; every column is COALESCE-guarded against a NULL incoming
+     value blanking an already-healed one, but a non-NULL value from this dump - including
+     lat/lng/date/quality_grade - does overwrite whatever's already cached for that id, same as
+     any other re-upsert path such as `ingest.revalidate`/`ingest.resync`).
      quality_grade is always written as "research": the GBIF DwC-A dump itself is already
      iNaturalist's quality_grade=research export (see the zip's eml.xml), so every row here
      is research-grade at the source - needed for issue #108's scoring filter to count them.
