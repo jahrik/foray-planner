@@ -343,13 +343,9 @@ def _recheck_ids(
     for obs in live:
         obs_id = obs["id"]
         seen_ids.add(obs_id)
-        taxon = obs.get("taxon") or {}
-        # FUNGI_TAXON_ID doubles as the Fungi kingdom's own iconic_taxon_id (verified live
-        # against /v1/observations, 2026-07-20) - the cheapest possible non-Fungi check, no
-        # ancestor walk needed.
-        if taxon.get("iconic_taxon_id") != FUNGI_TAXON_ID:
-            purge_ids.append(obs_id)
-            continue
+        # _resolve_genus_taxon_id already checks iconic_taxon_id == Fungi internally (see its
+        # docstring) - None covers both "not Fungi at all" and "no known genus ancestor", so a
+        # single check here is enough; no separate iconic_taxon_id check needed.
         new_genus = _resolve_genus_taxon_id(obs, known_genus_ids)
         if new_genus is None:
             purge_ids.append(obs_id)
@@ -411,9 +407,9 @@ def revalidate(
     known_genus_ids = _load_known_genus_ids(db)
     suspects = suspect_genus_taxon_ids(db)
     stats: dict[int, dict[str, int]] = {}
-    for i, genus_taxon_id in enumerate(suspects):
+    for position, genus_taxon_id in enumerate(suspects):
         if abort_event and abort_event.is_set():
-            logger.info("revalidate: cancelled after %d/%d suspect genera", i, len(suspects))
+            logger.info("revalidate: cancelled after %d/%d suspect genera", position, len(suspects))
             break
         ids = observation_ids_for_genus(db, genus_taxon_id)
         if not ids:
@@ -421,7 +417,7 @@ def revalidate(
         if progress_cb:
             progress_cb(
                 f"Revalidating genus {genus_taxon_id} ({len(ids)} cached observations)…",
-                90.0 * i / max(len(suspects), 1),
+                90.0 * position / max(len(suspects), 1),
             )
         result = _recheck_ids(db, known_genus_ids, ids, dict.fromkeys(ids, genus_taxon_id))
         stats[genus_taxon_id] = result

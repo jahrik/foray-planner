@@ -190,17 +190,19 @@ def monthly_histogram(
     return {int(k): int(v) for k, v in resp.items()}
 
 
-def fetch_observations(ids: list[int]) -> list[dict[str, Any]]:
+def fetch_observations(ids: list[int]) -> Iterator[dict[str, Any]]:
     """Fetch full current observation records for a batch of ids - each result's ``taxon``
     reflects iNat's identification *right now*, not whatever it was at original ingest time.
 
-    Used by ``ingest.revalidate`` to re-check previously-cached rows: an observation's
-    identification (and therefore its genus/kingdom) can change after ingest, and nothing else
-    here ever re-fetches an already-cached id outside its original ingest window.
+    Used by ``ingest.revalidate``/``ingest.resync`` to re-check previously-cached rows: an
+    observation's identification (and therefore its genus/kingdom) can change after ingest, and
+    nothing else here ever re-fetches an already-cached id outside its original ingest window.
+
+    A generator, not a list - ``resync --until-done`` can hand this tens of thousands of ids in
+    one call, and holding every page's full JSON in memory at once (verbose records: photos,
+    full taxon ancestry, etc) is exactly the unbounded-memory pattern the rest of this codebase
+    avoids (see ``ingest_region``'s chunked-insert comment).
     """
-    if not ids:
-        return []
-    results: list[dict[str, Any]] = []
     for start in range(0, len(ids), _PAGE_SIZE):
         chunk = ids[start : start + _PAGE_SIZE]
         page = _with_retries(
@@ -210,8 +212,7 @@ def fetch_observations(ids: list[int]) -> list[dict[str, Any]]:
                 user_agent=USER_AGENT,
             )
         )
-        results.extend(page.get("results", []))
-    return results
+        yield from page.get("results", [])
 
 
 def photos_for_observations(ids: list[int]) -> dict[int, list[dict[str, Any]]]:

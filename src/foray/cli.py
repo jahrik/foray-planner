@@ -174,9 +174,9 @@ def revalidate_cmd(ctx: click.Context) -> None:
         if not stats:
             click.echo("No suspect genera found - nothing to revalidate.")
             return
-        total_checked = sum(s["checked"] for s in stats.values())
-        total_purged = sum(s["purged"] for s in stats.values())
-        total_reassigned = sum(s["reassigned"] for s in stats.values())
+        total_checked = sum(genus_stats["checked"] for genus_stats in stats.values())
+        total_purged = sum(genus_stats["purged"] for genus_stats in stats.values())
+        total_reassigned = sum(genus_stats["reassigned"] for genus_stats in stats.values())
         click.echo(
             f"Revalidated {len(stats)} suspect genera: {total_checked} observations checked, "
             f"{total_purged} purged (no longer Fungi), {total_reassigned} reassigned."
@@ -198,27 +198,52 @@ def revalidate_cmd(ctx: click.Context) -> None:
     "--batch-size",
     default=2000,
     show_default=True,
-    help="How many of the oldest/never-checked cached observations to re-fetch this run.",
+    help="How many of the oldest/never-checked cached observations to re-fetch per batch.",
+)
+@click.option(
+    "--until-done",
+    is_flag=True,
+    default=False,
+    help=(
+        "Keep resyncing batch after batch until every cached row has been live-checked at "
+        "least once, instead of stopping after one batch. Meant for a deliberate catch-up run "
+        "(e.g. right after finding a data-accuracy bug), not the normal recurring schedule - "
+        "that stays on scripts/scheduler.sh's small-batch/hourly pace so it doesn't compete "
+        "with other scheduled jobs for iNat's rate limit."
+    ),
 )
 @click.pass_context
-def resync_cmd(ctx: click.Context, batch_size: int) -> None:
-    """Re-check one batch of the whole observations cache against iNat, oldest/never-checked
-    first - the only path that eventually true's up every column (including `obscured`, never
-    set by the bulk historical import) and catches a misidentification too rare within its genus
-    for `revalidate`'s ratio check to flag. Meant to run frequently in small batches on a
-    schedule (see scripts/scheduler.sh), grinding through the whole cache over time."""
+def resync_cmd(ctx: click.Context, batch_size: int, until_done: bool) -> None:
+    """Re-check the observations cache against iNat, oldest/never-checked first - the only path
+    that eventually true's up every column (including `obscured`, never set by the bulk
+    historical import) and catches a misidentification too rare within its genus for
+    `revalidate`'s ratio check to flag. Meant to run frequently in small batches on a schedule
+    (see scripts/scheduler.sh), grinding through the whole cache over time - or pass
+    --until-done for a one-off run that doesn't stop until the whole cache is caught up."""
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
-        result = resync(cfg, con, batch_size=batch_size)
-        if result["checked"] == 0:
+        total_checked = total_purged = total_reassigned = 0
+        while True:
+            result = resync(cfg, con, batch_size=batch_size)
+            total_checked += result["checked"]
+            total_purged += result["purged"]
+            total_reassigned += result["reassigned"]
+            if result["checked"]:
+                click.echo(
+                    f"Resynced {result['checked']} observations: {result['purged']} purged "
+                    f"(no longer Fungi/geolocatable), {result['reassigned']} reassigned. "
+                    f"(running total: {total_checked} checked)"
+                )
+            if not until_done or result["checked"] < batch_size:
+                break
+        if total_checked == 0:
             click.echo("Nothing to resync.")
             return
         click.echo(
-            f"Resynced {result['checked']} observations: {result['purged']} purged "
-            f"(no longer Fungi/geolocatable), {result['reassigned']} reassigned."
+            f"Done: {total_checked} observations checked, {total_purged} purged, "
+            f"{total_reassigned} reassigned. Rebuilding phenology…"
         )
-        click.echo("Rebuilding phenology…")
         build_phenology(con, cfg.cell_deg)
     finally:
         con.close()

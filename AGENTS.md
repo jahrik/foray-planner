@@ -80,7 +80,9 @@ Guiding principles - keep these in mind for any feature work:
   opened/closed via FastAPI `lifespan`; `refresh` runs in a background thread with SSE progress.
 - `src/foray/cli.py` - Click CLI: `foray ingest | camps | land | dispersed | trails | refresh |
   revalidate | resync | plan | serve | openapi`. `ingest --all-regions` is what the scheduler
-  runs.
+  runs. `resync --until-done` loops batch after batch until the whole cache is caught up
+  (`make resync ARGS="--until-done --batch-size 20000"`) - a deliberate one-off catch-up run,
+  not the small-batch/hourly default the scheduler uses.
 - `scripts/scheduler.sh` - shell loop running observation ingest (all regions), layer refresh,
   observation revalidation (`foray revalidate`, see `ingest.py`), and the whole-table resync
   grind (`foray resync --batch-size N`), each on their own N-hour interval. Configurable via

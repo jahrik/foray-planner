@@ -85,14 +85,16 @@ genera-refresh: db
 revalidate: db
 	docker compose run --rm app foray revalidate
 
-# Re-checks one batch of the *whole* observations cache against iNat, oldest/never-checked
-# first (see ingest.resync / TODO.md) - the only path that eventually true's up every column
-# (including `obscured`, never set by the bulk historical import) and catches a
-# misidentification too rare within its genus for `revalidate`'s ratio check to flag. Meant to
-# run frequently in small batches on a recurring schedule (scripts/scheduler.sh); this target is
-# for running one batch on demand against local dev data.
+# Re-checks the *whole* observations cache against iNat, oldest/never-checked first (see
+# ingest.resync / TODO.md) - the only path that eventually true's up every column (including
+# `obscured`, never set by the bulk historical import) and catches a misidentification too rare
+# within its genus for `revalidate`'s ratio check to flag. Default: one on-demand batch, same
+# shape scripts/scheduler.sh runs hourly. Pass ARGS for a deliberate catch-up run instead - e.g.
+# `make resync ARGS="--until-done --batch-size 20000"` keeps going batch after batch until every
+# row has been live-checked at least once (long-running, rate-limited by iNat ~1 req/s; run in
+# the background) - use after finding a data-accuracy bug, not as a routine invocation.
 resync: db
-	docker compose run --rm app foray resync
+	docker compose run --rm app foray resync $(ARGS)
 
 # One-time heuristic fix for the bulk-historical-import rows whose `obscured` flag was never set
 # (see scripts/backfill_obscured.py / TODO.md) - a NULL flag makes the UI show iNat's randomized
