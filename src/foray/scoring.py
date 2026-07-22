@@ -474,7 +474,13 @@ def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[i
 
 
 def recent_observations(
-    con: psycopg.Connection, *, region_id: str, taxon_ids: list[int], cell_deg: float, limit: int = 12
+    con: psycopg.Connection,
+    *,
+    region_id: str,
+    taxon_ids: list[int],
+    cell_deg: float,
+    months: list[int],
+    limit: int = 12,
 ) -> list[dict[str, Any]]:
     """Most recent observations in a region, newest first - the source list for photo thumbnails."""
     binned = _BINNED.format(cell=cell_deg)
@@ -484,12 +490,12 @@ def recent_observations(
             f"""
             SELECT o.id, o.taxon_id, o.observed_on, o.place_guess, o.uri, o.obscured
             FROM ({binned}) o
-            WHERE o.region_id = %s AND {_taxon_filter(taxon_ids, "o.taxon_id")}
+            WHERE o.region_id = %s AND {_taxon_filter(taxon_ids, "o.taxon_id")} AND o.month IN ({_in(months)})
             ORDER BY o.observed_on DESC
             LIMIT %s
             """,
         ),
-        [region_id, *taxon_ids, limit],
+        [region_id, *taxon_ids, *months, limit],
     ).fetchall()
     genera = _genus_name_map(con)
     results = []

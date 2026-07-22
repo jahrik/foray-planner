@@ -197,7 +197,9 @@ def test_observation_photos_filters_by_license(client: TestClient, monkeypatch: 
     monkeypatch.setattr("foray.api.inat.photos_for_observations", fake_photos)
     # Explicit species scope: a device with no genus selection now defaults to "everything
     # nearby" (issue #79 Phase 2), not just this fixture's one configured species.
-    response = client.get("/api/observations/photos", params={"region_id": region_id, "species": str(MOREL)})
+    response = client.get(
+        "/api/observations/photos", params={"region_id": region_id, "species": str(MOREL), "months": "4"}
+    )
     assert response.status_code == 200
     body = response.json()
     assert len(body) == 10  # every Morel observation in the fixture is in this region
@@ -206,6 +208,17 @@ def test_observation_photos_filters_by_license(client: TestClient, monkeypatch: 
     assert target["photos"][0]["license_code"] == "cc-by"
     others = [obs for obs in body if obs["id"] != obs_id]
     assert all(obs["photos"] == [] for obs in others)
+
+
+def test_observation_photos_filters_by_month(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("foray.api.inat.photos_for_observations", lambda ids: {})
+    region_id = client.get("/api/destinations", params={"months": "4"}).json()[0]["region_id"]
+    # Fixture Morels are all observed in April 2022 - a July filter must exclude them.
+    response = client.get(
+        "/api/observations/photos", params={"region_id": region_id, "species": str(MOREL), "months": "7"}
+    )
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_observation_photos_bad_region_returns_empty(client: TestClient) -> None:

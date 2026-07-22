@@ -878,6 +878,7 @@ export interface operations {
             query: {
                 region_id: string;
                 species?: string;
+                months?: string | null;
             };
             header?: never;
             path?: never;

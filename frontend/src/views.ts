@@ -227,7 +227,9 @@ async function loadPhotosInto(regionId: string, container: HTMLElement): Promise
   container.innerHTML = "<p class='hint'>Loading…</p>";
   let observations: RecentObservation[];
   try {
-    observations = await getJson("/api/observations/photos", { query: { region_id: regionId } });
+    observations = await getJson("/api/observations/photos", {
+      query: { region_id: regionId, months: monthsParam() },
+    });
   } catch (error) {
     container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
     return false;
