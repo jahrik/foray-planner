@@ -11,8 +11,8 @@ from foray.cache import connect, observation_count, upsert_fungi_genera
 from foray.camps import ingest_campgrounds
 from foray.config import Settings
 from foray.dispersed import ingest_dispersed
-from foray.inat import iter_fungi_genera
-from foray.ingest import ingest, ingest_region
+from foray.inat import InatQuotaExceeded, iter_fungi_genera
+from foray.ingest import ingest, ingest_region, resync, revalidate
 from foray.land import ingest_public_land, ingest_public_land_coverage
 from foray.scoring import build_phenology, plan_route
 from foray.trails import ingest_trails, ingest_trails_region
@@ -156,6 +156,117 @@ def trails_cmd(ctx: click.Context, all_coverage: bool) -> None:
         else:
             count = ingest_trails(cfg, con)
             click.echo(f"Cached {count} trails within {cfg.home.radius_km} km of home.")
+    finally:
+        con.close()
+
+
+@cli.command("revalidate")
+@click.pass_context
+def revalidate_cmd(ctx: click.Context) -> None:
+    """Re-check cached observations under genera whose cache count has drifted from iNat's
+    live count - purges/reassigns rows misidentified into a homonymous non-fungal genus (e.g.
+    fungal Olla vs. the ladybug genus Olla) that iNat corrected but this cache never saw.
+    Meant to run on a schedule (see scripts/scheduler.sh), not just once."""
+    cfg = ctx.obj["cfg"]
+    con = connect()
+    try:
+        try:
+            stats = revalidate(cfg, con)
+        except InatQuotaExceeded as exc:
+            click.echo(str(exc), err=True)
+            ctx.exit(1)
+        if not stats:
+            click.echo("No suspect genera found - nothing to revalidate.")
+            return
+        total_checked = sum(genus_stats["checked"] for genus_stats in stats.values())
+        total_purged = sum(genus_stats["purged"] for genus_stats in stats.values())
+        total_reassigned = sum(genus_stats["reassigned"] for genus_stats in stats.values())
+        click.echo(
+            f"Revalidated {len(stats)} suspect genera: {total_checked} observations checked, "
+            f"{total_purged} purged (no longer Fungi), {total_reassigned} reassigned."
+        )
+        # Rebuild whenever any suspect genus actually had cached rows to check, not just when
+        # something was purged - a row that stayed Fungi but got its lat/lng/observed_on
+        # refreshed (cache.upsert_observations) can still shift which region/month bucket it
+        # falls into, and a reassignment changes its taxon_id outright. Gating on purges alone
+        # left phenology/regions stale after a refresh-only or reassign-only run.
+        if total_checked:
+            click.echo("Rebuilding phenology…")
+            build_phenology(con, cfg.cell_deg)
+    finally:
+        con.close()
+
+
+@cli.command("resync")
+@click.option(
+    "--batch-size",
+    default=2000,
+    show_default=True,
+    help="How many of the oldest/never-checked cached observations to re-fetch per batch.",
+)
+@click.option(
+    "--until-done",
+    is_flag=True,
+    default=False,
+    help=(
+        "Keep resyncing batch after batch until every cached row has been live-checked at "
+        "least once, instead of stopping after one batch. Meant for a deliberate catch-up run "
+        "(e.g. right after finding a data-accuracy bug), not the normal recurring schedule - "
+        "that stays on scripts/scheduler.sh's small-batch/hourly pace so it doesn't compete "
+        "with other scheduled jobs for iNat's rate limit."
+    ),
+)
+@click.pass_context
+def resync_cmd(ctx: click.Context, batch_size: int, until_done: bool) -> None:
+    """Re-check the observations cache against iNat, oldest/never-checked first - the only path
+    that eventually trues up every column (including `obscured`, never set by the bulk
+    historical import) and catches a misidentification too rare within its genus for
+    `revalidate`'s ratio check to flag. Meant to run frequently in small batches on a schedule
+    (see scripts/scheduler.sh), grinding through the whole cache over time - or pass
+    --until-done for a one-off run that doesn't stop until the whole cache is caught up."""
+    cfg = ctx.obj["cfg"]
+    con = connect()
+    try:
+        # stale_observation_ids always returns up to `batch_size` rows (oldest-checked/never-
+        # checked first, NULLS FIRST) with no "actually stale" filter - that's correct for the
+        # recurring small-batch cron job, which is meant to grind forever, but it means
+        # `checked` never drops below `batch_size` once every row has been checked at least
+        # once. Stopping on `checked < batch_size` alone would never trigger then, looping
+        # --until-done forever. Cap on a full lap instead: NULLS FIRST guarantees never-yet-
+        # checked-this-run rows are always exhausted before any repeat appears, so once
+        # cumulative `checked` reaches the row count observed at the start, every row that
+        # existed then has been re-verified at least once (a handful of ids in the final batch
+        # may be benign repeats, not missed rows).
+        target = observation_count(con)
+        total_checked = total_purged = total_reassigned = 0
+        try:
+            while True:
+                result = resync(cfg, con, batch_size=batch_size)
+                total_checked += result["checked"]
+                total_purged += result["purged"]
+                total_reassigned += result["reassigned"]
+                if result["checked"]:
+                    click.echo(
+                        f"Resynced {result['checked']} observations: {result['purged']} purged "
+                        f"(no longer Fungi/geolocatable), {result['reassigned']} reassigned. "
+                        f"(running total: {total_checked} checked)"
+                    )
+                if not until_done or result["checked"] < batch_size or total_checked >= target:
+                    break
+        except InatQuotaExceeded as exc:
+            click.echo(
+                f"Stopped after {total_checked} checked ({total_purged} purged, {total_reassigned} reassigned) - {exc}",
+                err=True,
+            )
+            ctx.exit(1)
+        if total_checked == 0:
+            click.echo("Nothing to resync.")
+            return
+        click.echo(
+            f"Done: {total_checked} observations checked, {total_purged} purged, "
+            f"{total_reassigned} reassigned. Rebuilding phenology…"
+        )
+        build_phenology(con, cfg.cell_deg)
     finally:
         con.close()
 

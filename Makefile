@@ -1,5 +1,5 @@
-.PHONY: db install lint test check frontend check-api-schema start restart stop scheduler clean \
-	ingest genera-refresh bulk-download bulk-filter bulk-load \
+.PHONY: db psql install lint test check frontend check-api-schema start restart stop scheduler clean \
+	ingest genera-refresh revalidate resync backfill-obscured bulk-download bulk-filter bulk-load \
 	ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once \
 	ansible-genera-once ansible-bulk-load-once
 
@@ -16,6 +16,11 @@ db:
 	@echo "Waiting for Postgres…"
 	@until docker compose exec -T postgres pg_isready -U foray -q 2>/dev/null; do sleep 0.5; done
 	@echo "Postgres ready."
+
+# One-off diagnostic queries against local dev data, e.g. `make psql SQL="SELECT count(*) FROM observations"`.
+# No local psql client needed - runs inside the postgres container.
+psql: db
+	docker compose exec -T postgres psql -U foray -d foray -c "$(SQL)"
 
 install:
 	uv sync
@@ -71,6 +76,33 @@ ingest: db
 
 genera-refresh: db
 	docker compose run --rm app foray genera-refresh
+
+# Re-checks cached observations under genera whose cache count has drifted from iNat's live
+# count (see ingest.revalidate) - purges/reassigns rows misidentified into a homonymous
+# non-fungal genus (e.g. fungal Olla vs. the ladybug genus Olla). Meant to run on a recurring
+# schedule (scripts/scheduler.sh), this target is for running it on demand against local dev data.
+revalidate: db
+	docker compose run --rm app foray revalidate
+
+# Re-checks the *whole* observations cache against iNat, oldest/never-checked first (see
+# ingest.resync) - the only path that eventually trues up every column (including
+# `obscured`, never set by the bulk historical import) and catches a misidentification too rare
+# within its genus for `revalidate`'s ratio check to flag. Default: one on-demand batch, same
+# shape scripts/scheduler.sh runs hourly. Pass ARGS for a deliberate catch-up run instead - e.g.
+# `make resync ARGS="--until-done --batch-size 20000"` keeps going batch after batch until every
+# row has been live-checked at least once (long-running, rate-limited by iNat ~1 req/s; run in
+# the background) - use after finding a data-accuracy bug, not as a routine invocation.
+resync: db
+	docker compose run --rm app foray resync $(ARGS)
+
+# One-time heuristic fix for the bulk-historical-import rows whose `obscured` flag was never set
+# (see scripts/backfill_obscured.py) - a NULL flag makes the UI show iNat's randomized decoy
+# coordinate for a geoprivacy-obscured observation as if it were the real, precise location.
+# Safe to re-run (only touches still-NULL rows); `make resync`'s ongoing grind corrects
+# the ~1.7% heuristic false positives with the real flag over time. Not part of the foray CLI -
+# same one-time-script pattern as bulk-load (see that target's comment).
+backfill-obscured: db
+	uv run python scripts/backfill_obscured.py
 
 # One-time (or rebuild-from-scratch) bulk-load path for issue #79 Phase 3 - the nightly
 # ingest cron keeps things fresh day-to-day, so these are opt-in, not part of `check`/`start`.

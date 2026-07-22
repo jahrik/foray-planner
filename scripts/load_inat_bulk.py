@@ -3,11 +3,18 @@
 
 Reads data/inat_us_observations.jsonl (produced by inat_dwca_filter.py) and:
   1. Upserts every row into `observations` via cache.upsert_observations() - idempotent
-     (ON CONFLICT DO UPDATE on id; existing lat/lng/date/quality fields from a live ingest
-     are never clobbered, only place_guess/uri/obscured get backfilled when missing).
+     (ON CONFLICT DO UPDATE on id; every column is COALESCE-guarded against a NULL incoming
+     value blanking an already-healed one, but a non-NULL value from this dump - including
+     lat/lng/date/quality_grade - does overwrite whatever's already cached for that id, same as
+     any other re-upsert path such as `ingest.revalidate`/`ingest.resync`).
      quality_grade is always written as "research": the GBIF DwC-A dump itself is already
      iNaturalist's quality_grade=research export (see the zip's eml.xml), so every row here
      is research-grade at the source - needed for issue #108's scoring filter to count them.
+     `obscured` isn't a field the DwC-A dump carries at all (unlike the live API), so it's set
+     via the same coordinate_uncertainty_m fingerprint heuristic as
+     scripts/backfill_obscured.py (see foray.inat.OBSCURED_ACCURACY_LOW/HIGH) rather than left
+     NULL - a past run of this script is exactly how ~1.9M rows ended up with a NULL `obscured`
+     in the first place, so a future run of this script should not reintroduce the same gap.
   2. Writes a single ingest_log row for the whole load, in the same "obs:fungi:place:
      {place_id}:{start}:{end}" shape ingest_region() itself produces (issue #79 Phase 4:
      one whole-Fungi-kingdom key per place, not one per genus), so the nightly cron (capped
@@ -36,6 +43,7 @@ from typing import Any
 from tqdm import tqdm
 
 from foray.cache import connect, record_ingest, upsert_observations
+from foray.inat import OBSCURED_ACCURACY_HIGH, OBSCURED_ACCURACY_LOW
 
 INPUT_PATH = Path(__file__).parent.parent / "data" / "inat_us_observations.jsonl"
 PLACE_ID_US = 1  # matches defaults.COUNTRIES's "United States" entry
@@ -74,6 +82,11 @@ def main() -> None:
 
             taxon_id = rec["taxon_id"]
             uncertainty = rec.get("coordinate_uncertainty_m")
+            accuracy = int(float(uncertainty)) if uncertainty else None
+            # The DwC-A dump has no `obscured` field at all (unlike the live API) - flag it via
+            # the same coordinate_uncertainty_m fingerprint scripts/backfill_obscured.py uses,
+            # rather than leaving every row NULL (see this script's module docstring).
+            obscured = True if accuracy and OBSCURED_ACCURACY_LOW <= accuracy <= OBSCURED_ACCURACY_HIGH else None
             row = (
                 rec["inat_id"],
                 taxon_id,
@@ -83,10 +96,10 @@ def main() -> None:
                 day.month,
                 day.year,
                 "research",  # dump is already quality_grade=research at the source
-                int(float(uncertainty)) if uncertainty else None,
+                accuracy,
                 None,  # place_guess
                 f"https://www.inaturalist.org/observations/{rec['inat_id']}",
-                None,  # obscured
+                obscured,
             )
             chunk.append(row)
             per_taxon_count[taxon_id] += 1

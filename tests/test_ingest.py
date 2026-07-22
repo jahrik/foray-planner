@@ -35,14 +35,29 @@ def cfg_with_home(con: psycopg.Connection, monkeypatch) -> Settings:
     return Settings()
 
 
-def _fake_obs(obs_id: int, taxon_id: int, *, rank: str = "genus", ancestor_ids: list[int] | None = None) -> dict:
+FUNGI_ICONIC_TAXON_ID = 47170  # foray.inat.FUNGI_TAXON_ID doubles as Fungi's iconic_taxon_id
+
+
+def _fake_obs(
+    obs_id: int,
+    taxon_id: int,
+    *,
+    rank: str = "genus",
+    ancestor_ids: list[int] | None = None,
+    iconic_taxon_id: int = FUNGI_ICONIC_TAXON_ID,
+) -> dict:
     return {
         "id": obs_id,
         "geojson": {"coordinates": [-122.3, 47.6]},
         "observed_on": "2024-05-15",
         "quality_grade": "research",
         "positional_accuracy": 10,
-        "taxon": {"id": taxon_id, "rank": rank, "ancestor_ids": ancestor_ids or [taxon_id]},
+        "taxon": {
+            "id": taxon_id,
+            "rank": rank,
+            "ancestor_ids": ancestor_ids or [taxon_id],
+            "iconic_taxon_id": iconic_taxon_id,
+        },
     }
 
 
@@ -85,6 +100,27 @@ def test_ingest_skips_observations_with_no_known_genus_ancestor(
     with patch("foray.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter(
             [_fake_obs(1, MOREL), _fake_obs(2, 999999, rank="family", ancestor_ids=[47170, 999999])]
+        )
+        counts = ingest(cfg_with_home, con)
+
+    assert counts == {MOREL: 1}
+    row = con.execute("SELECT count(*) FROM observations").fetchone()
+    assert row is not None
+    assert row[0] == 1
+
+
+def test_ingest_skips_observations_whose_iconic_taxon_is_not_fungi(
+    con: psycopg.Connection, cfg_with_home: Settings
+) -> None:
+    """Ancestor-membership alone isn't sufficient: a handful of fungal genus names are homonyms
+    of established animal genera (fungal Olla vs. the ladybug genus, etc) - a genus taxon_id
+    match must not admit an observation whose iconic_taxon_id isn't actually Fungi."""
+    with patch("foray.ingest.iter_observations") as mock_iter:
+        mock_iter.return_value = iter(
+            [
+                _fake_obs(1, MOREL),
+                _fake_obs(2, MOREL, iconic_taxon_id=47158),  # 47158 = Insecta
+            ]
         )
         counts = ingest(cfg_with_home, con)
 

@@ -18,14 +18,20 @@ from typing import Any
 import psycopg
 
 from foray.cache import (
+    delete_observations,
     known_genus_taxon_ids,
     latest_obs_date,
     latest_obs_date_by_place,
+    mark_revalidated,
+    observation_ids_for_genus,
+    observation_taxon_ids,
     record_ingest,
+    stale_observation_ids,
+    suspect_genus_taxon_ids,
     upsert_observations,
 )
 from foray.config import Config, CoverageRegion
-from foray.inat import FUNGI_TAXON_ID, iter_observations
+from foray.inat import FUNGI_TAXON_ID, fetch_observations, iter_observations
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +80,19 @@ def _resolve_genus_taxon_id(obs: dict[str, Any], known_genus_ids: set[int]) -> i
     to the observation's own taxon id when it's already genus-rank; returns ``None`` when no
     ancestor matches a known catalog genus (subfamily-rank-or-coarser IDs - see the ~110/2.67M
     count noted when this was designed).
+
+    Belt-and-suspenders check: ``iconic_taxon_id`` (already in every response, no extra call)
+    must actually be Fungi. Ancestor-membership alone isn't sufficient - a handful of fungal
+    genus names are homonyms of established animal genera (fungal *Olla* vs. the ladybug genus,
+    etc, see ``ingest.revalidate``), so a match on genus taxon_id doesn't guarantee the
+    observation is really fungal *right now*. This won't catch a homonym-genus observation that
+    gets re-identified to the animal *after* ingest (nothing here re-checks old rows - that's
+    what ``revalidate`` is for), but it stops anything already wrong at ingest time from ever
+    landing in the cache in the first place.
     """
     taxon = obs.get("taxon") or {}
+    if taxon.get("iconic_taxon_id") != FUNGI_TAXON_ID:
+        return None
     if taxon.get("rank") == "genus":
         return taxon.get("id")
     for ancestor_id in taxon.get("ancestor_ids") or []:
@@ -300,3 +317,167 @@ def ingest_region(
         skipped_no_genus,
     )
     return counts
+
+
+def _recheck_ids(
+    db: psycopg.Connection,
+    known_genus_ids: set[int],
+    ids: list[int],
+    prev_taxon_id: dict[int, int],
+    abort_event: threading.Event | None = None,
+) -> dict[str, int]:
+    """Re-fetch ``ids`` from iNat and true up the cache: purge anything no longer Fungi, no
+    longer resolvable to a known genus, no longer returned at all (deleted/private), or missing
+    the coordinates/date ``_to_row`` needs; reassign anything whose genus changed; refresh every
+    other column (including ``obscured``) on rows that are still correct. Surviving ids are
+    stamped ``revalidated_at = now()`` so ``stale_observation_ids`` moves past them.
+
+    Shared by ``revalidate`` (genus-targeted) and ``resync`` (whole-table grind) - they differ
+    only in how ``ids`` and ``prev_taxon_id`` (each id's *current* cached taxon_id, needed to
+    tell a genuine reassignment apart from a same-genus refresh) are chosen.
+
+    A single call here can cover tens of thousands of ids (``resync --until-done``'s large
+    batches, or a big suspect genus), so ``abort_event`` is checked inside the fetch loop itself,
+    not just between calls - otherwise cancellation could sit unresponsive for the whole batch.
+    On an early abort, ids not yet seen are left alone (not purged as "iNat no longer returns
+    this id" - they were simply never checked this call, not confirmed gone).
+    """
+    live = fetch_observations(ids)
+    seen_ids: set[int] = set()
+    purge_ids: list[int] = []
+    upsert_rows: list[tuple[Any, ...]] = []
+    reassigned = 0
+    cancelled = False
+    for obs in live:
+        if abort_event and abort_event.is_set():
+            cancelled = True
+            break
+        obs_id = obs["id"]
+        seen_ids.add(obs_id)
+        # _resolve_genus_taxon_id already checks iconic_taxon_id == Fungi internally (see its
+        # docstring) - None covers both "not Fungi at all" and "no known genus ancestor", so a
+        # single check here is enough; no separate iconic_taxon_id check needed.
+        new_genus = _resolve_genus_taxon_id(obs, known_genus_ids)
+        if new_genus is None:
+            purge_ids.append(obs_id)
+            continue
+        row = _to_row(obs, new_genus)
+        if row is None:
+            # iNat now returns this id but without usable coords/date (e.g. location withheld) -
+            # keeping the old cached lat/lng around would be stale precision, not a fix.
+            purge_ids.append(obs_id)
+            continue
+        upsert_rows.append(row)
+        if new_genus != prev_taxon_id.get(obs_id):
+            reassigned += 1
+    if not cancelled:
+        # ids iNat no longer returns at all (deleted, or made private/inaccessible) - drop them.
+        purge_ids.extend(set(ids) - seen_ids)
+
+    if purge_ids:
+        delete_observations(db, purge_ids)
+    if upsert_rows:
+        upsert_observations(db, upsert_rows)
+        mark_revalidated(db, [row[0] for row in upsert_rows])
+
+    checked = len(seen_ids) if cancelled else len(ids)
+    return {"checked": checked, "purged": len(purge_ids), "reassigned": reassigned}
+
+
+def revalidate(
+    cfg: Config,
+    db: psycopg.Connection,
+    progress_cb: Callable[[str, float], None] | None = None,
+    abort_event: threading.Event | None = None,
+) -> dict[int, dict[str, int]]:
+    """Re-check cached observations under "suspect" genera against iNat's current state.
+
+    This is a recurring job, not a one-time cleanup - the underlying problem keeps recurring on
+    its own. A handful of fungal genus names happen to be homonyms of established, common
+    animal genera (fungal *Olla* vs. the ladybug genus *Olla*, fungal *Stigmella* vs. the
+    leaf-mining-moth genus, etc). Observations of the animal occasionally get attributed to the
+    fungal taxon_id at ingest time (the identification was, or briefly registered as, the
+    fungal homonym); iNat's community corrects these over time, but ``ingest``/``ingest_region``
+    only ever touch a row again within their narrow incremental overlap window, so a correction
+    on an older observation is never seen. Left unchecked, misidentified non-fungal
+    observations accumulate in the cache and feed phenology scoring indefinitely (a live census
+    found 19 such genera, ~24k affected rows out of 1.97M, as of 2026-07-20).
+
+    ``cache.suspect_genus_taxon_ids`` finds genus taxon_ids to check without any iNat call (it
+    compares our cached-row count to ``fungi_genera.observations_count``, already kept fresh by
+    the weekly ``foray genera-refresh``), so the recurring cost here stays proportional to the
+    size of the problem, not the whole cache. Only cached observations under a flagged genus
+    get re-fetched from iNat. This only catches a genus that's *almost entirely* misidentified
+    (the ratio trips); a genus where misidentified rows are a small minority (confirmed live:
+    ``Crucibulum``, ``Serpula``) needs ``resync``'s slower whole-table grind instead.
+
+    Returns ``{genus_taxon_id: {"checked": n, "purged": n, "reassigned": n}}`` - ``reassigned``
+    only counts rows whose genus taxon_id actually changed; a still-Fungi row that keeps the
+    same genus but gets its lat/lng/observed_on/positional_accuracy refreshed is written back
+    too (via the same ``upsert_observations`` call) but isn't counted as a reassignment.
+    """
+    known_genus_ids = _load_known_genus_ids(db)
+    suspects = suspect_genus_taxon_ids(db)
+    stats: dict[int, dict[str, int]] = {}
+    for position, genus_taxon_id in enumerate(suspects):
+        if abort_event and abort_event.is_set():
+            logger.info("revalidate: cancelled after %d/%d suspect genera", position, len(suspects))
+            break
+        ids = observation_ids_for_genus(db, genus_taxon_id)
+        if not ids:
+            continue
+        if progress_cb:
+            progress_cb(
+                f"Revalidating genus {genus_taxon_id} ({len(ids)} cached observations)…",
+                90.0 * (position + 1) / max(len(suspects), 1),
+            )
+        result = _recheck_ids(db, known_genus_ids, ids, dict.fromkeys(ids, genus_taxon_id), abort_event)
+        stats[genus_taxon_id] = result
+        logger.info(
+            "revalidate: genus %d - %d checked, %d purged (no longer Fungi), %d reassigned",
+            genus_taxon_id,
+            result["checked"],
+            result["purged"],
+            result["reassigned"],
+        )
+    return stats
+
+
+def resync(
+    cfg: Config,
+    db: psycopg.Connection,
+    batch_size: int = 2000,
+    progress_cb: Callable[[str, float], None] | None = None,
+    abort_event: threading.Event | None = None,
+) -> dict[str, int]:
+    """Re-check one batch of the *whole* observations table against iNat, oldest/never-checked
+    first (``cache.stale_observation_ids``). Meant to run frequently with a small batch (see
+    ``scripts/scheduler.sh``'s ``FORAY_RESYNC_*`` settings) so it grinds through every cached row
+    over time without front-loading a multi-hour iNat pull onto one run.
+
+    ``revalidate`` only targets genus taxon_ids whose cached-vs-live ratio trips (a genus that's
+    *almost entirely* misidentified); it can't catch a genus where misidentified rows are a
+    small minority (confirmed live: `Crucibulum`, `Serpula`), and it never touches a column
+    that isn't part of that ratio at all, like ``obscured`` (NULL for ~1.9M rows from the bulk
+    historical import). ``resync`` is the only path that eventually re-verifies every column of
+    every row, at the cost of being slow by design.
+
+    Returns ``{"checked": n, "purged": n, "reassigned": n}`` for this one batch.
+    """
+    if abort_event and abort_event.is_set():
+        return {"checked": 0, "purged": 0, "reassigned": 0}
+    known_genus_ids = _load_known_genus_ids(db)
+    ids = stale_observation_ids(db, batch_size)
+    if not ids:
+        return {"checked": 0, "purged": 0, "reassigned": 0}
+    if progress_cb:
+        progress_cb(f"Resyncing {len(ids)} cached observations against iNat…", 10.0)
+    prev_taxon_id = observation_taxon_ids(db, ids)
+    result = _recheck_ids(db, known_genus_ids, ids, prev_taxon_id, abort_event)
+    logger.info(
+        "resync: %d checked, %d purged (no longer Fungi/geolocatable), %d reassigned",
+        result["checked"],
+        result["purged"],
+        result["reassigned"],
+    )
+    return result

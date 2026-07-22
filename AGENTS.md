@@ -41,6 +41,19 @@ Guiding principles - keep these in mind for any feature work:
 - `src/foray/ingest.py` - pulls per seed taxon within the home radius or by coverage region
   (`place_id`). Tags each obs with the **seed** taxon_id (not leaf species) so phenology is
   per foraging target. Region ingest uses chunked inserts (5000 rows) for bounded memory.
+  `revalidate()` is a separate, recurring re-check pass: a handful of fungal genus names are
+  homonyms of common animal genera (fungal *Olla* vs. the ladybug genus, etc), so observations
+  occasionally get cached under the wrong (non-fungal) taxon_id and never self-correct since
+  `ingest`/`ingest_region` only ever revisit a narrow incremental overlap window. It targets
+  only genus taxon_ids flagged by `cache.suspect_genus_taxon_ids` (cached-count vs.
+  `fungi_genera.observations_count`, DB-only, no iNat call) and re-fetches just those cached
+  observations to purge/reassign anything no longer Fungi. `resync()` is the slower complement:
+  a whole-table grind, one small batch per call, oldest/never-live-checked first
+  (`cache.stale_observation_ids`, driven by the `revalidated_at` column both functions stamp via
+  `cache.mark_revalidated`) - it's the only path that eventually re-verifies every column of
+  every row, including `obscured` (never set by the bulk historical import) and
+  misidentifications too rare within their genus for `revalidate`'s ratio to flag. Both share
+  the actual re-check/purge/reassign logic (`_recheck_ids`).
 - `src/foray/camps.py` - developed-campground ingest from the Recreation.gov **RIDB API**
   (httpx, key from env `RIDB_API_KEY`). Tiles the home radius into <=50-mi query circles,
   dedupes facilities, clips to the true radius with `haversine_km`. Skipped (no-op) when the
@@ -66,10 +79,16 @@ Guiding principles - keep these in mind for any feature work:
   against cached data. `set_location` does not trigger refresh. A `psycopg_pool.ConnectionPool`
   opened/closed via FastAPI `lifespan`; `refresh` runs in a background thread with SSE progress.
 - `src/foray/cli.py` - Click CLI: `foray ingest | camps | land | dispersed | trails | refresh |
-  plan | serve | openapi`. `ingest --all-regions` is what the scheduler runs.
-- `scripts/scheduler.sh` - shell loop running observation ingest (all regions) every N hours
-  and layer refresh every M hours. Configurable via `FORAY_INGEST_INTERVAL_HOURS` (default 24)
-  and `FORAY_LAYERS_INTERVAL_HOURS` (default 168).
+  revalidate | resync | plan | serve | openapi`. `ingest --all-regions` is what the scheduler
+  runs. `resync --until-done` loops batch after batch until the whole cache is caught up
+  (`make resync ARGS="--until-done --batch-size 20000"`) - a deliberate one-off catch-up run,
+  not the small-batch/hourly default the scheduler uses.
+- `scripts/scheduler.sh` - shell loop running observation ingest (all regions), layer refresh,
+  observation revalidation (`foray revalidate`, see `ingest.py`), and the whole-table resync
+  grind (`foray resync --batch-size N`), each on their own N-hour interval. Configurable via
+  `FORAY_INGEST_INTERVAL_HOURS` (default 24), `FORAY_LAYERS_INTERVAL_HOURS` (default 168),
+  `FORAY_REVALIDATE_INTERVAL_HOURS` (default 168), `FORAY_RESYNC_INTERVAL_HOURS` (default 1),
+  and `FORAY_RESYNC_BATCH_SIZE` (default 2000).
 - `frontend/` - the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern:
   `src/state.ts` (shared `State`, DOM `qs()`/`setStatus()` helpers), `src/map.ts` (Leaflet init,
   theme/tile switching, marker palette, `clear*()` layer helpers), `src/layers.ts` (camps/land/

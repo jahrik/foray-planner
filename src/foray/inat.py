@@ -18,6 +18,7 @@ from pyinaturalist import (
     get_observations,
     get_taxa,
 )
+from pyrate_limiter.exceptions import BucketFullException
 
 # Photo license codes iNat's API returns that are safe to redisplay (with attribution) under
 # their terms; cc-by-nd/cc-by-nc-nd forbid derivatives (thumbnailing counts) and a null license
@@ -31,30 +32,114 @@ USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahr
 # old hardcoded 21-genus seed list.
 FUNGI_TAXON_ID = 47170
 
+# iNat's geoprivacy obscuration snaps a coordinate to a fixed-size grid cell, which produces a
+# distinctive positional_accuracy/coordinate_uncertainty_m value - empirically this band,
+# measured against foray-planner's cache (2026-07-21): 98.3% precise (4,441 true / 75 false)
+# against the rows whose real `obscured` flag is already known from a live fetch. Used to
+# heuristically flag likely-obscured rows that a data source doesn't carry the real flag for -
+# see scripts/backfill_obscured.py (a one-time fix for the pre-existing bulk-import cache) and
+# scripts/load_inat_bulk.py (applied at load time, so a *future* bulk-load doesn't reintroduce
+# the same gap). Only ever a hint that a row is obscured, never proof it's precise - resync's
+# live re-check is still the only path to the real flag.
+OBSCURED_ACCURACY_LOW = 26000
+OBSCURED_ACCURACY_HIGH = 31000
+
 # iNat caps deep offset paging; ``id_above`` walks past that. 200 is the max page size.
 _PAGE_SIZE = 200
 
 # Transient network failures (DNS blips, timeouts, dropped connections) should not abort a
-# long ingest - retry with backoff before giving up.
+# long ingest - retry with backoff before giving up. A 429/5xx HTTPError is transient too (iNat's
+# own rate limiter or a momentary upstream hiccup) - a long `resync --until-done` run making
+# thousands of requests will hit 429 sooner or later, and letting it propagate crashes the whole
+# batch instead of just pausing (this is exactly what took down a real resync run - see git log).
 _TRANSIENT = (
     requests.exceptions.ConnectionError,
     requests.exceptions.Timeout,
     requests.exceptions.ChunkedEncodingError,
 )
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+# A 429 ("normal_throttling") is guaranteed-eventually-fine, not a real failure - the plain
+# exponential backoff below (capped at 30s over 5 attempts) proved too short for a sustained
+# throttle window and crashed a live `resync --until-done` run twice in a row. Cap each sleep at
+# a minute and allow many more attempts specifically for 429 so a long batch job waits it out
+# instead of giving up (worst case ~10min: 2+4+8+16+32+60*6 seconds).
+_RATE_LIMIT_ATTEMPTS = 10
+_MAX_RETRY_DELAY = 60.0
+
+
+class InatQuotaExceeded(Exception):
+    """pyinaturalist's client-side daily request cap (iNat's documented 10,000/day) is
+    exhausted for now.
+
+    Distinct from the transient cases above: this can't be waited out in-process the way a 429
+    can - the cap is a rolling 24h window (capacity frees gradually as old requests age out, not
+    all at once at midnight), and a long backlog can plausibly need hours, not seconds. Raised
+    as a clean, typed error instead of letting pyrate_limiter's ``BucketFullException`` (an
+    implementation detail of pyinaturalist's http session) surface as a raw traceback in a CLI
+    run or - once ``resync``/``revalidate`` are wired into prod cron - a cron log.
+    """
+
+    def __init__(self, retry_after_seconds: float) -> None:
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(
+            "iNat's daily API request quota is exhausted for now - retry in about "
+            f"{retry_after_seconds / 60:.0f} min. Already-checked rows are unaffected; "
+            "rerunning picks up where this left off."
+        )
+
+
+def _retry_delay(exc: Exception, attempt: int, base_delay: float) -> float:
+    response = getattr(exc, "response", None)
+    retry_after = response.headers.get("Retry-After") if response is not None else None
+    if retry_after is not None:
+        try:
+            return max(float(retry_after), 0.0)
+        except ValueError:
+            pass
+    return min(base_delay * 2 ** (attempt - 1), _MAX_RETRY_DELAY)
 
 
 def _with_retries[T](fn: Callable[[], T], *, attempts: int = 5, base_delay: float = 2.0) -> T:
-    """Call ``fn``, retrying transient network errors with exponential backoff."""
+    """Call ``fn``, retrying transient network errors (and 429/5xx responses) with backoff.
+
+    A 429 gets its own, larger attempt budget (``_RATE_LIMIT_ATTEMPTS``) regardless of
+    ``attempts`` - it always eventually clears, unlike a real server error.
+    """
     if attempts < 1:
         raise ValueError(f"attempts must be >= 1, got {attempts}")
-    for attempt in range(1, attempts + 1):
+    attempt = 0
+    rate_limit_attempt = 0
+    while True:
         try:
             return fn()
         except _TRANSIENT:
+            attempt += 1
             if attempt == attempts:
                 raise
-            time.sleep(base_delay * 2 ** (attempt - 1))
-    raise AssertionError("unreachable")
+            time.sleep(min(base_delay * 2 ** (attempt - 1), _MAX_RETRY_DELAY))
+        except requests.exceptions.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status not in _RETRYABLE_STATUS:
+                raise
+            if status == 429:
+                rate_limit_attempt += 1
+                if rate_limit_attempt == _RATE_LIMIT_ATTEMPTS:
+                    raise
+                time.sleep(_retry_delay(exc, rate_limit_attempt, base_delay))
+            else:
+                attempt += 1
+                if attempt == attempts:
+                    raise
+                time.sleep(_retry_delay(exc, attempt, base_delay))
+        except BucketFullException as exc:
+            retry_after = float(exc.meta_info["remaining_time"])
+            if retry_after > _MAX_RETRY_DELAY:
+                raise InatQuotaExceeded(retry_after) from exc
+            rate_limit_attempt += 1
+            if rate_limit_attempt == _RATE_LIMIT_ATTEMPTS:
+                raise InatQuotaExceeded(retry_after) from exc
+            time.sleep(retry_after)
 
 
 def iter_observations(
@@ -188,6 +273,31 @@ def monthly_histogram(
     )
     # keys come back as month numbers (as ints or strings depending on version)
     return {int(k): int(v) for k, v in resp.items()}
+
+
+def fetch_observations(ids: list[int]) -> Iterator[dict[str, Any]]:
+    """Fetch full current observation records for a batch of ids - each result's ``taxon``
+    reflects iNat's identification *right now*, not whatever it was at original ingest time.
+
+    Used by ``ingest.revalidate``/``ingest.resync`` to re-check previously-cached rows: an
+    observation's identification (and therefore its genus/kingdom) can change after ingest, and
+    nothing else here ever re-fetches an already-cached id outside its original ingest window.
+
+    A generator, not a list - ``resync --until-done`` can hand this tens of thousands of ids in
+    one call, and holding every page's full JSON in memory at once (verbose records: photos,
+    full taxon ancestry, etc) is exactly the unbounded-memory pattern the rest of this codebase
+    avoids (see ``ingest_region``'s chunked-insert comment).
+    """
+    for start in range(0, len(ids), _PAGE_SIZE):
+        chunk = ids[start : start + _PAGE_SIZE]
+        page = _with_retries(
+            lambda chunk=chunk: get_observations(
+                id=chunk,
+                per_page=_PAGE_SIZE,
+                user_agent=USER_AGENT,
+            )
+        )
+        yield from page.get("results", [])
 
 
 def photos_for_observations(ids: list[int]) -> dict[int, list[dict[str, Any]]]:

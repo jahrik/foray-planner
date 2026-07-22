@@ -200,6 +200,28 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS place_guess TEXT")
     con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS uri TEXT")
     con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS obscured BOOLEAN")
+    # NULL means "never live-checked since this column was added" - includes every row from the
+    # bulk historical import, which is why it's used as the resync cursor (oldest/never-checked
+    # first, see stale_observation_ids) rather than a plain "last modified" timestamp.
+    con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS revalidated_at TIMESTAMPTZ")
+    # CONCURRENTLY: this runs on every connect() (app startup included), and a plain CREATE
+    # INDEX on prod's 2M+-row observations table would hold a write lock for the build's
+    # duration - real downtime on a rolling deploy. Safe outside an explicit transaction block
+    # since connect() uses autocommit=True (each statement is its own implicit transaction).
+    # IF NOT EXISTS doesn't fully protect against two processes racing on a first deploy/rolling
+    # restart (both can see it missing and one loses the race) - caught and logged rather than
+    # failing startup, same as the postgis handling above; the index is a query-speed
+    # optimization for stale_observation_ids, not something anything else depends on existing.
+    try:
+        con.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_revalidated_at ON observations (revalidated_at)"
+        )
+    except psycopg.Error:
+        logger.warning(
+            "cache: could not create ix_observations_revalidated_at (likely a concurrent "
+            "CREATE INDEX race with another starting instance) - resync will still work, just "
+            "without the index speeding up its stale-row lookup until a later connect() retries it."
+        )
     # `taxa` is retired (issue #79 Phase 4): superseded by fungi_genera, the full catalog
     # every name lookup now reads from (see scoring.py's _genus_name_map). Left in place
     # rather than dropped here - a DROP TABLE running unconditionally on every connect() is a
@@ -282,7 +304,15 @@ def search_fungi_genera(con: psycopg.Connection, query: str, limit: int = 20) ->
 
 
 def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
-    """Insert observation tuples, backfilling metadata on conflict. Returns rows attempted."""
+    """Insert observation tuples, backfilling metadata on conflict. Returns rows attempted.
+
+    Every column is refreshed on conflict (not just taxon_id/quality_grade/etc) - a cached
+    observation is only ever touched again by a later incremental window or by
+    ``ingest.revalidate``, so if a re-fetch happens at all its lat/lng/observed_on/
+    positional_accuracy must win too, or a since-corrected location/accuracy on iNat's side
+    stays wrong here forever. COALESCE still guards against a partial-loader re-upsert (one
+    that doesn't carry every column) blanking out a previously-healed value.
+    """
     if not rows:
         return 0
     with con.cursor() as cur:
@@ -294,7 +324,13 @@ def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 taxon_id = COALESCE(EXCLUDED.taxon_id, observations.taxon_id),
+                lat = COALESCE(EXCLUDED.lat, observations.lat),
+                lng = COALESCE(EXCLUDED.lng, observations.lng),
+                observed_on = COALESCE(EXCLUDED.observed_on, observations.observed_on),
+                month = COALESCE(EXCLUDED.month, observations.month),
+                year = COALESCE(EXCLUDED.year, observations.year),
                 quality_grade = COALESCE(EXCLUDED.quality_grade, observations.quality_grade),
+                positional_accuracy = COALESCE(EXCLUDED.positional_accuracy, observations.positional_accuracy),
                 place_guess = COALESCE(EXCLUDED.place_guess, observations.place_guess),
                 uri = COALESCE(EXCLUDED.uri, observations.uri),
                 obscured = COALESCE(EXCLUDED.obscured, observations.obscured)
@@ -302,6 +338,79 @@ def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
             rows,
         )
     return len(rows)
+
+
+def suspect_genus_taxon_ids(con: psycopg.Connection, ratio: float = 3.0) -> list[int]:
+    """Genus taxon_ids whose cached observation count has drifted implausibly far above iNat's
+    own live count for that genus (``fungi_genera.observations_count``, refreshed weekly by
+    ``foray genera-refresh`` - no iNat call needed here, this is DB-only).
+
+    This is the fingerprint of a cross-kingdom name homonym: a fungal genus taxon_id that
+    happens to share its scientific name with an established, common, completely unrelated
+    animal genus (e.g. fungal *Olla* vs. the ladybug genus *Olla*). A legitimate genus can only
+    ever have as many cached rows as fit inside our home-radius/region scoping, which is always
+    a fraction of iNat's global total - so "cached far exceeds live" only happens when
+    observations of the *other* (non-fungal) taxon got attributed to this taxon_id at ingest
+    time and never got re-synced since (see ``ingest.revalidate`` - a live census found 19 such
+    genera accounting for ~24k/1.97M cached rows).
+    """
+    rows = con.execute(
+        """
+        SELECT o.taxon_id
+        FROM observations o
+        JOIN fungi_genera g ON g.taxon_id = o.taxon_id
+        GROUP BY o.taxon_id, g.observations_count
+        HAVING count(*) > %s * COALESCE(g.observations_count, 0)
+        """,
+        [ratio],
+    ).fetchall()
+    return [taxon_id for (taxon_id,) in rows]
+
+
+def observation_ids_for_genus(con: psycopg.Connection, taxon_id: int) -> list[int]:
+    rows = con.execute("SELECT id FROM observations WHERE taxon_id = %s", [taxon_id]).fetchall()
+    return [row[0] for row in rows]
+
+
+def delete_observations(con: psycopg.Connection, ids: Sequence[int]) -> int:
+    """Remove cached rows by id (``ingest.revalidate`` purging observations no longer Fungi).
+    Returns rows attempted (not the actual delete count - ids may already be gone)."""
+    if not ids:
+        return 0
+    con.execute("DELETE FROM observations WHERE id = ANY(%s)", [list(ids)])
+    return len(ids)
+
+
+def stale_observation_ids(con: psycopg.Connection, limit: int) -> list[int]:
+    """The next batch for ``ingest.resync``'s full-table grind: never-live-checked rows first
+    (``revalidated_at IS NULL`` - every bulk-historical-import row starts this way), then the
+    longest-since-checked. Unlike ``suspect_genus_taxon_ids`` (targeted at one known failure
+    pattern), this is what eventually re-verifies every column of every cached row against iNat,
+    including ``obscured`` (never set by the bulk import) and misidentifications too rare within
+    their genus to trip the ratio-based suspect check.
+    """
+    rows = con.execute(
+        "SELECT id FROM observations ORDER BY revalidated_at ASC NULLS FIRST LIMIT %s",
+        [limit],
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def observation_taxon_ids(con: psycopg.Connection, ids: Sequence[int]) -> dict[int, int]:
+    """Current cached taxon_id for each id, so a resync/revalidate pass can tell a genuine genus
+    reassignment (new taxon_id != this) apart from a same-genus refresh."""
+    if not ids:
+        return {}
+    rows = con.execute("SELECT id, taxon_id FROM observations WHERE id = ANY(%s)", [list(ids)]).fetchall()
+    return dict(rows)
+
+
+def mark_revalidated(con: psycopg.Connection, ids: Sequence[int]) -> None:
+    """Stamp ``revalidated_at = now()`` on ids that were just live-checked (whether or not they
+    changed) - advances the ``stale_observation_ids`` cursor past them."""
+    if not ids:
+        return
+    con.execute("UPDATE observations SET revalidated_at = now() WHERE id = ANY(%s)", [list(ids)])
 
 
 def upsert_campsites(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
