@@ -38,6 +38,7 @@ def test_resync_cmd_until_done_loops_until_batch_shrinks(con: psycopg.Connection
     runner = CliRunner()
     with (
         patch("foray.cli.resync") as mock_resync,
+        patch("foray.cli.observation_count", return_value=1000),
         patch("foray.cli.build_phenology"),
     ):
         # Two full batches, then a partial (smaller-than-batch-size) final batch signals done.
@@ -71,11 +72,36 @@ def test_resync_cmd_until_done_stops_on_empty_batch(con: psycopg.Connection, mon
     mock_build.assert_not_called()
 
 
+def test_resync_cmd_until_done_stops_after_one_full_lap_even_with_full_batches(
+    con: psycopg.Connection, monkeypatch
+) -> None:
+    """stale_observation_ids has no "actually stale" filter - once every row has been checked
+    at least once, resync() keeps returning full batches forever (checked == batch_size), so
+    the old `checked < batch_size` stop condition alone would never trigger. --until-done must
+    stop once cumulative checked reaches the row count observed at the start."""
+    _env(monkeypatch)
+    runner = CliRunner()
+    with (
+        patch("foray.cli.resync") as mock_resync,
+        patch("foray.cli.observation_count", return_value=25),
+        patch("foray.cli.build_phenology"),
+    ):
+        # Every batch is full (checked == batch_size) - would loop forever without the
+        # total-vs-row-count cap.
+        mock_resync.return_value = {"checked": 10, "purged": 0, "reassigned": 0}
+        result = runner.invoke(cli, ["resync", "--batch-size", "10", "--until-done"])
+
+    assert result.exit_code == 0, result.output
+    assert mock_resync.call_count == 3
+    assert "30 observations checked" in result.output
+
+
 def test_resync_cmd_stops_cleanly_on_quota_exceeded(con: psycopg.Connection, monkeypatch) -> None:
     _env(monkeypatch)
     runner = CliRunner()
     with (
         patch("foray.cli.resync") as mock_resync,
+        patch("foray.cli.observation_count", return_value=1000),
         patch("foray.cli.build_phenology") as mock_build,
     ):
         mock_resync.side_effect = [

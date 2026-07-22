@@ -227,6 +227,17 @@ def resync_cmd(ctx: click.Context, batch_size: int, until_done: bool) -> None:
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
+        # stale_observation_ids always returns up to `batch_size` rows (oldest-checked/never-
+        # checked first, NULLS FIRST) with no "actually stale" filter - that's correct for the
+        # recurring small-batch cron job, which is meant to grind forever, but it means
+        # `checked` never drops below `batch_size` once every row has been checked at least
+        # once. Stopping on `checked < batch_size` alone would never trigger then, looping
+        # --until-done forever. Cap on a full lap instead: NULLS FIRST guarantees never-yet-
+        # checked-this-run rows are always exhausted before any repeat appears, so once
+        # cumulative `checked` reaches the row count observed at the start, every row that
+        # existed then has been re-verified at least once (a handful of ids in the final batch
+        # may be benign repeats, not missed rows).
+        target = observation_count(con)
         total_checked = total_purged = total_reassigned = 0
         try:
             while True:
@@ -240,7 +251,7 @@ def resync_cmd(ctx: click.Context, batch_size: int, until_done: bool) -> None:
                         f"(no longer Fungi/geolocatable), {result['reassigned']} reassigned. "
                         f"(running total: {total_checked} checked)"
                     )
-                if not until_done or result["checked"] < batch_size:
+                if not until_done or result["checked"] < batch_size or total_checked >= target:
                     break
         except InatQuotaExceeded as exc:
             click.echo(
