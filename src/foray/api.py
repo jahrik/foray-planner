@@ -512,13 +512,19 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/observations/photos")
     def observation_photos(
-        region_id: str, request: Request, response: Response, species: str = Query("all")
+        region_id: str,
+        request: Request,
+        response: Response,
+        species: str = Query("all"),
+        months: str | None = Query(None),
     ) -> list[RecentObservation]:
         require_idle()
         cfg = current()
         device_id, is_new = resolve_device_id(request)
         if is_new:
             set_device_cookie(request, response, device_id)
+        # No months given -> default to the current calendar month, matching /api/destinations.
+        selected_months = parse_months(months) if months is not None else [dt.date.today().month]
         try:
             with pool.connection() as conn:
                 recent = scoring.recent_observations(
@@ -526,6 +532,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     region_id=region_id,
                     taxon_ids=parse_species(species, conn, device_id),
                     cell_deg=cfg.cell_deg,
+                    months=selected_months,
                 )
         except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
