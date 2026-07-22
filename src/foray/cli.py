@@ -11,7 +11,7 @@ from foray.cache import connect, observation_count, upsert_fungi_genera
 from foray.camps import ingest_campgrounds
 from foray.config import Settings
 from foray.dispersed import ingest_dispersed
-from foray.inat import iter_fungi_genera
+from foray.inat import InatQuotaExceeded, iter_fungi_genera
 from foray.ingest import ingest, ingest_region, resync, revalidate
 from foray.land import ingest_public_land, ingest_public_land_coverage
 from foray.scoring import build_phenology, plan_route
@@ -170,7 +170,11 @@ def revalidate_cmd(ctx: click.Context) -> None:
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
-        stats = revalidate(cfg, con)
+        try:
+            stats = revalidate(cfg, con)
+        except InatQuotaExceeded as exc:
+            click.echo(str(exc), err=True)
+            ctx.exit(1)
         if not stats:
             click.echo("No suspect genera found - nothing to revalidate.")
             return
@@ -224,19 +228,26 @@ def resync_cmd(ctx: click.Context, batch_size: int, until_done: bool) -> None:
     con = connect()
     try:
         total_checked = total_purged = total_reassigned = 0
-        while True:
-            result = resync(cfg, con, batch_size=batch_size)
-            total_checked += result["checked"]
-            total_purged += result["purged"]
-            total_reassigned += result["reassigned"]
-            if result["checked"]:
-                click.echo(
-                    f"Resynced {result['checked']} observations: {result['purged']} purged "
-                    f"(no longer Fungi/geolocatable), {result['reassigned']} reassigned. "
-                    f"(running total: {total_checked} checked)"
-                )
-            if not until_done or result["checked"] < batch_size:
-                break
+        try:
+            while True:
+                result = resync(cfg, con, batch_size=batch_size)
+                total_checked += result["checked"]
+                total_purged += result["purged"]
+                total_reassigned += result["reassigned"]
+                if result["checked"]:
+                    click.echo(
+                        f"Resynced {result['checked']} observations: {result['purged']} purged "
+                        f"(no longer Fungi/geolocatable), {result['reassigned']} reassigned. "
+                        f"(running total: {total_checked} checked)"
+                    )
+                if not until_done or result["checked"] < batch_size:
+                    break
+        except InatQuotaExceeded as exc:
+            click.echo(
+                f"Stopped after {total_checked} checked ({total_purged} purged, {total_reassigned} reassigned) - {exc}",
+                err=True,
+            )
+            ctx.exit(1)
         if total_checked == 0:
             click.echo("Nothing to resync.")
             return

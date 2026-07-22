@@ -18,6 +18,7 @@ from pyinaturalist import (
     get_observations,
     get_taxa,
 )
+from pyrate_limiter.exceptions import BucketFullException
 
 # Photo license codes iNat's API returns that are safe to redisplay (with attribution) under
 # their terms; cc-by-nd/cc-by-nc-nd forbid derivatives (thumbnailing counts) and a null license
@@ -67,6 +68,27 @@ _RATE_LIMIT_ATTEMPTS = 10
 _MAX_RETRY_DELAY = 60.0
 
 
+class InatQuotaExceeded(Exception):
+    """pyinaturalist's client-side daily request cap (iNat's documented 10,000/day) is
+    exhausted for now.
+
+    Distinct from the transient cases above: this can't be waited out in-process the way a 429
+    can - the cap is a rolling 24h window (capacity frees gradually as old requests age out, not
+    all at once at midnight), and a long backlog can plausibly need hours, not seconds. Raised
+    as a clean, typed error instead of letting pyrate_limiter's ``BucketFullException`` (an
+    implementation detail of pyinaturalist's http session) surface as a raw traceback in a CLI
+    run or - once ``resync``/``revalidate`` are wired into prod cron - a cron log.
+    """
+
+    def __init__(self, retry_after_seconds: float) -> None:
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(
+            "iNat's daily API request quota is exhausted for now - retry in about "
+            f"{retry_after_seconds / 60:.0f} min. Already-checked rows are unaffected; "
+            "rerunning picks up where this left off."
+        )
+
+
 def _retry_delay(exc: Exception, attempt: int, base_delay: float) -> float:
     response = getattr(exc, "response", None)
     retry_after = response.headers.get("Retry-After") if response is not None else None
@@ -110,6 +132,14 @@ def _with_retries[T](fn: Callable[[], T], *, attempts: int = 5, base_delay: floa
                 if attempt == attempts:
                     raise
                 time.sleep(_retry_delay(exc, attempt, base_delay))
+        except BucketFullException as exc:
+            retry_after = float(exc.meta_info["remaining_time"])
+            if retry_after > _MAX_RETRY_DELAY:
+                raise InatQuotaExceeded(retry_after) from exc
+            rate_limit_attempt += 1
+            if rate_limit_attempt == _RATE_LIMIT_ATTEMPTS:
+                raise InatQuotaExceeded(retry_after) from exc
+            time.sleep(retry_after)
 
 
 def iter_observations(

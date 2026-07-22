@@ -6,8 +6,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 import requests.exceptions
+from pyrate_limiter.exceptions import BucketFullException
 
-from foray.inat import _RATE_LIMIT_ATTEMPTS, FUNGI_TAXON_ID, _with_retries, iter_fungi_genera
+from foray.inat import _RATE_LIMIT_ATTEMPTS, FUNGI_TAXON_ID, InatQuotaExceeded, _with_retries, iter_fungi_genera
 
 
 def _page(ids: list[int]) -> dict:
@@ -120,3 +121,38 @@ def test_with_retries_does_not_retry_non_retryable_status() -> None:
         _with_retries(fn, attempts=3, base_delay=1.0)
 
     fn.assert_called_once()
+
+
+def _bucket_full(remaining_time: float) -> BucketFullException:
+    return BucketFullException("api.inaturalist.org", Mock(), remaining_time)
+
+
+def test_with_retries_waits_out_a_short_quota_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr("foray.inat.time.sleep", sleeps.append)
+    fn = Mock(side_effect=[_bucket_full(5.0), "ok"])
+
+    result = _with_retries(fn, attempts=3, base_delay=1.0)
+
+    assert result == "ok"
+    assert sleeps == [5.0]
+
+
+def test_with_retries_raises_quota_exceeded_for_a_long_wait() -> None:
+    fn = Mock(side_effect=_bucket_full(3600.0))
+
+    with pytest.raises(InatQuotaExceeded, match="60 min") as exc_info:
+        _with_retries(fn, attempts=3, base_delay=1.0)
+
+    assert exc_info.value.retry_after_seconds == 3600.0
+    fn.assert_called_once()
+
+
+def test_with_retries_raises_quota_exceeded_after_exhausting_short_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("foray.inat.time.sleep", Mock())
+    fn = Mock(side_effect=_bucket_full(5.0))
+
+    with pytest.raises(InatQuotaExceeded):
+        _with_retries(fn, attempts=3, base_delay=1.0)
+
+    assert fn.call_count == _RATE_LIMIT_ATTEMPTS

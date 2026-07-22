@@ -8,6 +8,7 @@ import psycopg
 from click.testing import CliRunner
 
 from foray.cli import cli
+from foray.inat import InatQuotaExceeded
 
 
 def _env(monkeypatch) -> None:
@@ -67,4 +68,24 @@ def test_resync_cmd_until_done_stops_on_empty_batch(con: psycopg.Connection, mon
     assert result.exit_code == 0, result.output
     mock_resync.assert_called_once()
     assert "Nothing to resync" in result.output
+    mock_build.assert_not_called()
+
+
+def test_resync_cmd_stops_cleanly_on_quota_exceeded(con: psycopg.Connection, monkeypatch) -> None:
+    _env(monkeypatch)
+    runner = CliRunner()
+    with (
+        patch("foray.cli.resync") as mock_resync,
+        patch("foray.cli.build_phenology") as mock_build,
+    ):
+        mock_resync.side_effect = [
+            {"checked": 10, "purged": 1, "reassigned": 0},
+            InatQuotaExceeded(3600.0),
+        ]
+        result = runner.invoke(cli, ["resync", "--batch-size", "10", "--until-done"])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "Stopped after 10 checked" in result.output
+    assert "60 min" in result.output
     mock_build.assert_not_called()
