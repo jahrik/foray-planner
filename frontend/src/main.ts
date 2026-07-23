@@ -6,7 +6,7 @@ import type { Home } from "./api/types";
 import { initGenusSelection } from "./genera";
 import { loadCamps, loadLand, loadTrails } from "./layers";
 import { initLocationAutocomplete } from "./location";
-import { currentTheme, initMap, setMapClickHandler, setTiles, updateHome } from "./map";
+import { currentTheme, initMap, map, setMapClickHandler, setTiles, updateHome } from "./map";
 import { runPlan } from "./plan";
 import { cancelRefresh, setLocationLatLng, startRefresh } from "./refresh";
 import { errorDetail, qs, setStatus, state, type Units, type View } from "./state";
@@ -55,6 +55,10 @@ function initFiltersToggle(): void {
   toggle.onclick = () => {
     const open = row.classList.toggle("open");
     toggle.setAttribute("aria-expanded", String(open));
+    // Opening/closing the filters row changes how much vertical space main (and #map) get on
+    // mobile - resync Leaflet's cached container size once the reflow settles, same reason as
+    // the resize listener in main().
+    requestAnimationFrame(() => map.invalidateSize());
   };
 }
 
@@ -144,6 +148,12 @@ async function main(): Promise<void> {
   initMap(config.home);
   setMapClickHandler(setLocationLatLng);
   updateHome(config.home);
+  // Leaflet measures #map's box once at construction and never re-measures on its own. The
+  // mobile media query gives #map an explicit height, but the browser may not have finished
+  // laying that out in the same tick initMap() ran in - invalidateSize() after the next frame
+  // makes sure Leaflet's cached size matches reality before the user ever interacts with it.
+  requestAnimationFrame(() => map.invalidateSize());
+  window.addEventListener("resize", () => map.invalidateSize());
   loadLand();
   initTabs();
   initRadiusPresets();
