@@ -1,21 +1,21 @@
 :root,
 :root[data-theme="dark"] {
-  --bg: #12140f;
-  --panel: #1c1f17;
-  --ink: #eef0e6;
+  --bg: #14160f;
+  --panel: #1c2016;
+  --ink: #eef0e2;
   --muted: #9aa088;
-  --accent: #d9a441;
+  --accent: #e0a940;
   --accent2: #7fae5e;
   --border: #2c3122;
 }
 :root[data-theme="light"] {
-  --bg: #f4f2e9;
-  --panel: #ffffff;
-  --ink: #23271c;
-  --muted: #5f6653;
-  --accent: #b9832a;
-  --accent2: #6ba043;
-  --border: #d8d4c4;
+  --bg: #f0ead9;
+  --panel: #fffdf8;
+  --ink: #201d13;
+  --muted: #6b6650;
+  --accent: #c2791f;
+  --accent2: #3f6b3f;
+  --border: #ddd3b8;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -177,7 +177,21 @@ main { display: grid; grid-template-columns: 1fr 380px; gap: 0; flex: 1; min-hei
 .rank h3 { margin: 0 0 4px; font-size: 15px; display: flex; justify-content: space-between; }
 .rank .meta { color: var(--muted); font-size: 12px; }
 .bar { height: 6px; background: var(--border); border-radius: 3px; margin: 6px 0; overflow: hidden; }
-.bar > span { display: block; height: 100%; background: var(--accent); }
+.bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent2), var(--accent)); }
+
+/* Distance/species-count/score figures read like a field instrument's readout - tabular
+   monospace numerals keep columns of them aligned as you scan down a list of cards. */
+.num { font-family: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+
+/* The one signature motif (spore-print/contour-map reference) - used once, under the tab bar,
+   not repeated elsewhere as decoration. */
+.contour-rule {
+  height: 8px;
+  flex: 0 0 auto;
+  background-image: radial-gradient(circle, var(--border) 1px, transparent 1.3px);
+  background-size: 10px 10px;
+  background-position: center;
+}
 .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .chip {
   font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;

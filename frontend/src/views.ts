@@ -106,9 +106,9 @@ export async function runDestinations(): Promise<void> {
     const card = document.createElement("div");
     card.className = "rank";
     card.innerHTML = `
-      <h3><span>#${rank + 1} · ${dist(region.distance_km)}</span><span>${region.n_species} spp</span></h3>
+      <h3><span class="num">#${rank + 1} · ${dist(region.distance_km)}</span><span class="num">${region.n_species} spp</span></h3>
       <div class="bar"><span style="width:${(region.score_norm * 100).toFixed(0)}%"></span></div>
-      <div class="meta">score ${region.score_norm.toFixed(2)}${region.recent_count ? ` · ${region.recent_count} seen recently` : ""}</div>
+      <div class="meta">score <span class="num">${region.score_norm.toFixed(2)}</span>${region.recent_count ? ` · <span class="num">${region.recent_count}</span> seen recently` : ""}</div>
       <div class="rank-tabs">
         <button type="button" class="rank-tab active" data-tab="species">Species</button>
         <button type="button" class="rank-tab" data-tab="calendar">Calendar</button>
@@ -304,7 +304,7 @@ export async function runAlerts(): Promise<void> {
     const placeText = region.species[0]?.place_guess
       ? ` · ${escapeHtml(region.species[0].place_guess)}`
       : "";
-    card.innerHTML = `<h3><span>${dist(region.distance_km)}${placeText}</span><span>${region.total} recent</span></h3>
+    card.innerHTML = `<h3><span><span class="num">${dist(region.distance_km)}</span>${placeText}</span><span class="num">${region.total} recent</span></h3>
       <div class="chips">${region.species
         .map((hit) => {
           const label = hit.count + " · " + hit.last_seen + (hit.obscured ? " ⚠ fuzzy" : "");

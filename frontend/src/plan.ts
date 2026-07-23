@@ -91,7 +91,7 @@ export async function runPlan(): Promise<void> {
   panel.innerHTML = `
     <div class="plan-header">
       <div class="plan-summary">
-        <strong>${trip.n_stops} stops</strong> · ${dist(trip.total_drive_km)} total · ${monthNames}${skippedNote}
+        <strong class="num">${trip.n_stops} stops</strong> · <span class="num">${dist(trip.total_drive_km)} total</span> · ${monthNames}${skippedNote}
       </div>
       <div class="plan-export">
         <button id="export-gpx" class="primary">⬇ GPX</button>
@@ -117,10 +117,10 @@ function buildStopCard(stop: Stop): HTMLElement {
   const head = document.createElement("div");
   head.className = "stop-head";
   const numEl = document.createElement("span");
-  numEl.className = "stop-num";
+  numEl.className = "stop-num num";
   numEl.textContent = `Stop ${stop.order}`;
   const driveEl = document.createElement("span");
-  driveEl.className = "stop-drive";
+  driveEl.className = "stop-drive num";
   driveEl.textContent = `${dist(stop.drive_km_from_prev)} leg · ${dist(stop.cumulative_drive_km)} total`;
   head.append(numEl, driveEl);
   card.appendChild(head);
@@ -135,9 +135,21 @@ function buildStopCard(stop: Stop): HTMLElement {
 
   const meta = document.createElement("div");
   meta.className = "meta";
-  meta.textContent = `score ${stop.score_norm.toFixed(2)} · ${stop.n_species} spp · ${
-    stop.recent_count ? `${stop.recent_count} recent` : "no recent obs"
-  }`;
+  const scoreNum = document.createElement("span");
+  scoreNum.className = "num";
+  scoreNum.textContent = stop.score_norm.toFixed(2);
+  const speciesNum = document.createElement("span");
+  speciesNum.className = "num";
+  speciesNum.textContent = String(stop.n_species);
+  meta.append("score ", scoreNum, " · ", speciesNum, " spp · ");
+  if (stop.recent_count) {
+    const recentNum = document.createElement("span");
+    recentNum.className = "num";
+    recentNum.textContent = String(stop.recent_count);
+    meta.append(recentNum, " recent");
+  } else {
+    meta.append("no recent obs");
+  }
   card.appendChild(meta);
 
   // Species chips (top 5) - built as DOM nodes so name/common_name/label from
