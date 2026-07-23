@@ -23,6 +23,17 @@ function makeActivatable(card: HTMLElement, activate: () => void): void {
   };
 }
 
+// Links nested inside an activatable card (species/photo chips) need their clicks to open
+// normally without also firing the card's own activate handler. An inline onclick attribute
+// can't do this - the CSP (script-src 'self', no unsafe-inline) blocks it outright - so this
+// delegates from the link's container instead, which stops the click before it ever bubbles
+// to the card.
+function stopLinkPropagation(container: HTMLElement): void {
+  container.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).closest("a")) e.stopPropagation();
+  });
+}
+
 export function initMonths(): void {
   const box = qs("#months");
   MONTHS.forEach((label, index) => {
@@ -62,7 +73,7 @@ interface ChipData {
 // interpolating into an HTML string template.
 const speciesChip = (hit: ChipData, extraClass?: string): string =>
   `<a class="chip${extraClass ? " " + extraClass : ""}" href="${inatUrl(hit.taxon_id)}"
-      target="_blank" rel="noopener" onclick="event.stopPropagation()"
+      target="_blank" rel="noopener"
    >${escapeHtml(displayName(hit))}${hit.label ? " · " + escapeHtml(hit.label) : ""}</a>`;
 
 export async function runDestinations(): Promise<void> {
@@ -115,6 +126,8 @@ export async function runDestinations(): Promise<void> {
     const speciesBody = card.querySelector<HTMLElement>('[data-tab-content="species"]')!;
     const calendarBody = card.querySelector<HTMLElement>('[data-tab-content="calendar"]')!;
     const photosBody = card.querySelector<HTMLElement>('[data-tab-content="photos"]')!;
+    stopLinkPropagation(speciesBody);
+    stopLinkPropagation(photosBody);
     // "loading" (not just a boolean) guards against a second click firing a duplicate fetch
     // while the first is still in flight; a failed fetch resets to "idle" so the tab can be
     // retried, rather than permanently disabling it like a plain "already loaded" flag would.
@@ -243,7 +256,7 @@ async function loadPhotosInto(regionId: string, container: HTMLElement): Promise
       const name = displayName(obs);
       const uri = obs.uri && obs.uri.startsWith("https://") ? escapeHtml(obs.uri) : null;
       const link = uri
-        ? `<a href="${uri}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(name)}</a>`
+        ? `<a href="${uri}" target="_blank" rel="noopener">${escapeHtml(name)}</a>`
         : escapeHtml(name);
       const when = obs.observed_on ? escapeHtml(obs.observed_on) : "";
       const photo = obs.photos[0] && obs.photos[0].url.startsWith("https://") ? obs.photos[0] : null;
@@ -253,7 +266,7 @@ async function loadPhotosInto(regionId: string, container: HTMLElement): Promise
       const thumb = photo
         ? `${
             uri
-              ? `<a href="${uri}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${img}</a>`
+              ? `<a href="${uri}" target="_blank" rel="noopener">${img}</a>`
               : img
           }
            <div class="meta">${escapeHtml(photo.attribution)}</div>`
@@ -298,12 +311,13 @@ export async function runAlerts(): Promise<void> {
           const safeUri = hit.uri?.startsWith("https://") ? hit.uri : null;
           if (safeUri) {
             return `<a class="chip live" href="${escapeHtml(safeUri)}"
-              target="_blank" rel="noopener" onclick="event.stopPropagation()"
+              target="_blank" rel="noopener"
               >${escapeHtml(displayName(hit))} · ${escapeHtml(label)}</a>`;
           }
           return speciesChip({ ...hit, label }, "live");
         })
         .join("")}</div>`;
+    stopLinkPropagation(card.querySelector<HTMLElement>(".chips")!);
     const selectCard = () => {
       panel.querySelectorAll(".rank").forEach((el) => el.classList.remove("active"));
       card.classList.add("active");

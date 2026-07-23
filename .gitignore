@@ -23,6 +23,7 @@ data/
 
 # Personal planning notes (local only)
 TODO.md
+FRONTEND.md
 
 # playwright-mcp session output (snapshots/console logs from manual browser testing)
 .playwright-mcp/
