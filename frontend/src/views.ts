@@ -30,7 +30,7 @@ function makeActivatable(card: HTMLElement, activate: () => void): void {
 // to the card.
 function stopLinkPropagation(container: HTMLElement): void {
   container.addEventListener("click", (e) => {
-    if ((e.target as HTMLElement).closest("a")) e.stopPropagation();
+    if (e.target instanceof Element && e.target.closest("a")) e.stopPropagation();
   });
 }
 
