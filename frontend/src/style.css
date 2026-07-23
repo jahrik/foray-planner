@@ -159,6 +159,7 @@ progress::-moz-progress-bar { background: var(--accent2); border-radius: 5px; }
 .tabs button:hover { color: var(--ink); background: var(--border); }
 .tabs button.active { color: var(--ink); background: var(--panel); border-bottom-color: var(--accent2); }
 
+
 /* main claims whatever vertical space header/controls/tabs don't use, instead of a hardcoded
    "100vh minus a magic number" that broke whenever the header's height changed. */
 main { display: grid; grid-template-columns: 1fr 380px; gap: 0; flex: 1; min-height: 0; }
@@ -273,13 +274,44 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
   #filters-row:not(.open) { display: none; }
   .filters-toggle[aria-expanded="true"] .chevron { transform: rotate(180deg); }
   .chevron { display: inline-block; transition: transform 0.15s ease; }
-  /* The map claims whatever's left after the capped panel below, instead of a hardcoded
-     height that stayed small no matter how much the header/controls shrank. */
-  .map-wrap { flex: 1; min-height: 0; }
+  /* Segmented-control look instead of the desktop underline style - the tab bar now sits
+     directly above the reflowed map card + sheet, so it should read as attached to it. */
+  .tabs {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px;
+    margin: 8px 10px 0; padding: 3px; border: 1px solid var(--border); border-radius: 12px;
+    background: var(--panel); border-bottom: none;
+  }
+  .tabs button {
+    border-radius: 9px; margin-bottom: 0; border-bottom: none; padding: 8px 4px;
+    text-align: center;
+  }
+  /* var(--panel) rather than a fixed dark hex - accent2 is a dark green in the light theme, so
+     a near-black fixed text color read at ~2.7:1 contrast there (fails WCAG AA 4.5:1); --panel
+     stays light-on-dark-green (light theme) and dark-on-light-green (dark theme) in both cases,
+     landing above 6:1 either way. */
+  .tabs button.active { background: var(--accent2); color: var(--panel); border-bottom-color: transparent; }
+  /* The map is a fixed-height reference card, not the main event - the destination list below
+     it is the actual payoff, so it gets the majority of the screen instead of being capped to
+     a strip under a map that used to claim whatever space was left. */
+  .map-wrap {
+    flex: 0 0 34vh; height: 34vh; min-height: 0;
+    margin: 0 10px; border-radius: 16px; overflow: hidden; border: 1px solid var(--border);
+  }
   #map { flex: 1; min-height: 0; }
+  /* Tucks up under the map card's rounded bottom corners just enough to merge the seam - the
+     card's last flex child is the legend strip, so the overlap has to stay smaller than the
+     legend's height or it visually eats the legend text instead of just the rounded corner. */
   #panel {
-    flex: 0 1 auto; max-height: 32vh; overflow-y: auto;
-    border-left: none; border-top: 1px solid var(--border);
+    flex: 1; min-height: 0; overflow-y: auto;
+    margin-top: -8px; position: relative; z-index: 1;
+    border-left: none; border-top: none; border-radius: 16px 16px 0 0;
+  }
+  /* A ::before pseudo-element survives #panel's innerHTML being replaced on every tab/view
+     render (unlike a real child node would), so it's a reliable place for a static "this is a
+     sheet" affordance without wiring it into every render call. */
+  #panel::before {
+    content: ""; display: block; width: 36px; height: 4px; border-radius: 2px;
+    background: var(--border); margin: 8px auto 4px;
   }
   /* flex-wrap left a lone "Dec" orphaned on its own row once 12 buttons stopped fitting one
      line - a grid divides the same 12 into two even rows of 6 instead. */
