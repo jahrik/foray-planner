@@ -32,7 +32,10 @@ header {
   padding: 4px 12px; border-bottom: 1px solid var(--border);
 }
 header h1 { margin: 0; font-size: 13px; white-space: nowrap; flex-shrink: 0; }
-.theme-toggle { padding: 4px 8px; font-size: 14px; line-height: 1; flex: 0 0 auto; }
+.theme-toggle {
+  min-width: 40px; min-height: 40px; padding: 4px 8px; font-size: 14px; line-height: 1;
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+}
 .locbar { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .locbar form { position: relative; flex: 0 1 280px; min-width: 160px; }
 .locbar input {
@@ -176,7 +179,11 @@ main { display: grid; grid-template-columns: 1fr 380px; gap: 0; flex: 1; min-hei
 .bar { height: 6px; background: var(--border); border-radius: 3px; margin: 6px 0; overflow: hidden; }
 .bar > span { display: block; height: 100%; background: var(--accent); }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-.chip { font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 2px 8px; color: var(--ink); text-decoration: none; display: inline-block; }
+.chip {
+  font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 2px 8px; color: var(--ink); text-decoration: none; display: inline-block;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 a.chip:hover { border-color: var(--accent); }
 .chip.live { border-color: #22c3e6; color: #22c3e6; }
 .chip.removable { display: inline-flex; align-items: center; gap: 4px; }
@@ -259,6 +266,14 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
   #panel {
     flex: 0 1 auto; max-height: 32vh; overflow-y: auto;
     border-left: none; border-top: 1px solid var(--border);
+  }
+  /* flex-wrap left a lone "Dec" orphaned on its own row once 12 buttons stopped fitting one
+     line - a grid divides the same 12 into two even rows of 6 instead. */
+  .months { display: grid; grid-template-columns: repeat(6, 1fr); }
+  /* Filter/radius controls are tap targets on a touchscreen, not just clickable text - bump
+     them close to the 40-44px minimum instead of the ~24px they render at on desktop. */
+  .months button, .radius-presets button, .toggle-btn span, .filters-toggle {
+    min-height: 40px; display: inline-flex; align-items: center; justify-content: center;
   }
 }
 

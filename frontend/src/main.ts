@@ -36,6 +36,11 @@ function initTabs(): void {
       const monthsField = document.getElementById("months-field");
       if (monthsField) monthsField.style.display = state.view === "alerts" ? "none" : "flex";
 
+      // Each run*() only replaces #panel's content once its fetch resolves, so without this
+      // the previous tab's cards stay on screen (and interactive) for a beat after switching -
+      // easy to mistake for the new tab's data since nothing visibly changed yet.
+      qs("#panel").innerHTML = "<p class='hint'>Loading…</p>";
+
       if (state.view === "destinations") runDestinations();
       else if (state.view === "alerts") runAlerts();
       else if (state.view === "plan") runPlan();
