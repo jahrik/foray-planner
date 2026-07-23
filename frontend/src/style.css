@@ -285,7 +285,11 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
     border-radius: 9px; margin-bottom: 0; border-bottom: none; padding: 8px 4px;
     text-align: center;
   }
-  .tabs button.active { background: var(--accent2); color: #10230a; border-bottom-color: transparent; }
+  /* var(--panel) rather than a fixed dark hex - accent2 is a dark green in the light theme, so
+     a near-black fixed text color read at ~2.7:1 contrast there (fails WCAG AA 4.5:1); --panel
+     stays light-on-dark-green (light theme) and dark-on-light-green (dark theme) in both cases,
+     landing above 6:1 either way. */
+  .tabs button.active { background: var(--accent2); color: var(--panel); border-bottom-color: transparent; }
   /* The map is a fixed-height reference card, not the main event - the destination list below
      it is the actual payoff, so it gets the majority of the screen instead of being capped to
      a strip under a map that used to claim whatever space was left. */

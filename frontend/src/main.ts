@@ -153,7 +153,17 @@ async function main(): Promise<void> {
   // laying that out in the same tick initMap() ran in - invalidateSize() after the next frame
   // makes sure Leaflet's cached size matches reality before the user ever interacts with it.
   requestAnimationFrame(() => map.invalidateSize());
-  window.addEventListener("resize", () => map.invalidateSize());
+  // resize fires repeatedly during a drag/orientation-change, not once - coalesce into a
+  // single invalidateSize() per frame instead of one per event, cancelling any pending frame
+  // so only the latest resize in a burst actually triggers a recalculation.
+  let resizeFrame: number | null = null;
+  window.addEventListener("resize", () => {
+    if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(() => {
+      map.invalidateSize();
+      resizeFrame = null;
+    });
+  });
   loadLand();
   initTabs();
   initRadiusPresets();
