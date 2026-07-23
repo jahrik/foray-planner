@@ -29,8 +29,8 @@ function makeActivatable(card: HTMLElement, activate: () => void): void {
 // delegates from the link's container instead, which stops the click before it ever bubbles
 // to the card.
 function stopLinkPropagation(container: HTMLElement): void {
-  container.addEventListener("click", (e) => {
-    if (e.target instanceof Element && e.target.closest("a")) e.stopPropagation();
+  container.addEventListener("click", (event) => {
+    if (event.target instanceof Element && event.target.closest("a")) event.stopPropagation();
   });
 }
 
