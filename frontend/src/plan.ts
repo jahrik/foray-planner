@@ -91,7 +91,7 @@ export async function runPlan(): Promise<void> {
   panel.innerHTML = `
     <div class="plan-header">
       <div class="plan-summary">
-        <strong>${trip.n_stops} stops</strong> · ${dist(trip.total_drive_km)} total · ${monthNames}${skippedNote}
+        <strong class="num">${trip.n_stops} stops</strong> · <span class="num">${dist(trip.total_drive_km)} total</span> · ${monthNames}${skippedNote}
       </div>
       <div class="plan-export">
         <button id="export-gpx" class="primary">⬇ GPX</button>
@@ -117,10 +117,10 @@ function buildStopCard(stop: Stop): HTMLElement {
   const head = document.createElement("div");
   head.className = "stop-head";
   const numEl = document.createElement("span");
-  numEl.className = "stop-num";
+  numEl.className = "stop-num num";
   numEl.textContent = `Stop ${stop.order}`;
   const driveEl = document.createElement("span");
-  driveEl.className = "stop-drive";
+  driveEl.className = "stop-drive num";
   driveEl.textContent = `${dist(stop.drive_km_from_prev)} leg · ${dist(stop.cumulative_drive_km)} total`;
   head.append(numEl, driveEl);
   card.appendChild(head);
@@ -135,8 +135,10 @@ function buildStopCard(stop: Stop): HTMLElement {
 
   const meta = document.createElement("div");
   meta.className = "meta";
-  meta.textContent = `score ${stop.score_norm.toFixed(2)} · ${stop.n_species} spp · ${
-    stop.recent_count ? `${stop.recent_count} recent` : "no recent obs"
+  // Every value here is a computed number, not user-controlled text, so building this as HTML
+  // (to wrap the figures in the tabular-numeral span) doesn't need escaping.
+  meta.innerHTML = `score <span class="num">${stop.score_norm.toFixed(2)}</span> · <span class="num">${stop.n_species}</span> spp · ${
+    stop.recent_count ? `<span class="num">${stop.recent_count}</span> recent` : "no recent obs"
   }`;
   card.appendChild(meta);
 
