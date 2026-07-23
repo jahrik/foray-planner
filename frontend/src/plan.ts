@@ -135,11 +135,21 @@ function buildStopCard(stop: Stop): HTMLElement {
 
   const meta = document.createElement("div");
   meta.className = "meta";
-  // Every value here is a computed number, not user-controlled text, so building this as HTML
-  // (to wrap the figures in the tabular-numeral span) doesn't need escaping.
-  meta.innerHTML = `score <span class="num">${stop.score_norm.toFixed(2)}</span> · <span class="num">${stop.n_species}</span> spp · ${
-    stop.recent_count ? `<span class="num">${stop.recent_count}</span> recent` : "no recent obs"
-  }`;
+  const scoreNum = document.createElement("span");
+  scoreNum.className = "num";
+  scoreNum.textContent = stop.score_norm.toFixed(2);
+  const speciesNum = document.createElement("span");
+  speciesNum.className = "num";
+  speciesNum.textContent = String(stop.n_species);
+  meta.append("score ", scoreNum, " · ", speciesNum, " spp · ");
+  if (stop.recent_count) {
+    const recentNum = document.createElement("span");
+    recentNum.className = "num";
+    recentNum.textContent = String(stop.recent_count);
+    meta.append(recentNum, " recent");
+  } else {
+    meta.append("no recent obs");
+  }
   card.appendChild(meta);
 
   // Species chips (top 5) - built as DOM nodes so name/common_name/label from
