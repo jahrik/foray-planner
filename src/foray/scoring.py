@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import math
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any, LiteralString, cast
 
@@ -109,14 +110,22 @@ class SpeciesHit:
     w_pheno: float
 
 
-def _genus_name_map(con: psycopg.Connection) -> dict[int, tuple[str, str | None]]:
-    """taxon_id -> (scientific name, common name or None) from the full genus catalog.
+def _genus_name_map(con: psycopg.Connection, taxon_ids: Collection[int]) -> dict[int, tuple[str, str | None]]:
+    """taxon_id -> (scientific name, common name or None) for the given taxon_ids only.
 
     ``name`` is the primary display label (every ~6,018-genus catalog row has one);
     ``common_name`` is optional secondary enrichment - most genera outside the old curated
-    21 lack an English common name on iNat (see fungi_genera's schema comment).
+    21 lack an English common name on iNat (see fungi_genera's schema comment). Scoped to
+    ``taxon_ids`` (rather than the full catalog) since callers only ever look up the handful
+    of taxa present in their own result rows - fetching all ~6,018 rows on every request
+    doesn't scale as the catalog grows.
     """
-    rows = con.execute("SELECT taxon_id, name, common_name FROM fungi_genera").fetchall()
+    if not taxon_ids:
+        return {}
+    rows = con.execute(
+        "SELECT taxon_id, name, common_name FROM fungi_genera WHERE taxon_id = ANY(%s)",
+        [list(taxon_ids)],
+    ).fetchall()
     return {taxon_id: (name, common_name) for taxon_id, name, common_name in rows}
 
 
@@ -211,7 +220,7 @@ def rank_destinations(
         [*taxon_ids, *taxon_ids, *months],
     ).fetchall()
 
-    genera = _genus_name_map(con)
+    genera = _genus_name_map(con, {row[3] for row in rows})
     recent = _recent_counts(con, cell_deg, taxon_ids, recent_weeks)
 
     # Group per region, applying the distance filter and the score formula.
@@ -453,7 +462,7 @@ def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[i
         ),
         [region_id, *taxon_ids],
     ).fetchall()
-    genera = _genus_name_map(con)
+    genera = _genus_name_map(con, {row[1] for row in rows})
     calendar: dict[int, dict[str, Any]] = {month: {"total": 0, "species": {}} for month in range(1, 13)}
     per_month_counts: dict[int, dict[int, int]] = {month: {} for month in range(1, 13)}
     for month, taxon_id, cnt in rows:
@@ -497,7 +506,7 @@ def recent_observations(
         ),
         [region_id, *taxon_ids, *months, limit],
     ).fetchall()
-    genera = _genus_name_map(con)
+    genera = _genus_name_map(con, {row[1] for row in rows})
     results = []
     for obs_id, taxon_id, observed_on, place_guess, uri, obscured in rows:
         name, common_name = genera.get(taxon_id, (str(taxon_id), None))
@@ -548,7 +557,7 @@ def alerts(
         ),
         [cutoff, *taxon_ids],
     ).fetchall()
-    genera = _genus_name_map(con)
+    genera = _genus_name_map(con, {row[3] for row in rows})
 
     by_region: dict[str, dict[str, Any]] = {}
     for region_id, clat, clng, taxon_id, cnt, last_seen, place_guess, uri, obscured in rows:
