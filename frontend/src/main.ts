@@ -265,9 +265,9 @@ const GEOLOCATION_HEAD_START_MS = 600;
 // otherwise easy to miss.
 //
 // Resolves to the updated Home once geolocation succeeds, or null if it's unsupported, denied,
-// or fails - never rejects. Only performs the side effects (updateHome/loadLand/refreshCurrentView)
-// itself; main() races this against GEOLOCATION_HEAD_START_MS so a fast resolution can feed the
-// very first plot instead of forcing a second, visibly different-looking one right after it.
+// or fails - never rejects. Applying the result (updateHome/loadLand/refreshCurrentView) is left
+// to the caller; main() races this against GEOLOCATION_HEAD_START_MS so a fast resolution can
+// feed the very first plot instead of forcing a second, visibly different-looking one right after it.
 function geolocateHome(): Promise<Home | null> {
   if (!("geolocation" in navigator)) return Promise.resolve(null);
   return new Promise((resolve) => {
