@@ -218,16 +218,43 @@ async function main(): Promise<void> {
   wireLayerToggle("#show-trails", "trails", "Fetching trails…", loadTrails);
   initLocationAutocomplete();
   initGenusSelection(refreshCurrentView);
+
+  // Kick geolocation off immediately, but don't let it block the initial paint. If a home
+  // (already-granted permission, no browser prompt) resolves within the head-start window, the
+  // side effects below run *before* the race settles, so the very first plot already reflects
+  // the real location - no visible re-plot. If it's slower, we fall through and paint with the
+  // saved/default home now; the .then() below still fires whenever the fix eventually lands.
+  let geoApplied = false;
+  const geoPromise = geolocateHome().then((home) => {
+    if (home) {
+      geoApplied = true;
+      updateHome(home);
+      loadLand();
+      refreshCurrentView();
+    }
+    return home;
+  });
+
   // If a refresh is already running (e.g. page reload mid-fetch), reflect it.
   if (config.refreshing) {
     startRefresh("Fetching data…").then((succeeded) => {
       if (succeeded) refreshCurrentView();
     });
-  } else if (state.view === "destinations") {
-    runDestinations();
+  } else {
+    await Promise.race([geoPromise, sleep(GEOLOCATION_HEAD_START_MS)]);
+    if (!geoApplied && state.view === "destinations") runDestinations();
   }
-  initGeolocation();
 }
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// How long the first paint waits on geolocation before giving up and plotting the stale/saved
+// home instead. Long enough that an already-granted permission (no browser prompt, typically a
+// few hundred ms) resolves in time and the very first plot is the accurate one; short enough
+// that a slow fix (first-time permission prompt, weak GPS) doesn't stall the initial paint.
+const GEOLOCATION_HEAD_START_MS = 600;
 
 // Auto-detect location on load so users without a fixed home base (e.g. living in a van) get
 // a current fix each time they open the app, without needing to remember to set it manually.
@@ -236,39 +263,44 @@ async function main(): Promise<void> {
 // search box (initLocationAutocomplete) and map click stay available as manual overrides.
 // Denial/error surfaces a status message instead of failing silently, since a stale location is
 // otherwise easy to miss.
-function initGeolocation(): void {
-  if (!("geolocation" in navigator)) return;
-  navigator.geolocation.getCurrentPosition(
-    async (position) => {
-      const { latitude: lat, longitude: lng } = position.coords;
-      let name: string | undefined;
-      try {
-        const params = new URLSearchParams({ lat: String(lat), lon: String(lng), format: "json" });
-        const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`);
-        if (resp.ok) name = (await resp.json())?.display_name;
-      } catch {
-        // fall back to the coordinate-based name the backend derives
-      }
-      // /api/location's `name` field is capped at 200 chars server-side; Nominatim's
-      // display_name is often longer (full address chain), so an unguarded post would 422 and
-      // leave the location stale - the opposite of the point of this auto-refresh.
-      if (name && name.length > 200) name = undefined;
+//
+// Resolves to the updated Home once geolocation succeeds, or null if it's unsupported, denied,
+// or fails - never rejects. Only performs the side effects (updateHome/loadLand/refreshCurrentView)
+// itself; main() races this against GEOLOCATION_HEAD_START_MS so a fast resolution can feed the
+// very first plot instead of forcing a second, visibly different-looking one right after it.
+function geolocateHome(): Promise<Home | null> {
+  if (!("geolocation" in navigator)) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude: lat, longitude: lng } = position.coords;
+        let name: string | undefined;
+        try {
+          const params = new URLSearchParams({ lat: String(lat), lon: String(lng), format: "json" });
+          const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`);
+          if (resp.ok) name = (await resp.json())?.display_name;
+        } catch {
+          // fall back to the coordinate-based name the backend derives
+        }
+        // /api/location's `name` field is capped at 200 chars server-side; Nominatim's
+        // display_name is often longer (full address chain), so an unguarded post would 422 and
+        // leave the location stale - the opposite of the point of this auto-refresh.
+        if (name && name.length > 200) name = undefined;
 
-      let response: { home: Home };
-      try {
-        response = await postJson("/api/location", { lat, lng, name: name ?? null });
-      } catch {
-        return; // keep whatever location is already loaded
-      }
-      updateHome(response.home);
-      loadLand();
-      refreshCurrentView();
-    },
-    (error) => {
-      setStatus(`couldn't detect location (${error.message}) - set it manually via search or map click`);
-    },
-    { timeout: 8000, maximumAge: 0 },
-  );
+        try {
+          const response = await postJson("/api/location", { lat, lng, name: name ?? null });
+          resolve(response.home);
+        } catch {
+          resolve(null); // keep whatever location is already loaded
+        }
+      },
+      (error) => {
+        setStatus(`couldn't detect location (${error.message}) - set it manually via search or map click`);
+        resolve(null);
+      },
+      { timeout: 8000, maximumAge: 0 },
+    );
+  });
 }
 
 function initRadiusPresets(): void {
