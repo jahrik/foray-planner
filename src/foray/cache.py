@@ -166,6 +166,13 @@ CREATE TABLE IF NOT EXISTS app_genera (
 
 CREATE INDEX IF NOT EXISTS ix_observations_lat_lng ON observations (lat, lng);
 
+-- trails_near's/camps_near's bbox prefilter (`min_lat <= ? AND max_lat >= ? AND ...`) was a full
+-- sequential scan without these - fine for the map's one-off "trails near a click", but
+-- plan_route calls trails_near/camps_near per candidate stop, and trails alone had 1M+ rows in
+-- production - measured ~350ms/call unindexed vs ~50ms with this index.
+CREATE INDEX IF NOT EXISTS ix_trails_bbox ON trails (min_lat, max_lat, min_lng, max_lng);
+CREATE INDEX IF NOT EXISTS ix_campsites_lat_lng ON campsites (lat, lng);
+
 -- Scoring's shared _BINNED fragment (scoring.py) filters on taxon_id + observed_on
 -- (_recent_counts, recent_observations, alerts) on every live request - without this, each
 -- one is a sequential scan over `observations`. (build_phenology's GROUP BY region_id,

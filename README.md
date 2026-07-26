@@ -89,13 +89,16 @@ ownership polygons show who manages the land; they are informational only.
 
 ---
 
-## Plan route tab - a multi-stop itinerary
+## Plan route tab - a start-to-destination trip
 
-`foray plan` (or `GET /api/plan`, or the **🗺️ Plan route** tab) sequences the top
-destinations into a greedy multi-stop itinerary - each stop a region with active
-targets and, if required, a nearby free camp - ordered from home to keep the driving
-down. The tab plots the route on the map and lists each stop with its drive distance
-and nearest camp; **Max stops**, **Max leg (km)**, and **Require free camp** tune it.
+`foray plan` (or `GET /api/plan`, or the **🗺️ Plan route** tab) plans a trip from a
+**Start** (defaults to your current location) to a **Destination** - leave the
+destination blank and it auto-picks the best reachable region instead. Stops are the
+top-scoring regions along the way, each with a nearby free camp (if required) and a
+nearby trail, ordered by progress along the route. The tab plots the route on the map
+and lists each stop with its drive distance, camp, and trail; **Max stops**, **Max leg
+(km)**, and **Require free camp** tune it. Straight-line v1: legs follow the direct
+line between stops, not real roads - see [AGENTS.md](AGENTS.md) for why.
 See the [development guide](docs/development.md#cli-reference) for the CLI/API form.
 
 ---

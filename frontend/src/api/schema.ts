@@ -236,7 +236,9 @@ export interface paths {
         };
         /**
          * Plan
-         * @description Greedy multi-stop itinerary: top destinations sequenced home-out with the least drive.
+         * @description Corridor trip plan: fruiting stops (with nearby camp + trail) from start to destination.
+         *
+         *     ``destination`` is auto-picked (best-scoring region reachable from ``start``) when omitted.
          */
         get: operations["plan_api_plan_get"];
         put?: never;
@@ -581,6 +583,8 @@ export interface components {
             recent_count: number;
             /** Species */
             species: components["schemas"]["SpeciesHit"][];
+            /** Progress Km */
+            progress_km: number;
             /** Drive Km From Prev */
             drive_km_from_prev: number;
             /** Cumulative Drive Km */
@@ -588,6 +592,9 @@ export interface components {
             camp: components["schemas"]["CampSite"] | null;
             /** Camp Is Free */
             camp_is_free: boolean;
+            trail: components["schemas"]["Trail"] | null;
+            /** Trail Distance Km */
+            trail_distance_km: number | null;
         };
         /** Trail */
         Trail: {
@@ -616,10 +623,20 @@ export interface components {
         };
         /** TripPlan */
         TripPlan: {
-            /** Home Lat */
-            home_lat: number;
-            /** Home Lng */
-            home_lng: number;
+            /** Start Lat */
+            start_lat: number;
+            /** Start Lng */
+            start_lng: number;
+            /** Destination Lat */
+            destination_lat: number;
+            /** Destination Lng */
+            destination_lng: number;
+            /** Destination Name */
+            destination_name: string | null;
+            /** Auto Destination */
+            auto_destination: boolean;
+            /** Corridor Km */
+            corridor_km: number;
             /** Months */
             months: number[];
             /** N Stops */
@@ -1047,7 +1064,9 @@ export interface operations {
             query?: {
                 months?: string | null;
                 species?: string;
-                radius_km?: number | null;
+                start?: string | null;
+                destination?: string | null;
+                corridor_km?: number;
                 max_stops?: number;
                 max_drive_km?: number;
                 camp_radius_km?: number;

@@ -5,12 +5,30 @@ import { getJson, postJson } from "./api/client";
 import type { Home } from "./api/types";
 import { initGenusSelection } from "./genera";
 import { loadCamps, loadLand, loadTrails } from "./layers";
-import { initLocationAutocomplete } from "./location";
+import { initLocationAutocomplete, initPlaceAutocomplete } from "./location";
 import { currentTheme, initMap, map, setMapClickHandler, setTiles, updateHome } from "./map";
 import { runPlan } from "./plan";
 import { cancelRefresh, setLocationLatLng, startRefresh } from "./refresh";
 import { errorDetail, qs, setStatus, state, type Units, type View } from "./state";
 import { initMonths, runAlerts, runDestinations } from "./views";
+
+// Wires a plan-tab Start/Destination field: unlike the header's home search (which persists the
+// choice via /api/location), a selected suggestion here just fills the input with resolved
+// "lat, lng" text and re-runs the plan - the field itself is the only state, read fresh by
+// runPlan() on every request.
+function initPlanPlaceField(inputId: string, listId: string, formId: string): void {
+  const input = qs<HTMLInputElement>(`#${inputId}`);
+  initPlaceAutocomplete(
+    input,
+    qs<HTMLUListElement>(`#${listId}`),
+    qs<HTMLFormElement>(`#${formId}`),
+    (resolved) => {
+      input.value = resolved;
+      runPlan();
+    },
+    { clearInputOnSelect: false },
+  );
+}
 
 // Re-runs whichever view is currently open - used after a data refresh finishes so the new
 // data actually shows up without the user having to switch tabs back and forth to force it.
@@ -172,6 +190,8 @@ async function main(): Promise<void> {
   qs("#plan-stops").addEventListener("change", () => runPlan());
   qs("#plan-drive").addEventListener("change", () => runPlan());
   qs("#plan-free-camp").addEventListener("change", () => runPlan());
+  initPlanPlaceField("plan-start", "plan-start-suggestions", "plan-start-form");
+  initPlanPlaceField("plan-destination", "plan-destination-suggestions", "plan-destination-form");
   qs("#refresh").onclick = async () => {
     const succeeded = await startRefresh("Refreshing mushroom data…", "mushrooms");
     if (succeeded) refreshCurrentView();

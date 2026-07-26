@@ -329,6 +329,12 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
   border: 1px solid var(--border); border-radius: 6px;
   background: var(--panel); color: var(--ink); font-size: 14px;
 }
+#plan-start-field, #plan-destination-field { min-width: 180px; }
+#plan-start-field form, #plan-destination-field form { position: relative; }
+#plan-start-field input, #plan-destination-field input {
+  width: 100%; padding: 5px 10px; border-radius: 6px; font-size: 13px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--ink);
+}
 .plan-header {
   display: flex; justify-content: space-between; align-items: flex-start;
   gap: 10px; flex-wrap: wrap;
@@ -337,6 +343,7 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
 }
 .plan-summary { font-size: 13px; color: var(--muted); flex: 1; }
 .plan-skipped { margin-left: 6px; color: var(--accent); font-size: 12px; }
+.plan-auto { margin-left: 6px; color: var(--muted); font-size: 12px; font-style: italic; }
 .plan-export { display: flex; gap: 6px; flex-shrink: 0; }
 .plan-export button { padding: 6px 12px; font-size: 13px; }
 
@@ -351,12 +358,12 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
 }
 .stop-num { font-weight: 700; font-size: 15px; color: var(--accent); }
 .stop-drive { font-size: 12px; color: var(--muted); }
-.stop-camp {
+.stop-camp, .stop-trail {
   font-size: 12px; margin-top: 6px;
   padding: 4px 8px; border-radius: 4px;
   background: var(--bg); border: 1px solid var(--border);
 }
-.stop-camp.muted { color: var(--muted); }
+.stop-camp.muted, .stop-trail.muted { color: var(--muted); }
 
 /* Larger text mode (toggle next to mi/km and day/night in the header) - bumps font sizes across
    the panel/cards/calendar/controls, which is the actual reading surface on a phone. Layout
@@ -374,7 +381,8 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
 :root[data-text-size="large"] #status,
 :root[data-text-size="large"] .plan-summary,
 :root[data-text-size="large"] .stop-drive,
-:root[data-text-size="large"] .stop-camp { font-size: 14px; }
+:root[data-text-size="large"] .stop-camp,
+:root[data-text-size="large"] .stop-trail { font-size: 14px; }
 :root[data-text-size="large"] .chip,
 :root[data-text-size="large"] .rank-tab { font-size: 13px; }
 :root[data-text-size="large"] table.cal,

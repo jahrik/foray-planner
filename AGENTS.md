@@ -18,6 +18,10 @@ Guiding principles - keep these in mind for any feature work:
   land ownership + link the official source; informational, not authoritative.
 - **Reuse the grid.** Camping and trails hang off the same lat/lng grid + `haversine_km` scoring
   already uses - don't invent a second geography.
+- **No real road routing yet.** `plan_route`'s corridor is a straight-line (great-circle chord)
+  buffer, not an actual road route - there's no routing engine (OSRM/Valhalla/etc.) wired up.
+  Self-hosting one is a deliberate future follow-up once a region scope is picked, not something
+  to bolt on ad hoc.
 
 ## Layout
 
@@ -72,7 +76,10 @@ Guiding principles - keep these in mind for any feature work:
   Geometry is cached as GeoJSON *text* + bbox + a representative center in `trails`.
 - `src/foray/scoring.py` - `build_phenology` (materializes `regions` + `phenology`) and the
   scoring modes: `rank_destinations`, `place_calendar`, `alerts`, `camps_near`, `trails_near`,
-  and `plan_route` (greedy multi-stop itinerary). Grid binning is one reusable SQL fragment
+  and `plan_route` (start -> destination corridor trip: stops selected along the straight-line
+  buffer between the two, each annotated with a nearby camp *and* trail, ordered by progress
+  along the line; auto-picks a destination via `rank_destinations` when the caller doesn't
+  supply one - see "no real road routing yet" below). Grid binning is one reusable SQL fragment
   (`_BINNED`). `alerts` includes `place_guess`, `uri`, and `obscured` per observation.
 - `src/foray/api.py` - FastAPI: `/api/{config,species,destinations,calendar,alerts,camps,land,
   trails,plan,location,refresh,coverage}` + `/` (serves the built client). Search is **read-only**
