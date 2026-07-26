@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 
 import psycopg
 import pytest
@@ -26,6 +27,13 @@ MID = (45.0, -121.0)  # ~111 km N of start
 FAR = (47.0, -121.0)  # ~333 km N of start
 DEST = (48.0, -121.0)  # ~444 km N of start
 OFF_CORRIDOR = (45.0, -119.87)  # ~same latitude as MID, ~90 km E of the corridor line
+
+
+def _region_id(lat: float, lng: float, cell: float = CELL) -> str:
+    """Mirror scoring.py's ``_BINNED`` grid-binning exactly (``floor``, not ``int``) - matters for
+    negative, non-multiple-of-``cell`` coordinates like OFF_CORRIDOR's longitude, where ``int()``
+    truncates toward zero and disagrees with ``floor()``."""
+    return f"{math.floor(lat / cell)}_{math.floor(lng / cell)}"
 
 
 @pytest.fixture(autouse=True)
@@ -114,7 +122,7 @@ def test_plan_orders_stops_by_progress_along_corridor(con: psycopg.Connection) -
 
 def test_corridor_excludes_off_axis_region(con: psycopg.Connection) -> None:
     trip = plan_route(con, **_kwargs(require_free_camp=False))
-    off_region = f"{int(OFF_CORRIDOR[0] / CELL)}_{int(OFF_CORRIDOR[1] / CELL)}"
+    off_region = _region_id(*OFF_CORRIDOR)
     assert off_region not in {s.region_id for s in trip.stops}
 
 
@@ -132,7 +140,7 @@ def test_require_free_camp_drops_paid_only_stops(con: psycopg.Connection) -> Non
     # FAR has only a paid camp -> excluded; NEAR and MID keep their free camp.
     assert len(trip.stops) == 2
     assert all(s.camp_is_free and s.camp is not None for s in trip.stops)
-    far_region = f"{int(FAR[0] / CELL)}_{int(FAR[1] / CELL)}"
+    far_region = _region_id(*FAR)
     assert far_region not in ids
 
 
@@ -146,10 +154,7 @@ def test_max_stops_caps_the_itinerary(con: psycopg.Connection) -> None:
     trip = plan_route(con, **_kwargs(require_free_camp=False, max_stops=2))
     assert trip.n_stops == 2
     # The two highest-scoring on-corridor regions (NEAR, MID) are kept, not FAR.
-    assert {s.region_id for s in trip.stops} == {
-        f"{int(NEAR[0] / CELL)}_{int(NEAR[1] / CELL)}",
-        f"{int(MID[0] / CELL)}_{int(MID[1] / CELL)}",
-    }
+    assert {s.region_id for s in trip.stops} == {_region_id(*NEAR), _region_id(*MID)}
 
 
 def test_max_drive_km_reports_unreachable_stops(con: psycopg.Connection) -> None:
@@ -182,10 +187,10 @@ def test_auto_pick_chooses_best_scoring_region_beyond_min_distance(con: psycopg.
         ),
     )
     assert trip.auto_destination is True
-    assert trip.destination_name == f"{int(MID[0] / CELL)}_{int(MID[1] / CELL)}"
+    assert trip.destination_name == _region_id(*MID)
     assert round(trip.destination_lat, 1) == 45.0
     # NEAR sits on the start->MID corridor too, so it's still a stop along the way.
-    assert {s.region_id for s in trip.stops} >= {f"{int(NEAR[0] / CELL)}_{int(NEAR[1] / CELL)}"}
+    assert {s.region_id for s in trip.stops} >= {_region_id(*NEAR)}
 
 
 def test_auto_pick_empty_when_nothing_clears_minimum_distance(con: psycopg.Connection) -> None:
@@ -208,7 +213,7 @@ def test_degenerate_destination_does_not_crash(con: psycopg.Connection) -> None:
     )
     assert trip.auto_destination is False
     # Only NEAR (~22 km) is within the default 60 km corridor radius of a collapsed segment.
-    assert {s.region_id for s in trip.stops} == {f"{int(NEAR[0] / CELL)}_{int(NEAR[1] / CELL)}"}
+    assert {s.region_id for s in trip.stops} == {_region_id(*NEAR)}
     # Regression: a degenerate segment must fall back to radial distance as progress, not a flat
     # 0 for every candidate (which would collapse the sort order for any case with >1 stop).
     assert trip.stops[0].progress_km > 0
