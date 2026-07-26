@@ -209,3 +209,39 @@ def test_degenerate_destination_does_not_crash(con: psycopg.Connection) -> None:
     assert trip.auto_destination is False
     # Only NEAR (~22 km) is within the default 60 km corridor radius of a collapsed segment.
     assert {s.region_id for s in trip.stops} == {f"{int(NEAR[0] / CELL)}_{int(NEAR[1] / CELL)}"}
+    # Regression: a degenerate segment must fall back to radial distance as progress, not a flat
+    # 0 for every candidate (which would collapse the sort order for any case with >1 stop).
+    assert trip.stops[0].progress_km > 0
+
+
+# DETOUR sits well east of the corridor line at a middling latitude - close enough to survive the
+# default 60 km corridor width, but far enough from NEAR that the direct NEAR->DETOUR leg exceeds
+# a deliberately tight max_drive_km. NEXT sits back on the line, further along in progress than
+# DETOUR but much closer to NEAR in real distance - the exact "off-axis zigzag" the docstring
+# warns about. Only inserted for this test (not the shared fixture) so it can't perturb the
+# progress/ordering assertions of the other corridor tests above.
+DETOUR = (44.8, -120.303)  # ~89 km progress, ~86 km real distance from NEAR
+NEXT = (44.95, -121.0)  # ~106 km progress, ~83 km real distance from NEAR
+
+
+def test_unreachable_stop_is_skipped_not_truncating_the_rest(con: psycopg.Connection) -> None:
+    rows = []
+    obs_id = 10_000
+    for lat, lng in (DETOUR, NEXT):
+        for _ in range(20):
+            rows.append((obs_id, MOREL, lat, lng, dt.date(2022, 10, 15), 10, 2022, "research", 10))
+            obs_id += 1
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            rows,
+        )
+    build_phenology(con, CELL)
+
+    # 85 km reaches NEAR->NEXT (~83) and NEXT->MID (~6) but not NEAR->DETOUR (~86) or MID->FAR
+    # (~222) - DETOUR and FAR should each be individually skipped, not cascade into dropping
+    # NEXT/MID too.
+    trip = plan_route(con, **_kwargs(require_free_camp=False, max_drive_km=85, max_stops=20))
+    assert [round(s.center_lat, 2) for s in trip.stops] == [44.2, 44.95, 45.0]
+    assert trip.skipped_unreachable == 2

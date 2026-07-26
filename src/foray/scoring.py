@@ -352,7 +352,12 @@ def rank_destinations_corridor(
     def keep(clat: float, clng: float) -> tuple[bool, float]:
         px, py = _project_to_plane(start_lat, start_lng, clat, clng)
         t, offset_km = _segment_progress_and_offset(px, py, dx, dy)
-        return offset_km <= corridor_km, t * total_km
+        # _segment_progress_and_offset's degenerate-segment branch always returns t=0.0, which
+        # would make every candidate's progress 0 (collapsing the sort order) - use the radial
+        # offset (= distance from start in that branch) as progress instead, matching the
+        # docstring's fallback.
+        progress_km = offset_km if total_km == 0 else t * total_km
+        return offset_km <= corridor_km, progress_km
 
     return _rank_candidates(
         con, months=months, taxon_ids=taxon_ids, cell_deg=cell_deg, recent_weeks=recent_weeks, keep=keep
@@ -770,14 +775,16 @@ def plan_route(
        (``trails_near``), drop regions below ``min_score_norm`` or - when
        ``require_free_camp`` - without a free camp inside ``camp_radius_km``, keep the top
        ``max_stops`` by score, then sort by progress along the line ("along the way" order,
-       not nearest-neighbour). Walking that order, the first leg past ``max_drive_km`` marks
-       the rest ``skipped_unreachable``. Great-circle distance stands in for real drive time
-       until road routing lands (a documented follow-up).
+       not nearest-neighbour). Walking that order, any stop whose leg from the current position
+       exceeds ``max_drive_km`` is skipped individually (counted in ``skipped_unreachable``)
+       rather than assumed to make every later stop unreachable too - legs aren't guaranteed
+       monotonic under progress ordering (see below). Great-circle distance stands in for real
+       drive time until road routing lands (a documented follow-up).
 
     Straight-line v1: the "corridor" is a buffer around the great-circle chord, not a real
     road route, so a wide corridor with off-axis stops can occasionally zigzag rather than
-    monotonically recede from the current position - an accepted limitation until real
-    routing replaces the chord.
+    monotonically recede from the current position - this is exactly why unreachable stops are
+    skipped individually rather than truncating the rest of the itinerary.
 
     Missing tables (nothing ingested yet) surface as ``rank_destinations``/
     ``rank_destinations_corridor`` raising, mirroring the other modes; an empty candidate set
@@ -859,11 +866,14 @@ def plan_route(
     stops: list[Stop] = []
     cumulative = 0.0
     skipped = 0
-    for i, (region, camp, camp_is_free, trail) in enumerate(candidates):
+    for region, camp, camp_is_free, trail in candidates:
         leg = haversine_km(cur_lat, cur_lng, region.center_lat, region.center_lng)
         if leg > max_drive_km:
-            skipped = len(candidates) - i  # this stop (and the rest, still receding) are unreachable
-            break
+            # Progress-ordered, not nearest-neighbour, so legs aren't guaranteed monotonic (a wide
+            # corridor can zigzag off-axis) - skip just this stop rather than assuming everything
+            # still to come is unreachable too.
+            skipped += 1
+            continue
         cumulative += leg
         stops.append(
             Stop(
