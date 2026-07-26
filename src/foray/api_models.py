@@ -177,17 +177,25 @@ class Stop(BaseModel):
     n_species: int
     recent_count: int
     species: list[SpeciesHit]
+    progress_km: float
     drive_km_from_prev: float
     cumulative_drive_km: float
     camp: CampSite | None
     camp_is_free: bool
+    trail: Trail | None
+    trail_distance_km: float | None
 
 
 class TripPlan(BaseModel):
     model_config = _FROM_DATACLASS
 
-    home_lat: float
-    home_lng: float
+    start_lat: float
+    start_lng: float
+    destination_lat: float
+    destination_lng: float
+    destination_name: str | None
+    auto_destination: bool
+    corridor_km: float
     months: list[int]
     n_stops: int
     total_drive_km: float

@@ -3,22 +3,29 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 import psycopg
 import pytest
 
-from foray.cache import upsert_campsites
+from foray.cache import upsert_campsites, upsert_trails
 from foray.scoring import build_phenology, plan_route
 
 CELL = 0.5
 MOREL = 111
 
-# Home near (44.0, -121.0). Three morel regions at increasing distance, all active in October,
-# with decreasing observation counts so their score order is deterministic (near = strongest).
-HOME_LAT, HOME_LNG = 44.0, -121.0
-NEAR = (44.2, -121.0)  # ~22 km N of home
-MID = (45.0, -121.0)  # ~111 km N of home
-FAR = (47.0, -121.0)  # ~333 km N of home
+# Start near (44.0, -121.0). NEAR/MID/FAR sit due north of start, on the same meridian, all
+# active in October with decreasing observation counts (near = strongest score) so ordering is
+# deterministic. DEST is further north still, past FAR, so NEAR/MID/FAR are all on the
+# start->DEST corridor by construction. OFF_CORRIDOR sits at MID's latitude but well east of the
+# meridian, so it's roughly as far from start as MID but well outside the default corridor width -
+# the key regression a purely radial fixture can't express.
+START_LAT, START_LNG = 44.0, -121.0
+NEAR = (44.2, -121.0)  # ~22 km N of start
+MID = (45.0, -121.0)  # ~111 km N of start
+FAR = (47.0, -121.0)  # ~333 km N of start
+DEST = (48.0, -121.0)  # ~444 km N of start
+OFF_CORRIDOR = (45.0, -119.87)  # ~same latitude as MID, ~90 km E of the corridor line
 
 
 @pytest.fixture(autouse=True)
@@ -29,8 +36,9 @@ def _seed(con: psycopg.Connection) -> None:
 
     rows: list[tuple] = []
     obs_id = 1
-    # More observations closer in, so score (and thus selection order) tracks distance here.
-    for (lat, lng), obs_count in ((NEAR, 40), (MID, 25), (FAR, 15)):
+    # More observations closer in (and OFF_CORRIDOR deliberately scored higher than MID, so a
+    # broken corridor filter that let it through would be obvious in ordering assertions).
+    for (lat, lng), obs_count in ((NEAR, 40), (MID, 25), (FAR, 15), (OFF_CORRIDOR, 30)):
         for _ in range(obs_count):
             rows.append((obs_id, MOREL, lat, lng, dt.date(2022, 10, 15), 10, 2022, "research", 10))
             obs_id += 1
@@ -42,13 +50,37 @@ def _seed(con: psycopg.Connection) -> None:
         )
     build_phenology(con, CELL)
 
-    # A free camp beside NEAR and MID; FAR gets only a paid camp.
+    # A free camp beside NEAR and MID; FAR gets only a paid camp; OFF_CORRIDOR gets a free camp
+    # too (so it would definitely pass stop selection if the corridor filter didn't exclude it).
     upsert_campsites(
         con,
         [
             ("osm:1", "Free NEAR", "dispersed", None, True, NEAR[0], NEAR[1], "osm", "u"),
             ("osm:2", "Free MID", "dispersed", None, True, MID[0], MID[1], "osm", "u"),
             ("ridb:3", "Paid FAR", "campground", "$20", None, FAR[0], FAR[1], "ridb", "u"),
+            ("osm:4", "Free OFF_CORRIDOR", "dispersed", None, True, OFF_CORRIDOR[0], OFF_CORRIDOR[1], "osm", "u"),
+        ],
+    )
+
+    # A trail right at NEAR, so Stop.trail can be asserted on.
+    point = json.dumps({"type": "Point", "coordinates": [NEAR[1], NEAR[0]]})
+    upsert_trails(
+        con,
+        [
+            (
+                "osm:trail:1",
+                "Near Loop Trail",
+                "trail",
+                "osm",
+                "u",
+                NEAR[0],
+                NEAR[1],
+                NEAR[0],
+                NEAR[1],
+                NEAR[0],
+                NEAR[1],
+                point,
+            ),
         ],
     )
 
@@ -57,23 +89,41 @@ def _kwargs(**overrides: object) -> dict:
     base: dict = {
         "months": [10],
         "taxon_ids": [MOREL],
-        "home_lat": HOME_LAT,
-        "home_lng": HOME_LNG,
-        "radius_km": 500,
         "cell_deg": CELL,
+        "start_lat": START_LAT,
+        "start_lng": START_LNG,
+        "destination_lat": DEST[0],
+        "destination_lng": DEST[1],
     }
     base.update(overrides)
     return base
 
 
-def test_plan_orders_stops_nearest_first_from_home(con: psycopg.Connection) -> None:
+def test_plan_orders_stops_by_progress_along_corridor(con: psycopg.Connection) -> None:
     trip = plan_route(con, **_kwargs(require_free_camp=False))
-    # NEAR, MID, FAR are all viable; nearest-neighbour from home visits them in distance order.
+    # NEAR, MID, FAR are all on the corridor and on the way to DEST; OFF_CORRIDOR is excluded
+    # even though it out-scores MID and FAR.
     assert [s.order for s in trip.stops] == [1, 2, 3]
-    assert trip.stops[0].drive_km_from_prev < trip.stops[1].drive_km_from_prev
-    # Cumulative drive is monotonic and matches the reported total.
+    assert [round(s.center_lat, 1) for s in trip.stops] == [44.2, 45.0, 47.0]
+    assert trip.stops[0].progress_km < trip.stops[1].progress_km < trip.stops[2].progress_km
     assert trip.stops[-1].cumulative_drive_km == trip.total_drive_km
     assert trip.n_stops == 3
+    assert trip.destination_name is None  # explicit destination, not auto-picked
+    assert trip.auto_destination is False
+
+
+def test_corridor_excludes_off_axis_region(con: psycopg.Connection) -> None:
+    trip = plan_route(con, **_kwargs(require_free_camp=False))
+    off_region = f"{int(OFF_CORRIDOR[0] / CELL)}_{int(OFF_CORRIDOR[1] / CELL)}"
+    assert off_region not in {s.region_id for s in trip.stops}
+
+
+def test_stop_includes_nearest_trail(con: psycopg.Connection) -> None:
+    trip = plan_route(con, **_kwargs(require_free_camp=False))
+    near = next(s for s in trip.stops if round(s.center_lat, 1) == 44.2)
+    assert near.trail is not None
+    assert near.trail.name == "Near Loop Trail"
+    assert near.trail_distance_km == near.trail.distance_km
 
 
 def test_require_free_camp_drops_paid_only_stops(con: psycopg.Connection) -> None:
@@ -95,7 +145,7 @@ def test_any_camp_annotates_nearest_paid_camp(con: psycopg.Connection) -> None:
 def test_max_stops_caps_the_itinerary(con: psycopg.Connection) -> None:
     trip = plan_route(con, **_kwargs(require_free_camp=False, max_stops=2))
     assert trip.n_stops == 2
-    # The two highest-scoring regions (NEAR, MID) are kept, not FAR.
+    # The two highest-scoring on-corridor regions (NEAR, MID) are kept, not FAR.
     assert {s.region_id for s in trip.stops} == {
         f"{int(NEAR[0] / CELL)}_{int(NEAR[1] / CELL)}",
         f"{int(MID[0] / CELL)}_{int(MID[1] / CELL)}",
@@ -115,3 +165,47 @@ def test_empty_when_no_data_returns_empty_plan(con: psycopg.Connection) -> None:
     assert trip.stops == []
     assert trip.n_stops == 0
     assert trip.total_drive_km == 0.0
+
+
+def test_auto_pick_chooses_best_scoring_region_beyond_min_distance(con: psycopg.Connection) -> None:
+    # radius (130 km) excludes OFF_CORRIDOR (~143 km, despite scoring highest) and FAR (~333
+    # km); min distance excludes NEAR (~22 km) - MID (~111 km) is the sole survivor and becomes
+    # the auto-picked destination.
+    trip = plan_route(
+        con,
+        **_kwargs(
+            destination_lat=None,
+            destination_lng=None,
+            require_free_camp=False,
+            auto_pick_radius_km=130,
+            auto_pick_min_km=50,
+        ),
+    )
+    assert trip.auto_destination is True
+    assert trip.destination_name == f"{int(MID[0] / CELL)}_{int(MID[1] / CELL)}"
+    assert round(trip.destination_lat, 1) == 45.0
+    # NEAR sits on the start->MID corridor too, so it's still a stop along the way.
+    assert {s.region_id for s in trip.stops} >= {f"{int(NEAR[0] / CELL)}_{int(NEAR[1] / CELL)}"}
+
+
+def test_auto_pick_empty_when_nothing_clears_minimum_distance(con: psycopg.Connection) -> None:
+    trip = plan_route(
+        con,
+        **_kwargs(destination_lat=None, destination_lng=None, auto_pick_radius_km=10, auto_pick_min_km=5),
+    )
+    assert trip.auto_destination is True
+    assert trip.destination_name is None
+    assert trip.n_stops == 0
+    assert trip.stops == []
+
+
+def test_degenerate_destination_does_not_crash(con: psycopg.Connection) -> None:
+    # Destination equal to start collapses the corridor to a disk around start; should still
+    # run cleanly (falls back to radial distance for the offset test) rather than raising.
+    trip = plan_route(
+        con,
+        **_kwargs(destination_lat=START_LAT, destination_lng=START_LNG, require_free_camp=False),
+    )
+    assert trip.auto_destination is False
+    # Only NEAR (~22 km) is within the default 60 km corridor radius of a collapsed segment.
+    assert {s.region_id for s in trip.stops} == {f"{int(NEAR[0] / CELL)}_{int(NEAR[1] / CELL)}"}

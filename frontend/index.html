@@ -93,6 +93,30 @@
         </div>
       </div>
       <div class="row plan-row" id="plan-row" style="display:none">
+        <div class="field" id="plan-start-field">
+          <label for="plan-start">Start</label>
+          <form id="plan-start-form" autocomplete="off">
+            <input
+              id="plan-start"
+              type="text"
+              placeholder="Current location…"
+              autocomplete="off"
+            />
+            <ul id="plan-start-suggestions" class="loc-suggestions"></ul>
+          </form>
+        </div>
+        <div class="field" id="plan-destination-field">
+          <label for="plan-destination">Destination</label>
+          <form id="plan-destination-form" autocomplete="off">
+            <input
+              id="plan-destination"
+              type="text"
+              placeholder="Leave blank to auto-pick…"
+              autocomplete="off"
+            />
+            <ul id="plan-destination-suggestions" class="loc-suggestions"></ul>
+          </form>
+        </div>
         <div class="field">
           <label for="plan-stops">Max stops</label>
           <input id="plan-stops" type="number" min="1" max="20" value="5" />
@@ -103,7 +127,7 @@
         </div>
         <div class="field" style="justify-content:flex-end">
           <label class="toggle-btn">
-            <input type="checkbox" id="plan-free-camp" checked />
+            <input type="checkbox" id="plan-free-camp" />
             <span>Free camp</span>
           </label>
         </div>

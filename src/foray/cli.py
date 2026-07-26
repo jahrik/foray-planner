@@ -7,6 +7,7 @@ import logging
 
 import click
 
+from foray import geocode
 from foray.cache import connect, observation_count, upsert_fungi_genera
 from foray.camps import ingest_campgrounds
 from foray.config import Settings
@@ -394,6 +395,17 @@ def _parse_months(months: str) -> list[int]:
 
 @cli.command("plan")
 @click.option("--months", default="", help="Comma-separated months (1-12); default = current month.")
+@click.option(
+    "--destination",
+    default=None,
+    help="Trip destination: a place name or 'lat,lng'. Omit to auto-pick the best reachable region.",
+)
+@click.option(
+    "--corridor-km",
+    default=60.0,
+    type=click.FloatRange(min=0, min_open=True),
+    help="How far off the straight line home->destination a stop may be.",
+)
 @click.option("--max-stops", default=5, type=click.IntRange(min=1), help="Maximum stays in the itinerary.")
 @click.option(
     "--max-drive-km",
@@ -403,20 +415,39 @@ def _parse_months(months: str) -> list[int]:
 )
 @click.option("--any-camp", is_flag=True, help="Allow stops whose nearest camp isn't free-tagged.")
 @click.pass_context
-def plan_cmd(ctx: click.Context, months: str, max_stops: int, max_drive_km: float, any_camp: bool) -> None:
-    """Sequence the top destinations into a greedy, low-backtrack trip itinerary."""
+def plan_cmd(
+    ctx: click.Context,
+    months: str,
+    destination: str | None,
+    corridor_km: float,
+    max_stops: int,
+    max_drive_km: float,
+    any_camp: bool,
+) -> None:
+    """Plan a trip from home to a destination (auto-picked if omitted), stopping along the way."""
     cfg = ctx.obj["cfg"]
     selected = _parse_months(months) or [dt.date.today().month]
+    if destination is not None:
+        try:
+            dest_location = geocode.resolve(destination)
+        except (LookupError, ValueError) as error:
+            raise click.BadParameter(str(error), param_hint="destination") from error
+        dest_lat, dest_lng = dest_location.lat, dest_location.lng
+    else:
+        dest_lat, dest_lng = None, None
     con = connect()
     try:
         trip = plan_route(
             con,
             months=selected,
             taxon_ids=[],  # no fixed target list (issue #79) - every genus in the catalog is in play
-            home_lat=cfg.home.lat,
-            home_lng=cfg.home.lng,
-            radius_km=cfg.home.radius_km,
             cell_deg=cfg.cell_deg,
+            start_lat=cfg.home.lat,
+            start_lng=cfg.home.lng,
+            destination_lat=dest_lat,
+            destination_lng=dest_lng,
+            corridor_km=corridor_km,
+            auto_pick_radius_km=cfg.home.radius_km,
             recent_weeks=cfg.recent_weeks,
             max_stops=max_stops,
             max_drive_km=max_drive_km,
@@ -427,8 +458,13 @@ def plan_cmd(ctx: click.Context, months: str, max_stops: int, max_drive_km: floa
     if not trip.stops:
         click.echo("No viable stops found - try a wider radius, more months, or --any-camp.")
         return
+    dest_label = (
+        f"region {trip.destination_name}"
+        if trip.auto_destination
+        else f"{trip.destination_lat:.4f}, {trip.destination_lng:.4f}"
+    )
     click.echo(
-        f"Trip from {cfg.home.name} - months {selected}, {trip.n_stops} stops, "
+        f"Trip from {cfg.home.name} to {dest_label} - months {selected}, {trip.n_stops} stops, "
         f"{trip.total_drive_km:.0f} km total drive:"
     )
     for stop in trip.stops:
@@ -438,9 +474,10 @@ def plan_cmd(ctx: click.Context, months: str, max_stops: int, max_drive_km: floa
             if stop.camp is None
             else (f"{'FREE ' if stop.camp_is_free else ''}{stop.camp.name} ({stop.camp.distance_km:.0f} km)")
         )
+        trail = "no trail" if stop.trail is None else f"{stop.trail.name} ({stop.trail.distance_km:.0f} km)"
         click.echo(
             f"  {stop.order}. {stop.region_id}  +{stop.drive_km_from_prev:.0f} km  "
-            f"score {stop.score_norm:.2f}  {stop.n_species} spp [{top}]  camp: {camp}"
+            f"score {stop.score_norm:.2f}  {stop.n_species} spp [{top}]  camp: {camp}  trail: {trail}"
         )
     if trip.skipped_unreachable:
         click.echo(f"  ({trip.skipped_unreachable} viable stop(s) skipped - beyond max drive.)")

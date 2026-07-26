@@ -30,7 +30,7 @@ async function fetchSuggestions(query: string): Promise<NominatimResult[] | null
   }
 }
 
-function renderSuggestions(results: NominatimResult[], list: HTMLUListElement): void {
+function renderSuggestions(results: NominatimResult[], list: HTMLUListElement, onSelect: (query: string) => void): void {
   list.innerHTML = "";
   activeIndex = -1;
   if (!results.length) {
@@ -43,25 +43,30 @@ function renderSuggestions(results: NominatimResult[], list: HTMLUListElement): 
     li.dataset.index = String(i);
     li.onmousedown = (e) => {
       e.preventDefault();
-      selectResult(result);
+      selectResult(result, list, onSelect);
     };
     list.appendChild(li);
   });
   list.classList.add("open");
 }
 
-function selectResult(result: NominatimResult): void {
-  const input = qs<HTMLInputElement>("#loc");
-  const list = qs<HTMLUListElement>("#loc-suggestions");
-  input.value = "";
+function selectResult(result: NominatimResult, list: HTMLUListElement, onSelect: (query: string) => void): void {
   list.classList.remove("open");
-  setLocation(`${result.lat}, ${result.lon}`);
+  onSelect(`${result.lat}, ${result.lon}`);
 }
 
-export function initLocationAutocomplete(): void {
-  const input = qs<HTMLInputElement>("#loc");
-  const list = qs<HTMLUListElement>("#loc-suggestions");
-  const form = qs<HTMLFormElement>("#locform");
+/** Wire a Nominatim-backed place-search input + suggestion list. ``onSelect`` receives either a
+ * resolved "lat, lng" string (suggestion picked) or the raw typed text (form submitted directly),
+ * leaving what to do with it (persist as home, stash for a trip-planning field, etc.) to the
+ * caller. */
+export function initPlaceAutocomplete(
+  input: HTMLInputElement,
+  list: HTMLUListElement,
+  form: HTMLFormElement,
+  onSelect: (query: string) => void,
+  options: { clearInputOnSelect?: boolean } = {},
+): void {
+  const clearInputOnSelect = options.clearInputOnSelect ?? true;
   let results: NominatimResult[] = [];
 
   input.addEventListener("input", () => {
@@ -80,7 +85,10 @@ export function initLocationAutocomplete(): void {
       const fetched = await fetchSuggestions(query);
       if (fetched === null) return; // superseded by a newer request
       results = fetched;
-      renderSuggestions(results, list);
+      renderSuggestions(results, list, (resolved) => {
+        if (clearInputOnSelect) input.value = "";
+        onSelect(resolved);
+      });
     }, DEBOUNCE_MS);
   });
 
@@ -97,7 +105,10 @@ export function initLocationAutocomplete(): void {
       items.forEach((li, i) => li.classList.toggle("active", i === activeIndex));
     } else if (e.key === "Enter" && activeIndex >= 0) {
       e.preventDefault();
-      selectResult(results[activeIndex]);
+      selectResult(results[activeIndex], list, (resolved) => {
+        if (clearInputOnSelect) input.value = "";
+        onSelect(resolved);
+      });
     } else if (e.key === "Escape") {
       list.classList.remove("open");
     }
@@ -112,8 +123,17 @@ export function initLocationAutocomplete(): void {
     const query = input.value.trim();
     if (query) {
       list.classList.remove("open");
-      input.value = "";
-      setLocation(query);
+      if (clearInputOnSelect) input.value = "";
+      onSelect(query);
     }
   });
+}
+
+export function initLocationAutocomplete(): void {
+  initPlaceAutocomplete(
+    qs<HTMLInputElement>("#loc"),
+    qs<HTMLUListElement>("#loc-suggestions"),
+    qs<HTMLFormElement>("#locform"),
+    setLocation,
+  );
 }

@@ -3,7 +3,7 @@ import L from "leaflet";
 import { getJson } from "./api/client";
 import type { Stop, TripPlan } from "./api/types";
 import { focusRegion } from "./layers";
-import { clearMarkers, map, PLAN_STOP } from "./map";
+import { clearMarkers, map, HOME_FILL, HOME_RING, PLAN_STOP } from "./map";
 import { dist, displayName, errorDetail, inatUrl, MONTHS, qs, setStatus, state } from "./state";
 import { monthsParam } from "./views";
 
@@ -16,12 +16,16 @@ export async function runPlan(): Promise<void> {
   const driveInput = (document.getElementById("plan-drive") as HTMLInputElement).valueAsNumber;
   const maxDrive = Math.max(50, Number.isNaN(driveInput) ? 400 : driveInput);
   const requireFree = (document.getElementById("plan-free-camp") as HTMLInputElement).checked;
+  const start = (document.getElementById("plan-start") as HTMLInputElement).value.trim();
+  const destination = (document.getElementById("plan-destination") as HTMLInputElement).value.trim();
 
   let trip: TripPlan;
   try {
     trip = await getJson("/api/plan", {
       query: {
         months: monthsParam(),
+        start: start || null,
+        destination: destination || null,
         max_stops: maxStops,
         max_drive_km: maxDrive,
         require_free_camp: requireFree,
@@ -35,16 +39,20 @@ export async function runPlan(): Promise<void> {
 
   const panel = qs("#panel");
   if (!trip.stops.length) {
-    panel.innerHTML =
-      "<p class='hint'>No viable route found. Try relaxing constraints (disable 'Require free camp', increase max leg km, or run Refresh).</p>";
+    const reason =
+      trip.auto_destination && trip.destination_name === null
+        ? "No destination found to auto-pick within range. Try setting a destination manually or run Refresh."
+        : "No viable route found. Try relaxing constraints (disable 'Require free camp', increase max leg km, or run Refresh).";
+    panel.innerHTML = `<p class='hint'>${reason}</p>`;
     setStatus("");
     return;
   }
 
-  // Route polyline: home → stop1 → stop2 → …
+  // Route polyline: start → stop1 → stop2 → … → destination.
   const routePoints: L.LatLngExpression[] = [
-    [trip.home_lat, trip.home_lng],
+    [trip.start_lat, trip.start_lng],
     ...trip.stops.map((stop): L.LatLngExpression => [stop.center_lat, stop.center_lng]),
+    [trip.destination_lat, trip.destination_lng],
   ];
   state.planRouteLayer = L.polyline(routePoints, {
     color: PLAN_STOP,
@@ -54,9 +62,38 @@ export async function runPlan(): Promise<void> {
     bubblingMouseEvents: false,
   }).addTo(map);
 
-  // Plot stop markers (reuse plot() then re-colour to gold). Build the popup
-  // with DOM nodes so name/common_name values from the external API are never
-  // injected as raw HTML.
+  // Start marker (matches the persistent "you are here" home-dot styling).
+  const startMarker = L.circleMarker([trip.start_lat, trip.start_lng], {
+    radius: 7,
+    color: HOME_RING,
+    weight: 3,
+    fillColor: HOME_FILL,
+    fillOpacity: 1,
+    bubblingMouseEvents: false,
+  })
+    .addTo(map)
+    .bindPopup("Start");
+  state.markers.push(startMarker);
+
+  // Destination marker - a larger hollow ring in the plan-stop gold so it reads as the "goal",
+  // distinct from the filled stop circles along the way.
+  const destLabel = trip.auto_destination
+    ? `Auto-picked destination${trip.destination_name ? ` (region ${trip.destination_name})` : ""}`
+    : "Destination";
+  const destMarker = L.circleMarker([trip.destination_lat, trip.destination_lng], {
+    radius: 10,
+    color: PLAN_STOP,
+    weight: 3,
+    fillColor: PLAN_STOP,
+    fillOpacity: 0.15,
+    bubblingMouseEvents: false,
+  })
+    .addTo(map)
+    .bindPopup(destLabel);
+  state.markers.push(destMarker);
+
+  // Plot stop markers. Build the popup with DOM nodes so name/common_name values from the
+  // external API are never injected as raw HTML.
   trip.stops.forEach((stop) => {
     const popupEl = document.createElement("div");
     const title = document.createElement("b");
@@ -88,10 +125,11 @@ export async function runPlan(): Promise<void> {
   const skippedNote = trip.skipped_unreachable
     ? ` <span class="plan-skipped">${trip.skipped_unreachable} skipped (too far)</span>`
     : "";
+  const autoNote = trip.auto_destination ? ` <span class="plan-auto">auto-picked destination</span>` : "";
   panel.innerHTML = `
     <div class="plan-header">
       <div class="plan-summary">
-        <strong class="num">${trip.n_stops} stops</strong> · <span class="num">${dist(trip.total_drive_km)} total</span> · ${monthNames}${skippedNote}
+        <strong class="num">${trip.n_stops} stops</strong> · <span class="num">${dist(trip.total_drive_km)} total</span> · ${monthNames}${skippedNote}${autoNote}
       </div>
       <div class="plan-export">
         <button id="export-gpx" class="primary">⬇ GPX</button>
@@ -185,6 +223,18 @@ function buildStopCard(stop: Stop): HTMLElement {
   }
   card.appendChild(campEl);
 
+  // Trail info.
+  const trailEl = document.createElement("div");
+  trailEl.className = stop.trail ? "stop-trail" : "stop-trail muted";
+  if (stop.trail) {
+    const trailName = document.createElement("strong");
+    trailName.textContent = stop.trail.name;
+    trailEl.append("🥾 ", trailName, ` · ${dist(stop.trail.distance_km)}`);
+  } else {
+    trailEl.textContent = "No trail in range";
+  }
+  card.appendChild(trailEl);
+
   // Click → zoom the map to this stop and load layers around it.
   card.onclick = () => {
     map.setView([stop.center_lat, stop.center_lng], 10);
@@ -194,21 +244,25 @@ function buildStopCard(stop: Stop): HTMLElement {
   return card;
 }
 
-/** Export the trip plan as a GPX file with one waypoint per stop (camp if available). */
+/** Export the trip plan as a GPX file: start, one waypoint per stop (camp if available), destination. */
 function exportGpx(trip: TripPlan): void {
   const monthNames = trip.months.map((month) => MONTHS[month - 1]).join("-");
-  const wpts = trip.stops
-    .map((stop) => {
-      const lat = stop.camp ? stop.camp.center_lat : stop.center_lat;
-      const lng = stop.camp ? stop.camp.center_lng : stop.center_lng;
-      const name = stop.camp ? `Stop ${stop.order}: ${stop.camp.name}` : `Stop ${stop.order}`;
-      const desc = `${stop.species
-        .slice(0, 3)
-        .map((hit) => displayName(hit))
-        .join(", ")} · ${dist(stop.drive_km_from_prev)} leg`;
-      return `  <wpt lat="${lat.toFixed(6)}" lon="${lng.toFixed(6)}">\n    <name>${escXml(name)}</name>\n    <desc>${escXml(desc)}</desc>\n  </wpt>`;
-    })
-    .join("\n");
+  const stopWpts = trip.stops.map((stop) => {
+    const lat = stop.camp ? stop.camp.center_lat : stop.center_lat;
+    const lng = stop.camp ? stop.camp.center_lng : stop.center_lng;
+    const name = stop.camp ? `Stop ${stop.order}: ${stop.camp.name}` : `Stop ${stop.order}`;
+    const desc = `${stop.species
+      .slice(0, 3)
+      .map((hit) => displayName(hit))
+      .join(", ")} · ${dist(stop.drive_km_from_prev)} leg`;
+    return wptXml(lat, lng, name, desc);
+  });
+  const destName = trip.auto_destination ? "Destination (auto-picked)" : "Destination";
+  const wpts = [
+    wptXml(trip.start_lat, trip.start_lng, "Start", ""),
+    ...stopWpts,
+    wptXml(trip.destination_lat, trip.destination_lng, destName, ""),
+  ].join("\n");
 
   const gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Foray Planner" xmlns="http://www.topografix.com/GPX/1/1">
@@ -219,6 +273,11 @@ function exportGpx(trip: TripPlan): void {
 ${wpts}
 </gpx>`;
   downloadFile("foray-trip.gpx", gpx, "application/gpx+xml");
+}
+
+function wptXml(lat: number, lng: number, name: string, desc: string): string {
+  const descTag = desc ? `\n    <desc>${escXml(desc)}</desc>` : "";
+  return `  <wpt lat="${lat.toFixed(6)}" lon="${lng.toFixed(6)}">\n    <name>${escXml(name)}</name>${descTag}\n  </wpt>`;
 }
 
 /** Export the trip plan as a pretty-printed JSON file. */

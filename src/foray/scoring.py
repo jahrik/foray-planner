@@ -17,7 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import math
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Any, LiteralString, cast
 
@@ -179,18 +179,22 @@ def _taxon_filter(taxon_ids: list[int], column: str = "taxon_id") -> str:
     return f"{column} IN ({_in(taxon_ids)})" if taxon_ids else "TRUE"
 
 
-def rank_destinations(
+def _rank_candidates(
     con: psycopg.Connection,
     *,
     months: list[int],
     taxon_ids: list[int],
-    home_lat: float,
-    home_lng: float,
-    radius_km: float,
     cell_deg: float,
-    recent_weeks: int = 4,
+    recent_weeks: int,
+    keep: Callable[[float, float], tuple[bool, float]],
 ) -> list[RegionScore]:
-    """Rank grid regions within radius by expected choice-fungi activity in ``months``."""
+    """Shared fetch/score core for ``rank_destinations``/``rank_destinations_corridor``.
+
+    ``keep(center_lat, center_lng)`` decides whether a region survives and supplies the
+    value that lands in ``RegionScore.distance_km`` - home-distance for the radial caller,
+    progress-along-line for the corridor caller. Everything else (the SQL fetch, genus
+    lookup, recency, and score formula) is identical between the two modes.
+    """
     # Per (region, taxon): observations in the target months vs. all months.
     rows = con.execute(
         cast(
@@ -223,11 +227,11 @@ def rank_destinations(
     genera = _genus_name_map(con, {row[3] for row in rows})
     recent = _recent_counts(con, cell_deg, taxon_ids, recent_weeks)
 
-    # Group per region, applying the distance filter and the score formula.
+    # Group per region, applying the caller's filter and the score formula.
     regions: dict[str, dict[str, Any]] = {}
     for region_id, clat, clng, taxon_id, month_cnt, total_cnt in rows:
-        dist = haversine_km(home_lat, home_lng, clat, clng)
-        if dist > radius_km:
+        keep_it, dist = keep(clat, clng)
+        if not keep_it:
             continue
         w_pheno = month_cnt / total_cnt if total_cnt else 0.0
         agg = regions.setdefault(
@@ -264,6 +268,95 @@ def rank_destinations(
         region.score_norm = round(region.score / top_score, 4) if top_score else 0.0
     results.sort(key=lambda region: region.score, reverse=True)
     return results
+
+
+def rank_destinations(
+    con: psycopg.Connection,
+    *,
+    months: list[int],
+    taxon_ids: list[int],
+    home_lat: float,
+    home_lng: float,
+    radius_km: float,
+    cell_deg: float,
+    recent_weeks: int = 4,
+) -> list[RegionScore]:
+    """Rank grid regions within radius by expected choice-fungi activity in ``months``.
+
+    ``RegionScore.distance_km`` here is straight-line distance from ``(home_lat, home_lng)``.
+    """
+
+    def keep(clat: float, clng: float) -> tuple[bool, float]:
+        dist = haversine_km(home_lat, home_lng, clat, clng)
+        return dist <= radius_km, dist
+
+    return _rank_candidates(
+        con, months=months, taxon_ids=taxon_ids, cell_deg=cell_deg, recent_weeks=recent_weeks, keep=keep
+    )
+
+
+def _project_to_plane(ref_lat: float, ref_lng: float, lat: float, lng: float) -> tuple[float, float]:
+    """Local tangent-plane projection (x=east km, y=north km) centered on ``ref_lat``/``ref_lng``.
+
+    Same flat-degree approximation ``camps_near``/``trails_near`` already use for bbox
+    prefilters (``km / 111.0``), just applied once per point instead of per-bbox-edge. Fine
+    at corridor scale (tens to low hundreds of km); ``ref_lat`` is fixed for every point in a
+    given call so the longitude scale distortion is consistent, not per-point re-biased.
+    """
+    y = (lat - ref_lat) * 111.0
+    x = (lng - ref_lng) * 111.0 * max(abs(math.cos(math.radians(ref_lat))), 0.01)
+    return x, y
+
+
+def _segment_progress_and_offset(px: float, py: float, dx: float, dy: float) -> tuple[float, float]:
+    """Project point ``(px, py)`` onto the segment from the origin to ``(dx, dy)``.
+
+    Returns ``(t_clamped, offset_km)``: ``t_clamped`` is the projection parameter clamped to
+    ``[0, 1]`` (so a point beyond either end measures its offset to that endpoint, not the
+    infinite line - the correct corridor semantics), and ``offset_km`` is the perpendicular
+    distance from the point to the clamped projection, i.e. the corridor-width test.
+    """
+    seg_len2 = dx * dx + dy * dy
+    if seg_len2 == 0:
+        return 0.0, math.hypot(px, py)
+    t = (px * dx + py * dy) / seg_len2
+    t_clamped = max(0.0, min(1.0, t))
+    proj_x, proj_y = t_clamped * dx, t_clamped * dy
+    offset_km = math.hypot(px - proj_x, py - proj_y)
+    return t_clamped, offset_km
+
+
+def rank_destinations_corridor(
+    con: psycopg.Connection,
+    *,
+    months: list[int],
+    taxon_ids: list[int],
+    start_lat: float,
+    start_lng: float,
+    dest_lat: float,
+    dest_lng: float,
+    corridor_km: float,
+    cell_deg: float,
+    recent_weeks: int = 4,
+) -> list[RegionScore]:
+    """Rank grid regions within ``corridor_km`` of the straight line ``start`` -> ``dest``.
+
+    ``RegionScore.distance_km`` here is repurposed as progress-along-line in km (0 at
+    ``start``, ``haversine_km(start, dest)`` at ``dest``) rather than home-distance, so
+    callers can order stops "along the way" with a plain sort. A degenerate segment
+    (``dest`` ~= ``start``) falls back to plain radial distance from ``start`` as progress.
+    """
+    dx, dy = _project_to_plane(start_lat, start_lng, dest_lat, dest_lng)
+    total_km = haversine_km(start_lat, start_lng, dest_lat, dest_lng)
+
+    def keep(clat: float, clng: float) -> tuple[bool, float]:
+        px, py = _project_to_plane(start_lat, start_lng, clat, clng)
+        t, offset_km = _segment_progress_and_offset(px, py, dx, dy)
+        return offset_km <= corridor_km, t * total_km
+
+    return _rank_candidates(
+        con, months=months, taxon_ids=taxon_ids, cell_deg=cell_deg, recent_weeks=recent_weeks, keep=keep
+    )
 
 
 @dataclass
@@ -387,14 +480,20 @@ class Trail:
     geometry: dict[str, Any]  # parsed GeoJSON geometry, ready for Leaflet
 
 
-def trails_near(con: psycopg.Connection, *, lat: float, lng: float, radius_km: float) -> list[Trail]:
+def trails_near(
+    con: psycopg.Connection, *, lat: float, lng: float, radius_km: float, with_camp_distance: bool = True
+) -> list[Trail]:
     """Trails whose representative point is within ``radius_km`` of a hotspot, nearest first.
 
     A cheap bbox-vs-envelope prefilter in SQL (the stored geometry needs no spatial types)
     narrows candidates; the exact cut and ordering use ``haversine_km`` on each trail's stored
     center. Each trail is annotated with the distance to the nearest cached campsite so the UI can
-    show the "park → hike → fungi" chain. No rows ingested yet yields an empty list, mirroring
-    ``camps_near`` / ``land_near``.
+    show the "park → hike → fungi" chain - unless ``with_camp_distance`` is False, which skips that
+    O(trails-in-bbox * all-campsites) scan (measured ~13s against a 1M-row/17k-camp production
+    cache). ``plan_route`` sets it False: each stop already carries its own selected camp, so a
+    second "nearest camp to this trail" figure would be redundant there, and it calls this per stop
+    (up to ``max_stops`` times) where the full-catalog scan's cost multiplies fast. No rows
+    ingested yet yields an empty list, mirroring ``camps_near`` / ``land_near``.
     """
     dlat = radius_km / 111.0
     dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
@@ -406,16 +505,20 @@ def trails_near(con: psycopg.Connection, *, lat: float, lng: float, radius_km: f
         [lat + dlat, lat - dlat, lng + dlng, lng - dlng],
     ).fetchall()
     # Nearest-campsite distance is a per-trail annotation; fetch the camp points once and reuse.
-    camps = con.execute("SELECT lat, lng FROM campsites").fetchall()
+    camps = con.execute("SELECT lat, lng FROM campsites").fetchall() if with_camp_distance else []
 
     scored: list[tuple[float, Trail]] = []
     for trail_id, name, kind, source, url, clat, clng, geojson in rows:
         dist = haversine_km(lat, lng, clat, clng)
         if dist > radius_km:
             continue
-        camp_dist = min(
-            (haversine_km(clat, clng, camp_lat, camp_lng) for camp_lat, camp_lng in camps),
-            default=None,
+        camp_dist = (
+            min(
+                (haversine_km(clat, clng, camp_lat, camp_lng) for camp_lat, camp_lng in camps),
+                default=None,
+            )
+            if with_camp_distance
+            else None
         )
         scored.append(
             (
@@ -606,16 +709,24 @@ class Stop:
     n_species: int
     recent_count: int
     species: list[SpeciesHit]
-    drive_km_from_prev: float  # great-circle leg from the previous stop (or home for stop 1)
-    cumulative_drive_km: float  # running total from home
+    progress_km: float  # distance along the start->destination chord (0 at start)
+    drive_km_from_prev: float  # great-circle leg from the previous stop (or start for stop 1)
+    cumulative_drive_km: float  # running total from start, actual point-to-point (not progress_km)
     camp: CampSite | None  # closest free camp (or closest of any kind if none is free-tagged)
     camp_is_free: bool
+    trail: Trail | None  # closest trail in range, if any
+    trail_distance_km: float | None
 
 
 @dataclass
 class TripPlan:
-    home_lat: float
-    home_lng: float
+    start_lat: float
+    start_lng: float
+    destination_lat: float
+    destination_lng: float
+    destination_name: str | None  # region_id when auto-picked; None for a caller-supplied destination
+    auto_destination: bool
+    corridor_km: float
     months: list[int]
     n_stops: int
     total_drive_km: float
@@ -628,78 +739,131 @@ def plan_route(
     *,
     months: list[int],
     taxon_ids: list[int],
-    home_lat: float,
-    home_lng: float,
-    radius_km: float,
     cell_deg: float,
+    start_lat: float,
+    start_lng: float,
+    destination_lat: float | None = None,
+    destination_lng: float | None = None,
+    corridor_km: float = 60.0,
+    auto_pick_radius_km: float = 300.0,
+    auto_pick_min_km: float = 50.0,
     recent_weeks: int = 4,
     max_stops: int = 5,
     max_drive_km: float = 400.0,
     camp_radius_km: float = 40.0,
-    require_free_camp: bool = True,
+    require_free_camp: bool = False,
     min_score_norm: float = 0.0,
 ) -> TripPlan:
-    """Sequence the top destinations into a greedy, low-backtrack itinerary of week-long stays.
+    """Plan a trip from ``start`` to ``destination`` (auto-picked if not given), stopping at the
+    best fruiting spots - each with a nearby camp and trail - along the way.
 
-    Two passes, both built on the existing primitives (no new geography):
+    Two phases:
 
-    1. **Select** - take ``rank_destinations`` (already score-desc), annotate each with its nearest
-       campsite via ``camps_near`` (free-first), drop regions below ``min_score_norm`` or - when
-       ``require_free_camp`` - without a free camp inside ``camp_radius_km``, then keep the top
-       ``max_stops`` by score. These are the "worth the drive" stops.
-    2. **Order** - nearest-neighbour from home: repeatedly hop to the closest remaining stop,
-       accumulating ``haversine_km`` legs. Once the closest remaining stop is past ``max_drive_km``
-       from the current position everything left is farther still, so the rest are reported as
-       ``skipped_unreachable`` rather than forcing an implausible leg. Great-circle distance stands
-       in for real drive time until road routing lands (Epic 4 export slice).
+    1. **Pick a destination**, if the caller didn't supply one: run ``rank_destinations``
+       radially from ``start`` within ``auto_pick_radius_km``, drop anything closer than
+       ``auto_pick_min_km`` (don't auto-pick something next door - this is meant to be a
+       trip), and take the best-scoring survivor. Nothing clearing that bar yields an empty
+       plan rather than silently falling back to the old radial-only behaviour.
+    2. **Select + order stops along the corridor**: ``rank_destinations_corridor`` (already
+       score-desc, with ``distance_km`` repurposed as progress-along-line) - annotate each
+       with its nearest campsite (``camps_near``, free-first) and nearest trail
+       (``trails_near``), drop regions below ``min_score_norm`` or - when
+       ``require_free_camp`` - without a free camp inside ``camp_radius_km``, keep the top
+       ``max_stops`` by score, then sort by progress along the line ("along the way" order,
+       not nearest-neighbour). Walking that order, the first leg past ``max_drive_km`` marks
+       the rest ``skipped_unreachable``. Great-circle distance stands in for real drive time
+       until road routing lands (a documented follow-up).
 
-    Missing tables (nothing ingested yet) surface as ``rank_destinations`` raising, mirroring the
-    other modes; an empty candidate set yields an empty plan.
+    Straight-line v1: the "corridor" is a buffer around the great-circle chord, not a real
+    road route, so a wide corridor with off-axis stops can occasionally zigzag rather than
+    monotonically recede from the current position - an accepted limitation until real
+    routing replaces the chord.
+
+    Missing tables (nothing ingested yet) surface as ``rank_destinations``/
+    ``rank_destinations_corridor`` raising, mirroring the other modes; an empty candidate set
+    yields an empty plan.
     """
-    ranked = rank_destinations(
+    auto = destination_lat is None or destination_lng is None
+    destination_name: str | None = None
+    if auto:
+        picks = rank_destinations(
+            con,
+            months=months,
+            taxon_ids=taxon_ids,
+            home_lat=start_lat,
+            home_lng=start_lng,
+            radius_km=auto_pick_radius_km,
+            cell_deg=cell_deg,
+            recent_weeks=recent_weeks,
+        )
+        picks = [
+            pick
+            for pick in picks
+            if haversine_km(start_lat, start_lng, pick.center_lat, pick.center_lng) >= auto_pick_min_km
+        ]
+        if not picks:
+            return TripPlan(
+                start_lat=start_lat,
+                start_lng=start_lng,
+                destination_lat=start_lat,
+                destination_lng=start_lng,
+                destination_name=None,
+                auto_destination=True,
+                corridor_km=corridor_km,
+                months=months,
+                n_stops=0,
+                total_drive_km=0.0,
+                stops=[],
+                skipped_unreachable=0,
+            )
+        destination_lat, destination_lng = picks[0].center_lat, picks[0].center_lng
+        destination_name = picks[0].region_id
+
+    ranked = rank_destinations_corridor(
         con,
         months=months,
         taxon_ids=taxon_ids,
-        home_lat=home_lat,
-        home_lng=home_lng,
-        radius_km=radius_km,
+        start_lat=start_lat,
+        start_lng=start_lng,
+        dest_lat=destination_lat,
+        dest_lng=destination_lng,
+        corridor_km=corridor_km,
         cell_deg=cell_deg,
         recent_weeks=recent_weeks,
     )
 
-    # Pass 1 - annotate + filter, preserving the score-desc order rank_destinations returns.
-    candidates: list[tuple[RegionScore, CampSite | None, bool]] = []
+    # Select - annotate + filter, preserving the score-desc order rank_destinations_corridor returns.
+    candidates: list[tuple[RegionScore, CampSite | None, bool, Trail | None]] = []
     for region in ranked:
         if region.score_norm < min_score_norm:
             continue
         # camps_near ranks free-first, so its nearest result is the nearest *free* camp when one
         # is in range, else the nearest of any kind - one query answers both cases.
-        nearby = camps_near(con, lat=region.center_lat, lng=region.center_lng, radius_km=camp_radius_km)
-        camp = nearby[0] if nearby else None
+        nearby_camps = camps_near(con, lat=region.center_lat, lng=region.center_lng, radius_km=camp_radius_km)
+        camp = nearby_camps[0] if nearby_camps else None
         camp_is_free = camp is not None and camp.free is True
         if require_free_camp and not camp_is_free:
             continue
-        candidates.append((region, camp, camp_is_free))
+        nearby_trails = trails_near(
+            con, lat=region.center_lat, lng=region.center_lng, radius_km=camp_radius_km, with_camp_distance=False
+        )
+        trail = nearby_trails[0] if nearby_trails else None
+        candidates.append((region, camp, camp_is_free, trail))
         if len(candidates) >= max_stops:
             break
 
-    # Pass 2 - nearest-neighbour ordering from home.
-    remaining = candidates[:]
-    cur_lat, cur_lng = home_lat, home_lng
+    # Order - by progress along the start->destination line ("along the way"), not nearest-neighbour.
+    candidates.sort(key=lambda item: item[0].distance_km)
+
+    cur_lat, cur_lng = start_lat, start_lng
     stops: list[Stop] = []
     cumulative = 0.0
     skipped = 0
-    while remaining:
-        nearest = min(
-            range(len(remaining)),
-            key=lambda idx: haversine_km(cur_lat, cur_lng, remaining[idx][0].center_lat, remaining[idx][0].center_lng),
-        )
-        region, camp, camp_is_free = remaining[nearest]
+    for i, (region, camp, camp_is_free, trail) in enumerate(candidates):
         leg = haversine_km(cur_lat, cur_lng, region.center_lat, region.center_lng)
         if leg > max_drive_km:
-            skipped = len(remaining)  # closest is unreachable ⇒ so is everything else
+            skipped = len(candidates) - i  # this stop (and the rest, still receding) are unreachable
             break
-        remaining.pop(nearest)
         cumulative += leg
         stops.append(
             Stop(
@@ -711,17 +875,25 @@ def plan_route(
                 n_species=region.n_species,
                 recent_count=region.recent_count,
                 species=region.species,
+                progress_km=region.distance_km,
                 drive_km_from_prev=round(leg, 1),
                 cumulative_drive_km=round(cumulative, 1),
                 camp=camp,
                 camp_is_free=camp_is_free,
+                trail=trail,
+                trail_distance_km=trail.distance_km if trail else None,
             )
         )
         cur_lat, cur_lng = region.center_lat, region.center_lng
 
     return TripPlan(
-        home_lat=home_lat,
-        home_lng=home_lng,
+        start_lat=start_lat,
+        start_lng=start_lng,
+        destination_lat=destination_lat,
+        destination_lng=destination_lng,
+        destination_name=destination_name,
+        auto_destination=auto,
+        corridor_km=corridor_km,
         months=months,
         n_stops=len(stops),
         total_drive_km=round(cumulative, 1),

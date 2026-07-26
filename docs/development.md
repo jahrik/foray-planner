@@ -119,7 +119,8 @@ uv run foray trails --all        # ingest trails for every coverage region (stat
 uv run foray refresh             # ingest (home radius) + camps + land + dispersed + trails + phenology
 uv run foray refresh --with camps,trails  # refresh only specific layers
 uv run foray refresh --with land,trails --all  # region-scoped land/trails across all coverage; not valid for camps/dispersed (home-radius only)
-uv run foray plan                # print a greedy multi-stop trip itinerary
+uv run foray plan                # print a start->destination trip (auto-picks destination if omitted)
+uv run foray plan --destination "Bend, OR"  # plan to a named place (or "lat,lng")
 uv run foray serve               # start the FastAPI server (--host / --port to override)
 uv run foray openapi             # dump OpenAPI schema (feeds npm run gen:api)
 ```
@@ -133,7 +134,8 @@ one request.
 
 `refresh` (no `--all`) is for manual/ad-hoc use against the home radius: it runs ingest + camps
 + land + dispersed + trails + phenology in sequence. `plan` reads the already-cached data and
-does no network I/O.
+does no network I/O, unless `--destination` is a place name rather than `lat,lng` (then it makes
+one Nominatim geocoding call to resolve it, same as the location search box).
 
 ---
 

@@ -267,6 +267,40 @@ def test_plan_route(client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert "stops" in body
+    # No destination given -> the server auto-picks one rather than falling back to radial-only.
+    assert body["start_lat"] == HOME_LAT
+    assert body["start_lng"] == HOME_LNG
+    assert body["auto_destination"] is True
+
+
+def test_plan_route_explicit_start_and_destination(client: TestClient) -> None:
+    # "lat,lng" strings resolve without a network call (foray.geocode.resolve short-circuits
+    # on a raw coordinate pair), so this covers the new params without mocking Nominatim.
+    dest_lat, dest_lng = HOME_LAT + 1.0, HOME_LNG
+    response = client.get(
+        "/api/plan",
+        params={
+            "months": "4",
+            "require_free_camp": "false",
+            "start": f"{HOME_LAT},{HOME_LNG}",
+            "destination": f"{dest_lat},{dest_lng}",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["start_lat"] == HOME_LAT
+    assert body["destination_lat"] == dest_lat
+    assert body["auto_destination"] is False
+    assert body["destination_name"] is None
+
+
+def test_plan_route_bad_destination_is_404(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_resolve(query: str) -> None:
+        raise LookupError(f"no location found for {query!r}")
+
+    monkeypatch.setattr("foray.api.geocode.resolve", fake_resolve)
+    response = client.get("/api/plan", params={"destination": "nowhereville"})
+    assert response.status_code == 404
 
 
 def test_set_location_by_latlng(client: TestClient) -> None:
