@@ -670,17 +670,15 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 location = geocode.resolve(query)
             except (LookupError, ValueError) as error:
                 raise HTTPException(404, str(error)) from None
-            except Exception as error:  # network/geocoder failure
-                raise HTTPException(502, f"geocoding failed: {error}") from None
+            except Exception:  # network/geocoder failure - don't leak internals to the client
+                logger.warning("plan: geocoding %r failed", query, exc_info=True)
+                raise HTTPException(502, "geocoding failed") from None
             return location.lat, location.lng
 
         try:
             with pool.connection() as conn:
-                if start:
-                    start_lat, start_lng = resolve_point(start)
-                else:
-                    home = resolve_home(conn, device_id)
-                    start_lat, start_lng = home.lat, home.lng
+                home = resolve_home(conn, device_id)
+                start_lat, start_lng = resolve_point(start) if start else (home.lat, home.lng)
                 dest_lat, dest_lng = resolve_point(destination) if destination else (None, None)
                 trip = scoring.plan_route(
                     conn,
@@ -692,6 +690,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     destination_lat=dest_lat,
                     destination_lng=dest_lng,
                     corridor_km=corridor_km,
+                    auto_pick_radius_km=home.radius_km,
                     recent_weeks=cfg.recent_weeks,
                     max_stops=max_stops,
                     max_drive_km=max_drive_km,

@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from foray.api import create_app
 from foray.cache import upsert_fungi_genera
 from foray.config import Config, Home, Settings
-from foray.scoring import build_phenology
+from foray.scoring import TripPlan, build_phenology
 
 CELL = 0.5
 MOREL = 111
@@ -301,6 +301,47 @@ def test_plan_route_bad_destination_is_404(client: TestClient, monkeypatch: pyte
     monkeypatch.setattr("foray.api.geocode.resolve", fake_resolve)
     response = client.get("/api/plan", params={"destination": "nowhereville"})
     assert response.status_code == 404
+
+
+def test_plan_route_geocode_network_failure_is_502_without_leaking_detail(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_resolve(query: str) -> None:
+        raise RuntimeError("connection reset by peer at 10.0.0.5:443")
+
+    monkeypatch.setattr("foray.api.geocode.resolve", fake_resolve)
+    response = client.get("/api/plan", params={"destination": "somewhere"})
+    assert response.status_code == 502
+    assert "10.0.0.5" not in response.text
+    assert "connection reset" not in response.text
+
+
+def test_plan_route_auto_pick_uses_device_home_radius(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_plan_route(con, **kwargs):  # noqa: ANN001, ANN003 - test double mirrors scoring.plan_route's signature
+        captured.update(kwargs)
+        return TripPlan(
+            start_lat=kwargs["start_lat"],
+            start_lng=kwargs["start_lng"],
+            destination_lat=kwargs["start_lat"],
+            destination_lng=kwargs["start_lng"],
+            destination_name=None,
+            auto_destination=True,
+            corridor_km=kwargs["corridor_km"],
+            months=kwargs["months"],
+            n_stops=0,
+            total_drive_km=0.0,
+            stops=[],
+            skipped_unreachable=0,
+        )
+
+    monkeypatch.setattr("foray.api.scoring.plan_route", fake_plan_route)
+    response = client.get("/api/plan", params={"months": "4"})
+    assert response.status_code == 200
+    # The device's configured home radius (200, from the `cfg` fixture's Home), not
+    # plan_route's own 300km default - auto-pick shouldn't silently ignore it.
+    assert captured["auto_pick_radius_km"] == 200
 
 
 def test_set_location_by_latlng(client: TestClient) -> None:
