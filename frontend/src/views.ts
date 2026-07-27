@@ -80,13 +80,22 @@ const speciesChip = (hit: ChipData, extraClass?: string): string =>
 // w_pheno is "share of this genus's regional sightings that fall in the selected month(s)" -
 // a seasonality/in-season indicator, not a find-probability or share-of-destination figure
 // (issue #172). Spelled out in a tooltip since the bare "%" chip label is otherwise ambiguous.
-const phenoTitle = (pct: number, monthCount: number): string =>
-  `${pct}% of this genus's research-grade sightings here fall in your selected month(s) - a seasonality ` +
-  `indicator, not a chance of finding it. Chips are ordered by the ${monthCount} in-season sighting${monthCount === 1 ? "" : "s"} shown next to the percentage, not by the percentage itself.`;
+// With no months toggled, monthsParam() falls back to all 12 (see monthsParam below) - the
+// "selected month(s)" then covers the whole year, so w_pheno is trivially 100% for every genus
+// and month_count is really its all-time total, not an in-season subset. Wording has to
+// reflect that or the tooltip claims a seasonality signal that isn't actually being computed.
+const phenoTitle = (pct: number, monthCount: number, allMonths: boolean): string =>
+  allMonths
+    ? `No month filter applied, so this is just this genus's all-time sighting count here (${monthCount}) - the % is always 100% with every month selected and isn't a seasonality signal in this mode.`
+    : `${pct}% of this genus's research-grade sightings here fall in your selected month(s) - a seasonality ` +
+      `indicator, not a chance of finding it. Chips are ordered by the ${monthCount} in-season sighting${monthCount === 1 ? "" : "s"} shown next to the percentage, not by the percentage itself.`;
 
 export async function runDestinations(): Promise<void> {
   setStatus("Ranking…");
   clearMarkers();
+  // No months toggled reads the same as all 12 toggled (monthsParam()'s fallback) - either way
+  // there's no actual month restriction, so the phenology chip's %/tooltip need different wording.
+  const allMonths = state.months.size === 0 || state.months.size === 12;
   let regions: RegionScore[];
   try {
     regions = await getJson("/api/destinations", { query: { months: monthsParam() } });
@@ -127,7 +136,7 @@ export async function runDestinations(): Promise<void> {
           .slice(0, 6)
           .map((hit) => {
             const pct = Math.round(hit.w_pheno * 100);
-            return speciesChip({ ...hit, label: `${pct}% · ${hit.month_count}`, title: phenoTitle(pct, hit.month_count) });
+            return speciesChip({ ...hit, label: `${pct}% · ${hit.month_count}`, title: phenoTitle(pct, hit.month_count, allMonths) });
           })
           .join("")}</div>
         ${
@@ -157,7 +166,7 @@ export async function runDestinations(): Promise<void> {
           .slice(0, expanded ? undefined : 6)
           .map((hit) => {
             const pct = Math.round(hit.w_pheno * 100);
-            return speciesChip({ ...hit, label: `${pct}% · ${hit.month_count}`, title: phenoTitle(pct, hit.month_count) });
+            return speciesChip({ ...hit, label: `${pct}% · ${hit.month_count}`, title: phenoTitle(pct, hit.month_count, allMonths) });
           })
           .join("");
         showMoreButton.textContent = expanded ? "Show less" : `Show all ${region.species.length}`;
