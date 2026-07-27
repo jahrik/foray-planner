@@ -80,7 +80,7 @@ const speciesChip = (hit: ChipData, extraClass?: string): string =>
 // w_pheno is "share of this genus's regional sightings that fall in the selected month(s)" -
 // a seasonality/in-season indicator, not a find-probability or share-of-destination figure
 // (issue #172). Spelled out in a tooltip since the bare "%" chip label is otherwise ambiguous.
-// With no months toggled, monthsParam() falls back to all 12 (see monthsParam below) - the
+// With no months toggled, monthsParam() falls back to all 12 (see monthsParam above) - the
 // "selected month(s)" then covers the whole year, so w_pheno is trivially 100% for every genus
 // and month_count is really its all-time total, not an in-season subset. Wording has to
 // reflect that or the tooltip claims a seasonality signal that isn't actually being computed.
