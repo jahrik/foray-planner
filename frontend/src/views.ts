@@ -131,7 +131,7 @@ export async function runDestinations(): Promise<void> {
           .join("")}</div>
         ${
           region.species.length > 6
-            ? `<button type="button" class="show-more">Show all ${region.species.length}</button>`
+            ? `<button type="button" class="show-more" aria-expanded="false">Show all ${region.species.length}</button>`
             : ""
         }
       </div>
@@ -160,6 +160,7 @@ export async function runDestinations(): Promise<void> {
           })
           .join("");
         showMoreButton.textContent = expanded ? "Show less" : `Show all ${region.species.length}`;
+        showMoreButton.setAttribute("aria-expanded", String(expanded));
       };
     }
     // "loading" (not just a boolean) guards against a second click firing a duplicate fetch
