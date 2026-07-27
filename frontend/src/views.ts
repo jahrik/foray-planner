@@ -67,14 +67,21 @@ interface ChipData {
   name: string;
   common_name?: string | null;
   label?: string;
+  title?: string;
 }
 
 // name/common_name/label ultimately come from iNaturalist (user-editable), so escape before
 // interpolating into an HTML string template.
 const speciesChip = (hit: ChipData, extraClass?: string): string =>
   `<a class="chip${extraClass ? " " + extraClass : ""}" href="${inatUrl(hit.taxon_id)}"
-      target="_blank" rel="noopener"
+      target="_blank" rel="noopener"${hit.title ? ` title="${escapeHtml(hit.title)}"` : ""}
    >${escapeHtml(displayName(hit))}${hit.label ? " · " + escapeHtml(hit.label) : ""}</a>`;
+
+// w_pheno is "share of this genus's regional sightings that fall in the selected month(s)" -
+// a seasonality/in-season indicator, not a find-probability or share-of-destination figure
+// (issue #172). Spelled out in a tooltip since the bare "%" chip label is otherwise ambiguous.
+const phenoTitle = (pct: number): string =>
+  `${pct}% of this genus's research-grade sightings here fall in your selected month(s) - a seasonality indicator, not a chance of finding it`;
 
 export async function runDestinations(): Promise<void> {
   setStatus("Ranking…");
@@ -106,9 +113,9 @@ export async function runDestinations(): Promise<void> {
     const card = document.createElement("div");
     card.className = "rank";
     card.innerHTML = `
-      <h3><span class="num">#${rank + 1} · ${dist(region.distance_km)}</span><span class="num">${region.n_species} spp</span></h3>
+      <h3><span class="num">#${rank + 1} · ${dist(region.distance_km)}</span></h3>
       <div class="bar"><span style="width:${(region.score_norm * 100).toFixed(0)}%"></span></div>
-      <div class="meta">score <span class="num">${region.score_norm.toFixed(2)}</span>${region.recent_count ? ` · <span class="num">${region.recent_count}</span> seen recently` : ""}</div>
+      <div class="meta">score <span class="num">${region.score_norm.toFixed(2)}</span> · <span class="num">${region.n_species}</span> spp · ${region.recent_count ? `<span class="num">${region.recent_count}</span> recent` : "no recent obs"}</div>
       <div class="rank-tabs">
         <button type="button" class="rank-tab active" data-tab="species">Species</button>
         <button type="button" class="rank-tab" data-tab="calendar">Calendar</button>
@@ -116,8 +123,16 @@ export async function runDestinations(): Promise<void> {
       </div>
       <div class="chips" data-tab-content="species">${region.species
         .slice(0, 6)
-        .map((hit) => speciesChip({ ...hit, label: (hit.w_pheno * 100).toFixed(0) + "%" }))
+        .map((hit) => {
+          const pct = Math.round(hit.w_pheno * 100);
+          return speciesChip({ ...hit, label: pct + "%", title: phenoTitle(pct) });
+        })
         .join("")}</div>
+      ${
+        region.species.length > 6
+          ? `<button type="button" class="show-more">Show all ${region.species.length}</button>`
+          : ""
+      }
       <div class="rank-calendar" data-tab-content="calendar" style="display:none"></div>
       <div class="rank-photos" data-tab-content="photos" style="display:none"></div>`;
     const speciesTab = card.querySelector<HTMLButtonElement>('[data-tab="species"]')!;
@@ -128,6 +143,22 @@ export async function runDestinations(): Promise<void> {
     const photosBody = card.querySelector<HTMLElement>('[data-tab-content="photos"]')!;
     stopLinkPropagation(speciesBody);
     stopLinkPropagation(photosBody);
+    const showMoreButton = card.querySelector<HTMLButtonElement>(".show-more");
+    if (showMoreButton) {
+      let expanded = false;
+      showMoreButton.onclick = (e) => {
+        e.stopPropagation();
+        expanded = !expanded;
+        speciesBody.innerHTML = region.species
+          .slice(0, expanded ? undefined : 6)
+          .map((hit) => {
+          const pct = Math.round(hit.w_pheno * 100);
+          return speciesChip({ ...hit, label: pct + "%", title: phenoTitle(pct) });
+        })
+          .join("");
+        showMoreButton.textContent = expanded ? "Show less" : `Show all ${region.species.length}`;
+      };
+    }
     // "loading" (not just a boolean) guards against a second click firing a duplicate fetch
     // while the first is still in flight; a failed fetch resets to "idle" so the tab can be
     // retried, rather than permanently disabling it like a plain "already loaded" flag would.
