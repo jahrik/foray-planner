@@ -80,8 +80,9 @@ const speciesChip = (hit: ChipData, extraClass?: string): string =>
 // w_pheno is "share of this genus's regional sightings that fall in the selected month(s)" -
 // a seasonality/in-season indicator, not a find-probability or share-of-destination figure
 // (issue #172). Spelled out in a tooltip since the bare "%" chip label is otherwise ambiguous.
-const phenoTitle = (pct: number): string =>
-  `${pct}% of this genus's research-grade sightings here fall in your selected month(s) - a seasonality indicator, not a chance of finding it`;
+const phenoTitle = (pct: number, monthCount: number): string =>
+  `${pct}% of this genus's research-grade sightings here fall in your selected month(s) - a seasonality ` +
+  `indicator, not a chance of finding it. Chips are ordered by the ${monthCount} in-season sighting${monthCount === 1 ? "" : "s"} shown next to the percentage, not by the percentage itself.`;
 
 export async function runDestinations(): Promise<void> {
   setStatus("Ranking…");
@@ -126,7 +127,7 @@ export async function runDestinations(): Promise<void> {
           .slice(0, 6)
           .map((hit) => {
             const pct = Math.round(hit.w_pheno * 100);
-            return speciesChip({ ...hit, label: pct + "%", title: phenoTitle(pct) });
+            return speciesChip({ ...hit, label: `${pct}% · ${hit.month_count}`, title: phenoTitle(pct, hit.month_count) });
           })
           .join("")}</div>
         ${
@@ -156,7 +157,7 @@ export async function runDestinations(): Promise<void> {
           .slice(0, expanded ? undefined : 6)
           .map((hit) => {
             const pct = Math.round(hit.w_pheno * 100);
-            return speciesChip({ ...hit, label: pct + "%", title: phenoTitle(pct) });
+            return speciesChip({ ...hit, label: `${pct}% · ${hit.month_count}`, title: phenoTitle(pct, hit.month_count) });
           })
           .join("");
         showMoreButton.textContent = expanded ? "Show less" : `Show all ${region.species.length}`;
