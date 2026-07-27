@@ -121,18 +121,20 @@ export async function runDestinations(): Promise<void> {
         <button type="button" class="rank-tab" data-tab="calendar">Calendar</button>
         <button type="button" class="rank-tab" data-tab="photos">Photos</button>
       </div>
-      <div class="chips" data-tab-content="species">${region.species
-        .slice(0, 6)
-        .map((hit) => {
-          const pct = Math.round(hit.w_pheno * 100);
-          return speciesChip({ ...hit, label: pct + "%", title: phenoTitle(pct) });
-        })
-        .join("")}</div>
-      ${
-        region.species.length > 6
-          ? `<button type="button" class="show-more">Show all ${region.species.length}</button>`
-          : ""
-      }
+      <div data-tab-content="species">
+        <div class="chips">${region.species
+          .slice(0, 6)
+          .map((hit) => {
+            const pct = Math.round(hit.w_pheno * 100);
+            return speciesChip({ ...hit, label: pct + "%", title: phenoTitle(pct) });
+          })
+          .join("")}</div>
+        ${
+          region.species.length > 6
+            ? `<button type="button" class="show-more">Show all ${region.species.length}</button>`
+            : ""
+        }
+      </div>
       <div class="rank-calendar" data-tab-content="calendar" style="display:none"></div>
       <div class="rank-photos" data-tab-content="photos" style="display:none"></div>`;
     const speciesTab = card.querySelector<HTMLButtonElement>('[data-tab="species"]')!;
@@ -143,18 +145,19 @@ export async function runDestinations(): Promise<void> {
     const photosBody = card.querySelector<HTMLElement>('[data-tab-content="photos"]')!;
     stopLinkPropagation(speciesBody);
     stopLinkPropagation(photosBody);
+    const chipsContainer = speciesBody.querySelector<HTMLElement>(".chips")!;
     const showMoreButton = card.querySelector<HTMLButtonElement>(".show-more");
     if (showMoreButton) {
       let expanded = false;
       showMoreButton.onclick = (e) => {
         e.stopPropagation();
         expanded = !expanded;
-        speciesBody.innerHTML = region.species
+        chipsContainer.innerHTML = region.species
           .slice(0, expanded ? undefined : 6)
           .map((hit) => {
-          const pct = Math.round(hit.w_pheno * 100);
-          return speciesChip({ ...hit, label: pct + "%", title: phenoTitle(pct) });
-        })
+            const pct = Math.round(hit.w_pheno * 100);
+            return speciesChip({ ...hit, label: pct + "%", title: phenoTitle(pct) });
+          })
           .join("");
         showMoreButton.textContent = expanded ? "Show less" : `Show all ${region.species.length}`;
       };
