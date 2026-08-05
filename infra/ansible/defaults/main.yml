@@ -75,6 +75,11 @@ foray_revalidate_cron_weekday: "0"
 foray_resync_cron_minute: "30"
 foray_resync_batch_size: "2000"
 
+# One-time foray:resync-once catch-up (see TODO.md's rollout plan) - much larger than the
+# recurring cron's batch size since this runs once, synchronously, until the whole table is
+# caught up. Overrideable per droplet size/table growth (Copilot review, PR #185).
+foray_resync_once_batch_size: "20000"
+
 # Firewall rules — restrict SSH to your IP/VPN CIDR (required, no default)
 foray_do_firewall_name: foray-planner-fw
 foray_ssh_allowed_ips: []

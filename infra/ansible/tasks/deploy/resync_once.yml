@@ -24,4 +24,4 @@
     detach: false
     cleanup: true
     env_file: /opt/foray-planner/foray.env
-    command: "foray resync --until-done --batch-size 20000"
+    command: "foray resync --until-done --batch-size {{ foray_resync_once_batch_size }}"
