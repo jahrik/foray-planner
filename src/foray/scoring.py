@@ -654,13 +654,30 @@ def alerts(
     """Regions with fresh (trailing ``weeks``) observations of target species - 'fruiting now'."""
     cutoff = (dt.date.today() - dt.timedelta(weeks=weeks)).isoformat()
     binned = _BINNED.format(cell=cell_deg)
+    # Centers computed once per region_id across every matching taxon (not per region+taxon
+    # below) - a region with several target species shouldn't get a decoy-shifted center just
+    # because one of those species' rows here happen to be entirely obscured while another's
+    # aren't (Copilot review, PR #184).
+    region_centers = {
+        region_id: (clat, clng)
+        for region_id, clat, clng in con.execute(
+            cast(
+                LiteralString,
+                f"""
+                SELECT region_id, {_CENTER_LAT} AS center_lat, {_CENTER_LNG} AS center_lng
+                FROM ({binned})
+                WHERE observed_on >= %s AND {_taxon_filter(taxon_ids)}
+                GROUP BY region_id
+                """,
+            ),
+            [cutoff, *taxon_ids],
+        ).fetchall()
+    }
     rows = con.execute(
         cast(
             LiteralString,
             f"""
             SELECT region_id,
-                   {_CENTER_LAT} AS center_lat,
-                   {_CENTER_LNG} AS center_lng,
                    taxon_id, count(*) AS cnt,
                    max(observed_on) AS last_seen,
                    (array_agg(place_guess ORDER BY observed_on DESC))[1] AS place_guess,
@@ -673,10 +690,11 @@ def alerts(
         ),
         [cutoff, *taxon_ids],
     ).fetchall()
-    genera = _genus_name_map(con, {row[3] for row in rows})
+    genera = _genus_name_map(con, {row[1] for row in rows})
 
     by_region: dict[str, dict[str, Any]] = {}
-    for region_id, clat, clng, taxon_id, cnt, last_seen, place_guess, uri, obscured in rows:
+    for region_id, taxon_id, cnt, last_seen, place_guess, uri, obscured in rows:
+        clat, clng = region_centers[region_id]
         dist = haversine_km(home_lat, home_lng, clat, clng)
         if dist > radius_km:
             continue

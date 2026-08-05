@@ -341,6 +341,46 @@ def test_alerts_center_excludes_obscured_decoy(con: psycopg.Connection) -> None:
     assert active[0]["center_lng"] == pytest.approx(precise_lng, abs=1e-6)
 
 
+def test_alerts_center_excludes_obscured_decoy_across_taxa(con: psycopg.Connection) -> None:
+    # Region has two target taxa: one is entirely obscured (decoy-only) this window, the other
+    # has a precise point. The region's center must reflect the precise taxon regardless of
+    # which taxon's row happens to be processed first (Copilot review, PR #184) - the center is
+    # computed once per region_id across every matching taxon, not per (region_id, taxon_id).
+    precise_taxon, obscured_taxon = 558, 559
+    precise_lat, precise_lng = 40.0, -100.0
+    decoy_lat, decoy_lng = 40.3, -99.6
+    today = dt.date.today()
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            [(precise_taxon, "Preciseomyces", None), (obscured_taxon, "Obscuromyces", None)],
+        )
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (903, precise_taxon, precise_lat, precise_lng, today, today.month, today.year, "research", 10),
+        )
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy, obscured) VALUES"
+            " (%s, %s, %s, %s, %s, %s, %s, %s, %s, true)",
+            (904, obscured_taxon, decoy_lat, decoy_lng, today, today.month, today.year, "research", 27000),
+        )
+
+    active = alerts(
+        con,
+        taxon_ids=[precise_taxon, obscured_taxon],
+        home_lat=precise_lat,
+        home_lng=precise_lng,
+        radius_km=500,
+        cell_deg=CELL,
+        weeks=4,
+    )
+    assert len(active) == 1
+    assert active[0]["center_lat"] == pytest.approx(precise_lat, abs=1e-6)
+    assert active[0]["center_lng"] == pytest.approx(precise_lng, abs=1e-6)
+
+
 def test_haversine_known_distance() -> None:
     # Seattle -> Portland is ~233 km.
     distance = haversine_km(47.6062, -122.3321, 45.5152, -122.6784)
