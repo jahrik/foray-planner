@@ -64,6 +64,17 @@ foray_genera_cron_hour: "2"
 foray_genera_cron_minute: "0"
 foray_genera_cron_weekday: "0"
 
+# Cron: genus-drift revalidate (weekly Sunday at 05:00 UTC, matches local dev's
+# FORAY_REVALIDATE_INTERVAL_HOURS default of 168h)
+foray_revalidate_cron_hour: "5"
+foray_revalidate_cron_minute: "0"
+foray_revalidate_cron_weekday: "0"
+
+# Cron: observation resync (hourly, matches local dev's FORAY_RESYNC_INTERVAL_HOURS default of
+# 1h). A single small batch per run - the one-time full catch-up is foray:resync-once, not this.
+foray_resync_cron_minute: "30"
+foray_resync_batch_size: "2000"
+
 # Firewall rules — restrict SSH to your IP/VPN CIDR (required, no default)
 foray_do_firewall_name: foray-planner-fw
 foray_ssh_allowed_ips: []

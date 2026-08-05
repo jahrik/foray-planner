@@ -1,7 +1,8 @@
 .PHONY: db psql install lint test check frontend check-api-schema lock patch start restart stop scheduler clean \
 	ingest genera-refresh revalidate resync backfill-obscured bulk-download bulk-filter bulk-load \
 	ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once \
-	ansible-genera-once ansible-bulk-load-once
+	ansible-genera-once ansible-bulk-load-once ansible-cron ansible-resync-once \
+	ansible-backfill-obscured-once
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
@@ -167,6 +168,14 @@ ansible-deploy:
 		-i inventory/hosts.yml \
 		-e foray_droplet_ip=$$FORAY_DROPLET_IP
 
+# Applies/updates the recurring cron jobs (ingest, layers, genera, revalidate, resync) - not
+# part of ansible-deploy itself, matches how the existing cron jobs were originally set up.
+ansible-cron:
+	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
+	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:cron \
+		-i inventory/hosts.yml \
+		-e foray_droplet_ip=$$FORAY_DROPLET_IP
+
 # Manual/opt-in only - the foray-genera cron job already keeps the catalog fresh on a
 # schedule. Use this to warm fungi_genera immediately on a fresh droplet (depends on the env
 # file that deploy renders), instead of waiting for the next cron run. Run this *before*
@@ -194,5 +203,21 @@ ansible-ingest-once:
 ansible-bulk-load-once:
 	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
 	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:bulk-load-once \
+		-i inventory/hosts.yml \
+		-e foray_droplet_ip=$$FORAY_DROPLET_IP
+
+# One-time, fast, immediate partial fix for the obscured-coordinate bug (see TODO.md) - safe to
+# rerun. Run before ansible-resync-once (that one's the slow, complete fix).
+ansible-backfill-obscured-once:
+	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
+	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:backfill-obscured-once \
+		-i inventory/hosts.yml \
+		-e foray_droplet_ip=$$FORAY_DROPLET_IP
+
+# One-time, slow (~3h against prod's current table size) full resync catch-up (see TODO.md) -
+# the real live-recheck fix, not just the heuristic. Run it and don't block on it.
+ansible-resync-once:
+	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
+	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:resync-once \
 		-i inventory/hosts.yml \
 		-e foray_droplet_ip=$$FORAY_DROPLET_IP

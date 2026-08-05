@@ -23,6 +23,18 @@
     dest: /opt/foray-planner/scripts/cron-genera.sh
     mode: "0755"
 
+- name: Deploy genus-drift revalidate cron script
+  ansible.builtin.template:
+    src: cron-revalidate.sh.j2
+    dest: /opt/foray-planner/scripts/cron-revalidate.sh
+    mode: "0755"
+
+- name: Deploy observation resync cron script
+  ansible.builtin.template:
+    src: cron-resync.sh.j2
+    dest: /opt/foray-planner/scripts/cron-resync.sh
+    mode: "0755"
+
 - name: Schedule daily observation ingest
   ansible.builtin.cron:
     name: foray-ingest
@@ -45,3 +57,17 @@
     minute: "{{ foray_genera_cron_minute }}"
     weekday: "{{ foray_genera_cron_weekday }}"
     job: /opt/foray-planner/scripts/cron-genera.sh >> /var/log/foray-genera.log 2>&1
+
+- name: Schedule weekly genus-drift revalidate
+  ansible.builtin.cron:
+    name: foray-revalidate
+    hour: "{{ foray_revalidate_cron_hour }}"
+    minute: "{{ foray_revalidate_cron_minute }}"
+    weekday: "{{ foray_revalidate_cron_weekday }}"
+    job: /opt/foray-planner/scripts/cron-revalidate.sh >> /var/log/foray-revalidate.log 2>&1
+
+- name: Schedule hourly observation resync
+  ansible.builtin.cron:
+    name: foray-resync
+    minute: "{{ foray_resync_cron_minute }}"
+    job: /opt/foray-planner/scripts/cron-resync.sh >> /var/log/foray-resync.log 2>&1
