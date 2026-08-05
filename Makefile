@@ -1,4 +1,4 @@
-.PHONY: db psql install lint test check frontend check-api-schema start restart stop scheduler clean \
+.PHONY: db psql install lint test check frontend check-api-schema lock patch start restart stop scheduler clean \
 	ingest genera-refresh revalidate resync backfill-obscured bulk-download bulk-filter bulk-load \
 	ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once \
 	ansible-genera-once ansible-bulk-load-once
@@ -50,6 +50,21 @@ frontend:
 check-api-schema:
 	cd frontend && npm run gen:api
 	git diff --exit-code frontend/src/api/schema.ts
+
+# Regenerates all three lockfiles (root uv.lock, frontend package-lock.json, ansible uv.lock)
+# against their current pyproject.toml/package.json constraints.
+lock:
+	uv lock
+	cd frontend && npm install
+	cd $(ANSIBLE_DIR) && uv lock
+
+# Upgrades all three lockfiles to the newest versions allowed by their current
+# pyproject.toml/package.json constraints, rather than just re-resolving against what's
+# already locked (see `lock`).
+patch:
+	uv lock --upgrade
+	cd frontend && npm update
+	cd $(ANSIBLE_DIR) && uv lock --upgrade
 
 start:
 	docker compose up -d --build
