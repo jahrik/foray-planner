@@ -141,3 +141,27 @@ argument_specs:
         type: str
         description: Day of week (0=Sunday) for weekly Fungi genus catalog refresh
         default: "0"
+      foray_revalidate_cron_hour:
+        type: str
+        description: Hour (UTC) for weekly genus-drift revalidate cron
+        default: "5"
+      foray_revalidate_cron_minute:
+        type: str
+        description: Minute for weekly genus-drift revalidate cron
+        default: "0"
+      foray_revalidate_cron_weekday:
+        type: str
+        description: Day of week (0=Sunday) for weekly genus-drift revalidate cron
+        default: "0"
+      foray_resync_cron_minute:
+        type: str
+        description: Minute (every hour) for hourly observation resync cron
+        default: "30"
+      foray_resync_batch_size:
+        type: str
+        description: Row batch size for the recurring (non-catch-up) observation resync cron
+        default: "2000"
+      foray_resync_once_batch_size:
+        type: str
+        description: Row batch size for the one-time foray:resync-once catch-up run
+        default: "20000"

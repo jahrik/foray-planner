@@ -25,3 +25,8 @@
         foray_genera_cron_hour: "2"
         foray_genera_cron_minute: "0"
         foray_genera_cron_weekday: "0"
+        foray_revalidate_cron_hour: "5"
+        foray_revalidate_cron_minute: "0"
+        foray_revalidate_cron_weekday: "0"
+        foray_resync_cron_minute: "30"
+        foray_resync_batch_size: "2000"

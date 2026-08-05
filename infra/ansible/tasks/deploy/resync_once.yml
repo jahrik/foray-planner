@@ -1,0 +1,27 @@
+---
+# Manual/opt-in only - not part of foray:deploy. The hourly foray-resync cron job
+# (tasks/deploy/cron.yml) already keeps the cache accurate on a schedule at a small batch size,
+# but a droplet's first full pass at that pace takes weeks (see TODO.md's obscured-coordinate/
+# genus-drift investigation) - this runs a one-time `--until-done` grind instead, so prod
+# catches up promptly rather than trickling in over the recurring cron's normal pace.
+- name: Check for the deploy-rendered env file
+  ansible.builtin.stat:
+    path: /opt/foray-planner/foray.env
+  register: foray_resync_once_env_stat
+
+- name: Fail fast if this droplet has never been deployed to
+  ansible.builtin.fail:
+    msg: >-
+      /opt/foray-planner/foray.env not found - run `make ansible-deploy` at least once on
+      this droplet first (foray:resync-once depends on the env file it renders).
+  when: not foray_resync_once_env_stat.stat.exists
+
+- name: Run one-off observation resync catch-up
+  community.docker.docker_container:
+    name: foray-resync-once
+    image: "{{ foray_app_image }}"
+    state: started
+    detach: false
+    cleanup: true
+    env_file: /opt/foray-planner/foray.env
+    command: "foray resync --until-done --batch-size {{ foray_resync_once_batch_size }}"
