@@ -244,6 +244,143 @@ def test_alerts_only_recent(con: psycopg.Connection) -> None:
     assert active == []
 
 
+def test_regions_center_excludes_obscured_decoy(con: psycopg.Connection) -> None:
+    # A geoprivacy-obscured observation's cached point is iNat's randomized decoy coordinate,
+    # not the true find location - it shouldn't pull a region's displayed center off target.
+    # Own grid cell (40.0, -100.0), well away from the APR/OCT fixture regions.
+    taxon_id = 555
+    precise_lat, precise_lng = 40.0, -100.0
+    decoy_lat, decoy_lng = 40.3, -99.6  # same 0.5deg cell, far enough to shift a naive average
+    rows = [
+        (900 + i, taxon_id, precise_lat, precise_lng, dt.date(2022, 6, 1), 6, 2022, "research", 10) for i in range(3)
+    ]
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            rows,
+        )
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy, obscured) VALUES"
+            " (%s, %s, %s, %s, %s, %s, %s, %s, %s, true)",
+            (999, taxon_id, decoy_lat, decoy_lng, dt.date(2022, 6, 1), 6, 2022, "research", 27000),
+        )
+
+    build_phenology(con, CELL)
+
+    row = con.execute(
+        "SELECT center_lat, center_lng FROM regions WHERE region_id ="
+        " CAST(floor(%s / %s) AS INTEGER)::text || '_' || CAST(floor(%s / %s) AS INTEGER)::text",
+        [precise_lat, CELL, precise_lng, CELL],
+    ).fetchone()
+    assert row is not None
+    center_lat, center_lng = row
+    assert center_lat == pytest.approx(precise_lat, abs=1e-6)
+    assert center_lng == pytest.approx(precise_lng, abs=1e-6)
+
+
+def test_regions_center_falls_back_when_all_obscured(con: psycopg.Connection) -> None:
+    # If every observation in a region is obscured, the average still has to be usable (not
+    # NULL) - the exclusion only kicks in when a precise point exists to prefer instead.
+    taxon_id = 556
+    lat, lng = 50.0, -110.0
+    with con.cursor() as cur:
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy, obscured) VALUES"
+            " (%s, %s, %s, %s, %s, %s, %s, %s, %s, true)",
+            (997, taxon_id, lat, lng, dt.date(2022, 6, 1), 6, 2022, "research", 27000),
+        )
+
+    build_phenology(con, CELL)
+
+    row = con.execute(
+        "SELECT center_lat, center_lng FROM regions WHERE region_id ="
+        " CAST(floor(%s / %s) AS INTEGER)::text || '_' || CAST(floor(%s / %s) AS INTEGER)::text",
+        [lat, CELL, lng, CELL],
+    ).fetchone()
+    assert row is not None
+    assert row[0] == pytest.approx(lat, abs=1e-6)
+    assert row[1] == pytest.approx(lng, abs=1e-6)
+
+
+def test_alerts_center_excludes_obscured_decoy(con: psycopg.Connection) -> None:
+    taxon_id = 557
+    precise_lat, precise_lng = 40.0, -100.0
+    decoy_lat, decoy_lng = 40.3, -99.6
+    today = dt.date.today()
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            [(taxon_id, "Testomyces", "Test fungus")],
+        )
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (901, taxon_id, precise_lat, precise_lng, today, today.month, today.year, "research", 10),
+        )
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy, obscured) VALUES"
+            " (%s, %s, %s, %s, %s, %s, %s, %s, %s, true)",
+            (902, taxon_id, decoy_lat, decoy_lng, today, today.month, today.year, "research", 27000),
+        )
+
+    active = alerts(
+        con,
+        taxon_ids=[taxon_id],
+        home_lat=precise_lat,
+        home_lng=precise_lng,
+        radius_km=500,
+        cell_deg=CELL,
+        weeks=4,
+    )
+    assert len(active) == 1
+    assert active[0]["center_lat"] == pytest.approx(precise_lat, abs=1e-6)
+    assert active[0]["center_lng"] == pytest.approx(precise_lng, abs=1e-6)
+
+
+def test_alerts_center_excludes_obscured_decoy_across_taxa(con: psycopg.Connection) -> None:
+    # Region has two target taxa: one is entirely obscured (decoy-only) this window, the other
+    # has a precise point. The region's center must reflect the precise taxon regardless of
+    # which taxon's row happens to be processed first (Copilot review, PR #184) - the center is
+    # computed once per region_id across every matching taxon, not per (region_id, taxon_id).
+    precise_taxon, obscured_taxon = 558, 559
+    precise_lat, precise_lng = 40.0, -100.0
+    decoy_lat, decoy_lng = 40.3, -99.6
+    today = dt.date.today()
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            [(precise_taxon, "Preciseomyces", None), (obscured_taxon, "Obscuromyces", None)],
+        )
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (903, precise_taxon, precise_lat, precise_lng, today, today.month, today.year, "research", 10),
+        )
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy, obscured) VALUES"
+            " (%s, %s, %s, %s, %s, %s, %s, %s, %s, true)",
+            (904, obscured_taxon, decoy_lat, decoy_lng, today, today.month, today.year, "research", 27000),
+        )
+
+    active = alerts(
+        con,
+        taxon_ids=[precise_taxon, obscured_taxon],
+        home_lat=precise_lat,
+        home_lng=precise_lng,
+        radius_km=500,
+        cell_deg=CELL,
+        weeks=4,
+    )
+    assert len(active) == 1
+    assert active[0]["center_lat"] == pytest.approx(precise_lat, abs=1e-6)
+    assert active[0]["center_lng"] == pytest.approx(precise_lng, abs=1e-6)
+
+
 def test_haversine_known_distance() -> None:
     # Seattle -> Portland is ~233 km.
     distance = haversine_km(47.6062, -122.3321, 45.5152, -122.6784)
