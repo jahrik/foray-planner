@@ -613,6 +613,11 @@ def save_location(
     )
 
 
+def delete_location(con: psycopg.Connection, device_id: str) -> None:
+    """Issue #81: let a visitor delete their saved "Set location" override outright."""
+    con.execute("DELETE FROM app_location WHERE device_id = %s", [device_id])
+
+
 def load_genera(con: psycopg.Connection, device_id: str) -> list[int]:
     """This device's selected genus taxon_ids. Empty means "everything nearby", not "none"."""
     rows = con.execute("SELECT taxon_id FROM app_genera WHERE device_id = %s", [device_id]).fetchall()
