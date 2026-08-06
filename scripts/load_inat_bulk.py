@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -49,6 +51,19 @@ INPUT_PATH = Path(__file__).parent.parent / "data" / "inat_us_observations.jsonl
 PLACE_ID_US = 1  # matches defaults.COUNTRIES's "United States" entry
 SINCE_YEAR_FLOOR = "2000-01-01"  # older than iNat itself - marks these genera as fully backfilled
 CHUNK_SIZE = 5000
+LOCAL_PGHOSTS = {None, "", "localhost", "127.0.0.1", "postgres"}
+
+
+def _confirm_non_local_host() -> None:
+    """Issue #113: a second accidental run of this script re-upserts the full multi-hour
+    dump against whatever PGHOST is currently exported - require typing the hostname back
+    before writing anywhere that isn't local."""
+    host = os.environ.get("PGHOST")
+    if host in LOCAL_PGHOSTS:
+        return
+    typed = input(f"Type the hostname to confirm you want to write to {host!r}: ")
+    if typed != host:
+        sys.exit(f"Confirmation failed - aborting before writing to {host!r}.")
 
 
 def _parse_date(event_date: str | None) -> dt.date | None:
@@ -64,6 +79,7 @@ def main() -> None:
     if not INPUT_PATH.exists():
         raise SystemExit(f"Missing {INPUT_PATH} - run `make bulk-filter` first.")
 
+    _confirm_non_local_host()
     con = connect()
 
     chunk: list[tuple[Any, ...]] = []
