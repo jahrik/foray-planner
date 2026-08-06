@@ -11,10 +11,11 @@ Reads data/inat_us_observations.jsonl (produced by inat_dwca_filter.py) and:
      iNaturalist's quality_grade=research export (see the zip's eml.xml), so every row here
      is research-grade at the source - needed for issue #108's scoring filter to count them.
      `obscured` isn't a field the DwC-A dump carries at all (unlike the live API), so it's set
-     via the same coordinate_uncertainty_m fingerprint heuristic as
-     scripts/backfill_obscured.py (see foray.inat.OBSCURED_ACCURACY_LOW/HIGH) rather than left
-     NULL - a past run of this script is exactly how ~1.9M rows ended up with a NULL `obscured`
-     in the first place, so a future run of this script should not reintroduce the same gap.
+     via the coordinate_uncertainty_m fingerprint heuristic (see
+     foray.inat.OBSCURED_ACCURACY_LOW/HIGH) rather than left NULL - a past run of this script is
+     exactly how ~1.9M rows ended up with a NULL `obscured` in the first place (fixed via the
+     now-deleted one-time scripts/backfill_obscured.py), so a future run of this script should
+     not reintroduce the same gap.
   2. Writes a single ingest_log row for the whole load, in the same "obs:fungi:place:
      {place_id}:{start}:{end}" shape ingest_region() itself produces (issue #79 Phase 4:
      one whole-Fungi-kingdom key per place, not one per genus), so the nightly cron (capped

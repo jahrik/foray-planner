@@ -170,17 +170,6 @@
         - "foray:bulk-load-once"
         - never
 
-    - name: Include one-off obscured-coordinate heuristic backfill task
-      ansible.builtin.include_tasks:
-        file: tasks/deploy/backfill_obscured_once.yml
-        apply:
-          tags:
-            - "foray:backfill-obscured-once"
-            - never
-      tags:
-        - "foray:backfill-obscured-once"
-        - never
-
     - name: Include one-off observation resync catch-up task
       ansible.builtin.include_tasks:
         file: tasks/deploy/resync_once.yml

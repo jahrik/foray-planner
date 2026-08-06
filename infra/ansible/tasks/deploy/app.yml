@@ -12,7 +12,7 @@
   # community.docker.docker_image (source: pull, force_source: true) leaves the local
   # `:latest` tag pointing at whatever was pulled last time - it downloads the new layers
   # but doesn't move the tag, so ad hoc tasks referencing foray_app_image directly (e.g.
-  # backfill_obscured_once.yml, resync_once.yml) silently run a stale image. The dedicated
+  # resync_once.yml) silently run a stale image. The dedicated
   # docker_image_pull module (community.docker docs recommend it over docker_image) talks to
   # the daemon's pull endpoint directly and does move the tag, matching plain `docker pull`.
   community.docker.docker_image_pull:
