@@ -13,6 +13,7 @@ import secrets
 import threading
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -112,6 +113,31 @@ class LocationBody(BaseModel):
     radius_km: float | None = Field(default=None, gt=0, le=500)
 
 
+@dataclass
+class AppState:
+    """Shared server-side state, closed over by every route handler and the background
+    refresh thread (see issue #91). One instance lives for the app's lifetime.
+
+    This used to be a plain ``dict[str, Any]`` - a typo'd string key or a wrong-type write
+    (e.g. an ``int`` landing in ``http_client``) only surfaced at runtime, on whatever code
+    path happened to read it back. A dataclass gives ``ty`` the same static checking the
+    rest of the file already gets (dataclasses, ``Home``/``Config`` models, typed route
+    return values).
+    """
+
+    cfg: Config
+    refreshing: bool = False
+    last_error: str | None = None
+    listeners: list[queue.Queue[dict[str, Any]]] = field(default_factory=list)
+    listeners_lock: threading.Lock = field(default_factory=threading.Lock)
+    last_progress: dict[str, Any] | None = None
+    abort_event: threading.Event = field(default_factory=threading.Event)
+    http_client: httpx.Client | None = None
+    refresh_rate_limit: dict[str, float] = field(default_factory=dict)
+    refresh_rate_limit_lock: threading.Lock = field(default_factory=threading.Lock)
+    refresh_lock: threading.Lock = field(default_factory=threading.Lock)
+
+
 def create_app(cfg: Config | None = None) -> FastAPI:
     """Wire up the API: a Postgres connection pool + config state, opened/closed via lifespan."""
     cfg = cfg or Settings()
@@ -120,19 +146,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     # DSN-building code needed. `open=False` defers the actual connections until the
     # lifespan's `pool.open()`, matching psycopg_pool's recommended startup pattern.
     pool = ConnectionPool(conninfo="", min_size=1, max_size=5, open=False, kwargs={"autocommit": True})
-    state: dict[str, Any] = {
-        "cfg": cfg,
-        "refreshing": False,
-        "last_error": None,
-        "listeners": [],
-        "listeners_lock": threading.Lock(),
-        "last_progress": None,
-        "abort_event": threading.Event(),
-        "http_client": None,
-        "refresh_rate_limit": {},
-        "refresh_rate_limit_lock": threading.Lock(),
-        "refresh_lock": threading.Lock(),
-    }
+    state = AppState(cfg=cfg)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -146,7 +160,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     "the dispersed-camping proxy will be skipped."
                 )
             conn.execute(SCHEMA)
-        # `state["cfg"].home` is now only ever the env/default home - see resolve_device_id
+        # `state.cfg.home` is now only ever the env/default home - see resolve_device_id
         # and resolve_home below for per-visitor overrides. Multi-user, no accounts: each browser
         # gets its own anonymous device-id cookie and its own saved home/radius in `app_location`.
         try:
@@ -200,9 +214,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         app.mount("/assets", StaticFiles(directory=str(_DIST / "assets")), name="assets")
 
     def broadcast(msg: dict[str, Any]) -> None:
-        state["last_progress"] = msg
-        with state["listeners_lock"]:
-            listener_queues = list(state["listeners"])
+        state.last_progress = msg
+        with state.listeners_lock:
+            listener_queues = list(state.listeners)
         for listener_queue in listener_queues:
             try:
                 listener_queue.put_nowait(msg)
@@ -220,7 +234,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         return cb
 
     def current() -> Config:
-        return state["cfg"]
+        return state.cfg
 
     _DEVICE_ID_COOKIE = "device_id"
     _DEVICE_ID_MAX_AGE = 60 * 60 * 24 * 365  # ~1 year
@@ -272,15 +286,15 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         return db_load_genera(conn, device_id)
 
     def require_idle() -> None:
-        if state["refreshing"]:
+        if state.refreshing:
             raise HTTPException(409, "refreshing data for this area - try again shortly")
 
     _REFRESH_RATE_LIMIT_SECONDS = 300.0
 
     def check_refresh_rate_limit(ip: str) -> None:
         now = time.monotonic()
-        limiter: dict[str, float] = state["refresh_rate_limit"]
-        with state["refresh_rate_limit_lock"]:
+        limiter = state.refresh_rate_limit
+        with state.refresh_rate_limit_lock:
             last = limiter.get(ip)
             if last is not None and now - last < _REFRESH_RATE_LIMIT_SECONDS:
                 retry_after = int(_REFRESH_RATE_LIMIT_SECONDS - (now - last)) + 1
@@ -326,10 +340,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         # unchanged (they all just read `cfg.home` internally).
         refresh_cfg = current().model_copy(update={"home": home})
         try:
-            state["abort_event"].clear()
+            state.abort_event.clear()
             # 300s covers Overpass trail queries that can take up to 180s; set a
             # generous ceiling so the shared client doesn't cut off slow phases.
-            state["http_client"] = httpx.Client(timeout=300.0)
+            state.http_client = httpx.Client(timeout=300.0)
 
             broadcast({"step": "Starting refresh…", "progress": 0.0})
             logger.info("refresh: starting for %s (target=%s)", refresh_cfg.home.name, target)
@@ -338,68 +352,68 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             # concurrent readers (other requests borrowing their own connections) natively
             # via MVCC, unlike the DuckDB-era single-writer-file model this replaced.
             with pool.connection() as db:
-                if target in ("all", "mushrooms") and not state["abort_event"].is_set():
+                if target in ("all", "mushrooms") and not state.abort_event.is_set():
                     ingest(
                         refresh_cfg,
                         db,
                         progress_cb=make_cb(0.0, 90.0 if target == "mushrooms" else 50.0),
-                        abort_event=state["abort_event"],
+                        abort_event=state.abort_event,
                     )
-                if target in ("all", "camps") and not state["abort_event"].is_set():
+                if target in ("all", "camps") and not state.abort_event.is_set():
                     camps.ingest_campgrounds(
                         refresh_cfg,
                         db,
-                        client=state["http_client"],
+                        client=state.http_client,
                         progress_cb=make_cb(50.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
                     )
-                if target in ("all", "land") and not state["abort_event"].is_set():
+                if target in ("all", "land") and not state.abort_event.is_set():
                     land.ingest_public_land(
                         refresh_cfg,
                         db,
-                        client=state["http_client"],
+                        client=state.http_client,
                         progress_cb=make_cb(60.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
                     )
-                if target in ("all", "dispersed") and not state["abort_event"].is_set():
+                if target in ("all", "dispersed") and not state.abort_event.is_set():
                     dispersed.ingest_dispersed(
                         refresh_cfg,
                         db,
-                        client=state["http_client"],
+                        client=state.http_client,
                         progress_cb=make_cb(70.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
                     )
-                if target in ("all", "trails") and not state["abort_event"].is_set():
+                if target in ("all", "trails") and not state.abort_event.is_set():
                     trails.ingest_trails(
                         refresh_cfg,
                         db,
-                        client=state["http_client"],
+                        client=state.http_client,
                         progress_cb=make_cb(80.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
                     )
 
-                if target in ("all", "mushrooms") and not state["abort_event"].is_set():
+                if target in ("all", "mushrooms") and not state.abort_event.is_set():
                     broadcast({"step": "Building phenology…", "progress": 90.0})
                     logger.info("refresh: building phenology…")
                     scoring.build_phenology(db, refresh_cfg.cell_deg)
 
-            if state["abort_event"].is_set():
+            if state.abort_event.is_set():
                 logger.info("refresh: cancelled by user")
-                state["last_error"] = "Cancelled"
+                state.last_error = "Cancelled"
                 broadcast({"error": "Cancelled", "done": True})
             else:
-                state["last_error"] = None
+                state.last_error = None
                 broadcast({"step": "Done", "progress": 100.0, "done": True})
                 logger.info("refresh: complete")
         except (httpx.LocalProtocolError, httpx.ReadError, httpx.PoolTimeout):
             logger.info("refresh: network client closed explicitly (cancelled)")
-            state["last_error"] = "Cancelled"
+            state.last_error = "Cancelled"
             broadcast({"error": "Cancelled", "done": True})
         except Exception as error:  # surface to the UI rather than dying silently
             logger.exception("refresh: failed")
-            state["last_error"] = str(error)
+            state.last_error = str(error)
             broadcast({"error": str(error), "done": True})
         finally:
-            if state["http_client"] is not None:
-                state["http_client"].close()
-                state["http_client"] = None
-            state["refreshing"] = False
+            if state.http_client is not None:
+                state.http_client.close()
+                state.http_client = None
+            state.refreshing = False
 
     @app.get("/api/config")
     def get_config(request: Request, response: Response) -> ConfigResponse:
@@ -413,8 +427,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             home=home,
             cell_deg=cfg.cell_deg,
             recent_weeks=cfg.recent_weeks,
-            refreshing=state["refreshing"],
-            last_error=state["last_error"],
+            refreshing=state.refreshing,
+            last_error=state.last_error,
         )
 
     @app.get("/api/genera")
@@ -785,10 +799,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(400, f"unknown target '{target}'; valid: {sorted(_VALID_REFRESH_TARGETS)}")
         # Check-and-set must be one atomic step, else two concurrent requests can both see
         # `refreshing=False` and both start a refresh thread.
-        with state["refresh_lock"]:
-            if state["refreshing"]:
+        with state.refresh_lock:
+            if state.refreshing:
                 return StatusResponse(status="already running")
-            state["refreshing"] = True
+            state.refreshing = True
         try:
             check_refresh_rate_limit(_client_ip(request))
             device_id, is_new = resolve_device_id(request)
@@ -797,19 +811,19 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             with pool.connection() as conn:
                 home = resolve_home(conn, device_id)
         except Exception:
-            state["refreshing"] = False
+            state.refreshing = False
             raise
-        state["last_error"] = None
-        state["last_progress"] = None
+        state.last_error = None
+        state.last_progress = None
         threading.Thread(target=run_refresh, args=(home, target), daemon=True).start()
         return StatusResponse(status="started")
 
     @app.delete("/api/refresh")
     def cancel_refresh() -> StatusResponse:
-        if state["refreshing"]:
-            state["abort_event"].set()
-            if state["http_client"] is not None:
-                state["http_client"].close()
+        if state.refreshing:
+            state.abort_event.set()
+            if state.http_client is not None:
+                state.http_client.close()
             return StatusResponse(status="cancelling")
         return StatusResponse(status="idle")
 
@@ -825,10 +839,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     )
     async def refresh_stream() -> StreamingResponse:
         listener_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=100)
-        if state["last_progress"]:
-            listener_queue.put_nowait(state["last_progress"])
-        with state["listeners_lock"]:
-            state["listeners"].append(listener_queue)
+        if state.last_progress:
+            listener_queue.put_nowait(state.last_progress)
+        with state.listeners_lock:
+            state.listeners.append(listener_queue)
 
         async def event_generator():
             try:
@@ -841,9 +855,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     if msg.get("done") or msg.get("error"):
                         break
             finally:
-                with state["listeners_lock"]:
-                    if listener_queue in state["listeners"]:
-                        state["listeners"].remove(listener_queue)
+                with state.listeners_lock:
+                    if listener_queue in state.listeners:
+                        state.listeners.remove(listener_queue)
 
         return StreamingResponse(
             event_generator(),
