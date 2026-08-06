@@ -200,8 +200,19 @@ make frontend
 - Location is per-area: changing it (UI `POST /api/location`) immediately runs scoring against
   cached data. The saved override (`app_location` table in Postgres) wins over the env var
   defaults and survives restarts.
-- The Postgres database is fully rebuildable via `foray refresh`; connection info comes from
-  `PG*` env vars (see `src/foray/cache.py`).
+- The Postgres database is fully rebuildable via `foray refresh` - with one exception:
+  `app_location` (per-device "Set location" override, `src/foray/cache.py`) is genuinely
+  user-authored state that no ingest path regenerates. In prod, it lives on the DigitalOcean
+  managed Postgres cluster provisioned by `infra/ansible/tasks/provision/database.yml`
+  (`digitalocean.cloud.database_cluster`), so it's covered by whatever automatic
+  snapshot/backup policy that managed offering applies by default - this repo doesn't
+  configure, verify, or restore-test that policy, so treat it as unconfirmed rather than a
+  guarantee. There is no `pg_dump` cron or other app-level backup for it. Local/self-hosted
+  `docker-compose` deployments have it even less covered: its only persistence is the
+  `foray-postgres-data` named volume (`docker-compose.yml`), with no backup at all. Either
+  way, if the underlying storage is lost, every visitor's saved location silently reverts to
+  the env-var default home with no warning - see issue #114.
+- Connection info comes from `PG*` env vars (see `src/foray/cache.py`).
 - `campsites` (developed campgrounds) is keyed by `"{source}:{source_id}"` and upserted
   idempotently. Needs `RIDB_API_KEY` (gitignored `.env` locally; env var in prod) - absent,
   camps ingest is a no-op. `free` is nullable: TRUE only on an explicit no-fee signal, else
@@ -211,6 +222,13 @@ make frontend
 - Target genera aren't configured in code - `foray genera-refresh` keeps the full catalog
   synced, `foray ingest` pulls every Fungi observation and resolves each one's own genus from
   its taxon ancestry, and users pick their targets in the search UI (per-device, `app_genera`).
+- Droplet CPU/memory/disk alerting (issue #84 - a past ENOSPC incident went unnoticed until the
+  app broke) is provisioned as code: `infra/ansible/tasks/provision/monitoring.yml` creates DO
+  monitoring alert policies via `digitalocean.cloud.monitoring_alert_policy`, opt-in behind the
+  `foray_alert_email` var (`FORAY_ALERT_EMAIL` env; unset skips creation). A Cloudflare health
+  check is a further, complementary layer this repo doesn't automate - set one up manually in
+  the Cloudflare dashboard (Traffic -> Health Checks) against `https://forayplanner.com/` if
+  wanted; nothing here depends on it.
 
 ## Not in scope
 

@@ -29,6 +29,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import sys
 import zipfile
 from pathlib import Path
@@ -43,6 +44,20 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 ZIP_PATH = DATA_DIR / "gbif-observations-dwca.zip"
 OUTPUT_PATH = DATA_DIR / "inat_us_observations.jsonl"
 ENTRY_NAME = "observations.csv"
+LOCAL_PGHOSTS = {None, "", "localhost", "127.0.0.1", "postgres"}
+
+
+def _confirm_non_local_host() -> None:
+    """Issue #113: this script queries the fungi_genera catalog before a multi-hour scan -
+    require typing the hostname back before it queries anywhere that isn't local, so a
+    stray PGHOST export doesn't point a one-off scratch run at prod unnoticed."""
+    host = os.environ.get("PGHOST")
+    if host in LOCAL_PGHOSTS:
+        return
+    typed = input(f"Type the hostname to confirm you want to query {host!r}: ")
+    if typed != host:
+        sys.exit(f"Confirmation failed - aborting before querying {host!r}.")
+
 
 # Column indices from meta.xml's field order for the Occurrence core (0-indexed, matches
 # observations.csv's header exactly - verified by reading both directly out of the zip).
@@ -73,6 +88,7 @@ def main() -> None:
     if not ZIP_PATH.exists():
         sys.exit(f"Missing {ZIP_PATH} - run `make bulk-download` first.")
 
+    _confirm_non_local_host()
     taxon_id_by_genus = _load_genus_taxon_ids()
     print(f"Loaded {len(taxon_id_by_genus):,} genera from the catalog.", flush=True)
 

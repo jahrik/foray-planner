@@ -43,6 +43,7 @@ from foray.api_models import (
 )
 from foray.cache import _ENABLE_POSTGIS, SCHEMA, search_fungi_genera
 from foray.cache import add_genus as db_add_genus
+from foray.cache import delete_location as db_delete_location
 from foray.cache import list_selected_genera as db_list_selected_genera
 from foray.cache import load_genera as db_load_genera
 from foray.cache import load_location as db_load_location
@@ -155,6 +156,33 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     app = FastAPI(title="Foray Planner API", lifespan=lifespan)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+    # Issue #82: only route accepting a body is POST /api/location (LocationBody - a few KB
+    # realistic max). Cloudflare's free-plan edge cap is 100MB with no app-level backstop
+    # otherwise, so this rejects oversized bodies before they're read/parsed. Registered
+    # before security_headers so it ends up the inner layer - a 413 here still gets the
+    # security headers applied on the way back out.
+    _MAX_BODY_BYTES = 32 * 1024
+
+    @app.middleware("http")
+    async def limit_body_size(request: Request, call_next: Any) -> Response:
+        if request.method in ("POST", "PUT", "PATCH"):
+            content_length = request.headers.get("content-length")
+            if content_length is not None:
+                if not content_length.isdigit() or int(content_length) > _MAX_BODY_BYTES:
+                    return Response(status_code=413, content="request body too large")
+            else:
+                # No Content-Length (e.g. chunked transfer-encoding) - enforce the same
+                # ceiling by counting bytes off the stream instead of trusting the header.
+                # bytearray avoids the repeated copy that `bytes += chunk` does on every
+                # chunk (Copilot review caught this).
+                body = bytearray()
+                async for chunk in request.stream():
+                    body += chunk
+                    if len(body) > _MAX_BODY_BYTES:
+                        return Response(status_code=413, content="request body too large")
+                request._body = bytes(body)
+        return await call_next(request)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Any) -> Response:
@@ -736,6 +764,18 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             )
 
         return LocationResponse(home=home)
+
+    @app.delete("/api/location")
+    def delete_location(request: Request, response: Response) -> StatusResponse:
+        """Issue #81: let a visitor delete their saved home/radius override. Scoped to the
+        caller's own device_id cookie - never touches another visitor's row."""
+        device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(request, response, device_id)
+        else:
+            with pool.connection() as conn:
+                db_delete_location(conn, device_id)
+        return StatusResponse(status="deleted")
 
     _VALID_REFRESH_TARGETS = frozenset({"all", "mushrooms", "camps", "land", "dispersed", "trails"})
 

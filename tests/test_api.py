@@ -443,6 +443,41 @@ def test_location_is_scoped_per_device(client: TestClient) -> None:
     assert get_unknown.json()["home"]["name"] == "Home"
 
 
+def test_delete_location_reverts_to_default_home(client: TestClient) -> None:
+    """Issue #81: a visitor can delete their saved override outright."""
+    client.cookies.set("device_id", "test-device-cccccccccccccccccc")
+    set_response = client.post("/api/location", json={"lat": 10.0, "lng": 20.0, "radius_km": 50})
+    assert set_response.status_code == 200
+
+    delete_response = client.delete("/api/location")
+    assert delete_response.status_code == 200
+    assert delete_response.json()["status"] == "deleted"
+
+    get_response = client.get("/api/config")
+    assert get_response.json()["home"]["name"] == "Home"
+
+
+def test_delete_location_is_scoped_per_device(client: TestClient) -> None:
+    """Deleting device A's saved location must not touch device B's."""
+    client.cookies.set("device_id", "test-device-dddddddddddddddddd")
+    client.post("/api/location", json={"lat": 10.0, "lng": 20.0, "radius_km": 50})
+
+    client.cookies.set("device_id", "test-device-eeeeeeeeeeeeeeeeeeee")
+    client.post("/api/location", json={"lat": 30.0, "lng": 40.0, "radius_km": 75})
+    client.delete("/api/location")
+
+    client.cookies.set("device_id", "test-device-dddddddddddddddddd")
+    get_response = client.get("/api/config")
+    assert get_response.json()["home"]["lat"] == 10.0
+
+
+def test_post_location_rejects_oversized_body(client: TestClient) -> None:
+    """Issue #82: app-level backstop below Cloudflare's 100MB edge cap."""
+    oversized_query = "x" * (64 * 1024)
+    response = client.post("/api/location", json={"query": oversized_query})
+    assert response.status_code == 413
+
+
 def test_destinations_uses_per_device_home(client: TestClient) -> None:
     """A device with no saved override still ranks by the default home (existing behavior)."""
     client.cookies.set("device_id", "device-destinations")
