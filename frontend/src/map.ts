@@ -21,6 +21,7 @@ export const LAND_COLORS: Record<string, string> = {
 export const LAND_DEFAULT = "#b5b5b5"; // any other agency
 export const TRAIL = "#ff5555"; // bright red - the walking network (paths/routes) + trailhead dots
 export const PLAN_STOP = "#ffd060"; // neon gold - planned-route stops and connecting line
+export const PRECISE = "#c792ea"; // bright lavender - known-precise (non-obscured) observation pin
 
 // A single standard OSM tile source for both themes - dark mode inverts it via CSS
 // (`invert() hue-rotate()` in style.css) instead of swapping in a separate dark tileset.
@@ -59,6 +60,7 @@ export function renderLegend(): void {
   const camps = (document.getElementById("show-camps") as HTMLInputElement | null)?.checked;
   const dispersed = (document.getElementById("show-dispersed") as HTMLInputElement | null)?.checked;
   const trails = (document.getElementById("show-trails") as HTMLInputElement | null)?.checked;
+  const precise = (document.getElementById("show-precise") as HTMLInputElement | null)?.checked;
   const entries: [string, string][] = [
     [HEAT, "Destination (historical)"],
     [LIVE, "Recently observed"],
@@ -68,6 +70,7 @@ export function renderLegend(): void {
   }
   if (dispersed) entries.push([CAMP_OSM, "Reported campsite (OSM)"]);
   if (trails) entries.push([TRAIL, "Trail / trailhead"]);
+  if (precise) entries.push([PRECISE, "Precise observation (verified location)"]);
   el.innerHTML = entries
     .map(([color, label]) => `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`)
     .join("");
@@ -176,7 +179,13 @@ export function clearMarkers(): void {
   clearLand();
   clearTrails();
   clearPlanRoute();
+  clearPrecise();
   state.focused = null;
+}
+
+export function clearPrecise(): void {
+  state.preciseMarkers.forEach((marker) => map.removeLayer(marker));
+  state.preciseMarkers = [];
 }
 
 export function clearCamps(): void {

@@ -105,6 +105,17 @@ class RecentObservation(BaseModel):
     photos: list[ObservationPhoto]
 
 
+class PreciseObservation(BaseModel):
+    id: int
+    taxon_id: int
+    name: str
+    common_name: str | None
+    lat: float
+    lng: float
+    observed_on: str | None
+    uri: str | None
+
+
 class AlertHit(BaseModel):
     taxon_id: int
     name: str

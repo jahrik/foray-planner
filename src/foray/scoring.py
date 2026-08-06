@@ -728,6 +728,71 @@ def alerts(
     return results
 
 
+def precise_observations(
+    con: psycopg.Connection,
+    *,
+    taxon_ids: list[int],
+    home_lat: float,
+    home_lng: float,
+    radius_km: float,
+    months: list[int],
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """Individually-plottable observations within ``radius_km`` whose cached coordinate is
+    known-precise (``obscured = false``, i.e. live-verified against iNat, not a randomized
+    geoprivacy decoy - see ``ingest.resync``). Everything ``NULL``/``true`` stays out of this
+    path entirely and is only ever shown via the coarse region circle (issue #161) - this
+    query never widens what a caller already sees, since ``obscured = false`` is exactly the
+    subset iNat itself already publishes as an exact point.
+
+    Same bbox-prefilter-then-haversine-cut technique as ``camps_near``/``trails_near``. A
+    densely-observed area can easily clear ``limit`` before the radius cut even applies (a
+    real dev-DB check against Seattle found ~7,800 candidates in-radius for one month) - the
+    frontend has no marker-clustering yet (issue #161's "why not now"), so dumping every match
+    unclustered would bury the map. ``ORDER BY observed_on DESC`` caps this to the freshest
+    sightings first, which also matches the "is this still active" value of an individual pin
+    better than an arbitrary cutoff would.
+    """
+    dlat = radius_km / 111.0
+    dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(home_lat))), 0.01))
+    rows = con.execute(
+        cast(
+            LiteralString,
+            f"""
+            SELECT o.id, o.taxon_id, o.lat, o.lng, o.observed_on, o.uri
+            FROM observations o
+            WHERE o.quality_grade = 'research' AND o.obscured = FALSE
+              AND o.lat BETWEEN %s AND %s AND o.lng BETWEEN %s AND %s
+              AND {_taxon_filter(taxon_ids)} AND o.month IN ({_in(months)})
+            ORDER BY o.observed_on DESC
+            LIMIT %s
+            """,
+        ),
+        [home_lat - dlat, home_lat + dlat, home_lng - dlng, home_lng + dlng, *taxon_ids, *months, limit],
+    ).fetchall()
+    genera = _genus_name_map(con, {row[1] for row in rows})
+
+    results = []
+    for obs_id, taxon_id, lat, lng, observed_on, uri in rows:
+        dist = haversine_km(home_lat, home_lng, lat, lng)
+        if dist > radius_km:
+            continue
+        name, common_name = genera.get(taxon_id, (str(taxon_id), None))
+        results.append(
+            {
+                "id": obs_id,
+                "taxon_id": taxon_id,
+                "name": name,
+                "common_name": common_name,
+                "lat": lat,
+                "lng": lng,
+                "observed_on": observed_on.isoformat() if observed_on else None,
+                "uri": uri,
+            }
+        )
+    return results
+
+
 @dataclass
 class Stop:
     """One week-long stay in a planned trip: a destination + how you get there + where you sleep."""

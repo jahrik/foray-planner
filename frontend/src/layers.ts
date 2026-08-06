@@ -1,28 +1,31 @@
 import L from "leaflet";
 
 import { getJson } from "./api/client";
-import type { CampSite, LandUnit, Trail } from "./api/types";
+import type { CampSite, LandUnit, PreciseObservation, Trail } from "./api/types";
 import {
   CAMP_FREE,
   CAMP_OSM,
   CAMP_PAID,
   clearCamps,
   clearLand,
+  clearPrecise,
   clearTrails,
   HOME_RING,
   LAND_COLORS,
   LAND_DEFAULT,
   map,
+  PRECISE,
   renderLegend,
   TRAIL,
 } from "./map";
-import { dist, errorDetail, qs, setStatus, state } from "./state";
+import { dist, displayName, errorDetail, qs, setStatus, state } from "./state";
 
 export const campsOn = (): boolean => qs<HTMLInputElement>("#show-camps").checked;
 export const dispersedOn = (): boolean => qs<HTMLInputElement>("#show-dispersed").checked;
 export const freeOnly = (): boolean => qs<HTMLInputElement>("#free-camps").checked;
 export const landOn = (): boolean => qs<HTMLInputElement>("#show-land").checked;
 export const trailsOn = (): boolean => qs<HTMLInputElement>("#show-trails").checked;
+export const preciseOn = (): boolean => qs<HTMLInputElement>("#show-precise").checked;
 
 // OSM dispersed layer: real tagged sites ("reported") + the road∩public-land proxy ("dispersed").
 const isDispersed = (site: CampSite): boolean =>
@@ -221,6 +224,60 @@ function trailPopup(trail: Trail): HTMLElement {
     document.createElement("br"),
     link,
   );
+  return root;
+}
+
+// Fetch + plot individually-precise observations (issue #161): unlike the coarse cell_deg
+// circles plot() draws for every region, `obscured = false` rows have a cached coordinate
+// that's been live-verified against iNat as the real find location, not a randomized
+// geoprivacy decoy - worth showing as its own small pin. Scoped to the whole search radius
+// (like loadLand), filtered by the destinations tab's month selection since these are
+// individual observations, not a region aggregate. No-op (just clears) when the toggle is off.
+export async function loadPreciseObservations(months: string): Promise<void> {
+  clearPrecise();
+  renderLegend();
+  if (!preciseOn() || !state.home) return;
+  let observations: PreciseObservation[];
+  try {
+    observations = await getJson("/api/observations/precise", { query: { months } });
+  } catch (error) {
+    setStatus(errorDetail(error));
+    return;
+  }
+  observations.forEach((obs) => {
+    const marker = L.circleMarker([obs.lat, obs.lng], {
+      radius: 4,
+      color: HOME_RING,
+      weight: 1,
+      fillColor: PRECISE,
+      fillOpacity: 0.9,
+      bubblingMouseEvents: false,
+    })
+      .addTo(map)
+      .bindPopup(precisePopup(obs));
+    state.preciseMarkers.push(marker);
+  });
+}
+
+// Popup built from DOM nodes: name/observed_on come from an external API, so `textContent`
+// escapes them; `obs.uri` is server-constructed (a fixed iNaturalist observation URL).
+function precisePopup(obs: PreciseObservation): HTMLElement {
+  const root = document.createElement("div");
+  const title = document.createElement("b");
+  title.textContent = displayName(obs);
+  root.append(title);
+  if (obs.observed_on) {
+    root.append(document.createElement("br"), document.createTextNode(obs.observed_on));
+  }
+  if (obs.uri) {
+    root.append(document.createElement("br"));
+    const link = document.createElement("a");
+    link.href = obs.uri;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = "iNaturalist ↗";
+    root.append(link);
+  }
   return root;
 }
 

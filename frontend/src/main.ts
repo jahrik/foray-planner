@@ -4,13 +4,13 @@ import "./style.css";
 import { getJson, postJson } from "./api/client";
 import type { Home } from "./api/types";
 import { initGenusSelection } from "./genera";
-import { loadCamps, loadLand, loadTrails } from "./layers";
+import { loadCamps, loadLand, loadPreciseObservations, loadTrails } from "./layers";
 import { initLocationAutocomplete, initPlaceAutocomplete } from "./location";
 import { currentTheme, initMap, map, setMapClickHandler, setTiles, updateHome } from "./map";
 import { runPlan } from "./plan";
 import { cancelRefresh, setLocationLatLng, startRefresh } from "./refresh";
 import { errorDetail, qs, setStatus, state, type Units, type View } from "./state";
-import { initMonths, runAlerts, runDestinations } from "./views";
+import { initMonths, monthsParam, runAlerts, runDestinations } from "./views";
 
 // Wires a plan-tab Start/Destination field: unlike the header's home search (which persists the
 // choice via /api/location), a selected suggestion here just fills the input with resolved
@@ -236,6 +236,10 @@ async function main(): Promise<void> {
   qs("#free-camps").onchange = () => loadCamps();
   wireLayerToggle("#show-land", "land", "Fetching public land…", loadLand);
   wireLayerToggle("#show-trails", "trails", "Fetching trails…", loadTrails);
+  // No separate ingest step needed - precise observations are already in the observations
+  // table from the existing ingest, so this skips wireLayerToggle's refresh-trigger machinery
+  // (that exists specifically for layers with their own ingest job, like camps/land/trails).
+  qs("#show-precise").onchange = () => loadPreciseObservations(monthsParam());
   initLocationAutocomplete();
   initGenusSelection(refreshCurrentView);
 

@@ -2,7 +2,7 @@ import L from "leaflet";
 
 import { getJson } from "./api/client";
 import type { AlertRegion, Calendar, RecentObservation, RegionScore } from "./api/types";
-import { focusRegion } from "./layers";
+import { focusRegion, loadPreciseObservations } from "./layers";
 import { clearMarkers, deselectSize, HEAT_RGB, map, plot, selectSize } from "./map";
 import { dist, displayName, errorDetail, escapeHtml, inatUrl, MONTHS, qs, setStatus, state } from "./state";
 
@@ -246,6 +246,7 @@ export async function runDestinations(): Promise<void> {
   rankList.querySelector(".rank")?.classList.add("active");
   selectSize(markers[0]);
   selected = { marker: markers[0], weight: top.score_norm };
+  loadPreciseObservations(monthsParam());
 }
 
 // Fetches once per card (cached by the calendarState flag at the call site) and renders straight
