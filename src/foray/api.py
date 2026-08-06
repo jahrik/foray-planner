@@ -41,7 +41,7 @@ from foray.api_models import (
     Trail,
     TripPlan,
 )
-from foray.cache import _ENABLE_POSTGIS, SCHEMA, search_fungi_genera
+from foray.cache import SCHEMA, search_fungi_genera
 from foray.cache import add_genus as db_add_genus
 from foray.cache import delete_location as db_delete_location
 from foray.cache import list_selected_genera as db_list_selected_genera
@@ -138,13 +138,6 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         pool.open()
         with pool.connection() as conn:
-            try:
-                conn.execute(_ENABLE_POSTGIS)
-            except psycopg.Error:
-                logger.warning(
-                    "api: could not enable postgis (missing extension or insufficient privilege); "
-                    "the dispersed-camping proxy will be skipped."
-                )
             conn.execute(SCHEMA)
         # `state["cfg"].home` is now only ever the env/default home - see resolve_device_id
         # and resolve_home below for per-visitor overrides. Multi-user, no accounts: each browser

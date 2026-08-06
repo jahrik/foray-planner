@@ -39,9 +39,9 @@ Guiding principles - keep these in mind for any feature work:
   backs off on transient network errors so one blip doesn't abort a long ingest.
 - `src/foray/geocode.py` - resolve a place name (OpenStreetMap Nominatim) or raw `lat,lng`
   to coordinates. Network-mocked in tests.
-- `src/foray/cache.py` - Postgres+PostGIS schema (extension + tables created eagerly on every
-  `connect()`) + idempotent upserts (`ON CONFLICT`), ingest log. `connect()` takes no DSN by
-  default - reads the standard `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` env vars.
+- `src/foray/cache.py` - Postgres schema (tables created eagerly on every `connect()`) +
+  idempotent upserts (`ON CONFLICT`), ingest log. `connect()` takes no DSN by default - reads
+  the standard `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` env vars.
 - `src/foray/ingest.py` - pulls per seed taxon within the home radius or by coverage region
   (`place_id`). Tags each obs with the **seed** taxon_id (not leaf species) so phenology is
   per foraging target. Region ingest uses chunked inserts (5000 rows) for bounded memory.
@@ -63,12 +63,12 @@ Guiding principles - keep these in mind for any feature work:
   dedupes facilities, clips to the true radius with `haversine_km`. Skipped (no-op) when the
   key is unset, so the iNat refresh still works. `free` is only asserted on an explicit
   no-fee signal - never guessed.
-- `src/foray/dispersed.py` - dispersed-camping layer from OSM **Overpass** (httpx, no key). Two
-  ODbL signals, both cached as `campsites`: reported sites (`kind='reported'` - `tourism=camp_site`
-  /`camp_pitch`, `backcountry=yes`) and a proxy (`kind='dispersed'` - `highway=track`/`unclassified`
-  within cached `public_land`, via **PostGIS**'s point-in-polygon, ingest-side only so the read path
-  stays spatial-free). `free=TRUE` on proxy points (public-land camping is free of
-  charge); the *legality* caveat rides on `kind`+UI label, never asserted.
+- `src/foray/dispersed.py` - dispersed-camping layer from OSM **Overpass** (httpx, no key).
+  One ODbL signal, cached as `campsites` (`kind='reported'` - `tourism=camp_site`/`camp_pitch`,
+  `backcountry=yes`). `free=TRUE` only on an explicit no-fee tag, never guessed; the *legality*
+  caveat rides on `kind`+UI label, never asserted. (A `public_land`-proxy signal - unmapped roads
+  within public land, inferred as likely dispersed sites - was scoped but never implemented; see
+  issue #110.)
 - `src/foray/trails.py` - trail layer from OSM **Overpass** (httpx, no key). One ODbL query pulls
   backcountry paths (`highway=path` -> `kind='path'`, LineString; `footway` is **excluded** - it's
   mostly urban sidewalks), named hiking routes (`route=hiking` relations -> `kind='route'`,
@@ -128,7 +128,7 @@ prepends the nvm Node path automatically.
 
 ```bash
 make install            # uv sync + frontend npm ci
-make db                 # start Postgres+PostGIS
+make db                 # start Postgres
 make ingest             # one-shot all-regions ingest + phenology rebuild
 make start              # http://localhost:8000 (app + postgres)
 make scheduler          # optional: start the background ingest/refresh loop
@@ -138,7 +138,7 @@ make scheduler          # optional: start the background ingest/refresh loop
 
 | Target | What it does |
 |---|---|
-| `make db` | Start Postgres+PostGIS (docker compose), wait for ready |
+| `make db` | Start Postgres (docker compose), wait for ready |
 | `make install` | `uv sync` + `cd frontend && npm ci` |
 | `make lint` | `ruff format` + `ruff check` + `ty check` |
 | `make test` | Start Postgres if needed, then `pytest` |

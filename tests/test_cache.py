@@ -11,18 +11,26 @@ from foray.cache import (
     add_genus,
     delete_observations,
     genus_taxon_ids,
+    is_ingested,
+    latest_obs_date,
     list_selected_genera,
     load_genera,
     mark_revalidated,
     observation_ids_for_genus,
     observation_taxon_ids,
+    record_ingest,
     remove_genus,
     search_fungi_genera,
     stale_observation_ids,
     suspect_genus_taxon_ids,
+    upsert_campsites,
     upsert_fungi_genera,
     upsert_observations,
 )
+from foray.scoring import haversine_km
+
+# Seattle, used as the "home" point for latest_obs_date's haversine region-matching tests.
+_HOME_LAT, _HOME_LNG = 47.6, -122.3
 
 _ROW = (
     1,  # id
@@ -302,3 +310,79 @@ def test_list_selected_genera_joins_catalog_names(con: psycopg.Connection) -> No
         {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles"},
         {"taxon_id": 999999, "name": "Obscurella", "common_name": None},
     ]
+
+
+def test_is_ingested_false_for_unknown_key(con: psycopg.Connection) -> None:
+    assert is_ingested(con, "obs:111:47.6:-122.3:150:2015-01-01:2026-07-11") is False
+
+
+def test_is_ingested_true_after_record_ingest(con: psycopg.Connection) -> None:
+    key = "obs:111:47.6:-122.3:150:2015-01-01:2026-07-11"
+
+    record_ingest(con, key, 42, lat=_HOME_LAT, lng=_HOME_LNG, radius_km=150)
+
+    assert is_ingested(con, key) is True
+
+
+def test_latest_obs_date_none_when_nothing_ingested(con: psycopg.Connection) -> None:
+    assert latest_obs_date(con, 111, _HOME_LAT, _HOME_LNG, radius_km=150) is None
+
+
+def test_latest_obs_date_matches_query_disk_fully_inside_ingested_disk(con: psycopg.Connection) -> None:
+    # Previously ingested a 200km disk around home; a query for a smaller 150km disk at the
+    # same center is fully covered by it (dist=0, 0 + 150 <= 200), so the cached end-date applies.
+    record_ingest(con, "obs:111:47.6:-122.3:200:2015-01-01:2026-06-01", 10, lat=_HOME_LAT, lng=_HOME_LNG, radius_km=200)
+
+    assert latest_obs_date(con, 111, _HOME_LAT, _HOME_LNG, radius_km=150) == "2026-06-01"
+
+
+def test_latest_obs_date_none_when_query_disk_not_covered(con: psycopg.Connection) -> None:
+    # Same ingested disk as above, but the query radius alone already exceeds what was
+    # ingested (0 + 250 > 200) - not covered, so there's no usable cached end-date.
+    record_ingest(con, "obs:111:47.6:-122.3:200:2015-01-01:2026-06-01", 10, lat=_HOME_LAT, lng=_HOME_LNG, radius_km=200)
+
+    assert latest_obs_date(con, 111, _HOME_LAT, _HOME_LNG, radius_km=250) is None
+
+
+def test_latest_obs_date_accounts_for_distance_between_centers(con: psycopg.Connection) -> None:
+    # A different center (Portland, OR) some real distance from the ingested disk's center -
+    # covered only if dist + query_radius <= ingested_radius.
+    portland_lat, portland_lng = 45.5, -122.7
+    dist = haversine_km(_HOME_LAT, _HOME_LNG, portland_lat, portland_lng)
+    record_ingest(
+        con,
+        "obs:111:47.6:-122.3:400:2015-01-01:2026-06-01",
+        10,
+        lat=_HOME_LAT,
+        lng=_HOME_LNG,
+        radius_km=dist + 50,  # covers a 50km disk around Portland, no more
+    )
+
+    assert latest_obs_date(con, 111, portland_lat, portland_lng, radius_km=40) == "2026-06-01"
+    assert latest_obs_date(con, 111, portland_lat, portland_lng, radius_km=60) is None
+
+
+def test_latest_obs_date_picks_the_max_end_date_among_covering_disks(con: psycopg.Connection) -> None:
+    record_ingest(con, "obs:111:47.6:-122.3:200:2015-01-01:2026-01-01", 10, lat=_HOME_LAT, lng=_HOME_LNG, radius_km=200)
+    record_ingest(con, "obs:111:47.6:-122.3:200:2015-01-01:2026-06-01", 10, lat=_HOME_LAT, lng=_HOME_LNG, radius_km=200)
+
+    assert latest_obs_date(con, 111, _HOME_LAT, _HOME_LNG, radius_km=150) == "2026-06-01"
+
+
+def test_latest_obs_date_ignores_other_tokens(con: psycopg.Connection) -> None:
+    # Ingest log for a different taxon token shouldn't leak into this token's lookup.
+    record_ingest(con, "obs:222:47.6:-122.3:200:2015-01-01:2026-06-01", 10, lat=_HOME_LAT, lng=_HOME_LNG, radius_km=200)
+
+    assert latest_obs_date(con, 111, _HOME_LAT, _HOME_LNG, radius_km=150) is None
+
+
+_CAMPSITE_ROW = ("osm:way/1", "Old Name", "reported", None, None, 47.6, -122.3, "osm", "https://example.com/1")
+
+
+def test_upsert_campsites_same_key_twice_updates_not_duplicates(con: psycopg.Connection) -> None:
+    upsert_campsites(con, [_CAMPSITE_ROW])
+    updated = (*_CAMPSITE_ROW[:1], "New Name", *_CAMPSITE_ROW[2:])
+    upsert_campsites(con, [updated])
+
+    rows = con.execute("SELECT id, name FROM campsites WHERE id = %s", [_CAMPSITE_ROW[0]]).fetchall()
+    assert rows == [("osm:way/1", "New Name")]
