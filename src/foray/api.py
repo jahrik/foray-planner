@@ -174,12 +174,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             else:
                 # No Content-Length (e.g. chunked transfer-encoding) - enforce the same
                 # ceiling by counting bytes off the stream instead of trusting the header.
-                body = b""
+                # bytearray avoids the repeated copy that `bytes += chunk` does on every
+                # chunk (Copilot review caught this).
+                body = bytearray()
                 async for chunk in request.stream():
                     body += chunk
                     if len(body) > _MAX_BODY_BYTES:
                         return Response(status_code=413, content="request body too large")
-                request._body = body
+                request._body = bytes(body)
         return await call_next(request)
 
     @app.middleware("http")
