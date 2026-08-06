@@ -8,11 +8,22 @@ import pytest
 import requests.exceptions
 from pyrate_limiter.exceptions import BucketFullException
 
-from foray.inat import _RATE_LIMIT_ATTEMPTS, FUNGI_TAXON_ID, InatQuotaExceeded, _with_retries, iter_fungi_genera
+from foray.inat import (
+    _RATE_LIMIT_ATTEMPTS,
+    FUNGI_TAXON_ID,
+    InatQuotaExceeded,
+    _with_retries,
+    iter_fungi_genera,
+    iter_observations,
+)
 
 
 def _page(ids: list[int]) -> dict:
     return {"results": [{"id": taxon_id, "name": f"Genus{taxon_id}", "rank": "genus"} for taxon_id in ids]}
+
+
+def _obs_page(ids: list[int]) -> dict:
+    return {"results": [{"id": obs_id, "observed_on": "2024-05-15"} for obs_id in ids]}
 
 
 def test_iter_fungi_genera_walks_id_above_pages() -> None:
@@ -40,6 +51,87 @@ def test_iter_fungi_genera_empty_result_stops_immediately() -> None:
 
     assert results == []
     mock_get_taxa.assert_called_once()
+
+
+def test_iter_observations_walks_id_above_pages_by_point_radius() -> None:
+    with patch("foray.inat.get_observations") as mock_get_observations, patch("foray.inat._PAGE_SIZE", 2):
+        mock_get_observations.side_effect = [
+            _obs_page([1, 2]),
+            _obs_page([3]),
+        ]
+        results = list(
+            iter_observations(taxon_id=111, lat=47.6, lng=-122.3, radius_km=150, d1="2015-01-01", d2="2026-01-01")
+        )
+
+    assert [obs["id"] for obs in results] == [1, 2, 3]
+    assert mock_get_observations.call_count == 2
+    first_kwargs = mock_get_observations.call_args_list[0].kwargs
+    assert first_kwargs["taxon_id"] == 111
+    assert first_kwargs["lat"] == 47.6
+    assert first_kwargs["lng"] == -122.3
+    assert first_kwargs["radius"] == 150
+    assert first_kwargs["id_above"] == 0
+    # The cursor advances to the last id of the previous (full) page, not just an increment.
+    second_kwargs = mock_get_observations.call_args_list[1].kwargs
+    assert second_kwargs["id_above"] == 2
+
+
+def test_iter_observations_stops_on_a_short_page_without_a_further_request() -> None:
+    with patch("foray.inat.get_observations") as mock_get_observations, patch("foray.inat._PAGE_SIZE", 5):
+        mock_get_observations.return_value = _obs_page([1, 2])  # shorter than _PAGE_SIZE
+
+        results = list(
+            iter_observations(taxon_id=111, lat=47.6, lng=-122.3, radius_km=150, d1="2015-01-01", d2="2026-01-01")
+        )
+
+    assert [obs["id"] for obs in results] == [1, 2]
+    mock_get_observations.assert_called_once()
+
+
+def test_iter_observations_walks_id_above_pages_by_place_id() -> None:
+    with patch("foray.inat.get_observations") as mock_get_observations, patch("foray.inat._PAGE_SIZE", 2):
+        mock_get_observations.side_effect = [_obs_page([1, 2]), _obs_page([3])]
+
+        results = list(iter_observations(taxon_id=111, place_id=46, d1="2015-01-01", d2="2026-01-01"))
+
+    assert [obs["id"] for obs in results] == [1, 2, 3]
+    first_kwargs = mock_get_observations.call_args_list[0].kwargs
+    assert first_kwargs["place_id"] == 46
+    assert "lat" not in first_kwargs
+
+
+def test_iter_observations_rejects_both_place_id_and_point() -> None:
+    with pytest.raises(ValueError, match="not both"):
+        list(
+            iter_observations(
+                taxon_id=111, place_id=46, lat=47.6, lng=-122.3, radius_km=150, d1="2015-01-01", d2="2026-01-01"
+            )
+        )
+
+
+def test_iter_observations_rejects_neither_place_id_nor_point() -> None:
+    with pytest.raises(ValueError, match="provide either"):
+        list(iter_observations(taxon_id=111, d1="2015-01-01", d2="2026-01-01"))
+
+
+def test_iter_observations_retries_transient_error_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A transient failure mid-ingest shouldn't abort the walk - `_with_retries` (already
+    covered below) should retry it and `iter_observations` should still yield the results
+    once the underlying call succeeds."""
+    monkeypatch.setattr("foray.inat.time.sleep", Mock())
+    with patch("foray.inat.get_observations") as mock_get_observations, patch("foray.inat._PAGE_SIZE", 2):
+        mock_get_observations.side_effect = [
+            requests.exceptions.ConnectionError("blip"),
+            _obs_page([1, 2]),
+            _obs_page([3]),
+        ]
+
+        results = list(
+            iter_observations(taxon_id=111, lat=47.6, lng=-122.3, radius_km=150, d1="2015-01-01", d2="2026-01-01")
+        )
+
+    assert [obs["id"] for obs in results] == [1, 2, 3]
+    assert mock_get_observations.call_count == 3
 
 
 @pytest.mark.parametrize("attempts", [0, -1])
