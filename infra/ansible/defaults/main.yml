@@ -84,6 +84,14 @@ foray_resync_once_batch_size: "20000"
 foray_do_firewall_name: foray-planner-fw
 foray_ssh_allowed_ips: []
 
+# DO monitoring alert policies (issue #84) — unset skips creation entirely (see
+# tasks/provision/monitoring.yml). Thresholds mirror the values DO's own dashboard suggests;
+# disk is the one that matters most here (past ENOSPC incident).
+foray_alert_email: "{{ lookup('ansible.builtin.env', 'FORAY_ALERT_EMAIL', default='') }}"
+foray_disk_alert_threshold_percent: 85
+foray_cpu_alert_threshold_percent: 90
+foray_memory_alert_threshold_percent: 90
+
 # CI runner's public IP, added to/removed from the live SSH firewall rule around an automated
 # deploy (foray:firewall-allow-runner / foray:firewall-revoke-runner tags). Never set locally.
 foray_ci_runner_ip: ""

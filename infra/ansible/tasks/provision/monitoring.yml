@@ -1,0 +1,74 @@
+---
+# Issue #84: no uptime/health alerting existed for the droplet before this - a past disk-full
+# (ENOSPC) incident went unnoticed until the app itself broke. digitalocean.cloud.monitoring_
+# alert_policy (present since collection 0.2.0, well under the >=1.9.0 pin in requirements.yml)
+# creates DO's native CPU/memory/disk alert policies as code. Opt-in: foray_alert_email unset
+# (the default) skips creation entirely rather than failing every provision run for operators
+# who haven't configured alerting yet.
+- name: Skip alert policy provisioning if no alert email is configured
+  ansible.builtin.debug:
+    msg: "foray_alert_email not set - skipping DO monitoring alert policies (see AGENTS.md, issue #84)"
+  when: foray_alert_email | length == 0
+
+# Disk matters most (see the ENOSPC incident referenced in issue #84), so it's listed first,
+# but all three thresholds are provisioned together since a droplet can also degrade from
+# CPU/memory exhaustion with plenty of disk free.
+- name: Create droplet disk-usage alert policy
+  digitalocean.cloud.monitoring_alert_policy:
+    token: "{{ foray_do_token }}"
+    state: present
+    alerts:
+      email:
+        - "{{ foray_alert_email }}"
+    compare: GreaterThan
+    description: "foray-planner droplet disk usage"
+    enabled: true
+    entities:
+      - "{{ foray_droplet.id }}"
+    tags: []
+    type: v1/insights/droplet/disk_utilization_percent
+    value: "{{ foray_disk_alert_threshold_percent }}"
+    window: 5m
+  when:
+    - foray_alert_email | length > 0
+    - foray_droplet is defined
+
+- name: Create droplet CPU-usage alert policy
+  digitalocean.cloud.monitoring_alert_policy:
+    token: "{{ foray_do_token }}"
+    state: present
+    alerts:
+      email:
+        - "{{ foray_alert_email }}"
+    compare: GreaterThan
+    description: "foray-planner droplet CPU usage"
+    enabled: true
+    entities:
+      - "{{ foray_droplet.id }}"
+    tags: []
+    type: v1/insights/droplet/cpu
+    value: "{{ foray_cpu_alert_threshold_percent }}"
+    window: 10m
+  when:
+    - foray_alert_email | length > 0
+    - foray_droplet is defined
+
+- name: Create droplet memory-usage alert policy
+  digitalocean.cloud.monitoring_alert_policy:
+    token: "{{ foray_do_token }}"
+    state: present
+    alerts:
+      email:
+        - "{{ foray_alert_email }}"
+    compare: GreaterThan
+    description: "foray-planner droplet memory usage"
+    enabled: true
+    entities:
+      - "{{ foray_droplet.id }}"
+    tags: []
+    type: v1/insights/droplet/memory_utilization_percent
+    value: "{{ foray_memory_alert_threshold_percent }}"
+    window: 10m
+  when:
+    - foray_alert_email | length > 0
+    - foray_droplet is defined

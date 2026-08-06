@@ -165,3 +165,19 @@ argument_specs:
         type: str
         description: Row batch size for the one-time foray:resync-once catch-up run
         default: "20000"
+      foray_alert_email:
+        type: str
+        description: DO monitoring alert recipient (read from FORAY_ALERT_EMAIL env var); unset skips alert policy creation
+        default: ""
+      foray_disk_alert_threshold_percent:
+        type: int
+        description: Droplet disk-usage percent that triggers a DO monitoring alert
+        default: 85
+      foray_cpu_alert_threshold_percent:
+        type: int
+        description: Droplet CPU-usage percent that triggers a DO monitoring alert
+        default: 90
+      foray_memory_alert_threshold_percent:
+        type: int
+        description: Droplet memory-usage percent that triggers a DO monitoring alert
+        default: 90

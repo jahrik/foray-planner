@@ -13,6 +13,7 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 | `foray_do_region` | DO region (default: sfo3) |
 | `foray_app_image` | Container image (default: ghcr.io/jahrik/foray-planner:latest) |
 | `foray_ridb_api_key` | Recreation.gov API key (optional) |
+| `foray_alert_email` | DO monitoring alert recipient (from `FORAY_ALERT_EMAIL` env); unset skips alert policy creation (issue #84) |
 
 ## Key Files
 
@@ -20,7 +21,7 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 |---|---|
 | `site.yml` | Main playbook (provision + deploy) |
 | `defaults/main.yml` | All tuneable variables |
-| `tasks/provision/` | DO resource creation (database, droplet, firewall) |
+| `tasks/provision/` | DO resource creation (database, droplet, firewall, monitoring alert policies) |
 | `tasks/deploy/` | App deployment + cron setup |
 | `templates/foray.env.j2` | Runtime env file (secrets loaded from DO managed DB) |
 | `meta/argument_specs.yml` | Variable documentation and types |
