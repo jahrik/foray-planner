@@ -37,9 +37,9 @@ FUNGI_TAXON_ID = 47170
 # measured against foray-planner's cache (2026-07-21): 98.3% precise (4,441 true / 75 false)
 # against the rows whose real `obscured` flag is already known from a live fetch. Used to
 # heuristically flag likely-obscured rows that a data source doesn't carry the real flag for -
-# see scripts/backfill_obscured.py (a one-time fix for the pre-existing bulk-import cache) and
-# scripts/load_inat_bulk.py (applied at load time, so a *future* bulk-load doesn't reintroduce
-# the same gap). Only ever a hint that a row is obscured, never proof it's precise - resync's
+# used by scripts/load_inat_bulk.py (applied at load time, so a *future* bulk-load doesn't
+# reintroduce the gap fixed by the now-deleted one-time scripts/backfill_obscured.py). Only ever
+# a hint that a row is obscured, never proof it's precise - resync's
 # live re-check is still the only path to the real flag.
 OBSCURED_ACCURACY_LOW = 26000
 OBSCURED_ACCURACY_HIGH = 31000

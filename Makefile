@@ -1,8 +1,7 @@
 .PHONY: db psql install lint test check frontend check-api-schema lock patch start restart stop scheduler clean \
-	ingest genera-refresh revalidate resync backfill-obscured bulk-download bulk-filter bulk-load \
+	ingest genera-refresh revalidate resync bulk-download bulk-filter bulk-load \
 	ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once \
-	ansible-genera-once ansible-bulk-load-once ansible-cron ansible-resync-once \
-	ansible-backfill-obscured-once
+	ansible-genera-once ansible-bulk-load-once ansible-cron ansible-resync-once
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
@@ -111,15 +110,6 @@ revalidate: db
 resync: db
 	docker compose run --rm app foray resync $(ARGS)
 
-# One-time heuristic fix for the bulk-historical-import rows whose `obscured` flag was never set
-# (see scripts/backfill_obscured.py) - a NULL flag makes the UI show iNat's randomized decoy
-# coordinate for a geoprivacy-obscured observation as if it were the real, precise location.
-# Safe to re-run (only touches still-NULL rows); `make resync`'s ongoing grind corrects
-# the ~1.7% heuristic false positives with the real flag over time. Not part of the foray CLI -
-# same one-time-script pattern as bulk-load (see that target's comment).
-backfill-obscured: db
-	uv run python scripts/backfill_obscured.py
-
 # One-time (or rebuild-from-scratch) bulk-load path for issue #79 Phase 3 - the nightly
 # ingest cron keeps things fresh day-to-day, so these are opt-in, not part of `check`/`start`.
 # ~25.5GB download, run on the host (not in a container) since it just needs `curl` and a
@@ -203,14 +193,6 @@ ansible-ingest-once:
 ansible-bulk-load-once:
 	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
 	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:bulk-load-once \
-		-i inventory/hosts.yml \
-		-e foray_droplet_ip=$$FORAY_DROPLET_IP
-
-# One-time, fast, immediate partial fix for the obscured-coordinate bug (see TODO.md) - safe to
-# rerun. Run before ansible-resync-once (that one's the slow, complete fix).
-ansible-backfill-obscured-once:
-	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
-	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:backfill-obscured-once \
 		-i inventory/hosts.yml \
 		-e foray_droplet_ip=$$FORAY_DROPLET_IP
 
