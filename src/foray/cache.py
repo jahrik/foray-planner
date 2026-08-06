@@ -23,14 +23,6 @@ from foray.scoring import haversine_km
 
 logger = logging.getLogger(__name__)
 
-# Split from SCHEMA (rather than its first statement) because a managed Postgres app role
-# (e.g. on RDS, if it isn't the master/rds_superuser account) may lack CREATE EXTENSION
-# privilege - failing this alone shouldn't take the whole schema bootstrap down with it, nor
-# surface as an opaque low-level DB error. PostGIS is only needed by the dispersed-camping
-# ingest's point-in-polygon proxy (see dispersed.py), which already degrades gracefully
-# (best-effort, catches psycopg.Error) when it's unavailable.
-_ENABLE_POSTGIS = "CREATE EXTENSION IF NOT EXISTS postgis;"
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS observations (
     id                  BIGINT PRIMARY KEY,
@@ -56,18 +48,16 @@ CREATE TABLE IF NOT EXISTS ingest_log (
     radius_km     DOUBLE PRECISION
 );
 
--- Campsites: developed campgrounds (Recreation.gov RIDB) plus the OSM dispersed-camping layer
--- (reported sites + a road∩public-land proxy). Keyed by "{source}:{source_id}" so re-ingesting
--- the same area is a no-op. `free` is nullable on purpose: we only assert free when the source
--- says so (or, for the dispersed proxy, because public-land camping carries no fee), never guess.
+-- Campsites: developed campgrounds (Recreation.gov RIDB) plus OSM-reported dispersed-camping
+-- sites (tourism=camp_site/camp_pitch, backcountry=yes - see dispersed.py). Keyed by
+-- "{source}:{source_id}" so re-ingesting the same area is a no-op. `free` is nullable on
+-- purpose: we only assert free when the source says so, never guess.
 CREATE TABLE IF NOT EXISTS campsites (
     id          TEXT PRIMARY KEY,    -- "{source}:{source_id}", e.g. "ridb:250018", "osm:way/42"
     name        TEXT,
-    kind        TEXT,                -- "campground" (RIDB), "reported"/"dispersed" (OSM)
+    kind        TEXT,                -- "campground" (RIDB), "reported" (OSM)
     fee         TEXT,                -- raw fee description when known, else NULL
-    free        BOOLEAN,             -- TRUE on an explicit no-fee signal (RIDB/OSM tag) OR for
-                                      --   the dispersed proxy (public-land camping is free of
-                                      --   charge by nature, not from a per-site tag); else NULL
+    free        BOOLEAN,             -- TRUE on an explicit no-fee signal (RIDB/OSM tag), else NULL
     lat         DOUBLE PRECISION,
     lng         DOUBLE PRECISION,
     source      TEXT,                -- "ridb", "osm"
@@ -192,14 +182,6 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     DSN-building code needed anywhere.
     """
     con = psycopg.connect(conninfo, autocommit=True)
-    try:
-        con.execute(_ENABLE_POSTGIS)
-    except psycopg.Error:
-        logger.warning(
-            "cache: could not enable postgis (missing extension or insufficient privilege); "
-            "the dispersed-camping proxy will be skipped (everything else still works). "
-            "Run `CREATE EXTENSION postgis;` as a superuser/rds_superuser to enable it."
-        )
     con.execute(SCHEMA)
     con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION")
     con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION")
@@ -217,8 +199,8 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     # since connect() uses autocommit=True (each statement is its own implicit transaction).
     # IF NOT EXISTS doesn't fully protect against two processes racing on a first deploy/rolling
     # restart (both can see it missing and one loses the race) - caught and logged rather than
-    # failing startup, same as the postgis handling above; the index is a query-speed
-    # optimization for stale_observation_ids, not something anything else depends on existing.
+    # failing startup; the index is a query-speed optimization for stale_observation_ids, not
+    # something anything else depends on existing.
     try:
         con.execute(
             "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_revalidated_at ON observations (revalidated_at)"

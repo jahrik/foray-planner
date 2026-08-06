@@ -129,12 +129,12 @@ def land_cmd(ctx: click.Context, all_coverage: bool) -> None:
 @cli.command("dispersed")
 @click.pass_context
 def dispersed_cmd(ctx: click.Context) -> None:
-    """Ingest OSM dispersed camping (reported sites + road∩public-land proxy) near home."""
+    """Ingest OSM-reported dispersed camping (camp_site/camp_pitch/backcountry tags) near home."""
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
         count = ingest_dispersed(cfg, con)
-        click.echo(f"Cached {count} dispersed/reported sites within {cfg.home.radius_km} km of home.")
+        click.echo(f"Cached {count} reported dispersed-camping sites within {cfg.home.radius_km} km of home.")
     finally:
         con.close()
 

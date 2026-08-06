@@ -25,9 +25,9 @@ and publishing the image is unconditional; deploying it is gated behind manual a
 
 ## Running with Docker
 
-The container needs a reachable Postgres+PostGIS instance - connection info comes from the
+The container needs a reachable Postgres instance - connection info comes from the
 standard libpq env vars (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`), never a config
-file or a baked-in default. `foray.cache.SCHEMA` (extension + tables) is applied automatically
+file or a baked-in default. `foray.cache.SCHEMA` (tables) is applied automatically
 on startup, so there's no separate migration step.
 
 ```bash
@@ -57,7 +57,7 @@ The health check polls `GET /api/config` every 30 seconds.
 
 | Service | Role |
 |---|---|
-| `postgres` | PostGIS 16, health-checked |
+| `postgres` | Postgres 16, health-checked |
 | `app` | FastAPI server on port 8000 |
 
 The **scheduler** is behind a docker-compose profile and only starts on demand:

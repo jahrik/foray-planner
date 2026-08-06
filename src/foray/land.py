@@ -1,10 +1,10 @@
 """Public-land ownership ingest from ArcGIS REST feature services.
 
 For the free-camping question ("can I sleep near here for free"), the first thing to know is
-*who owns the ground*. **BLM** and **USFS** are the two agencies the dispersed-camping proxy
-(slice 2b) will consider, so this module pulls those two ownership layers as GeoJSON and caches
-the polygons for the map. It reports ownership and links the official source - nothing more; it
-makes no claim about whether camping is permitted anywhere (see AGENTS.md).
+*who owns the ground*. **BLM** and **USFS** are the two agencies most relevant to dispersed
+camping, so this module pulls those two ownership layers as GeoJSON and caches the polygons for
+the map. It reports ownership and links the official source - nothing more; it makes no claim
+about whether camping is permitted anywhere (see AGENTS.md).
 
 Two authoritative ArcGIS layers, queried with an envelope around home:
 

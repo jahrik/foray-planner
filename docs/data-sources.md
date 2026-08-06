@@ -41,15 +41,13 @@ scoring.
 
 ## OpenStreetMap / Overpass API
 
-**Role:** Two layers - reported campsites and the dispersed-camping proxy.
+**Role:** Reported dispersed-camping sites.
 
 - **Client:** httpx (no key required)
 - **Endpoint:** [Overpass API](https://overpass-api.de) - `https://overpass-api.de/api/interpreter`
 - **Rate limit:** Polite: sleep between requests; 429 responses respect the `Retry-After` header
 - **What we fetch:**
   - `tourism=camp_site`, `tourism=camp_pitch`, `backcountry=yes` → `kind='reported'` campsites
-  - `highway=track`, `highway=unclassified` → candidate roads for the dispersed proxy
-    (kept only where they fall on BLM/USFS land via PostGIS point-in-polygon)
 - **License:** [ODbL](https://opendatacommons.org/licenses/odbl/) - data must be attributed
   and any derivative databases shared under ODbL
 - **Attribution required:** "© OpenStreetMap contributors" in any UI showing this data
@@ -77,9 +75,8 @@ spots" value without the license problem. Do not add iOverlander or The Dyrt.
 - **API:** ArcGIS REST FeatureServer `query?f=geojson` - paginated, server-side generalized
   (reduces geometry complexity before transfer)
 - **No key required**
-- **Storage:** GeoJSON stored as text + bounding-box columns. No PostGIS geometry types needed
-  on the read/map path - bbox overlap in SQL is sufficient for the "land near here" query.
-  PostGIS is only used at ingest time for the dispersed-camping point-in-polygon join.
+- **Storage:** GeoJSON stored as text + bounding-box columns. No PostGIS geometry types needed -
+  bbox overlap in SQL is sufficient for the "land near here" query.
 - **Attribution:** BLM and USFS are US federal agencies; data is public domain.
 - **PAD-US** (USGS national ownership layer) is a documented backstop if the ArcGIS sources
   change or go offline.

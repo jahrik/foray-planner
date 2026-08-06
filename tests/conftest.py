@@ -6,8 +6,8 @@ Isolation: one session-scoped connection + schema (created once via `cache.conne
 bootstrap), truncate-all before every test. Not per-test transaction rollback: `api.py` uses a
 connection *pool* post-migration, so a test seeding data on one connection and a request
 reading via a different pooled connection would see nothing under naive rollback isolation.
-Not fresh-schema-per-test either: recreating the `postgis` extension per test adds real
-overhead across this many test files. Truncate is the standard, fast, pool-safe answer.
+Not fresh-schema-per-test either: recreating the whole schema per test adds real overhead
+across this many test files. Truncate is the standard, fast, pool-safe answer.
 
 Runs against its own `foray_test` database (created here on first run if missing), not the
 `foray` database local dev/QA uses - so `make test` truncating tables can't wipe real data

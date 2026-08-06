@@ -4,7 +4,7 @@
 
 - **Python 3.13+** and **[uv](https://docs.astral.sh/uv/)** - uv manages the venv and lockfile
 - **Node 22+** via [nvm](https://github.com/nvm-sh/nvm) - not on `PATH` by default, see below
-- **Docker / Podman** - runs the local Postgres+PostGIS instance (`docker-compose.yml`); also
+- **Docker / Podman** - runs the local Postgres instance (`docker-compose.yml`); also
   used for the container workflow
 - **RIDB_API_KEY** *(optional)* - free key from [Recreation.gov](https://ridb.recreation.gov/landing)
   for campground data; without it the camps ingest step is a no-op and everything else still works
@@ -15,7 +15,7 @@
 
 ```bash
 make install            # uv sync + frontend npm ci
-make db                 # start Postgres+PostGIS (docker compose)
+make db                 # start Postgres (docker compose)
 
 # Optional: create a .env file with your RIDB key
 echo "RIDB_API_KEY=your_key_here" > .env   # omit to skip campground ingest
@@ -76,7 +76,7 @@ ArcGIS BLM/USFS          Nominatim (geocoding)
     |                                          |
     +------------------+-----------------------+
                        |
-              Postgres + PostGIS
+                 Postgres
            (observations, campsites,
             public_land, trails,
             ingest_log, app_location)
@@ -193,7 +193,7 @@ shows per-month totals. The alerts view fixes species + recency, ignoring the mo
 | `fungi_genera` | `taxon_id` | Full Fungi genus catalog: taxon_id -> name/common_name/observations_count |
 | `phenology` | `(region_id, taxon_id, month)` | Materialized per-(region, taxon, month) observation counts |
 | `regions` | `region_id` | Grid cell summaries: center coords, total obs count, distinct taxa |
-| `campsites` | `id` (`"{source}:{source_id}"`) | Developed campgrounds (RIDB) + OSM reported/dispersed sites |
+| `campsites` | `id` (`"{source}:{source_id}"`) | Developed campgrounds (RIDB) + OSM-reported dispersed-camping sites |
 | `public_land` | `id` (`"{source}:{source_id}"`) | BLM/USFS ownership polygons - GeoJSON text + bbox columns |
 | `trails` | `id` (`"{source}:{osm_type}/{osm_id}"`) | OSM trails/routes/trailheads - GeoJSON text + bbox columns |
 | `ingest_log` | - | Per-run progress records for refresh stages |
@@ -201,10 +201,9 @@ shows per-month totals. The alerts view fixes species + recency, ignoring the mo
 | `app_genera` | `(device_id, taxon_id)` | Per-device selected target genera |
 
 `phenology`/`regions` are dynamically (re)materialized by `foray ingest` and `foray refresh`;
-every other table is created by `foray.cache.SCHEMA` (which also enables the `postgis` extension,
-used only by the dispersed-camping ingest's point-in-polygon join - the read path never needs
-PostGIS geometry types). The database is fully rebuildable with `foray refresh`. Change
-`FORAY_CELL_DEG` and re-run refresh to rebuild with a different grid resolution.
+every other table is created by `foray.cache.SCHEMA`. The database is fully rebuildable with
+`foray refresh`. Change `FORAY_CELL_DEG` and re-run refresh to rebuild with a different grid
+resolution.
 
 ---
 
