@@ -437,6 +437,11 @@ def test_location_is_scoped_per_device(client: TestClient) -> None:
     assert get_b.json()["home"]["lat"] == 30.0
     assert get_b.json()["home"]["radius_km"] == 75
 
+    # A device that never saved a location still gets the default, not another device's home.
+    client.cookies.set("device_id", "test-device-cccccccccccccccccc")
+    get_unknown = client.get("/api/config")
+    assert get_unknown.json()["home"]["name"] == "Home"
+
 
 def test_delete_location_reverts_to_default_home(client: TestClient) -> None:
     """Issue #81: a visitor can delete their saved override outright."""
@@ -471,11 +476,6 @@ def test_post_location_rejects_oversized_body(client: TestClient) -> None:
     oversized_query = "x" * (64 * 1024)
     response = client.post("/api/location", json={"query": oversized_query})
     assert response.status_code == 413
-
-    # A device that never saved a location still gets the default, not another device's home.
-    client.cookies.set("device_id", "test-device-cccccccccccccccccc")
-    get_unknown = client.get("/api/config")
-    assert get_unknown.json()["home"]["name"] == "Home"
 
 
 def test_destinations_uses_per_device_home(client: TestClient) -> None:
