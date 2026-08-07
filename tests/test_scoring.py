@@ -12,6 +12,7 @@ from foray.scoring import (
     build_phenology,
     haversine_km,
     place_calendar,
+    precise_observations,
     rank_destinations,
 )
 
@@ -379,6 +380,66 @@ def test_alerts_center_excludes_obscured_decoy_across_taxa(con: psycopg.Connecti
     assert len(active) == 1
     assert active[0]["center_lat"] == pytest.approx(precise_lat, abs=1e-6)
     assert active[0]["center_lng"] == pytest.approx(precise_lng, abs=1e-6)
+
+
+def test_precise_observations_excludes_null_and_true_obscured(con: psycopg.Connection) -> None:
+    # Issue #161: only obscured=false (live-verified precise) rows are individually plottable -
+    # obscured=true (iNat's randomized decoy) and obscured IS NULL (not yet verified) must not
+    # leak into this path, since it's the one query that shows an exact point on the map.
+    home_lat, home_lng = APR_LAT, APR_LNG
+    precise_lat, precise_lng = home_lat + 0.01, home_lng + 0.01
+    with con.cursor() as cur:
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, uri, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, false)",
+            (9001, MOREL, precise_lat, precise_lng, dt.date(2022, 4, 15), 4, 2022, "research", "https://x/9001"),
+        )
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, uri, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true)",
+            (9002, MOREL, precise_lat, precise_lng, dt.date(2022, 4, 15), 4, 2022, "research", "https://x/9002"),
+        )
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, uri) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (9003, MOREL, precise_lat, precise_lng, dt.date(2022, 4, 16), 4, 2022, "research", "https://x/9003"),
+        )
+
+    results = precise_observations(
+        con, taxon_ids=[MOREL], home_lat=home_lat, home_lng=home_lng, radius_km=50, months=[4]
+    )
+    assert [r["id"] for r in results] == [9001]
+    assert results[0]["lat"] == pytest.approx(precise_lat)
+    assert results[0]["lng"] == pytest.approx(precise_lng)
+    assert results[0]["name"] == "Morchella"
+    assert results[0]["uri"] == "https://x/9001"
+
+
+def test_precise_observations_respects_radius_and_months(con: psycopg.Connection) -> None:
+    home_lat, home_lng = APR_LAT, APR_LNG
+    near_lat, near_lng = home_lat + 0.01, home_lng + 0.01
+    far_lat, far_lng = home_lat + 5.0, home_lng + 5.0  # well outside a 50km radius
+    with con.cursor() as cur:
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false)",
+            (9101, MOREL, near_lat, near_lng, dt.date(2022, 4, 15), 4, 2022, "research"),
+        )
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false)",
+            (9102, MOREL, far_lat, far_lng, dt.date(2022, 4, 15), 4, 2022, "research"),
+        )
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false)",
+            (9103, MOREL, near_lat, near_lng, dt.date(2022, 10, 15), 10, 2022, "research"),
+        )
+
+    results = precise_observations(
+        con, taxon_ids=[MOREL], home_lat=home_lat, home_lng=home_lng, radius_km=50, months=[4]
+    )
+    assert [r["id"] for r in results] == [9101]
 
 
 def test_haversine_known_distance() -> None:

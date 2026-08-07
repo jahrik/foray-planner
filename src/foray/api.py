@@ -36,6 +36,7 @@ from foray.api_models import (
     GenusResult,
     LandUnit,
     LocationResponse,
+    PreciseObservation,
     RecentObservation,
     RegionScore,
     StatusResponse,
@@ -610,6 +611,34 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         except psycopg.errors.UndefinedTable:
             return []
         return [AlertRegion.model_validate(region) for region in regions]
+
+    @app.get("/api/observations/precise")
+    def observations_precise(
+        request: Request,
+        response: Response,
+        species: str = Query("all"),
+        months: str | None = Query(None),
+        radius_km: float | None = Query(None),
+    ) -> list[PreciseObservation]:
+        require_idle()
+        device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(request, response, device_id)
+        selected_months = parse_months(months) if months is not None else [dt.date.today().month]
+        try:
+            with pool.connection() as conn:
+                home = resolve_home(conn, device_id)
+                observations = scoring.precise_observations(
+                    conn,
+                    taxon_ids=parse_species(species, conn, device_id),
+                    home_lat=home.lat,
+                    home_lng=home.lng,
+                    radius_km=radius_km or home.radius_km,
+                    months=selected_months,
+                )
+        except psycopg.errors.UndefinedTable:
+            return []
+        return [PreciseObservation.model_validate(obs) for obs in observations]
 
     @app.get("/api/camps")
     def get_camps(

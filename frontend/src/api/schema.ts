@@ -167,6 +167,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/observations/precise": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Observations Precise */
+        get: operations["observations_precise_api_observations_precise_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/camps": {
         parameters: {
             query?: never;
@@ -501,6 +518,25 @@ export interface components {
             license_code: string;
             /** Attribution */
             attribution: string;
+        };
+        /** PreciseObservation */
+        PreciseObservation: {
+            /** Id */
+            id: number;
+            /** Taxon Id */
+            taxon_id: number;
+            /** Name */
+            name: string;
+            /** Common Name */
+            common_name: string | null;
+            /** Lat */
+            lat: number;
+            /** Lng */
+            lng: number;
+            /** Observed On */
+            observed_on: string | null;
+            /** Uri */
+            uri: string | null;
         };
         /** RecentObservation */
         RecentObservation: {
@@ -948,6 +984,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AlertRegion"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    observations_precise_api_observations_precise_get: {
+        parameters: {
+            query?: {
+                species?: string;
+                months?: string | null;
+                radius_km?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreciseObservation"][];
                 };
             };
             /** @description Validation Error */

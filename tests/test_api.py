@@ -234,6 +234,34 @@ def test_alerts_empty_when_no_recent_observations(client: TestClient) -> None:
     assert response.json() == []
 
 
+def test_precise_observations_empty_by_default(client: TestClient) -> None:
+    # Fixture Morels have no `obscured` column set (NULL), so none qualify as known-precise.
+    response = client.get("/api/observations/precise", params={"species": str(MOREL), "months": "4"})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_precise_observations_returns_unobscured_only(client: TestClient, con: psycopg.Connection) -> None:
+    with con.cursor() as cur:
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, uri, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, false)",
+            (9001, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", "https://x/9001"),
+        )
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, true)",
+            (9002, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research"),
+        )
+    response = client.get("/api/observations/precise", params={"species": str(MOREL), "months": "4"})
+    assert response.status_code == 200
+    body = response.json()
+    assert [obs["id"] for obs in body] == [9001]
+    assert body[0]["lat"] == pytest.approx(HOME_LAT)
+    assert body[0]["name"] == "Morchella"
+    assert body[0]["uri"] == "https://x/9001"
+
+
 def test_camps_requires_region_or_latlng(client: TestClient) -> None:
     response = client.get("/api/camps")
     assert response.status_code == 400
