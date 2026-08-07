@@ -3,6 +3,7 @@ import L from "leaflet";
 import { getJson } from "./api/client";
 import type { CampSite, LandUnit, PreciseObservation, Trail } from "./api/types";
 import {
+  addPreciseMarker,
   CAMP_FREE,
   CAMP_OSM,
   CAMP_PAID,
@@ -233,6 +234,8 @@ function trailPopup(trail: Trail): HTMLElement {
 // geoprivacy decoy - worth showing as its own small pin. Scoped to the whole search radius
 // (like loadLand), filtered by the destinations tab's month selection since these are
 // individual observations, not a region aggregate. No-op (just clears) when the toggle is off.
+// Pins go into the cluster group (map.ts's preciseCluster) instead of straight onto the map -
+// a dense area folds into a count badge instead of dumping hundreds of overlapping dots.
 export async function loadPreciseObservations(months: string): Promise<void> {
   clearPrecise();
   renderLegend();
@@ -252,10 +255,8 @@ export async function loadPreciseObservations(months: string): Promise<void> {
       fillColor: PRECISE,
       fillOpacity: 0.9,
       bubblingMouseEvents: false,
-    })
-      .addTo(map)
-      .bindPopup(precisePopup(obs));
-    state.preciseMarkers.push(marker);
+    }).bindPopup(precisePopup(obs));
+    addPreciseMarker(marker);
   });
 }
 

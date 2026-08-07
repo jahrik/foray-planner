@@ -1,4 +1,5 @@
 import L from "leaflet";
+import "leaflet.markercluster";
 
 import type { Home } from "./api/types";
 import { dist, qs, state } from "./state";
@@ -36,6 +37,13 @@ let tileLayer: L.TileLayer | null = null;
 
 export let map: L.Map;
 let homeMarker: L.CircleMarker;
+// Precise-observation pins cluster (issue #161): a dense area can easily clear a thousand
+// individual points, which would bury the map as flat markers - clustering collapses nearby
+// pins into a count badge that splits apart on zoom, same value as a heatmap without losing
+// per-observation click-through. Created once in initMap() and reused (clearLayers() on
+// reload) rather than recreated per fetch, since MarkerClusterGroup itself owns the spatial
+// index that makes re-clustering on zoom cheap.
+let preciseCluster: L.MarkerClusterGroup;
 
 export const currentTheme = (): "dark" | "light" =>
   document.documentElement.dataset.theme === "light" ? "light" : "dark";
@@ -76,9 +84,32 @@ export function renderLegend(): void {
     .join("");
 }
 
+// Cluster badge styling: a lavender disc (same hue as an individual pin) with a dark ring and
+// the count in the middle - readable on both the dark and light basemap, and visually reads as
+// "more precise pins" rather than borrowing the plugin's default blue/yellow/orange severity
+// gradient, which has no meaning here.
+function preciseClusterIcon(cluster: L.MarkerCluster): L.DivIcon {
+  const count = cluster.getChildCount();
+  const size = count < 10 ? 30 : count < 100 ? 36 : 42;
+  return L.divIcon({
+    html: `<div style="
+      width:${size}px;height:${size}px;line-height:${size}px;
+      background:${PRECISE};border:2px solid ${HOME_RING};border-radius:50%;
+      text-align:center;font-weight:600;color:${HOME_RING};
+    ">${count}</div>`,
+    className: "precise-cluster-icon",
+    iconSize: L.point(size, size),
+  });
+}
+
 export function initMap(home: Home): void {
   map = L.map("map").setView([home.lat, home.lng], 7);
   setTiles(currentTheme());
+  preciseCluster = L.markerClusterGroup({
+    iconCreateFunction: preciseClusterIcon,
+    maxClusterRadius: 40,
+    spiderfyOnMaxZoom: true,
+  }).addTo(map);
   renderLegend();
   homeMarker = L.circleMarker([home.lat, home.lng], {
     radius: 7,
@@ -184,8 +215,14 @@ export function clearMarkers(): void {
 }
 
 export function clearPrecise(): void {
-  state.preciseMarkers.forEach((marker) => map.removeLayer(marker));
-  state.preciseMarkers = [];
+  preciseCluster.clearLayers();
+}
+
+// Adds a precise-observation pin into the cluster group (see preciseCluster above) instead of
+// directly onto the map - the cluster group itself decides whether it renders standalone or
+// folded into a nearby cluster badge at the current zoom.
+export function addPreciseMarker(marker: L.CircleMarker): void {
+  preciseCluster.addLayer(marker);
 }
 
 export function clearCamps(): void {

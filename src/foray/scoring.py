@@ -736,7 +736,7 @@ def precise_observations(
     home_lng: float,
     radius_km: float,
     months: list[int],
-    limit: int = 500,
+    limit: int = 3000,
 ) -> list[dict[str, Any]]:
     """Individually-plottable observations within ``radius_km`` whose cached coordinate is
     known-precise (``obscured = false``, i.e. live-verified against iNat, not a randomized
@@ -745,13 +745,12 @@ def precise_observations(
     query never widens what a caller already sees, since ``obscured = false`` is exactly the
     subset iNat itself already publishes as an exact point.
 
-    Same bbox-prefilter-then-haversine-cut technique as ``camps_near``/``trails_near``. A
-    densely-observed area can easily clear ``limit`` before the radius cut even applies (a
-    real dev-DB check against Seattle found ~7,800 candidates in-radius for one month) - the
-    frontend has no marker-clustering yet (issue #161's "why not now"), so dumping every match
-    unclustered would bury the map. ``ORDER BY observed_on DESC`` caps this to the freshest
-    sightings first, which also matches the "is this still active" value of an individual pin
-    better than an arbitrary cutoff would.
+    Same bbox-prefilter-then-haversine-cut technique as ``camps_near``/``trails_near``. The
+    frontend clusters these pins (Leaflet.markercluster, see map.ts's ``preciseCluster``), so
+    ``limit`` isn't standing in for clustering anymore - it's just a query/payload backstop for
+    the pathological case (a real dev-DB check against Seattle found ~7,800 candidates in-radius
+    for one month; a full year at a large radius could clear this). ``ORDER BY observed_on DESC``
+    keeps whatever does get cut the freshest sightings first.
     """
     dlat = radius_km / 111.0
     dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(home_lat))), 0.01))
