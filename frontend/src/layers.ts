@@ -25,7 +25,11 @@ import { dist, displayName, errorDetail, monthsParam, qs, setStatus, state } fro
 export const campsOn = (): boolean => qs<HTMLInputElement>("#show-camps").checked;
 export const dispersedOn = (): boolean => qs<HTMLInputElement>("#show-dispersed").checked;
 export const freeOnly = (): boolean => qs<HTMLInputElement>("#free-camps").checked;
-export const landOn = (): boolean => qs<HTMLInputElement>("#show-land").checked;
+export const blmOn = (): boolean => qs<HTMLInputElement>("#show-land-blm").checked;
+export const usfsOn = (): boolean => qs<HTMLInputElement>("#show-land-usfs").checked;
+export const tribalOn = (): boolean => qs<HTMLInputElement>("#show-land-tribal").checked;
+const LAND_TOGGLES: Record<string, () => boolean> = { BLM: blmOn, USFS: usfsOn, Tribal: tribalOn };
+const landOn = (): boolean => blmOn() || usfsOn() || tribalOn();
 export const trailsOn = (): boolean => qs<HTMLInputElement>("#show-trails").checked;
 
 // OSM dispersed layer: real tagged sites ("reported") + the road∩public-land proxy ("dispersed").
@@ -106,6 +110,7 @@ function campPopup(site: CampSite): HTMLElement {
 // markers and degrade quietly.
 export async function loadLand(): Promise<void> {
   clearLand();
+  renderLegend();
   if (!landOn() || !state.home) return;
   const { lat, lng, radius_km } = state.home;
   let units: LandUnit[];
@@ -127,8 +132,12 @@ export async function loadLand(): Promise<void> {
     },
     onEachFeature: (feature, lyr) => lyr.bindPopup(landPopup(feature.properties as LandUnit)),
   });
-  // Carry each unit's fields as GeoJSON `properties` so style/popup can read them.
+  // Carry each unit's fields as GeoJSON `properties` so style/popup can read them. Each agency
+  // has its own toggle, so a fetched-but-toggled-off agency is filtered out here rather than
+  // re-fetched per toggle - one request covers whichever combination is on.
   units.forEach((unit) => {
+    const isOn = LAND_TOGGLES[unit.agency];
+    if (isOn && !isOn()) return;
     const feature: GeoJSON.Feature = {
       type: "Feature",
       properties: unit,

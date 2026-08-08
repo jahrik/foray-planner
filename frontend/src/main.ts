@@ -236,7 +236,9 @@ async function main(): Promise<void> {
   wireLayerToggle("#show-camps", "camps", "Fetching campgrounds…", loadCamps);
   wireLayerToggle("#show-dispersed", "dispersed", "Fetching dispersed camping…", loadCamps);
   qs("#free-camps").onchange = () => loadCamps();
-  wireLayerToggle("#show-land", "land", "Fetching public land…", loadLand);
+  wireLayerToggle("#show-land-blm", "land", "Fetching public land…", loadLand);
+  wireLayerToggle("#show-land-usfs", "land", "Fetching public land…", loadLand);
+  wireLayerToggle("#show-land-tribal", "land", "Fetching public land…", loadLand);
   wireLayerToggle("#show-trails", "trails", "Fetching trails…", loadTrails);
   initLocationAutocomplete();
   initGenusSelection(refreshCurrentView);
