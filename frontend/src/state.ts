@@ -54,8 +54,8 @@ export function distVal(km: number): number {
   return Math.round(km);
 }
 
-export function qs<T extends HTMLElement = HTMLElement>(selector: string): T {
-  const element = document.querySelector<T>(selector);
+export function qs<T extends HTMLElement = HTMLElement>(selector: string, root: ParentNode = document): T {
+  const element = root.querySelector<T>(selector);
   if (!element) throw new Error(`missing element: ${selector}`);
   return element;
 }

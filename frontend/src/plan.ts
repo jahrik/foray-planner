@@ -139,8 +139,8 @@ export async function runPlan(): Promise<void> {
   trip.stops.forEach((stop) => panel.appendChild(buildStopCard(stop)));
 
   // Wire export buttons - trip is captured in closure.
-  document.getElementById("export-gpx")!.onclick = () => exportGpx(trip);
-  document.getElementById("export-json")!.onclick = () => exportJson(trip);
+  qs<HTMLButtonElement>("#export-gpx").onclick = () => exportGpx(trip);
+  qs<HTMLButtonElement>("#export-json").onclick = () => exportJson(trip);
 
   setStatus(`${trip.n_stops} stops · ${dist(trip.total_drive_km)}`);
 }
