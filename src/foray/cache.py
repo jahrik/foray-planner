@@ -220,7 +220,14 @@ def connect(conninfo: str = "") -> psycopg.Connection:
         if version in applied:
             continue
         con.execute(statement)
-        con.execute("INSERT INTO schema_migrations (version) VALUES (%s)", [version])
+        # ON CONFLICT DO NOTHING: two processes can both see `version` as unapplied and race to
+        # run it (e.g. API + scheduler starting together). The migration statements themselves
+        # are idempotent (IF NOT EXISTS / IF EXISTS), so that's harmless - but a plain INSERT
+        # would then raise a primary-key violation and abort startup for the loser.
+        con.execute(
+            "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING",
+            [version],
+        )
     # CONCURRENTLY: this runs on every connect() (app startup included), and a plain CREATE
     # INDEX on prod's 2M+-row observations table would hold a write lock for the build's
     # duration - real downtime on a rolling deploy. Safe outside an explicit transaction block
