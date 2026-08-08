@@ -18,6 +18,7 @@ export const CAMP_OSM = "#1fe6d0"; // neon teal - OSM dispersed layer (solid = r
 export const LAND_COLORS: Record<string, string> = {
   BLM: "#e8974a", // bright ochre
   USFS: "#a693ff", // bright violet
+  Tribal: "#4d79ff", // bright blue - sovereign nation land, visually distinct from BLM/USFS
 };
 export const LAND_DEFAULT = "#b5b5b5"; // any other agency
 export const TRAIL = "#ff5555"; // bright red - the walking network (paths/routes) + trailhead dots
