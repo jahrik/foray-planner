@@ -747,13 +747,10 @@ def precise_observations(
     Same bbox-prefilter-then-haversine-cut technique as ``camps_near``/``trails_near``, and
     (unlike the original version) called with a *destination's* coordinates rather than home's -
     the frontend scopes this to whichever region is currently focused (see map.ts's
-    ``regionRadiusKm``), not the whole search radius. That footprint is small enough (a single
-    cell_deg region, not the whole search radius) that the old radius-wide version's 3000-row cap
-    is no longer needed to keep the *normal* response small - but the route still allows callers
-    to omit lat/lng and fall back to home's full search radius, so a generous backstop LIMIT stays
-    here for that broader mode (defense in depth, not expected to bind in the scoped path). The
-    frontend also clusters these pins (Leaflet.markercluster, see map.ts's ``preciseCluster``) for
-    whatever density does show up.
+    ``regionRadiusKm``), not the whole search radius. No row cap, matching the ``camps_near``/
+    ``trails_near``/``land_near`` precedent (those have never had one) - the old radius-wide
+    version's 3000-row cap existed to bound a fetch that could span the entire map at once; a
+    single destination's own footprint can't realistically produce that.
     """
     dlat = radius_km / 111.0
     dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
@@ -767,7 +764,6 @@ def precise_observations(
               AND o.lat BETWEEN %s AND %s AND o.lng BETWEEN %s AND %s
               AND {_taxon_filter(taxon_ids)} AND o.month IN ({_in(months)})
             ORDER BY o.observed_on DESC
-            LIMIT 5000
             """,
         ),
         [lat - dlat, lat + dlat, lng - dlng, lng + dlng, *taxon_ids, *months],
