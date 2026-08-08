@@ -139,7 +139,8 @@ export async function initGenusSelection(onSelectionChange: () => void): Promise
       e.preventDefault();
       const selectedIds = new Set(selected.map((genus) => genus.taxon_id));
       const candidates = results.filter((genus) => !selectedIds.has(genus.taxon_id));
-      selectGenus(candidates[activeIndex]);
+      const candidate = candidates[activeIndex];
+      if (candidate) selectGenus(candidate);
     } else if (e.key === "Escape") {
       list.classList.remove("open");
     }

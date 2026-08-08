@@ -248,10 +248,13 @@ export async function runDestinations(): Promise<void> {
   // still gets its trails/camps/land auto-loaded, same as a click on the #1 card; its calendar
   // loads on demand from the Calendar tab like every other card.
   const top = regions[0];
-  focusRegion(top.center_lat, top.center_lng);
-  rankList.querySelector(".rank")?.classList.add("active");
-  selectSize(markers[0]);
-  selected = { marker: markers[0], weight: top.score_norm };
+  const topMarker = markers[0];
+  if (top && topMarker) {
+    focusRegion(top.center_lat, top.center_lng);
+    rankList.querySelector(".rank")?.classList.add("active");
+    selectSize(topMarker);
+    selected = { marker: topMarker, weight: top.score_norm };
+  }
 }
 
 // Fetches once per card (cached by the calendarState flag at the call site) and renders straight

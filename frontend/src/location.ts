@@ -105,10 +105,13 @@ export function initPlaceAutocomplete(
       items.forEach((li, i) => li.classList.toggle("active", i === activeIndex));
     } else if (e.key === "Enter" && activeIndex >= 0) {
       e.preventDefault();
-      selectResult(results[activeIndex], list, (resolved) => {
-        if (clearInputOnSelect) input.value = "";
-        onSelect(resolved);
-      });
+      const result = results[activeIndex];
+      if (result) {
+        selectResult(result, list, (resolved) => {
+          if (clearInputOnSelect) input.value = "";
+          onSelect(resolved);
+        });
+      }
     } else if (e.key === "Escape") {
       list.classList.remove("open");
     }
