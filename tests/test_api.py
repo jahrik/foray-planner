@@ -262,6 +262,32 @@ def test_precise_observations_returns_unobscured_only(client: TestClient, con: p
     assert body[0]["uri"] == "https://x/9001"
 
 
+def test_precise_observations_by_latlng(client: TestClient, con: psycopg.Connection) -> None:
+    with con.cursor() as cur:
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, uri, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, false)",
+            (9003, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", "https://x/9003"),
+        )
+    response = client.get(
+        "/api/observations/precise",
+        params={"species": str(MOREL), "months": "4", "lat": HOME_LAT, "lng": HOME_LNG, "radius_km": 5},
+    )
+    assert response.status_code == 200
+    assert [obs["id"] for obs in response.json()] == [9003]
+
+
+def test_precise_observations_by_latlng_empty(client: TestClient) -> None:
+    response = client.get("/api/observations/precise", params={"lat": HOME_LAT, "lng": HOME_LNG})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_precise_observations_requires_lat_lng_together(client: TestClient) -> None:
+    response = client.get("/api/observations/precise", params={"lat": HOME_LAT})
+    assert response.status_code == 400
+
+
 def test_camps_requires_region_or_latlng(client: TestClient) -> None:
     response = client.get("/api/camps")
     assert response.status_code == 400

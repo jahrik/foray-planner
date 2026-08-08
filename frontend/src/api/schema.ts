@@ -174,7 +174,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Observations Precise */
+        /**
+         * Observations Precise
+         * @description Precise observations near an explicit lat/lng (a focused destination), falling back to
+         *     home + its search radius when omitted - same `lat`/`lng`/`radius_km` override pattern as
+         *     `/api/camps` and `/api/trails`.
+         */
         get: operations["observations_precise_api_observations_precise_get"];
         put?: never;
         post?: never;
@@ -1002,6 +1007,8 @@ export interface operations {
             query?: {
                 species?: string;
                 months?: string | null;
+                lat?: number | null;
+                lng?: number | null;
                 radius_km?: number | null;
             };
             header?: never;

@@ -4,8 +4,7 @@ import { getJson } from "./api/client";
 import type { Stop, TripPlan } from "./api/types";
 import { focusRegion } from "./layers";
 import { clearMarkers, map, HOME_FILL, HOME_RING, PLAN_STOP } from "./map";
-import { dist, displayName, errorDetail, inatUrl, MONTHS, qs, setStatus, state } from "./state";
-import { monthsParam } from "./views";
+import { dist, displayName, errorDetail, inatUrl, monthsParam, MONTHS, qs, setStatus, state } from "./state";
 
 export async function runPlan(): Promise<void> {
   setStatus("Planning route…");

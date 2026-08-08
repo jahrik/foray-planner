@@ -59,26 +59,27 @@ export function setTiles(_theme: "dark" | "light"): void {
 // Each entry is its own block-level span (not <br>-joined) so the mobile flex-wrap layout can
 // wrap entries cleanly instead of fighting <br>'s line-break semantics.
 //
-// Destination markers (historical/recently-observed) are the only thing on the map by default,
-// so they're the only entries shown out of the box - camp/trail entries only appear once their
-// layer is actually toggled on, instead of explaining markers that aren't there yet. Called from
-// layers.ts after every camps/trails load or clear, so it always mirrors what's on the map.
+// Destination markers (historical/recently-observed) and precise observations (verified-location
+// pins for whichever destination is focused - no layer toggle, see layers.ts's
+// loadPreciseObservations) are on the map by default, so they're always in the legend - camp/
+// trail entries only appear once their layer is actually toggled on, instead of explaining
+// markers that aren't there yet. Called from layers.ts after every camps/trails/precise load or
+// clear, so it always mirrors what's on the map.
 export function renderLegend(): void {
   const el = qs("#legend");
   const camps = (document.getElementById("show-camps") as HTMLInputElement | null)?.checked;
   const dispersed = (document.getElementById("show-dispersed") as HTMLInputElement | null)?.checked;
   const trails = (document.getElementById("show-trails") as HTMLInputElement | null)?.checked;
-  const precise = (document.getElementById("show-precise") as HTMLInputElement | null)?.checked;
   const entries: [string, string][] = [
     [HEAT, "Destination (historical)"],
     [LIVE, "Recently observed"],
+    [PRECISE, "Precise observation (verified location)"],
   ];
   if (camps) {
     entries.push([CAMP_FREE, "Free campground"], [CAMP_PAID, "Paid / unknown campground"]);
   }
   if (dispersed) entries.push([CAMP_OSM, "Reported campsite (OSM)"]);
   if (trails) entries.push([TRAIL, "Trail / trailhead"]);
-  if (precise) entries.push([PRECISE, "Precise observation (verified location)"]);
   el.innerHTML = entries
     .map(([color, label]) => `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`)
     .join("");
@@ -150,6 +151,13 @@ export function updateHome(home: Home): void {
 // Matches the same 111 km/degree approximation used backend-side (camps.py, land.py,
 // scoring.py) to convert a region's cell_deg grid width into meters.
 const KM_PER_DEG = 111.0;
+
+// Same footprint plot() uses for a region's true (not score-scaled) circle - see selectSize.
+// Exported so layers.ts can scope the precise-observations fetch to exactly the ground a
+// selected destination bubble represents, instead of the whole search radius (issue #161
+// follow-up: a radius-wide fetch put a cluster badge on every destination on the map at once,
+// visually burying the destination bubbles they were competing with).
+export const regionRadiusKm = (): number => (state.cellDeg * KM_PER_DEG) / 2;
 
 // Per-marker sizing so a selected region can snap between its score size and its true
 // geographic footprint (see selectSize/deselectSize below) without re-plotting.

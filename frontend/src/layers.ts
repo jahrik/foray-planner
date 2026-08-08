@@ -16,17 +16,17 @@ import {
   LAND_DEFAULT,
   map,
   PRECISE,
+  regionRadiusKm,
   renderLegend,
   TRAIL,
 } from "./map";
-import { dist, displayName, errorDetail, qs, setStatus, state } from "./state";
+import { dist, displayName, errorDetail, monthsParam, qs, setStatus, state } from "./state";
 
 export const campsOn = (): boolean => qs<HTMLInputElement>("#show-camps").checked;
 export const dispersedOn = (): boolean => qs<HTMLInputElement>("#show-dispersed").checked;
 export const freeOnly = (): boolean => qs<HTMLInputElement>("#free-camps").checked;
 export const landOn = (): boolean => qs<HTMLInputElement>("#show-land").checked;
 export const trailsOn = (): boolean => qs<HTMLInputElement>("#show-trails").checked;
-export const preciseOn = (): boolean => qs<HTMLInputElement>("#show-precise").checked;
 
 // OSM dispersed layer: real tagged sites ("reported") + the road∩public-land proxy ("dispersed").
 const isDispersed = (site: CampSite): boolean =>
@@ -231,18 +231,26 @@ function trailPopup(trail: Trail): HTMLElement {
 // Fetch + plot individually-precise observations (issue #161): unlike the coarse cell_deg
 // circles plot() draws for every region, `obscured = false` rows have a cached coordinate
 // that's been live-verified against iNat as the real find location, not a randomized
-// geoprivacy decoy - worth showing as its own small pin. Scoped to the whole search radius
-// (like loadLand), filtered by the destinations tab's month selection since these are
-// individual observations, not a region aggregate. No-op (just clears) when the toggle is off.
-// Pins go into the cluster group (map.ts's preciseCluster) instead of straight onto the map -
-// a dense area folds into a count badge instead of dumping hundreds of overlapping dots.
-export async function loadPreciseObservations(months: string): Promise<void> {
+// geoprivacy decoy - worth showing as its own small pin. On by default (no layer toggle) and
+// scoped to the *focused* destination's own footprint (regionRadiusKm() - the same true-size
+// circle selectSize snaps that region's bubble to), not the whole search radius - an earlier
+// version fetched radius-wide and put a cluster badge on every destination on the map at once,
+// which visually buried the (much smaller, score-scaled) destination bubbles the badges were
+// sitting on top of. Scoping to one region at a time makes precise pins read as that
+// destination's detail view instead of a second, competing map layer, and keeps the result set
+// small enough that unlike other layers, it needs no opt-in. No-op (just clears) when nothing's
+// focused. Pins go into the cluster group (map.ts's preciseCluster) instead of straight onto the
+// map - a dense area folds into a count badge instead of dumping hundreds of overlapping dots.
+export async function loadPreciseObservations(): Promise<void> {
   clearPrecise();
   renderLegend();
-  if (!preciseOn() || !state.home) return;
+  if (!state.focused) return;
+  const { lat, lng } = state.focused;
   let observations: PreciseObservation[];
   try {
-    observations = await getJson("/api/observations/precise", { query: { months } });
+    observations = await getJson("/api/observations/precise", {
+      query: { months: monthsParam(), lat, lng, radius_km: regionRadiusKm() },
+    });
   } catch (error) {
     setStatus(errorDetail(error));
     return;
@@ -289,4 +297,5 @@ export function focusRegion(lat: number, lng: number): void {
   state.focused = { lat, lng };
   loadCamps();
   loadTrails();
+  loadPreciseObservations();
 }
