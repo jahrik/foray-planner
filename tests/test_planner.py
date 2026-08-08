@@ -48,12 +48,12 @@ def _seed(con: psycopg.Connection) -> None:
     # broken corridor filter that let it through would be obvious in ordering assertions).
     for (lat, lng), obs_count in ((NEAR, 40), (MID, 25), (FAR, 15), (OFF_CORRIDOR, 30)):
         for _ in range(obs_count):
-            rows.append((obs_id, MOREL, lat, lng, dt.date(2022, 10, 15), 10, 2022, "research", 10))
+            rows.append((obs_id, MOREL, lat, lng, dt.date(2022, 10, 15), 10, "research", 10))
             obs_id += 1
     with con.cursor() as cur:
         cur.executemany(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             rows,
         )
     build_phenology(con, CELL)
@@ -234,12 +234,12 @@ def test_unreachable_stop_is_skipped_not_truncating_the_rest(con: psycopg.Connec
     obs_id = 10_000
     for lat, lng in (DETOUR, NEXT):
         for _ in range(20):
-            rows.append((obs_id, MOREL, lat, lng, dt.date(2022, 10, 15), 10, 2022, "research", 10))
+            rows.append((obs_id, MOREL, lat, lng, dt.date(2022, 10, 15), 10, "research", 10))
             obs_id += 1
     with con.cursor() as cur:
         cur.executemany(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             rows,
         )
     build_phenology(con, CELL)

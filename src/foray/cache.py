@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
-from typing import Any
+from typing import Any, LiteralString
 
 import psycopg
 
@@ -31,7 +31,6 @@ CREATE TABLE IF NOT EXISTS observations (
     lng                 DOUBLE PRECISION,
     observed_on         DATE,
     month               SMALLINT,
-    year                SMALLINT,
     quality_grade       TEXT,
     positional_accuracy INTEGER,
     place_guess         TEXT,
@@ -169,7 +168,36 @@ CREATE INDEX IF NOT EXISTS ix_campsites_lat_lng ON campsites (lat, lng);
 -- taxon_id, month is a full aggregate over _BINNED's output regardless, so a plain index on
 -- `month` alone wouldn't speed that up - not added.)
 CREATE INDEX IF NOT EXISTS ix_observations_taxon_observed ON observations (taxon_id, observed_on);
+
+-- Every ingest_log coverage check (is_area_covered, latest_obs_date, latest_obs_date_by_place)
+-- is a `key LIKE 'prefix%'` scan (issue #112). Postgres can only use a plain btree index for a
+-- prefix LIKE under the `C` collation - under the default locale-aware collation this table's
+-- managed-Postgres image actually uses, it degrades to a sequential scan. `text_pattern_ops`
+-- builds a pattern-matching index regardless of collation, so the prefix scan stays an index
+-- scan as ingest_log grows (one row per taxon/region/window per scheduler cycle).
+CREATE INDEX IF NOT EXISTS ix_ingest_log_key_pattern ON ingest_log (key text_pattern_ops);
 """
+
+# Schema changes past the initial CREATE TABLE/INDEX IF NOT EXISTS baseline above, applied in
+# order and recorded in `schema_migrations` (issue #117) so a connect() with everything already
+# applied is one SELECT instead of re-running the growing list of ALTER TABLE statements below -
+# each is individually idempotent, but that stops scaling as more get added over the project's
+# life. New migrations: append a new (version, statement) tuple, never edit/reorder an existing
+# one (already-applied versions are looked up by number, not by content).
+_MIGRATIONS: list[tuple[int, LiteralString]] = [
+    (1, "ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION"),
+    (2, "ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION"),
+    (3, "ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS radius_km DOUBLE PRECISION"),
+    (4, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS place_guess TEXT"),
+    (5, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS uri TEXT"),
+    (6, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS obscured BOOLEAN"),
+    (7, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS revalidated_at TIMESTAMPTZ"),
+    # issue #117 finding 13: `year` was write-only (populated at ingest, upserted at resync,
+    # never read by any query) - a stored duplicate of `EXTRACT(YEAR FROM observed_on)` that
+    # cost a write on every ingested row for a value nothing consumed. Fully recoverable from
+    # observed_on if a future feature ever needs year-based filtering.
+    (8, "ALTER TABLE observations DROP COLUMN IF EXISTS year"),
+]
 
 
 def connect(conninfo: str = "") -> psycopg.Connection:
@@ -183,16 +211,16 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     """
     con = psycopg.connect(conninfo, autocommit=True)
     con.execute(SCHEMA)
-    con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION")
-    con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION")
-    con.execute("ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS radius_km DOUBLE PRECISION")
-    con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS place_guess TEXT")
-    con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS uri TEXT")
-    con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS obscured BOOLEAN")
-    # NULL means "never live-checked since this column was added" - includes every row from the
-    # bulk historical import, which is why it's used as the resync cursor (oldest/never-checked
-    # first, see stale_observation_ids) rather than a plain "last modified" timestamp.
-    con.execute("ALTER TABLE observations ADD COLUMN IF NOT EXISTS revalidated_at TIMESTAMPTZ")
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations "
+        "(version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+    )
+    applied = {row[0] for row in con.execute("SELECT version FROM schema_migrations").fetchall()}
+    for version, statement in _MIGRATIONS:
+        if version in applied:
+            continue
+        con.execute(statement)
+        con.execute("INSERT INTO schema_migrations (version) VALUES (%s)", [version])
     # CONCURRENTLY: this runs on every connect() (app startup included), and a plain CREATE
     # INDEX on prod's 2M+-row observations table would hold a write lock for the build's
     # duration - real downtime on a rolling deploy. Safe outside an explicit transaction block
@@ -308,16 +336,15 @@ def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
         cur.executemany(
             """
             INSERT INTO observations
-                (id, taxon_id, lat, lng, observed_on, month, year, quality_grade,
+                (id, taxon_id, lat, lng, observed_on, month, quality_grade,
                  positional_accuracy, place_guess, uri, obscured)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 taxon_id = COALESCE(EXCLUDED.taxon_id, observations.taxon_id),
                 lat = COALESCE(EXCLUDED.lat, observations.lat),
                 lng = COALESCE(EXCLUDED.lng, observations.lng),
                 observed_on = COALESCE(EXCLUDED.observed_on, observations.observed_on),
                 month = COALESCE(EXCLUDED.month, observations.month),
-                year = COALESCE(EXCLUDED.year, observations.year),
                 quality_grade = COALESCE(EXCLUDED.quality_grade, observations.quality_grade),
                 positional_accuracy = COALESCE(EXCLUDED.positional_accuracy, observations.positional_accuracy),
                 place_guess = COALESCE(EXCLUDED.place_guess, observations.place_guess),

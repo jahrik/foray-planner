@@ -111,7 +111,6 @@ def main() -> None:
                 rec["lng"],
                 day,
                 day.month,
-                day.year,
                 "research",  # dump is already quality_grade=research at the source
                 accuracy,
                 None,  # place_guess
