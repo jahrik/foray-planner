@@ -105,6 +105,11 @@ class RecentObservation(BaseModel):
     photos: list[ObservationPhoto]
 
 
+class RecentObservationsPage(BaseModel):
+    observations: list[RecentObservation]
+    has_more: bool
+
+
 class PreciseObservation(BaseModel):
     id: int
     taxon_id: int

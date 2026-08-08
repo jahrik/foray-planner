@@ -202,11 +202,13 @@ def test_observation_photos_filters_by_license(client: TestClient, monkeypatch: 
     )
     assert response.status_code == 200
     body = response.json()
-    assert len(body) == 10  # every Morel observation in the fixture is in this region
-    target = next(obs for obs in body if obs["id"] == obs_id)
+    assert body["has_more"] is False
+    observations = body["observations"]
+    assert len(observations) == 10  # every Morel observation in the fixture is in this region
+    target = next(obs for obs in observations if obs["id"] == obs_id)
     assert len(target["photos"]) == 1
     assert target["photos"][0]["license_code"] == "cc-by"
-    others = [obs for obs in body if obs["id"] != obs_id]
+    others = [obs for obs in observations if obs["id"] != obs_id]
     assert all(obs["photos"] == [] for obs in others)
 
 
@@ -218,13 +220,48 @@ def test_observation_photos_filters_by_month(client: TestClient, monkeypatch: py
         "/api/observations/photos", params={"region_id": region_id, "species": str(MOREL), "months": "7"}
     )
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json() == {"observations": [], "has_more": False}
 
 
 def test_observation_photos_bad_region_returns_empty(client: TestClient) -> None:
     response = client.get("/api/observations/photos", params={"region_id": "999_999"})
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json() == {"observations": [], "has_more": False}
+
+
+def test_observation_photos_paginates_with_offset(
+    client: TestClient, con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("foray.api.inat.photos_for_observations", lambda ids: {})
+    # Fixture already has 10 Morel observations (ids 1-10) in this region/month - add 5 more so
+    # the region's total (15) crosses the default page size (12).
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            [
+                (obs_id, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", 10)
+                for obs_id in range(9001, 9006)
+            ],
+        )
+    region_id = client.get("/api/destinations", params={"months": "4"}).json()[0]["region_id"]
+
+    first_page = client.get(
+        "/api/observations/photos", params={"region_id": region_id, "species": str(MOREL), "months": "4"}
+    ).json()
+    assert len(first_page["observations"]) == 12
+    assert first_page["has_more"] is True
+
+    second_page = client.get(
+        "/api/observations/photos",
+        params={"region_id": region_id, "species": str(MOREL), "months": "4", "offset": 12},
+    ).json()
+    assert len(second_page["observations"]) == 3
+    assert second_page["has_more"] is False
+
+    first_ids = {obs["id"] for obs in first_page["observations"]}
+    second_ids = {obs["id"] for obs in second_page["observations"]}
+    assert first_ids.isdisjoint(second_ids)
 
 
 def test_alerts_empty_when_no_recent_observations(client: TestClient) -> None:

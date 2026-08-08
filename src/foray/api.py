@@ -38,6 +38,7 @@ from foray.api_models import (
     LocationResponse,
     PreciseObservation,
     RecentObservation,
+    RecentObservationsPage,
     RegionScore,
     StatusResponse,
     Trail,
@@ -553,7 +554,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         response: Response,
         species: str = Query("all"),
         months: str | None = Query(None),
-    ) -> list[RecentObservation]:
+        offset: int = Query(0, ge=0),
+    ) -> RecentObservationsPage:
         require_idle()
         cfg = current()
         device_id, is_new = resolve_device_id(request)
@@ -563,12 +565,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         selected_months = parse_months(months) if months is not None else [dt.date.today().month]
         try:
             with pool.connection() as conn:
-                recent = scoring.recent_observations(
+                recent, has_more = scoring.recent_observations(
                     conn,
                     region_id=region_id,
                     taxon_ids=parse_species(species, conn, device_id),
                     cell_deg=cfg.cell_deg,
                     months=selected_months,
+                    offset=offset,
                 )
         except psycopg.errors.UndefinedTable:
             raise HTTPException(409, "no data for this area yet - click Fetch data") from None
@@ -581,7 +584,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 if photo.get("license_code") in inat.DISPLAYABLE_PHOTO_LICENSES
             ]
             result.append(RecentObservation.model_validate({**obs, "photos": photos}))
-        return result
+        return RecentObservationsPage(observations=result, has_more=has_more)
 
     @app.get("/api/alerts")
     def get_alerts(

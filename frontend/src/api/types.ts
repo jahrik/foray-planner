@@ -60,6 +60,9 @@ export type ObservationPhoto = components["schemas"]["ObservationPhoto"];
 /** A recent observation, with any eligible thumbnails (`GET /api/observations/photos`). */
 export type RecentObservation = components["schemas"]["RecentObservation"];
 
+/** One page of recent observations, with whether a further `offset` page exists. */
+export type RecentObservationsPage = components["schemas"]["RecentObservationsPage"];
+
 /** An observation with a known-precise (non-obscured) coordinate (`GET /api/observations/precise`). */
 export type PreciseObservation = components["schemas"]["PreciseObservation"];
 
