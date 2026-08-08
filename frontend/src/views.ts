@@ -153,15 +153,15 @@ export async function runDestinations(): Promise<void> {
       </div>
       <div class="rank-calendar" data-tab-content="calendar" style="display:none"></div>
       <div class="rank-photos" data-tab-content="photos" style="display:none"></div>`;
-    const speciesTab = card.querySelector<HTMLButtonElement>('[data-tab="species"]')!;
-    const calendarTab = card.querySelector<HTMLButtonElement>('[data-tab="calendar"]')!;
-    const photosTab = card.querySelector<HTMLButtonElement>('[data-tab="photos"]')!;
-    const speciesBody = card.querySelector<HTMLElement>('[data-tab-content="species"]')!;
-    const calendarBody = card.querySelector<HTMLElement>('[data-tab-content="calendar"]')!;
-    const photosBody = card.querySelector<HTMLElement>('[data-tab-content="photos"]')!;
+    const speciesTab = qs<HTMLButtonElement>('[data-tab="species"]', card);
+    const calendarTab = qs<HTMLButtonElement>('[data-tab="calendar"]', card);
+    const photosTab = qs<HTMLButtonElement>('[data-tab="photos"]', card);
+    const speciesBody = qs<HTMLElement>('[data-tab-content="species"]', card);
+    const calendarBody = qs<HTMLElement>('[data-tab-content="calendar"]', card);
+    const photosBody = qs<HTMLElement>('[data-tab-content="photos"]', card);
     stopLinkPropagation(speciesBody);
     stopLinkPropagation(photosBody);
-    const chipsContainer = speciesBody.querySelector<HTMLElement>(".chips")!;
+    const chipsContainer = qs<HTMLElement>(".chips", speciesBody);
     const showMoreButton = card.querySelector<HTMLButtonElement>(".show-more");
     if (showMoreButton) {
       let expanded = false;
@@ -410,7 +410,7 @@ export async function runAlerts(): Promise<void> {
           return speciesChip({ ...hit, label }, "live");
         })
         .join("")}</div>`;
-    stopLinkPropagation(card.querySelector<HTMLElement>(".chips")!);
+    stopLinkPropagation(qs<HTMLElement>(".chips", card));
     const selectCard = () => {
       panel.querySelectorAll(".rank").forEach((el) => el.classList.remove("active"));
       card.classList.add("active");
