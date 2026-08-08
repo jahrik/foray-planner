@@ -304,10 +304,10 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "pre-commit", specifier = ">=4.6.1" },
-    { name = "pytest", specifier = ">=8.3" },
-    { name = "ruff", specifier = ">=0.16.1" },
-    { name = "ty", specifier = ">=0.0.66" },
+    { name = "pre-commit", specifier = ">=4.6.1,<5.0" },
+    { name = "pytest", specifier = ">=8.3,<10.0" },
+    { name = "ruff", specifier = ">=0.16.1,<1.0" },
+    { name = "ty", specifier = ">=0.0.66,<1.0" },
 ]
 
 [[package]]
