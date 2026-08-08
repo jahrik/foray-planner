@@ -795,8 +795,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 if name is None:
                     try:
                         name = geocode.reverse(body.lat, body.lng).name[:200]
-                    except Exception as error:
-                        logger.warning("location: reverse geocode failed (%s)", error)
+                    except (httpx.HTTPError, LookupError, ValueError):
+                        logger.warning("location: reverse geocode failed for %s,%s", body.lat, body.lng, exc_info=True)
                 home = Home(
                     name=name or f"{body.lat:.4f}, {body.lng:.4f}",
                     lat=body.lat,

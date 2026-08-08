@@ -44,6 +44,8 @@ def reverse(lat: float, lng: float, *, client: httpx.Client | None = None) -> Lo
     ``/reverse`` endpoint instead of ``/search`` (issue #145) - keeps the one Nominatim client
     (and its rate-limit/User-Agent policy) in one place instead of duplicated per-caller.
     """
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        raise ValueError(f"coordinates out of range: {lat},{lng}")
     owns = client is None
     client = client or httpx.Client(timeout=15.0)
     try:
