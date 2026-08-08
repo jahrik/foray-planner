@@ -626,6 +626,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         home + its search radius when omitted - same `lat`/`lng`/`radius_km` override pattern as
         `/api/camps` and `/api/trails`."""
         require_idle()
+        if (lat is None) != (lng is None):
+            raise HTTPException(400, "provide both `lat` and `lng`, or neither")
         device_id, is_new = resolve_device_id(request)
         if is_new:
             set_device_cookie(request, response, device_id)

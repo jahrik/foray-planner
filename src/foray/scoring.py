@@ -748,11 +748,12 @@ def precise_observations(
     (unlike the original version) called with a *destination's* coordinates rather than home's -
     the frontend scopes this to whichever region is currently focused (see map.ts's
     ``regionRadiusKm``), not the whole search radius. That footprint is small enough (a single
-    cell_deg region, not the whole search radius) that no result cap is needed - the old
-    radius-wide version's 3000-row backstop existed for a fetch that could span the entire map at
-    once; a single destination's own circle can't realistically produce that. The frontend also
-    clusters these pins (Leaflet.markercluster, see map.ts's ``preciseCluster``) for whatever
-    density does show up.
+    cell_deg region, not the whole search radius) that the old radius-wide version's 3000-row cap
+    is no longer needed to keep the *normal* response small - but the route still allows callers
+    to omit lat/lng and fall back to home's full search radius, so a generous backstop LIMIT stays
+    here for that broader mode (defense in depth, not expected to bind in the scoped path). The
+    frontend also clusters these pins (Leaflet.markercluster, see map.ts's ``preciseCluster``) for
+    whatever density does show up.
     """
     dlat = radius_km / 111.0
     dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
@@ -766,6 +767,7 @@ def precise_observations(
               AND o.lat BETWEEN %s AND %s AND o.lng BETWEEN %s AND %s
               AND {_taxon_filter(taxon_ids)} AND o.month IN ({_in(months)})
             ORDER BY o.observed_on DESC
+            LIMIT 5000
             """,
         ),
         [lat - dlat, lat + dlat, lng - dlng, lng + dlng, *taxon_ids, *months],
