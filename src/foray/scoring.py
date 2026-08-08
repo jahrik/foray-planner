@@ -612,7 +612,9 @@ def recent_observations(
 
     Fetches one extra row beyond ``limit`` to cheaply detect whether a further page exists
     (issue #174), rather than a separate ``COUNT(*)`` query - trimmed back to ``limit`` before
-    returning the ``(observations, has_more)`` pair.
+    returning the ``(observations, has_more)`` pair. ``id`` is a tie-breaker in the ORDER BY since
+    ``observed_on`` alone isn't unique - without it, LIMIT/OFFSET paging can skip or repeat rows
+    whenever two observations share a date and land on opposite sides of a page boundary.
     """
     binned = _BINNED.format(cell=cell_deg)
     rows = con.execute(
@@ -622,7 +624,7 @@ def recent_observations(
             SELECT o.id, o.taxon_id, o.observed_on, o.place_guess, o.uri, o.obscured
             FROM ({binned}) o
             WHERE o.region_id = %s AND {_taxon_filter(taxon_ids, "o.taxon_id")} AND o.month IN ({_in(months)})
-            ORDER BY o.observed_on DESC
+            ORDER BY o.observed_on DESC, o.id DESC
             LIMIT %s OFFSET %s
             """,
         ),

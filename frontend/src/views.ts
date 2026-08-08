@@ -312,10 +312,14 @@ function renderObsPhoto(obs: RecentObservation): string {
 // re-fetching from scratch, disappearing once the backend reports no further page.
 async function loadPhotosInto(regionId: string, container: HTMLElement): Promise<boolean> {
   container.innerHTML = "<p class='hint'>Loading…</p>";
+  // Captured once and reused for every "Load more" click in this paging session - re-reading
+  // monthsParam() per click would let a month-filter change mid-session mix pages fetched under
+  // different filters at the same offset.
+  const months = monthsParam();
   let page: RecentObservationsPage;
   try {
     page = await getJson("/api/observations/photos", {
-      query: { region_id: regionId, months: monthsParam() },
+      query: { region_id: regionId, months },
     });
   } catch (error) {
     container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
@@ -340,7 +344,7 @@ async function loadPhotosInto(regionId: string, container: HTMLElement): Promise
       let nextPage: RecentObservationsPage;
       try {
         nextPage = await getJson("/api/observations/photos", {
-          query: { region_id: regionId, months: monthsParam(), offset },
+          query: { region_id: regionId, months, offset },
         });
       } catch (error) {
         setStatus(errorDetail(error));
