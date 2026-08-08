@@ -92,3 +92,11 @@ export function escapeHtml(text: string): string {
 export function setStatus(text: string): void {
   qs("#status").textContent = text;
 }
+
+/** No months toggled reads the same as all 12 toggled - there's no actual restriction either
+ * way, so callers that need to distinguish the two (e.g. phenology-% wording) check
+ * `state.months.size` themselves rather than trying to infer it from this string. */
+export function monthsParam(): string {
+  const ordered = [...state.months].sort((left, right) => left - right);
+  return ordered.length ? ordered.join(",") : "1,2,3,4,5,6,7,8,9,10,11,12";
+}

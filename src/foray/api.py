@@ -618,8 +618,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         response: Response,
         species: str = Query("all"),
         months: str | None = Query(None),
+        lat: float | None = Query(None),
+        lng: float | None = Query(None),
         radius_km: float | None = Query(None),
     ) -> list[PreciseObservation]:
+        """Precise observations near an explicit lat/lng (a focused destination), falling back to
+        home + its search radius when omitted - same `lat`/`lng`/`radius_km` override pattern as
+        `/api/camps` and `/api/trails`."""
         require_idle()
         device_id, is_new = resolve_device_id(request)
         if is_new:
@@ -628,11 +633,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         try:
             with pool.connection() as conn:
                 home = resolve_home(conn, device_id)
+                center_lat = lat if lat is not None else home.lat
+                center_lng = lng if lng is not None else home.lng
                 observations = scoring.precise_observations(
                     conn,
                     taxon_ids=parse_species(species, conn, device_id),
-                    home_lat=home.lat,
-                    home_lng=home.lng,
+                    lat=center_lat,
+                    lng=center_lng,
                     radius_km=radius_km or home.radius_km,
                     months=selected_months,
                 )

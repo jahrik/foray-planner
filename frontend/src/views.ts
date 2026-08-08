@@ -2,9 +2,20 @@ import L from "leaflet";
 
 import { getJson } from "./api/client";
 import type { AlertRegion, Calendar, RecentObservation, RegionScore } from "./api/types";
-import { focusRegion, loadPreciseObservations } from "./layers";
+import { focusRegion } from "./layers";
 import { clearMarkers, deselectSize, HEAT_RGB, map, plot, selectSize } from "./map";
-import { dist, displayName, errorDetail, escapeHtml, inatUrl, MONTHS, qs, setStatus, state } from "./state";
+import {
+  dist,
+  displayName,
+  errorDetail,
+  escapeHtml,
+  inatUrl,
+  monthsParam,
+  MONTHS,
+  qs,
+  setStatus,
+  state,
+} from "./state";
 
 // Cards act as buttons (selecting a region) but are plain <div>s for layout flexibility, so make
 // them keyboard-operable: focusable, and Enter/Space activates - but only when the key event's
@@ -55,11 +66,6 @@ export function initMonths(): void {
     };
     box.appendChild(button);
   });
-}
-
-export function monthsParam(): string {
-  const ordered = [...state.months].sort((left, right) => left - right);
-  return ordered.length ? ordered.join(",") : "1,2,3,4,5,6,7,8,9,10,11,12";
 }
 
 interface ChipData {
@@ -246,7 +252,6 @@ export async function runDestinations(): Promise<void> {
   rankList.querySelector(".rank")?.classList.add("active");
   selectSize(markers[0]);
   selected = { marker: markers[0], weight: top.score_norm };
-  loadPreciseObservations(monthsParam());
 }
 
 // Fetches once per card (cached by the calendarState flag at the call site) and renders straight

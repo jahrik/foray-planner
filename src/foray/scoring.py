@@ -732,28 +732,30 @@ def precise_observations(
     con: psycopg.Connection,
     *,
     taxon_ids: list[int],
-    home_lat: float,
-    home_lng: float,
+    lat: float,
+    lng: float,
     radius_km: float,
     months: list[int],
-    limit: int = 3000,
 ) -> list[dict[str, Any]]:
-    """Individually-plottable observations within ``radius_km`` whose cached coordinate is
-    known-precise (``obscured = false``, i.e. live-verified against iNat, not a randomized
-    geoprivacy decoy - see ``ingest.resync``). Everything ``NULL``/``true`` stays out of this
-    path entirely and is only ever shown via the coarse region circle (issue #161) - this
+    """Individually-plottable observations within ``radius_km`` of ``lat``/``lng`` whose cached
+    coordinate is known-precise (``obscured = false``, i.e. live-verified against iNat, not a
+    randomized geoprivacy decoy - see ``ingest.resync``). Everything ``NULL``/``true`` stays out
+    of this path entirely and is only ever shown via the coarse region circle (issue #161) - this
     query never widens what a caller already sees, since ``obscured = false`` is exactly the
     subset iNat itself already publishes as an exact point.
 
-    Same bbox-prefilter-then-haversine-cut technique as ``camps_near``/``trails_near``. The
-    frontend clusters these pins (Leaflet.markercluster, see map.ts's ``preciseCluster``), so
-    ``limit`` isn't standing in for clustering anymore - it's just a query/payload backstop for
-    the pathological case (a real dev-DB check against Seattle found ~7,800 candidates in-radius
-    for one month; a full year at a large radius could clear this). ``ORDER BY observed_on DESC``
-    keeps whatever does get cut the freshest sightings first.
+    Same bbox-prefilter-then-haversine-cut technique as ``camps_near``/``trails_near``, and
+    (unlike the original version) called with a *destination's* coordinates rather than home's -
+    the frontend scopes this to whichever region is currently focused (see map.ts's
+    ``regionRadiusKm``), not the whole search radius. That footprint is small enough (a single
+    cell_deg region, not the whole search radius) that no result cap is needed - the old
+    radius-wide version's 3000-row backstop existed for a fetch that could span the entire map at
+    once; a single destination's own circle can't realistically produce that. The frontend also
+    clusters these pins (Leaflet.markercluster, see map.ts's ``preciseCluster``) for whatever
+    density does show up.
     """
     dlat = radius_km / 111.0
-    dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(home_lat))), 0.01))
+    dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
     rows = con.execute(
         cast(
             LiteralString,
@@ -764,16 +766,15 @@ def precise_observations(
               AND o.lat BETWEEN %s AND %s AND o.lng BETWEEN %s AND %s
               AND {_taxon_filter(taxon_ids)} AND o.month IN ({_in(months)})
             ORDER BY o.observed_on DESC
-            LIMIT %s
             """,
         ),
-        [home_lat - dlat, home_lat + dlat, home_lng - dlng, home_lng + dlng, *taxon_ids, *months, limit],
+        [lat - dlat, lat + dlat, lng - dlng, lng + dlng, *taxon_ids, *months],
     ).fetchall()
     genera = _genus_name_map(con, {row[1] for row in rows})
 
     results = []
-    for obs_id, taxon_id, lat, lng, observed_on, uri in rows:
-        dist = haversine_km(home_lat, home_lng, lat, lng)
+    for obs_id, taxon_id, obs_lat, obs_lng, observed_on, uri in rows:
+        dist = haversine_km(lat, lng, obs_lat, obs_lng)
         if dist > radius_km:
             continue
         name, common_name = genera.get(taxon_id, (str(taxon_id), None))
@@ -783,8 +784,8 @@ def precise_observations(
                 "taxon_id": taxon_id,
                 "name": name,
                 "common_name": common_name,
-                "lat": lat,
-                "lng": lng,
+                "lat": obs_lat,
+                "lng": obs_lng,
                 "observed_on": observed_on.isoformat() if observed_on else None,
                 "uri": uri,
             }

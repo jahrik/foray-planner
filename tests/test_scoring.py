@@ -405,9 +405,7 @@ def test_precise_observations_excludes_null_and_true_obscured(con: psycopg.Conne
             (9003, MOREL, precise_lat, precise_lng, dt.date(2022, 4, 16), 4, 2022, "research", "https://x/9003"),
         )
 
-    results = precise_observations(
-        con, taxon_ids=[MOREL], home_lat=home_lat, home_lng=home_lng, radius_km=50, months=[4]
-    )
+    results = precise_observations(con, taxon_ids=[MOREL], lat=home_lat, lng=home_lng, radius_km=50, months=[4])
     assert [r["id"] for r in results] == [9001]
     assert results[0]["lat"] == pytest.approx(precise_lat)
     assert results[0]["lng"] == pytest.approx(precise_lng)
@@ -436,9 +434,7 @@ def test_precise_observations_respects_radius_and_months(con: psycopg.Connection
             (9103, MOREL, near_lat, near_lng, dt.date(2022, 10, 15), 10, 2022, "research"),
         )
 
-    results = precise_observations(
-        con, taxon_ids=[MOREL], home_lat=home_lat, home_lng=home_lng, radius_km=50, months=[4]
-    )
+    results = precise_observations(con, taxon_ids=[MOREL], lat=home_lat, lng=home_lng, radius_km=50, months=[4])
     assert [r["id"] for r in results] == [9101]
 
 
