@@ -1,7 +1,7 @@
 import L from "leaflet";
 
 import { getJson } from "./api/client";
-import type { AlertRegion, Calendar, RecentObservation, RegionScore } from "./api/types";
+import type { AlertRegion, Calendar, RecentObservation, RecentObservationsPage, RegionScore } from "./api/types";
 import { focusRegion } from "./layers";
 import { clearMarkers, deselectSize, HEAT_RGB, map, plot, selectSize } from "./map";
 import {
@@ -284,47 +284,82 @@ async function loadCalendarInto(regionId: string, container: HTMLElement): Promi
   return true;
 }
 
+function renderObsPhoto(obs: RecentObservation): string {
+  const name = displayName(obs);
+  const uri = obs.uri && obs.uri.startsWith("https://") ? escapeHtml(obs.uri) : null;
+  const link = uri
+    ? `<a href="${uri}" target="_blank" rel="noopener">${escapeHtml(name)}</a>`
+    : escapeHtml(name);
+  const when = obs.observed_on ? escapeHtml(obs.observed_on) : "";
+  const photo = obs.photos[0] && obs.photos[0].url.startsWith("https://") ? obs.photos[0] : null;
+  const img = photo
+    ? `<img class="obs-thumb" src="${escapeHtml(photo.url)}" alt="${escapeHtml(name)}" loading="lazy" />`
+    : "";
+  const thumb = photo
+    ? `${uri ? `<a href="${uri}" target="_blank" rel="noopener">${img}</a>` : img}
+       <div class="meta">${escapeHtml(photo.attribution)}</div>`
+    : "";
+  return `<div class="obs-photo">${thumb}<div class="meta">${link} · ${when}</div></div>`;
+}
+
 // Same fetch-once-per-card pattern as loadCalendarInto. Observations without an eligible
 // (redisplayable) photo still get listed as a plain link back to iNat, per the license allow-list
 // the backend already applied.
+//
+// The backend caps each page at 12 (issue #174) - a "Load more" button (same stopPropagation
+// pattern as the species tab's show-more button, since it's a plain button, not a link
+// stopLinkPropagation already covers) fetches the next `offset` page and appends rather than
+// re-fetching from scratch, disappearing once the backend reports no further page.
 async function loadPhotosInto(regionId: string, container: HTMLElement): Promise<boolean> {
   container.innerHTML = "<p class='hint'>Loading…</p>";
-  let observations: RecentObservation[];
+  let page: RecentObservationsPage;
   try {
-    observations = await getJson("/api/observations/photos", {
+    page = await getJson("/api/observations/photos", {
       query: { region_id: regionId, months: monthsParam() },
     });
   } catch (error) {
     container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
     return false;
   }
-  if (!observations.length) {
+  if (!page.observations.length) {
     container.innerHTML = "<p class='hint'>No recent observations here yet.</p>";
     return true;
   }
-  container.innerHTML = observations
-    .map((obs) => {
-      const name = displayName(obs);
-      const uri = obs.uri && obs.uri.startsWith("https://") ? escapeHtml(obs.uri) : null;
-      const link = uri
-        ? `<a href="${uri}" target="_blank" rel="noopener">${escapeHtml(name)}</a>`
-        : escapeHtml(name);
-      const when = obs.observed_on ? escapeHtml(obs.observed_on) : "";
-      const photo = obs.photos[0] && obs.photos[0].url.startsWith("https://") ? obs.photos[0] : null;
-      const img = photo
-        ? `<img class="obs-thumb" src="${escapeHtml(photo.url)}" alt="${escapeHtml(name)}" loading="lazy" />`
-        : "";
-      const thumb = photo
-        ? `${
-            uri
-              ? `<a href="${uri}" target="_blank" rel="noopener">${img}</a>`
-              : img
-          }
-           <div class="meta">${escapeHtml(photo.attribution)}</div>`
-        : "";
-      return `<div class="obs-photo">${thumb}<div class="meta">${link} · ${when}</div></div>`;
-    })
-    .join("");
+  container.innerHTML = page.observations.map(renderObsPhoto).join("");
+  let offset = page.observations.length;
+  let hasMore = page.has_more;
+  if (hasMore) {
+    const loadMoreButton = document.createElement("button");
+    loadMoreButton.type = "button";
+    loadMoreButton.className = "show-more";
+    loadMoreButton.textContent = "Load more";
+    loadMoreButton.onclick = async (e) => {
+      e.stopPropagation();
+      loadMoreButton.textContent = "Loading…";
+      loadMoreButton.disabled = true;
+      let nextPage: RecentObservationsPage;
+      try {
+        nextPage = await getJson("/api/observations/photos", {
+          query: { region_id: regionId, months: monthsParam(), offset },
+        });
+      } catch (error) {
+        setStatus(errorDetail(error));
+        loadMoreButton.disabled = false;
+        loadMoreButton.textContent = "Load more";
+        return;
+      }
+      offset += nextPage.observations.length;
+      hasMore = nextPage.has_more;
+      loadMoreButton.insertAdjacentHTML("beforebegin", nextPage.observations.map(renderObsPhoto).join(""));
+      if (hasMore) {
+        loadMoreButton.disabled = false;
+        loadMoreButton.textContent = "Load more";
+      } else {
+        loadMoreButton.remove();
+      }
+    };
+    container.appendChild(loadMoreButton);
+  }
   return true;
 }
 

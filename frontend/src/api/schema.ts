@@ -564,6 +564,13 @@ export interface components {
             /** Photos */
             photos: components["schemas"]["ObservationPhoto"][];
         };
+        /** RecentObservationsPage */
+        RecentObservationsPage: {
+            /** Observations */
+            observations: components["schemas"]["RecentObservation"][];
+            /** Has More */
+            has_more: boolean;
+        };
         /** RegionScore */
         RegionScore: {
             /** Region Id */
@@ -942,6 +949,7 @@ export interface operations {
                 region_id: string;
                 species?: string;
                 months?: string | null;
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -955,7 +963,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RecentObservation"][];
+                    "application/json": components["schemas"]["RecentObservationsPage"];
                 };
             };
             /** @description Validation Error */

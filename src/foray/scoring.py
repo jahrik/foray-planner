@@ -606,8 +606,14 @@ def recent_observations(
     cell_deg: float,
     months: list[int],
     limit: int = 12,
-) -> list[dict[str, Any]]:
-    """Most recent observations in a region, newest first - the source list for photo thumbnails."""
+    offset: int = 0,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Most recent observations in a region, newest first - the source list for photo thumbnails.
+
+    Fetches one extra row beyond ``limit`` to cheaply detect whether a further page exists
+    (issue #174), rather than a separate ``COUNT(*)`` query - trimmed back to ``limit`` before
+    returning the ``(observations, has_more)`` pair.
+    """
     binned = _BINNED.format(cell=cell_deg)
     rows = con.execute(
         cast(
@@ -617,11 +623,13 @@ def recent_observations(
             FROM ({binned}) o
             WHERE o.region_id = %s AND {_taxon_filter(taxon_ids, "o.taxon_id")} AND o.month IN ({_in(months)})
             ORDER BY o.observed_on DESC
-            LIMIT %s
+            LIMIT %s OFFSET %s
             """,
         ),
-        [region_id, *taxon_ids, *months, limit],
+        [region_id, *taxon_ids, *months, limit + 1, offset],
     ).fetchall()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
     genera = _genus_name_map(con, {row[1] for row in rows})
     results = []
     for obs_id, taxon_id, observed_on, place_guess, uri, obscured in rows:
@@ -638,7 +646,7 @@ def recent_observations(
                 "obscured": bool(obscured),
             }
         )
-    return results
+    return results, has_more
 
 
 def alerts(
