@@ -124,7 +124,6 @@ def _to_row(obs: dict[str, Any], genus_taxon_id: int) -> tuple[Any, ...] | None:
         lng,
         day,
         day.month,
-        day.year,
         obs.get("quality_grade"),
         obs.get("positional_accuracy"),
         obs.get("place_guess"),

@@ -40,20 +40,20 @@ def _seed(con: psycopg.Connection) -> None:
     obs_id = 1
     # 20 morel obs in the APR region, all in April.
     for _ in range(20):
-        rows.append((obs_id, MOREL, APR_LAT, APR_LNG, dt.date(2022, 4, 15), 4, 2022, "research", 10))
+        rows.append((obs_id, MOREL, APR_LAT, APR_LNG, dt.date(2022, 4, 15), 4, "research", 10))
         obs_id += 1
     # 30 chanterelle obs in the OCT region, all in October.
     for _ in range(30):
-        rows.append((obs_id, CHANTERELLE, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, 2022, "research", 10))
+        rows.append((obs_id, CHANTERELLE, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, "research", 10))
         obs_id += 1
     # A couple stray off-season morels in the OCT region (noise).
     for _ in range(2):
-        rows.append((obs_id, MOREL, OCT_LAT, OCT_LNG, dt.date(2022, 7, 1), 7, 2022, "research", 10))
+        rows.append((obs_id, MOREL, OCT_LAT, OCT_LNG, dt.date(2022, 7, 1), 7, "research", 10))
         obs_id += 1
     with con.cursor() as cur:
         cur.executemany(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             rows,
         )
     build_phenology(con, CELL)
@@ -132,12 +132,9 @@ def test_non_research_grade_excluded_from_scoring(con: psycopg.Connection) -> No
             (casual_taxon, "Amanita", "Amanitas"),
         )
         cur.executemany(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            [
-                (9000 + i, casual_taxon, APR_LAT, APR_LNG, dt.date(2022, 4, 15), 4, 2022, "casual", 10)
-                for i in range(20)
-            ],
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            [(9000 + i, casual_taxon, APR_LAT, APR_LNG, dt.date(2022, 4, 15), 4, "casual", 10) for i in range(20)],
         )
     build_phenology(con, CELL)
     ranked = rank_destinations(
@@ -181,10 +178,10 @@ def test_place_calendar_caps_species_breakdown_when_unfiltered(con: psycopg.Conn
             extra_taxa,
         )
         cur.executemany(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             [
-                (20000 + i, taxon_id, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, 2022, "research", 10)
+                (20000 + i, taxon_id, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, "research", 10)
                 for i, (taxon_id, _, _) in enumerate(extra_taxa)
             ],
         )
@@ -212,11 +209,11 @@ def test_place_calendar_disambiguates_duplicate_display_names(con: psycopg.Conne
             [(dup_a, "Amanitopsis", None), (dup_b, "Amanitopsis", None)],
         )
         cur.executemany(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             [
-                (30001, dup_a, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, 2022, "research", 10),
-                (30002, dup_b, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, 2022, "research", 10),
+                (30001, dup_a, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, "research", 10),
+                (30002, dup_b, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, "research", 10),
             ],
         )
     build_phenology(con, CELL)
@@ -252,20 +249,18 @@ def test_regions_center_excludes_obscured_decoy(con: psycopg.Connection) -> None
     taxon_id = 555
     precise_lat, precise_lng = 40.0, -100.0
     decoy_lat, decoy_lng = 40.3, -99.6  # same 0.5deg cell, far enough to shift a naive average
-    rows = [
-        (900 + i, taxon_id, precise_lat, precise_lng, dt.date(2022, 6, 1), 6, 2022, "research", 10) for i in range(3)
-    ]
+    rows = [(900 + i, taxon_id, precise_lat, precise_lng, dt.date(2022, 6, 1), 6, "research", 10) for i in range(3)]
     with con.cursor() as cur:
         cur.executemany(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             rows,
         )
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
             " quality_grade, positional_accuracy, obscured) VALUES"
-            " (%s, %s, %s, %s, %s, %s, %s, %s, %s, true)",
-            (999, taxon_id, decoy_lat, decoy_lng, dt.date(2022, 6, 1), 6, 2022, "research", 27000),
+            " (%s, %s, %s, %s, %s, %s, %s, %s, true)",
+            (999, taxon_id, decoy_lat, decoy_lng, dt.date(2022, 6, 1), 6, "research", 27000),
         )
 
     build_phenology(con, CELL)
@@ -288,10 +283,10 @@ def test_regions_center_falls_back_when_all_obscured(con: psycopg.Connection) ->
     lat, lng = 50.0, -110.0
     with con.cursor() as cur:
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
             " quality_grade, positional_accuracy, obscured) VALUES"
-            " (%s, %s, %s, %s, %s, %s, %s, %s, %s, true)",
-            (997, taxon_id, lat, lng, dt.date(2022, 6, 1), 6, 2022, "research", 27000),
+            " (%s, %s, %s, %s, %s, %s, %s, %s, true)",
+            (997, taxon_id, lat, lng, dt.date(2022, 6, 1), 6, "research", 27000),
         )
 
     build_phenology(con, CELL)
@@ -317,15 +312,15 @@ def test_alerts_center_excludes_obscured_decoy(con: psycopg.Connection) -> None:
             [(taxon_id, "Testomyces", "Test fungus")],
         )
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (901, taxon_id, precise_lat, precise_lng, today, today.month, today.year, "research", 10),
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (901, taxon_id, precise_lat, precise_lng, today, today.month, "research", 10),
         )
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
             " quality_grade, positional_accuracy, obscured) VALUES"
-            " (%s, %s, %s, %s, %s, %s, %s, %s, %s, true)",
-            (902, taxon_id, decoy_lat, decoy_lng, today, today.month, today.year, "research", 27000),
+            " (%s, %s, %s, %s, %s, %s, %s, %s, true)",
+            (902, taxon_id, decoy_lat, decoy_lng, today, today.month, "research", 27000),
         )
 
     active = alerts(
@@ -357,15 +352,15 @@ def test_alerts_center_excludes_obscured_decoy_across_taxa(con: psycopg.Connecti
             [(precise_taxon, "Preciseomyces", None), (obscured_taxon, "Obscuromyces", None)],
         )
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (903, precise_taxon, precise_lat, precise_lng, today, today.month, today.year, "research", 10),
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (903, precise_taxon, precise_lat, precise_lng, today, today.month, "research", 10),
         )
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
             " quality_grade, positional_accuracy, obscured) VALUES"
-            " (%s, %s, %s, %s, %s, %s, %s, %s, %s, true)",
-            (904, obscured_taxon, decoy_lat, decoy_lng, today, today.month, today.year, "research", 27000),
+            " (%s, %s, %s, %s, %s, %s, %s, %s, true)",
+            (904, obscured_taxon, decoy_lat, decoy_lng, today, today.month, "research", 27000),
         )
 
     active = alerts(
@@ -390,19 +385,19 @@ def test_precise_observations_excludes_null_and_true_obscured(con: psycopg.Conne
     precise_lat, precise_lng = home_lat + 0.01, home_lng + 0.01
     with con.cursor() as cur:
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, uri, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, false)",
-            (9001, MOREL, precise_lat, precise_lng, dt.date(2022, 4, 15), 4, 2022, "research", "https://x/9001"),
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, uri, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false)",
+            (9001, MOREL, precise_lat, precise_lng, dt.date(2022, 4, 15), 4, "research", "https://x/9001"),
         )
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, uri, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true)",
-            (9002, MOREL, precise_lat, precise_lng, dt.date(2022, 4, 15), 4, 2022, "research", "https://x/9002"),
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, uri, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, true)",
+            (9002, MOREL, precise_lat, precise_lng, dt.date(2022, 4, 15), 4, "research", "https://x/9002"),
         )
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, uri) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (9003, MOREL, precise_lat, precise_lng, dt.date(2022, 4, 16), 4, 2022, "research", "https://x/9003"),
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, uri) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (9003, MOREL, precise_lat, precise_lng, dt.date(2022, 4, 16), 4, "research", "https://x/9003"),
         )
 
     results = precise_observations(con, taxon_ids=[MOREL], lat=home_lat, lng=home_lng, radius_km=50, months=[4])
@@ -419,19 +414,19 @@ def test_precise_observations_respects_radius_and_months(con: psycopg.Connection
     far_lat, far_lng = home_lat + 5.0, home_lng + 5.0  # well outside a 50km radius
     with con.cursor() as cur:
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false)",
-            (9101, MOREL, near_lat, near_lng, dt.date(2022, 4, 15), 4, 2022, "research"),
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, false)",
+            (9101, MOREL, near_lat, near_lng, dt.date(2022, 4, 15), 4, "research"),
         )
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false)",
-            (9102, MOREL, far_lat, far_lng, dt.date(2022, 4, 15), 4, 2022, "research"),
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, false)",
+            (9102, MOREL, far_lat, far_lng, dt.date(2022, 4, 15), 4, "research"),
         )
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false)",
-            (9103, MOREL, near_lat, near_lng, dt.date(2022, 10, 15), 10, 2022, "research"),
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, false)",
+            (9103, MOREL, near_lat, near_lng, dt.date(2022, 10, 15), 10, "research"),
         )
 
     results = precise_observations(con, taxon_ids=[MOREL], lat=home_lat, lng=home_lng, radius_km=50, months=[4])
