@@ -55,7 +55,7 @@ COPY --from=builder --chown=foray:foray /app /app
 # Overlay the built client bundle (gitignored, so not in the uv builder's context).
 COPY --from=frontend --chown=foray:foray /app/src/foray/web/dist /app/src/foray/web/dist
 
-USER foray
+USER 1000
 EXPOSE 8000
 
 # Liveness: config endpoint returns 200 once the app is up (see scripts/healthcheck.py).
