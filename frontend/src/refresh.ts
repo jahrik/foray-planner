@@ -152,25 +152,15 @@ export async function setLocation(query: string): Promise<void> {
   runDestinations();
 }
 
-// Map clicks (e.g. on a city label on the base tiles) carry only coordinates; reverse-geocode
-// so the location name matches what the user actually clicked on, instead of showing raw
-// lat/lng. Falls back to whatever name the backend derives if the reverse lookup fails.
+// Map clicks (e.g. on a city label on the base tiles) carry only coordinates; the backend
+// reverse-geocodes server-side (issue #145) so the location name matches what the user actually
+// clicked on, instead of showing raw lat/lng - falls back to the coordinate string there if the
+// reverse lookup fails.
 export async function setLocationLatLng(lat: number, lng: number): Promise<void> {
   setStatus("Finding location…");
-  let name: string | undefined;
-  try {
-    const params = new URLSearchParams({ lat: String(lat), lon: String(lng), format: "json" });
-    const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`);
-    if (resp.ok) {
-      const data = await resp.json();
-      name = data?.display_name;
-    }
-  } catch {
-    // fall back to the coordinate-based name the backend derives
-  }
   let response: { home: Home };
   try {
-    response = await postJson("/api/location", { lat, lng, name: name ?? null });
+    response = await postJson("/api/location", { lat, lng });
   } catch (error) {
     setStatus(errorDetail(error) || "location not found");
     return;

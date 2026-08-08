@@ -785,8 +785,20 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         with pool.connection() as conn:
             current_home = resolve_home(conn, device_id)
             if body.lat is not None and body.lng is not None:
+                # No client-supplied name: reverse-geocode server-side (issue #145) rather than
+                # trusting the client to have done its own Nominatim lookup - keeps the User-
+                # Agent/rate-limit policy in one place and avoids the browser sending precise
+                # coordinates straight to a third party. Best-effort: a failed/slow reverse
+                # lookup falls back to the coordinate string, same as before this endpoint did
+                # any reverse geocoding at all.
+                name = body.name
+                if name is None:
+                    try:
+                        name = geocode.reverse(body.lat, body.lng).name[:200]
+                    except (httpx.HTTPError, LookupError, ValueError):
+                        logger.warning("location: reverse geocode failed for %s,%s", body.lat, body.lng, exc_info=True)
                 home = Home(
-                    name=body.name or f"{body.lat:.4f}, {body.lng:.4f}",
+                    name=name or f"{body.lat:.4f}, {body.lng:.4f}",
                     lat=body.lat,
                     lng=body.lng,
                     radius_km=body.radius_km or current_home.radius_km,
