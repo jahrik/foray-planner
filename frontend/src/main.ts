@@ -298,21 +298,10 @@ function geolocateHome(): Promise<Home | null> {
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const { latitude: lat, longitude: lng } = position.coords;
-        let name: string | undefined;
+        // Reverse geocoding happens server-side now (issue #145) - no direct browser->Nominatim
+        // call, no client-side 200-char guard to duplicate.
         try {
-          const params = new URLSearchParams({ lat: String(lat), lon: String(lng), format: "json" });
-          const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`);
-          if (resp.ok) name = (await resp.json())?.display_name;
-        } catch {
-          // fall back to the coordinate-based name the backend derives
-        }
-        // /api/location's `name` field is capped at 200 chars server-side; Nominatim's
-        // display_name is often longer (full address chain), so an unguarded post would 422 and
-        // leave the location stale - the opposite of the point of this auto-refresh.
-        if (name && name.length > 200) name = undefined;
-
-        try {
-          const response = await postJson("/api/location", { lat, lng, name: name ?? null });
+          const response = await postJson("/api/location", { lat, lng });
           resolve(response.home);
         } catch {
           resolve(null); // keep whatever location is already loaded

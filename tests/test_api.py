@@ -62,6 +62,19 @@ def client(cfg: Settings) -> Iterator[TestClient]:
         yield client
 
 
+@pytest.fixture(autouse=True)
+def _no_reverse_geocode_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`/api/location` reverse-geocodes server-side (issue #145) when `lat`/`lng` are posted
+    without `name` - block the real Nominatim call by default so tests here stay network-free
+    per this module's docstring; tests exercising that behavior specifically override this
+    locally with their own `monkeypatch.setattr`."""
+
+    def fake_reverse(lat: float, lng: float, *, client: object = None) -> None:
+        raise LookupError("network disabled in tests")
+
+    monkeypatch.setattr("foray.api.geocode.reverse", fake_reverse)
+
+
 def test_get_config(client: TestClient) -> None:
     response = client.get("/api/config")
     assert response.status_code == 200
@@ -448,6 +461,40 @@ def test_set_location_returns_home(client: TestClient) -> None:
 def test_set_location_requires_query_or_latlng(client: TestClient) -> None:
     response = client.post("/api/location", json={})
     assert response.status_code == 400
+
+
+def test_set_location_latlng_reverse_geocodes_when_name_omitted(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from foray.geocode import Location
+
+    def fake_reverse(lat: float, lng: float, *, client: object = None) -> Location:
+        return Location(name="Boulder, Colorado, USA", lat=lat, lng=lng)
+
+    monkeypatch.setattr("foray.api.geocode.reverse", fake_reverse)
+    response = client.post("/api/location", json={"lat": 40.0, "lng": -105.0})
+    assert response.status_code == 200
+    assert response.json()["home"]["name"] == "Boulder, Colorado, USA"
+
+
+def test_set_location_latlng_falls_back_to_coords_when_reverse_geocode_fails(client: TestClient) -> None:
+    # The autouse `_no_reverse_geocode_network` fixture already makes `geocode.reverse` raise -
+    # this asserts the fallback behavior that failure should produce, not just that it's mocked.
+    response = client.post("/api/location", json={"lat": 40.0, "lng": -105.0})
+    assert response.status_code == 200
+    assert response.json()["home"]["name"] == "40.0000, -105.0000"
+
+
+def test_set_location_latlng_client_name_skips_reverse_geocode(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_if_called(lat: float, lng: float, *, client: object = None) -> None:
+        raise AssertionError("geocode.reverse should not be called when a name is supplied")
+
+    monkeypatch.setattr("foray.api.geocode.reverse", fail_if_called)
+    response = client.post("/api/location", json={"lat": 40.0, "lng": -105.0, "name": "My spot"})
+    assert response.status_code == 200
+    assert response.json()["home"]["name"] == "My spot"
 
 
 def test_config_sets_device_id_cookie_on_first_visit(client: TestClient) -> None:

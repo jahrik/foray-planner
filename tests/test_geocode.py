@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from foray.geocode import resolve
+from foray.geocode import resolve, reverse
 
 
 def test_parses_raw_coordinates() -> None:
@@ -51,3 +51,23 @@ def test_geocode_no_match_raises() -> None:
     client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[])))
     with pytest.raises(LookupError):
         resolve("asdfqwerzxcv nowhere", client=client)
+
+
+def test_reverse_geocodes_coordinates_via_nominatim() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["lat"] == "43.3665"
+        assert request.url.params["lon"] == "-124.2179"
+        assert "foray-planner" in request.headers["user-agent"]
+        return httpx.Response(200, json={"display_name": "Coos Bay, Coos County, Oregon"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    loc = reverse(43.3665, -124.2179, client=client)
+    assert loc.lat == pytest.approx(43.3665)
+    assert loc.lng == pytest.approx(-124.2179)
+    assert loc.name == "Coos Bay, Coos County, Oregon"
+
+
+def test_reverse_geocode_no_match_raises() -> None:
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})))
+    with pytest.raises(LookupError):
+        reverse(0.0, 0.0, client=client)

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import httpx
 
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_REVERSE = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
 
 # "43.37, -124.22" or "43.37 -124.22" - a raw coordinate pair.
@@ -34,6 +35,32 @@ def resolve(query: str, *, client: httpx.Client | None = None) -> Location:
             raise ValueError(f"coordinates out of range: {query!r}")
         return Location(name=f"{lat:.4f}, {lng:.4f}", lat=lat, lng=lng)
     return _geocode(query, client=client)
+
+
+def reverse(lat: float, lng: float, *, client: httpx.Client | None = None) -> Location:
+    """Reverse-geocode ``lat``/``lng`` to a human-readable place name.
+
+    Same client/User-Agent/timeout pattern as ``resolve()``/``_geocode()``, hitting Nominatim's
+    ``/reverse`` endpoint instead of ``/search`` (issue #145) - keeps the one Nominatim client
+    (and its rate-limit/User-Agent policy) in one place instead of duplicated per-caller.
+    """
+    owns = client is None
+    client = client or httpx.Client(timeout=15.0)
+    try:
+        resp = client.get(
+            NOMINATIM_REVERSE,
+            params={"lat": lat, "lon": lng, "format": "json"},
+            headers={"User-Agent": USER_AGENT},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    finally:
+        if owns:
+            client.close()
+    name = data.get("display_name")
+    if not name:
+        raise LookupError(f"no place name found for {lat},{lng}")
+    return Location(name=name, lat=lat, lng=lng)
 
 
 def _geocode(query: str, *, client: httpx.Client | None = None) -> Location:
