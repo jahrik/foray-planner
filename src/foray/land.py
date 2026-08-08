@@ -1,16 +1,19 @@
 """Public-land ownership ingest from ArcGIS REST feature services.
 
 For the free-camping question ("can I sleep near here for free"), the first thing to know is
-*who owns the ground*. **BLM** and **USFS** are the two agencies most relevant to dispersed
-camping, so this module pulls those two ownership layers as GeoJSON and caches the polygons for
-the map. It reports ownership and links the official source - nothing more; it makes no claim
-about whether camping is permitted anywhere (see AGENTS.md).
+*who manages the ground*. **BLM** and **USFS** are the two agencies most relevant to dispersed
+camping, and **Tribal** land status matters for the same reason, so this module pulls those
+ownership layers as GeoJSON and caches the polygons for the map. It reports ownership and links
+the official source - nothing more; it makes no claim about whether camping is permitted
+anywhere (see AGENTS.md).
 
-Two authoritative ArcGIS layers, queried with an envelope around home:
+Three authoritative ArcGIS layers, queried with an envelope around home:
 
 * **BLM Surface Management Agency** - national ownership layer; filtered to the BLM-managed
   polygons (``ADMIN_AGENCY_CODE='BLM'``).
 * **USFS Administrative Forest Boundaries** - national forest units (good ``FORESTNAME``).
+* **Census TIGERweb AIANNH** - federal American Indian reservations (sovereign nation land, not
+  a federal land-management agency, but the same "who manages the ground" question applies).
 
 Geometry is generalized server-side (``maxAllowableOffset``) so the cached polygons stay light
 enough for the field map, and stored as GeoJSON text (see ``cache.public_land``) - the read
@@ -82,6 +85,17 @@ SOURCES: tuple[LandSource, ...] = (
         where="1=1",
         name_field="FORESTNAME",
         fallback_name="National Forest",
+    ),
+    # Census Bureau TIGERweb, layer 2 ("Federal American Indian Reservations") - sovereign
+    # nation land, not a federal land-management agency like BLM/USFS, but the same "who
+    # manages the ground" question applies. No auth, no rate-limit signup (issue #80).
+    LandSource(
+        key="tribal",
+        agency="Tribal",
+        query_url=("https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/AIANNHA/MapServer/2/query"),
+        where="1=1",
+        name_field="NAME",
+        fallback_name="Tribal land",
     ),
 )
 

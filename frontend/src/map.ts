@@ -18,6 +18,7 @@ export const CAMP_OSM = "#1fe6d0"; // neon teal - OSM dispersed layer (solid = r
 export const LAND_COLORS: Record<string, string> = {
   BLM: "#e8974a", // bright ochre
   USFS: "#a693ff", // bright violet
+  Tribal: "#4d79ff", // bright blue - sovereign nation land, visually distinct from BLM/USFS
 };
 export const LAND_DEFAULT = "#b5b5b5"; // any other agency
 export const TRAIL = "#ff5555"; // bright red - the walking network (paths/routes) + trailhead dots
@@ -70,6 +71,9 @@ export function renderLegend(): void {
   const camps = (document.getElementById("show-camps") as HTMLInputElement | null)?.checked;
   const dispersed = (document.getElementById("show-dispersed") as HTMLInputElement | null)?.checked;
   const trails = (document.getElementById("show-trails") as HTMLInputElement | null)?.checked;
+  const blm = (document.getElementById("show-land-blm") as HTMLInputElement | null)?.checked;
+  const usfs = (document.getElementById("show-land-usfs") as HTMLInputElement | null)?.checked;
+  const tribal = (document.getElementById("show-land-tribal") as HTMLInputElement | null)?.checked;
   const entries: [string, string][] = [
     [HEAT, "Destination (historical)"],
     [LIVE, "Recently observed"],
@@ -80,6 +84,9 @@ export function renderLegend(): void {
   }
   if (dispersed) entries.push([CAMP_OSM, "Reported campsite (OSM)"]);
   if (trails) entries.push([TRAIL, "Trail / trailhead"]);
+  if (blm) entries.push([LAND_COLORS.BLM ?? LAND_DEFAULT, "BLM land"]);
+  if (usfs) entries.push([LAND_COLORS.USFS ?? LAND_DEFAULT, "USFS land"]);
+  if (tribal) entries.push([LAND_COLORS.Tribal ?? LAND_DEFAULT, "Tribal land"]);
   el.innerHTML = entries
     .map(([color, label]) => `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`)
     .join("");
