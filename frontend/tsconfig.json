@@ -13,6 +13,7 @@
     "noImplicitReturns": true,
     "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
+    "noUncheckedIndexedAccess": true,
 
     "isolatedModules": true,
     "skipLibCheck": true,
