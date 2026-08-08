@@ -34,21 +34,15 @@ def cfg(con: psycopg.Connection) -> Settings:
         ],
     )
     rows = (
-        [(obs_id, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", 10) for obs_id in range(1, 11)]
-        + [
-            (obs_id, CHANT, HOME_LAT, HOME_LNG, dt.date(2022, 7, 10), 7, 2022, "research", 10)
-            for obs_id in range(11, 16)
-        ]
-        + [
-            (obs_id, BOLET, HOME_LAT, HOME_LNG, dt.date(2022, 9, 5), 9, 2022, "research", 10)
-            for obs_id in range(16, 21)
-        ]
+        [(obs_id, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, "research", 10) for obs_id in range(1, 11)]
+        + [(obs_id, CHANT, HOME_LAT, HOME_LNG, dt.date(2022, 7, 10), 7, "research", 10) for obs_id in range(11, 16)]
+        + [(obs_id, BOLET, HOME_LAT, HOME_LNG, dt.date(2022, 9, 5), 9, "research", 10) for obs_id in range(16, 21)]
     )
     with con.cursor() as cur:
         cur.executemany(
             "INSERT INTO observations "
-            "(id, taxon_id, lat, lng, observed_on, month, year, quality_grade, "
-            "positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "(id, taxon_id, lat, lng, observed_on, month, quality_grade, "
+            "positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             rows,
         )
     build_phenology(con, CELL)
@@ -237,10 +231,10 @@ def test_observation_photos_paginates_with_offset(
     # the region's total (15) crosses the default page size (12).
     with con.cursor() as cur:
         cur.executemany(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             [
-                (obs_id, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", 10)
+                (obs_id, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, "research", 10)
                 for obs_id in range(9001, 9006)
             ],
         )
@@ -281,14 +275,14 @@ def test_precise_observations_empty_by_default(client: TestClient) -> None:
 def test_precise_observations_returns_unobscured_only(client: TestClient, con: psycopg.Connection) -> None:
     with con.cursor() as cur:
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, uri, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, false)",
-            (9001, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", "https://x/9001"),
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, uri, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false)",
+            (9001, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, "research", "https://x/9001"),
         )
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, true)",
-            (9002, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research"),
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, true)",
+            (9002, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, "research"),
         )
     response = client.get("/api/observations/precise", params={"species": str(MOREL), "months": "4"})
     assert response.status_code == 200
@@ -302,9 +296,9 @@ def test_precise_observations_returns_unobscured_only(client: TestClient, con: p
 def test_precise_observations_by_latlng(client: TestClient, con: psycopg.Connection) -> None:
     with con.cursor() as cur:
         cur.execute(
-            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, year,"
-            " quality_grade, uri, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, false)",
-            (9003, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, 2022, "research", "https://x/9003"),
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, uri, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false)",
+            (9003, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, 4, 15), 4, "research", "https://x/9003"),
         )
     response = client.get(
         "/api/observations/precise",

@@ -39,7 +39,6 @@ _ROW = (
     -122.3,  # lng
     dt.date(2022, 4, 15),  # observed_on
     4,  # month
-    2022,  # year
     "needs_id",  # quality_grade
     10,  # positional_accuracy
     "Seattle, WA",  # place_guess
@@ -59,7 +58,7 @@ def test_reupsert_heals_taxon_id_and_quality_grade(con: psycopg.Connection) -> N
     # First write: wrong taxon_id (e.g. a since-corrected iNat ID) and not-yet-research-grade.
     _insert(con, _ROW)
 
-    reidentified = (*_ROW[:1], 222, *_ROW[2:7], "research", *_ROW[8:])
+    reidentified = (*_ROW[:1], 222, *_ROW[2:6], "research", *_ROW[7:])
     _insert(con, reidentified)
 
     row = con.execute("SELECT taxon_id, quality_grade FROM observations WHERE id = %s", [_ROW[0]]).fetchone()
@@ -73,7 +72,7 @@ def test_reupsert_preserves_place_guess_when_new_value_is_null(con: psycopg.Conn
     _insert(con, _ROW)
 
     # A later fetch that doesn't carry place_guess shouldn't blank out what's already stored.
-    row_without_place_guess = (*_ROW[:9], None, *_ROW[10:])
+    row_without_place_guess = (*_ROW[:8], None, *_ROW[9:])
     _insert(con, row_without_place_guess)
 
     row = con.execute("SELECT place_guess FROM observations WHERE id = %s", [_ROW[0]]).fetchone()
@@ -87,14 +86,14 @@ def test_reupsert_preserves_taxon_id_and_quality_grade_when_new_value_is_null(co
     # wiped back to NULL.
     _insert(con, _ROW)
 
-    row_without_taxon_or_grade = (*_ROW[:1], None, *_ROW[2:7], None, *_ROW[8:])
+    row_without_taxon_or_grade = (*_ROW[:1], None, *_ROW[2:6], None, *_ROW[7:])
     _insert(con, row_without_taxon_or_grade)
 
     row = con.execute("SELECT taxon_id, quality_grade FROM observations WHERE id = %s", [_ROW[0]]).fetchone()
     assert row is not None
     taxon_id, quality_grade = row
     assert taxon_id == _ROW[1]
-    assert quality_grade == _ROW[7]
+    assert quality_grade == _ROW[6]
 
 
 def test_reupsert_refreshes_lat_lng_and_positional_accuracy(con: psycopg.Connection) -> None:
@@ -102,7 +101,7 @@ def test_reupsert_refreshes_lat_lng_and_positional_accuracy(con: psycopg.Connect
     accuracy on iNat's side - these used to be frozen at whatever the first insert wrote."""
     _insert(con, _ROW)
 
-    corrected = (*_ROW[:2], 48.0, -121.0, *_ROW[4:7], _ROW[7], 5, *_ROW[9:])
+    corrected = (*_ROW[:2], 48.0, -121.0, *_ROW[4:6], _ROW[6], 5, *_ROW[8:])
     _insert(con, corrected)
 
     row = con.execute("SELECT lat, lng, positional_accuracy FROM observations WHERE id = %s", [_ROW[0]]).fetchone()

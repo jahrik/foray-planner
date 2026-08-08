@@ -23,7 +23,6 @@ _ROW = (
     -122.3,  # lng
     "2024-05-15",  # observed_on
     5,  # month
-    2024,  # year
     "research",  # quality_grade
     10,  # positional_accuracy
     None,  # place_guess
