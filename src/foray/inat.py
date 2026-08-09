@@ -230,7 +230,7 @@ def resolve_genus_taxon_id(name: str) -> int | None:
     """Look up a genus-rank taxon's iNat taxon_id by exact scientific name (issue #85's tree
     genus resolution - GloBI's interaction data has host genus names but no iNat taxon_id of
     its own). Returns None if no genus-rank taxon matches exactly."""
-    page = _with_retries(lambda: get_taxa(q=name, rank="genus", is_active=True, per_page=10, user_agent=USER_AGENT))
+    page = _with_retries(lambda: get_taxa(q=name, rank="genus", is_active=True, per_page=30, user_agent=USER_AGENT))
     for result in page.get("results", []):
         if result.get("rank") == "genus" and result.get("name") == name:
             return result.get("id")

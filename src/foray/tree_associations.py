@@ -92,6 +92,15 @@ def fetch_host_genera(client: httpx.Client, fungus_genus: str) -> Counter[str]:
     resp.raise_for_status()
     data: dict[str, Any] = resp.json()
     idx = {name: i for i, name in enumerate(data.get("columns", []))}
+    required = ("source_taxon_name", "target_taxon_name", "target_taxon_path")
+    missing = [column for column in required if column not in idx]
+    if missing:
+        logger.warning(
+            "tree_associations: GloBI response for %s missing column(s) %s, skipping",
+            fungus_genus,
+            missing,
+        )
+        return Counter()
     counts: Counter[str] = Counter()
     for row in data.get("data", []):
         source_name = row[idx["source_taxon_name"]] or ""
@@ -120,6 +129,7 @@ def refresh_tree_associations(
     client = client or httpx.Client(timeout=30.0)
     throttle = _make_throttle(_MIN_REQUEST_INTERVAL)
     names = sorted(genus_taxon_ids(con))
+    refreshed_genera: list[str] = []
     rows: list[tuple[str, str, int]] = []
     try:
         for index, fungus_genus in enumerate(names):
@@ -134,10 +144,14 @@ def refresh_tree_associations(
             except httpx.HTTPError as exc:
                 logger.warning("tree_associations: GloBI request failed for %s: %s", fungus_genus, exc)
                 continue
+            # A genus whose fetch succeeded but produced no rows above _MIN_PAIR_WEIGHT still
+            # needs its stale prior pairs cleared - only a failed fetch should leave old rows
+            # in place (see upsert_tree_associations's replace-per-genus semantics).
+            refreshed_genera.append(fungus_genus)
             for host_genus, weight in host_counts.items():
                 if weight >= _MIN_PAIR_WEIGHT:
                     rows.append((fungus_genus, host_genus, weight))
     finally:
         if owns:
             client.close()
-    return upsert_tree_associations(con, rows)
+    return upsert_tree_associations(con, rows, replace_genera=refreshed_genera)

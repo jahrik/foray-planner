@@ -6,7 +6,7 @@ from __future__ import annotations
 import httpx
 import psycopg
 
-from foray.cache import upsert_fungi_genera
+from foray.cache import upsert_fungi_genera, upsert_tree_associations
 from foray.tree_associations import fetch_host_genera, refresh_tree_associations
 
 _COLUMNS = ["source_taxon_name", "target_taxon_name", "target_taxon_path"]
@@ -67,6 +67,17 @@ def test_fetch_host_genera_aggregates_to_genus_level() -> None:
     assert counts == {"Pinus": 2, "Quercus": 1}
 
 
+def test_fetch_host_genera_returns_empty_on_unexpected_response_shape() -> None:
+    """GloBI returning a different column set (or an error payload with a 200) must not raise
+    KeyError and abort the whole refresh - just skip that genus."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"columns": ["error"], "data": [["rate limited"]]})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    assert fetch_host_genera(client, "Boletus") == {}
+
+
 def test_refresh_tree_associations_drops_pairs_below_min_weight(con: psycopg.Connection) -> None:
     upsert_fungi_genera(
         con,
@@ -89,3 +100,42 @@ def test_refresh_tree_associations_drops_pairs_below_min_weight(con: psycopg.Con
     rows = con.execute("SELECT fungus_genus, host_genus, weight FROM tree_associations").fetchall()
     assert rows == [("Boletus", "Pinus", 4)]
     assert count == 1
+
+
+def test_refresh_tree_associations_clears_stale_pairs_for_successfully_refetched_genera(
+    con: psycopg.Connection,
+) -> None:
+    """A pair that drops out of GloBI (or falls below _MIN_PAIR_WEIGHT) between runs must not
+    linger forever - a successful re-fetch fully replaces that genus's pairs."""
+    upsert_fungi_genera(
+        con,
+        [{"taxon_id": 1, "name": "Boletus", "common_name": None, "observations_count": 100}],
+    )
+    upsert_tree_associations(con, [("Boletus", "Betula", 99)])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _globi_response([("Boletus", "Pinus sylvestris", "Eukaryota | Plantae | Streptophyta | Pinus")] * 4)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    refresh_tree_associations(con, client=client)
+
+    rows = con.execute("SELECT fungus_genus, host_genus, weight FROM tree_associations").fetchall()
+    assert rows == [("Boletus", "Pinus", 4)]
+
+
+def test_refresh_tree_associations_preserves_pairs_when_fetch_fails(con: psycopg.Connection) -> None:
+    """A genus whose GloBI request errors must keep its prior pairs, not lose them."""
+    upsert_fungi_genera(
+        con,
+        [{"taxon_id": 1, "name": "Boletus", "common_name": None, "observations_count": 100}],
+    )
+    upsert_tree_associations(con, [("Boletus", "Betula", 99)])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    refresh_tree_associations(con, client=client)
+
+    rows = con.execute("SELECT fungus_genus, host_genus, weight FROM tree_associations").fetchall()
+    assert rows == [("Boletus", "Betula", 99)]

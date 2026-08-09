@@ -578,15 +578,27 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
     return len(rows)
 
 
-def upsert_tree_associations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
-    """Upsert (fungus_genus, host_genus, weight) tuples, refreshing existing rows in place.
+def upsert_tree_associations(
+    con: psycopg.Connection,
+    rows: Sequence[tuple[Any, ...]],
+    replace_genera: Collection[str] = (),
+) -> int:
+    """Upsert (fungus_genus, host_genus, weight) tuples.
 
-    A full `foray tree-associations-refresh` run recomputes every pair's true weight from
-    scratch, so this replaces rather than accumulates. Returns rows attempted.
+    ``replace_genera`` lists every fungus genus that was successfully re-queried this run -
+    their existing pairs are deleted before the new rows are inserted, so a pair that dropped
+    out of GloBI (or fell below the weight threshold) doesn't linger forever. A genus is left
+    out of ``replace_genera`` when its own fetch failed, so a transient GloBI error doesn't
+    wipe out prior data for that genus. Returns rows attempted.
     """
-    if not rows:
-        return 0
     with con.cursor() as cur:
+        if replace_genera:
+            cur.execute(
+                "DELETE FROM tree_associations WHERE fungus_genus = ANY(%s)",
+                (list(replace_genera),),
+            )
+        if not rows:
+            return 0
         cur.executemany(
             """
             INSERT INTO tree_associations (fungus_genus, host_genus, weight)
