@@ -42,6 +42,7 @@ from foray.api_models import (
     RegionScore,
     StatusResponse,
     Trail,
+    TrailPath,
     TripPlan,
 )
 from foray.cache import SCHEMA, search_fungi_genera
@@ -703,8 +704,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         lat: float | None = Query(None),
         lng: float | None = Query(None),
         radius_km: float = Query(40.0),
+        kind: str | None = Query(None),
+        limit: int | None = Query(None, gt=0),
     ) -> list[Trail]:
-        """Trails near a region (by id) or an explicit lat/lng, nearest to the hotspot first."""
+        """Trails near a region (by id) or an explicit lat/lng, nearest to the hotspot first.
+
+        ``kind``/``limit`` scope this to e.g. just the nearest 20 trailheads for a destination
+        card's Trails tab, instead of every path/route/trailhead in the radius.
+        """
         require_idle()
         if region_id is not None:
             center_lat, center_lng = region_center(region_id)
@@ -713,8 +720,25 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         else:
             raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
         with pool.connection() as conn:
-            found = scoring.trails_near(conn, lat=center_lat, lng=center_lng, radius_km=radius_km)
+            found = scoring.trails_near(
+                conn, lat=center_lat, lng=center_lng, radius_km=radius_km, kind=kind, limit=limit
+            )
         return [Trail.model_validate(trail) for trail in found]
+
+    @app.get("/api/trails/network")
+    def get_trail_network(trail_id: str = Query(...)) -> TrailPath:
+        """The real trail for a selected trailhead - live OSM topology when available, otherwise
+        the nearest cached path/route (see ``trails.resolve_trail_network``). ``trail_id`` is a
+        query param, not a path segment - trail ids embed a literal ``/`` (``osm:node/123``)."""
+        require_idle()
+        with pool.connection() as conn:
+            try:
+                result = trails.resolve_trail_network(conn, trail_id, client=state.http_client)
+            except LookupError as error:
+                raise HTTPException(404, str(error)) from None
+        if result is None:
+            raise HTTPException(404, f"no trail found for trailhead {trail_id!r}")
+        return TrailPath.model_validate(result)
 
     @app.get("/api/plan")
     def plan(

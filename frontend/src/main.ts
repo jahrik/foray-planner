@@ -6,7 +6,7 @@ import "./style.css";
 import { getJson, postJson } from "./api/client";
 import type { Home } from "./api/types";
 import { initGenusSelection } from "./genera";
-import { loadCamps, loadLand, loadTrails } from "./layers";
+import { loadCamps, loadLand } from "./layers";
 import { initLocationAutocomplete, initPlaceAutocomplete } from "./location";
 import { currentTheme, initMap, map, setMapClickHandler, setTiles, updateHome } from "./map";
 import { runPlan } from "./plan";
@@ -210,7 +210,6 @@ async function main(): Promise<void> {
     currentRefreshTarget = null;
     loadCamps();
     loadLand();
-    loadTrails();
   };
   const cancelLayerRefresh = (target: string) => {
     // Only cancel if the in-flight refresh is for this specific layer, so we
@@ -239,7 +238,6 @@ async function main(): Promise<void> {
   wireLayerToggle("#show-land-blm", "land", "Fetching public land…", loadLand);
   wireLayerToggle("#show-land-usfs", "land", "Fetching public land…", loadLand);
   wireLayerToggle("#show-land-tribal", "land", "Fetching public land…", loadLand);
-  wireLayerToggle("#show-trails", "trails", "Fetching trails…", loadTrails);
   initLocationAutocomplete();
   initGenusSelection(refreshCurrentView);
 

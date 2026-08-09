@@ -43,6 +43,9 @@ export type Trail = Omit<components["schemas"]["Trail"], "geometry"> & {
   geometry: GeoJSON.Geometry;
 };
 
+/** The real trail for a selected trailhead (`GET /api/trails/network`), see selectTrailhead. */
+export type TrailPath = Omit<components["schemas"]["TrailPath"], "trail"> & { trail: Trail };
+
 /** One week-long stay in a planned trip (a `TripPlan.stops` entry). */
 export type Stop = components["schemas"]["Stop"];
 

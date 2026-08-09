@@ -1,9 +1,27 @@
 import L from "leaflet";
 
 import { getJson } from "./api/client";
-import type { AlertRegion, Calendar, RecentObservation, RecentObservationsPage, RegionScore } from "./api/types";
-import { focusRegion } from "./layers";
-import { clearMarkers, deselectSize, HEAT_RGB, map, plot, selectSize } from "./map";
+import type {
+  AlertRegion,
+  Calendar,
+  RecentObservation,
+  RecentObservationsPage,
+  RegionScore,
+  Trail,
+} from "./api/types";
+import { focusRegion, selectTrailhead } from "./layers";
+import {
+  clearMarkers,
+  clearTrailheadMarkers,
+  deselectSize,
+  HEAT_RGB,
+  map,
+  plot,
+  plotTrailhead,
+  regionRadiusKm,
+  selectSize,
+  setTrailheadActive,
+} from "./map";
 import {
   dist,
   displayName,
@@ -136,6 +154,7 @@ export async function runDestinations(): Promise<void> {
         <button type="button" class="rank-tab active" data-tab="species">Species</button>
         <button type="button" class="rank-tab" data-tab="calendar">Calendar</button>
         <button type="button" class="rank-tab" data-tab="photos">Photos</button>
+        <button type="button" class="rank-tab" data-tab="trails">Trails</button>
       </div>
       <div data-tab-content="species">
         <div class="chips">${region.species
@@ -152,15 +171,19 @@ export async function runDestinations(): Promise<void> {
         }
       </div>
       <div class="rank-calendar" data-tab-content="calendar" style="display:none"></div>
-      <div class="rank-photos" data-tab-content="photos" style="display:none"></div>`;
+      <div class="rank-photos" data-tab-content="photos" style="display:none"></div>
+      <div class="rank-trails" data-tab-content="trails" style="display:none"></div>`;
     const speciesTab = qs<HTMLButtonElement>('[data-tab="species"]', card);
     const calendarTab = qs<HTMLButtonElement>('[data-tab="calendar"]', card);
     const photosTab = qs<HTMLButtonElement>('[data-tab="photos"]', card);
+    const trailsTab = qs<HTMLButtonElement>('[data-tab="trails"]', card);
     const speciesBody = qs<HTMLElement>('[data-tab-content="species"]', card);
     const calendarBody = qs<HTMLElement>('[data-tab-content="calendar"]', card);
     const photosBody = qs<HTMLElement>('[data-tab-content="photos"]', card);
+    const trailsBody = qs<HTMLElement>('[data-tab-content="trails"]', card);
     stopLinkPropagation(speciesBody);
     stopLinkPropagation(photosBody);
+    stopLinkPropagation(trailsBody);
     const chipsContainer = qs<HTMLElement>(".chips", speciesBody);
     const showMoreButton = card.querySelector<HTMLButtonElement>(".show-more");
     if (showMoreButton) {
@@ -184,13 +207,16 @@ export async function runDestinations(): Promise<void> {
     // retried, rather than permanently disabling it like a plain "already loaded" flag would.
     let calendarState: "idle" | "loading" | "loaded" = "idle";
     let photosState: "idle" | "loading" | "loaded" = "idle";
-    const showTab = (tab: "species" | "calendar" | "photos") => {
+    let trailsState: "idle" | "loading" | "loaded" = "idle";
+    const showTab = (tab: "species" | "calendar" | "photos" | "trails") => {
       speciesTab.classList.toggle("active", tab === "species");
       calendarTab.classList.toggle("active", tab === "calendar");
       photosTab.classList.toggle("active", tab === "photos");
+      trailsTab.classList.toggle("active", tab === "trails");
       speciesBody.style.display = tab === "species" ? "" : "none";
       calendarBody.style.display = tab === "calendar" ? "" : "none";
       photosBody.style.display = tab === "photos" ? "" : "none";
+      trailsBody.style.display = tab === "trails" ? "" : "none";
     };
     speciesTab.onclick = (e) => {
       e.stopPropagation();
@@ -213,6 +239,16 @@ export async function runDestinations(): Promise<void> {
         photosState = "loading";
         loadPhotosInto(region.region_id, photosBody).then((succeeded) => {
           photosState = succeeded ? "loaded" : "idle";
+        });
+      }
+    };
+    trailsTab.onclick = (e) => {
+      e.stopPropagation();
+      showTab("trails");
+      if (trailsState === "idle") {
+        trailsState = "loading";
+        loadTrailheadsInto(region, trailsBody).then((succeeded) => {
+          trailsState = succeeded ? "loaded" : "idle";
         });
       }
     };
@@ -367,6 +403,63 @@ async function loadPhotosInto(regionId: string, container: HTMLElement): Promise
     };
     container.appendChild(loadMoreButton);
   }
+  return true;
+}
+
+// Same fetch-once-per-card pattern as loadCalendarInto/loadPhotosInto. Scoped to the
+// destination's own true circle (regionRadiusKm() - the same footprint issue #161 already uses
+// for precise-observations, not the whole home search radius) and to trailheads only (`kind`,
+// issue #115 follow-up) - a destination card should list what's actually reachable from inside
+// it, not every path/route/trailhead in the search area. Selecting a row draws the real trail on
+// the map (layers.ts's selectTrailhead) rather than just opening a popup.
+async function loadTrailheadsInto(region: RegionScore, container: HTMLElement): Promise<boolean> {
+  container.innerHTML = "<p class='hint'>Loading…</p>";
+  let trailheads: Trail[];
+  try {
+    // See layers.ts's LandUnit cast - `geometry` is real GeoJSON, just untyped on the backend.
+    trailheads = (await getJson("/api/trails", {
+      query: { region_id: region.region_id, kind: "trailhead", radius_km: regionRadiusKm(), limit: 20 },
+    })) as unknown as Trail[];
+  } catch (error) {
+    container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
+    return false;
+  }
+  if (!trailheads.length) {
+    container.innerHTML = "<p class='hint'>No trailheads cached in this destination yet.</p>";
+    return true;
+  }
+  container.innerHTML = "";
+  const list = document.createElement("div");
+  list.className = "chips";
+  // Only one card's trailheads are plotted at a time (plotTrailhead clears the previous set),
+  // same as camps/land - opening a different card's Trails tab replaces these, it doesn't add on.
+  clearTrailheadMarkers();
+  const rows: { button: HTMLButtonElement; marker: L.Marker }[] = [];
+  const selectRow = (trailhead: Trail, button: HTMLButtonElement, marker: L.Marker): void => {
+    rows.forEach((row) => {
+      row.button.classList.remove("active");
+      setTrailheadActive(row.marker, false);
+    });
+    button.classList.add("active");
+    setTrailheadActive(marker, true);
+    selectTrailhead(trailhead);
+  };
+  trailheads.forEach((trailhead) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "chip";
+    button.textContent = `${trailhead.name} · ${dist(trailhead.distance_km)}`;
+    const marker = plotTrailhead(trailhead.center_lat, trailhead.center_lng, trailhead.name, () =>
+      selectRow(trailhead, button, marker),
+    );
+    button.onclick = (e) => {
+      e.stopPropagation();
+      selectRow(trailhead, button, marker);
+    };
+    rows.push({ button, marker });
+    list.appendChild(button);
+  });
+  container.appendChild(list);
   return true;
 }
 
