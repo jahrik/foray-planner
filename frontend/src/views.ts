@@ -114,7 +114,17 @@ const phenoTitle = (pct: number, monthCount: number, allMonths: boolean): string
     : `${pct}% of this genus's research-grade sightings here fall in your selected month(s) - a seasonality ` +
       `indicator, not a chance of finding it. Chips are ordered by the ${monthCount} in-season sighting${monthCount === 1 ? "" : "s"} shown next to the percentage, not by the percentage itself.`;
 
+// Guards against overlapping runDestinations() calls stepping on each other - e.g. main.ts's
+// startup sequence can fire one on the head-start timeout and a second once geolocation actually
+// resolves. If the first call's fetch happens to resolve after the second has already rendered,
+// it would otherwise plot its own (stale) markers on top without re-clearing the map first (its
+// own clearMarkers() already ran, before either fetch started) - duplicate destination circles
+// that never go away until the next run. A stale call bails out entirely once it notices a newer
+// one has started, rather than touching the panel or the map at all.
+let destinationsRunToken = 0;
+
 export async function runDestinations(): Promise<void> {
+  const token = ++destinationsRunToken;
   setStatus("Ranking…");
   clearMarkers();
   // No months toggled reads the same as all 12 toggled (monthsParam()'s fallback) - either way
@@ -124,9 +134,14 @@ export async function runDestinations(): Promise<void> {
   try {
     regions = await getJson("/api/destinations", { query: { months: monthsParam() } });
   } catch (error) {
+    // Superseded either by a newer runDestinations() call or by the user switching away from
+    // the Destinations tab entirely while this fetch was in flight - either way, whoever owns
+    // #panel/the map now shouldn't have their state clobbered by a stale response.
+    if (token !== destinationsRunToken || state.view !== "destinations") return;
     setStatus(errorDetail(error));
     return;
   }
+  if (token !== destinationsRunToken || state.view !== "destinations") return;
   const panel = qs("#panel");
   if (!regions.length) {
     panel.innerHTML =
@@ -463,16 +478,25 @@ async function loadTrailheadsInto(region: RegionScore, container: HTMLElement): 
   return true;
 }
 
+// Same overlapping-call guard as destinationsRunToken above - runAlerts() can also be triggered
+// more than once in flight (tab switches, refreshCurrentView() calls). Also bails if the user has
+// since switched away from the Alerts tab entirely while the fetch was in flight, not just if a
+// newer runAlerts() call superseded this one.
+let alertsRunToken = 0;
+
 export async function runAlerts(): Promise<void> {
+  const token = ++alertsRunToken;
   setStatus("Checking recent activity…");
   clearMarkers();
   let regions: AlertRegion[];
   try {
     regions = await getJson("/api/alerts");
   } catch (error) {
+    if (token !== alertsRunToken || state.view !== "alerts") return;
     setStatus(errorDetail(error));
     return;
   }
+  if (token !== alertsRunToken || state.view !== "alerts") return;
   const panel = qs("#panel");
   if (!regions.length) {
     panel.innerHTML = "<p class='hint'>No target species observed in the trailing window yet.</p>";
