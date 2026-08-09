@@ -48,6 +48,11 @@ _KM_PER_DEG_LAT = 111.0
 # pace them to stay comfortably under (45/min) and back off on a 429.
 _MIN_REQUEST_INTERVAL = 60.0 / 45.0
 
+# The tiling grid grows O(radius^2); config allows radii up to 20000 km, which would
+# otherwise queue hundreds of thousands of RIDB requests (issue #115). Cap the grid and keep
+# the centers closest to home when a radius would exceed it, rather than growing unbounded.
+_MAX_QUERY_CENTERS = 200
+
 # Fee descriptions that explicitly signal no charge. We only ever *assert* free on one of
 # these; anything else stays unknown (NULL) rather than guessing paid - see AGENTS.md.
 _FREE_MARKERS = ("no fee", "no charge", "free of charge", "fee: none", "$0", "$0.00")
@@ -95,6 +100,16 @@ def _query_centers(lat: float, lng: float, radius_km: float, query_radius_km: fl
             # Keep the center only if its query circle can overlap the home disk.
             if haversine_km(lat, lng, center_lat, center_lng) <= radius_km + query_radius_km:
                 centers.append((center_lat, center_lng))
+
+    if len(centers) > _MAX_QUERY_CENTERS:
+        centers.sort(key=lambda center: haversine_km(lat, lng, center[0], center[1]))
+        logger.warning(
+            "camps: radius %.0f km needs %d RIDB query circles, capping at %d closest to home",
+            radius_km,
+            len(centers),
+            _MAX_QUERY_CENTERS,
+        )
+        centers = centers[:_MAX_QUERY_CENTERS]
     return centers
 
 
