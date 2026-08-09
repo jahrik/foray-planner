@@ -732,9 +732,12 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         query param, not a path segment - trail ids embed a literal ``/`` (``osm:node/123``)."""
         require_idle()
         with pool.connection() as conn:
-            result = trails.resolve_trail_network(conn, trail_id, client=state.http_client)
+            try:
+                result = trails.resolve_trail_network(conn, trail_id, client=state.http_client)
+            except LookupError as error:
+                raise HTTPException(404, str(error)) from None
         if result is None:
-            raise HTTPException(404, f"no trailhead cached for id {trail_id!r}")
+            raise HTTPException(404, f"no trail found for trailhead {trail_id!r}")
         return TrailPath.model_validate(result)
 
     @app.get("/api/plan")

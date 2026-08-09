@@ -78,11 +78,11 @@ def _no_reverse_geocode_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _no_trail_network_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`/api/trails/{id}/network` does a live, node-scoped Overpass query (issue: draw the real
-    trail on trailhead selection) when authoritative OSM topology isn't already cached - block it
-    by default so tests here stay network-free per this module's docstring; this also makes the
-    nearest-cached fallback path deterministic to test rather than depending on what the real
-    Overpass API happens to return for a given node id."""
+    """`/api/trails/network` (query param `trail_id`) does a live, node-scoped Overpass query
+    (issue: draw the real trail on trailhead selection) when authoritative OSM topology isn't
+    already cached - block it by default so tests here stay network-free per this module's
+    docstring; this also makes the nearest-cached fallback path deterministic to test rather than
+    depending on what the real Overpass API happens to return for a given node id."""
 
     def fake_network(node_id: int, *, client: object = None) -> None:
         return None

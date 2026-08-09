@@ -414,13 +414,14 @@ def resolve_trail_network(
 ) -> scoring.TrailPath | None:
     """The real trail for a selected trailhead, falling back to the nearest cached path/route.
 
-    Returns None only if the trailhead id itself doesn't resolve to a cached trailhead row -
-    callers (``api.py``) treat that as a 404, distinct from "no trail found" (which still returns
-    a ``TrailPath`` when the nearest-cached fallback succeeds).
+    Raises ``LookupError`` if the trailhead id itself doesn't resolve to a cached trailhead row -
+    callers (``api.py``) treat that as "unknown trailhead". Returns None if the trailhead is known
+    but neither live OSM topology nor a nearby cached path/route could be found for it - a
+    distinct "no trail found" case, still a 404 but for a different reason.
     """
     trailhead = scoring.get_trail(con, trailhead_id)
     if trailhead is None or trailhead.kind != "trailhead":
-        return None
+        raise LookupError(f"no trailhead cached for id {trailhead_id!r}")
     node_id = _parse_trailhead_id(trailhead_id)
     live = trailhead_network(node_id, client=client)
     if live is not None:

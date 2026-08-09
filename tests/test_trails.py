@@ -485,8 +485,9 @@ def test_trailhead_network_returns_none_on_a_failing_query() -> None:
     assert trailhead_network(1, client=client) is None
 
 
-def test_resolve_trail_network_unknown_trailhead_returns_none(con: psycopg.Connection) -> None:
-    assert resolve_trail_network(con, "osm:node/999", client=httpx.Client()) is None
+def test_resolve_trail_network_raises_for_an_unknown_trailhead(con: psycopg.Connection) -> None:
+    with pytest.raises(LookupError):
+        resolve_trail_network(con, "osm:node/999", client=httpx.Client())
 
 
 def test_resolve_trail_network_uses_live_topology_when_available(con: psycopg.Connection) -> None:
