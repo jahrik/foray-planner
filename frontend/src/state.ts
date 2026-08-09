@@ -17,7 +17,7 @@ export interface State {
   campMarkers: L.CircleMarker[];
   landLayer: L.GeoJSON | null;
   trailheadMarkers: L.Marker[];
-  selectedTrailLayer: L.GeoJSON | null;
+  selectedTrailLayer: L.Polyline | null;
   planRouteLayer: L.Polyline | null;
   planTrip: TripPlan | null;
   focused: { lat: number; lng: number } | null;

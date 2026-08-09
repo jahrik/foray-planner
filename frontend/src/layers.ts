@@ -170,12 +170,63 @@ function landPopup(unit: LandUnit): HTMLElement {
   return root;
 }
 
+// A trail's geometry as one or more ordered point sequences ([lat, lng] pairs, Leaflet's order -
+// GeoJSON stores [lng, lat]) - a plain LineString is a single part, a MultiLineString (the merged
+// way + route relation trailhead_network can return, see trails.py) is drawn as multiple parts in
+// sequence rather than joined into one, so the animation doesn't fake a connection between
+// segments that aren't actually contiguous on the ground.
+function trailParts(geometry: GeoJSON.Geometry): L.LatLngTuple[][] {
+  if (geometry.type === "LineString") {
+    return [geometry.coordinates.map(([lng, lat]) => [lat, lng] as L.LatLngTuple)];
+  }
+  if (geometry.type === "MultiLineString") {
+    return geometry.coordinates.map((line) => line.map(([lng, lat]) => [lat, lng] as L.LatLngTuple));
+  }
+  return [];
+}
+
+// Only the most recently started animation should still be drawing - if the user clicks a
+// different trailhead mid-animation, clearSelectedTrail() already removed the in-progress layer
+// from the map, but without this token the orphaned rAF loop would keep computing frames for a
+// layer nobody sees until it finishes on its own.
+let trailAnimationToken = 0;
+
+// Progressively reveals `parts` on `layer` over a short, point-count-scaled duration (capped so a
+// simple trailhead-to-junction segment and a long merged route both feel like "watching it get
+// drawn" rather than either an instant snap or a sluggish crawl). Parts fill in order - later
+// parts stay empty until earlier ones finish - so a multi-segment trail reads as one continuous
+// draw across its pieces.
+function animateTrail(layer: L.Polyline, parts: L.LatLngTuple[][]): void {
+  const token = ++trailAnimationToken;
+  const totalPoints = parts.reduce((sum, part) => sum + part.length, 0);
+  if (totalPoints === 0) return;
+  const duration = Math.min(1400, Math.max(500, totalPoints * 25));
+  const start = performance.now();
+  const frame = (now: number): void => {
+    if (token !== trailAnimationToken) return; // superseded by a newer selection
+    const elapsed = now - start;
+    const revealed = Math.min(totalPoints, Math.ceil((elapsed / duration) * totalPoints));
+    let remaining = revealed;
+    const shown: L.LatLngTuple[][] = [];
+    for (const part of parts) {
+      if (remaining <= 0) break;
+      const take = Math.min(part.length, remaining);
+      shown.push(part.slice(0, take));
+      remaining -= take;
+    }
+    layer.setLatLngs(shown);
+    if (revealed < totalPoints) requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+
 // Draws the real trail for a trailhead selected in a destination card's Trails tab (views.ts).
 // Fetches `/api/trails/network`, which resolves it via live OSM topology when the trailhead sits
 // on a real way/route, falling back to the nearest already-cached path/route otherwise - drawn
 // solid for the former, dashed for the latter so the UI doesn't overstate confidence in a guess.
-// At most one selected trail shows at a time (state.selectedTrailLayer); no camera movement, same
-// "don't be jarring" approach as the rest of this file's click interactions.
+// At most one selected trail shows at a time (state.selectedTrailLayer). Zooms to the trail's
+// extent and animates the line drawing in (animateTrail) rather than snapping it in instantly -
+// unlike the rest of this file's click interactions, this one's the whole point of the click.
 export async function selectTrailhead(trail: Trail): Promise<void> {
   clearSelectedTrail();
   let path: TrailPath;
@@ -188,21 +239,18 @@ export async function selectTrailhead(trail: Trail): Promise<void> {
     setStatus(errorDetail(error));
     return;
   }
-  const feature: GeoJSON.Feature = { type: "Feature", properties: {}, geometry: path.trail.geometry };
-  const layer = L.geoJSON(
-    feature,
-    {
-      style: {
-        color: TRAIL,
-        weight: 3,
-        opacity: 0.9,
-        dashArray: path.authoritative ? undefined : "6 6",
-        bubblingMouseEvents: false,
-      },
-    },
-  );
-  layer.addTo(map);
+  const parts = trailParts(path.trail.geometry);
+  if (!parts.length) return;
+  const layer = L.polyline([], {
+    color: TRAIL,
+    weight: 3,
+    opacity: 0.9,
+    dashArray: path.authoritative ? undefined : "6 6",
+    bubblingMouseEvents: false,
+  }).addTo(map);
   state.selectedTrailLayer = layer;
+  map.fitBounds(L.latLngBounds(parts.flat()), { padding: [40, 40], maxZoom: 15 });
+  animateTrail(layer, parts);
 }
 
 // Fetch + plot individually-precise observations (issue #161): unlike the coarse cell_deg
