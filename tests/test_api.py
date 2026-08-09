@@ -12,9 +12,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from foray.api import create_app
-from foray.cache import upsert_fungi_genera
+from foray.cache import upsert_fungi_genera, upsert_trails
 from foray.config import Config, Home, Settings
 from foray.scoring import TripPlan, build_phenology
+from foray.trails import _parse_element
 
 CELL = 0.5
 MOREL = 111
@@ -73,6 +74,20 @@ def _no_reverse_geocode_network(monkeypatch: pytest.MonkeyPatch) -> None:
         raise LookupError("network disabled in tests")
 
     monkeypatch.setattr("foray.api.geocode.reverse", fake_reverse)
+
+
+@pytest.fixture(autouse=True)
+def _no_trail_network_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`/api/trails/network` (query param `trail_id`) does a live, node-scoped Overpass query
+    (issue: draw the real trail on trailhead selection) when authoritative OSM topology isn't
+    already cached - block it by default so tests here stay network-free per this module's
+    docstring; this also makes the nearest-cached fallback path deterministic to test rather than
+    depending on what the real Overpass API happens to return for a given node id."""
+
+    def fake_network(node_id: int, *, client: object = None) -> None:
+        return None
+
+    monkeypatch.setattr("foray.trails.trailhead_network", fake_network)
 
 
 def test_get_config(client: TestClient) -> None:
@@ -353,6 +368,62 @@ def test_trails_by_latlng_empty(client: TestClient) -> None:
     response = client.get("/api/trails", params={"lat": HOME_LAT, "lng": HOME_LNG})
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_trails_kind_and_limit_scope_the_results(client: TestClient, con: psycopg.Connection) -> None:
+    trailhead = _parse_element(
+        {"type": "node", "id": 1, "lat": HOME_LAT + 0.01, "lon": HOME_LNG, "tags": {"highway": "trailhead"}}
+    )
+    path = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "path", "name": "Ridge"},
+            "geometry": [{"lat": HOME_LAT + 0.02, "lon": HOME_LNG}, {"lat": HOME_LAT + 0.03, "lon": HOME_LNG}],
+        }
+    )
+    assert trailhead is not None and path is not None
+    upsert_trails(con, [trailhead, path])
+
+    response = client.get("/api/trails", params={"lat": HOME_LAT, "lng": HOME_LNG, "kind": "trailhead"})
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["kind"] == "trailhead"
+
+    response = client.get("/api/trails", params={"lat": HOME_LAT, "lng": HOME_LNG, "limit": 1})
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+
+def test_trail_network_404s_for_an_unknown_trailhead(client: TestClient) -> None:
+    response = client.get("/api/trails/network", params={"trail_id": "osm:node/999"})
+    assert response.status_code == 404
+
+
+def test_trail_network_falls_back_to_nearest_cached_trail(client: TestClient, con: psycopg.Connection) -> None:
+    trailhead = _parse_element(
+        {"type": "node", "id": 1, "lat": HOME_LAT, "lon": HOME_LNG, "tags": {"highway": "trailhead"}}
+    )
+    nearby_path = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "path", "name": "Nearby"},
+            "geometry": [{"lat": HOME_LAT + 0.001, "lon": HOME_LNG}, {"lat": HOME_LAT + 0.002, "lon": HOME_LNG}],
+        }
+    )
+    assert trailhead is not None and nearby_path is not None
+    upsert_trails(con, [trailhead, nearby_path])
+
+    # The autouse `_no_trail_network_lookup` fixture makes the live Overpass lookup return
+    # nothing, exercising the nearest-cached fallback exactly like a real "trailhead not
+    # topologically linked to any way/relation" case would.
+    response = client.get("/api/trails/network", params={"trail_id": "osm:node/1"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["authoritative"] is False
+    assert body["trail"]["name"] == "Nearby"
 
 
 def test_camps_bad_region_id_is_400(client: TestClient) -> None:

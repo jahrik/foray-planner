@@ -1,7 +1,7 @@
 import L from "leaflet";
 
 import { getJson } from "./api/client";
-import type { CampSite, LandUnit, PreciseObservation, Trail } from "./api/types";
+import type { CampSite, LandUnit, PreciseObservation, Trail, TrailPath } from "./api/types";
 import {
   addPreciseMarker,
   CAMP_FREE,
@@ -10,7 +10,7 @@ import {
   clearCamps,
   clearLand,
   clearPrecise,
-  clearTrails,
+  clearSelectedTrail,
   HOME_RING,
   LAND_COLORS,
   LAND_DEFAULT,
@@ -30,7 +30,6 @@ export const usfsOn = (): boolean => qs<HTMLInputElement>("#show-land-usfs").che
 export const tribalOn = (): boolean => qs<HTMLInputElement>("#show-land-tribal").checked;
 const LAND_TOGGLES: Record<string, () => boolean> = { BLM: blmOn, USFS: usfsOn, Tribal: tribalOn };
 const landOn = (): boolean => blmOn() || usfsOn() || tribalOn();
-export const trailsOn = (): boolean => qs<HTMLInputElement>("#show-trails").checked;
 
 // OSM dispersed layer: real tagged sites ("reported") + the road∩public-land proxy ("dispersed").
 const isDispersed = (site: CampSite): boolean =>
@@ -171,70 +170,90 @@ function landPopup(unit: LandUnit): HTMLElement {
   return root;
 }
 
-// Fetch + draw the OSM trail network around the focused region. Paths/routes render as red
-// polylines; trailheads as small red dots. No-op (just clears) when the toggle is off. Trails sit
-// above the land shading but below the observation/campground markers, and degrade quietly.
-export async function loadTrails(): Promise<void> {
-  clearTrails();
-  renderLegend();
-  if (!trailsOn() || !state.focused) return;
-  const { lat, lng } = state.focused;
-  let found: Trail[];
+// A trail's geometry as one or more ordered point sequences ([lat, lng] pairs, Leaflet's order -
+// GeoJSON stores [lng, lat]) - a plain LineString is a single part, a MultiLineString (the merged
+// way + route relation trailhead_network can return, see trails.py) is drawn as multiple parts in
+// sequence rather than joined into one, so the animation doesn't fake a connection between
+// segments that aren't actually contiguous on the ground.
+function trailParts(geometry: GeoJSON.Geometry): L.LatLngTuple[][] {
+  if (geometry.type === "LineString") {
+    return [geometry.coordinates.map(([lng, lat]) => [lat, lng] as L.LatLngTuple)];
+  }
+  if (geometry.type === "MultiLineString") {
+    return geometry.coordinates.map((line) => line.map(([lng, lat]) => [lat, lng] as L.LatLngTuple));
+  }
+  return [];
+}
+
+// Only the most recently started animation should still be drawing - if the user clicks a
+// different trailhead mid-animation, clearSelectedTrail() already removed the in-progress layer
+// from the map, but without this token the orphaned rAF loop would keep computing frames for a
+// layer nobody sees until it finishes on its own.
+let trailAnimationToken = 0;
+
+// Progressively reveals `parts` on `layer` over a short, point-count-scaled duration (capped so a
+// simple trailhead-to-junction segment and a long merged route both feel like "watching it get
+// drawn" rather than either an instant snap or a sluggish crawl). Parts fill in order - later
+// parts stay empty until earlier ones finish - so a multi-segment trail reads as one continuous
+// draw across its pieces.
+function animateTrail(layer: L.Polyline, parts: L.LatLngTuple[][]): void {
+  const token = ++trailAnimationToken;
+  const totalPoints = parts.reduce((sum, part) => sum + part.length, 0);
+  if (totalPoints === 0) return;
+  const duration = Math.min(1400, Math.max(500, totalPoints * 25));
+  const start = performance.now();
+  const frame = (now: number): void => {
+    if (token !== trailAnimationToken) return; // superseded by a newer selection
+    const elapsed = now - start;
+    const revealed = Math.min(totalPoints, Math.ceil((elapsed / duration) * totalPoints));
+    let remaining = revealed;
+    const shown: L.LatLngTuple[][] = [];
+    for (const part of parts) {
+      if (remaining <= 0) break;
+      const take = Math.min(part.length, remaining);
+      shown.push(part.slice(0, take));
+      remaining -= take;
+    }
+    layer.setLatLngs(shown);
+    if (revealed < totalPoints) requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+
+// Draws the real trail for a trailhead selected in a destination card's Trails tab (views.ts).
+// Fetches `/api/trails/network`, which resolves it via live OSM topology when the trailhead sits
+// on a real way/route, falling back to the nearest already-cached path/route otherwise - drawn
+// solid for the former, dashed for the latter so the UI doesn't overstate confidence in a guess.
+// At most one selected trail shows at a time (state.selectedTrailLayer). Zooms to the trailhead
+// itself right away - the live Overpass lookup (trailhead_network) can take a beat, and waiting
+// for it before moving the camera reads as the whole thing being slow, not just the data. Once
+// the real geometry arrives, the view re-fits to the trail's actual extent and animates the line
+// drawing in (animateTrail) rather than snapping it in instantly.
+export async function selectTrailhead(trail: Trail): Promise<void> {
+  clearSelectedTrail();
+  map.flyTo([trail.center_lat, trail.center_lng], Math.max(map.getZoom(), 14), { duration: 0.5 });
+  let path: TrailPath;
   try {
     // See the LandUnit cast above - `geometry` is real GeoJSON, just untyped on the backend.
-    found = (await getJson("/api/trails", { query: { lat, lng } })) as unknown as Trail[];
+    path = (await getJson("/api/trails/network", {
+      query: { trail_id: trail.id },
+    })) as unknown as TrailPath;
   } catch (error) {
     setStatus(errorDetail(error));
     return;
   }
-  const layer = L.geoJSON(undefined, {
-    style: { color: TRAIL, weight: 2, opacity: 0.85, bubblingMouseEvents: false },
-    // Trailheads come through as GeoJSON points; render them as small dots instead of pins.
-    pointToLayer: (_feature, latlng) =>
-      L.circleMarker(latlng, {
-        radius: 5,
-        color: TRAIL,
-        weight: 1,
-        fillColor: TRAIL,
-        fillOpacity: 0.9,
-        bubblingMouseEvents: false,
-      }),
-    onEachFeature: (feature, lyr) => lyr.bindPopup(trailPopup(feature.properties as Trail)),
-  });
-  // Carry each trail's fields as GeoJSON `properties` so the popup can read them.
-  found.forEach((trail) => {
-    const feature: GeoJSON.Feature = {
-      type: "Feature",
-      properties: trail,
-      geometry: trail.geometry,
-    };
-    layer.addData(feature);
-  });
-  layer.addTo(map);
-  state.trailLayer = layer;
-}
-
-// Popup built from DOM nodes: the trail name comes from an external service, so `textContent`
-// escapes it; the source url is a fixed openstreetmap.org element link.
-function trailPopup(trail: Trail): HTMLElement {
-  const root = document.createElement("div");
-  const title = document.createElement("b");
-  title.textContent = trail.name;
-  const camp =
-    trail.camp_distance_km != null ? ` · nearest camp ${dist(trail.camp_distance_km)}` : "";
-  const link = document.createElement("a");
-  link.href = trail.url;
-  link.target = "_blank";
-  link.rel = "noopener";
-  link.textContent = "OpenStreetMap ↗";
-  root.append(
-    title,
-    document.createElement("br"),
-    document.createTextNode(`${trail.kind} · ${dist(trail.distance_km)} away${camp}`),
-    document.createElement("br"),
-    link,
-  );
-  return root;
+  const parts = trailParts(path.trail.geometry);
+  if (!parts.length) return;
+  const layer = L.polyline([], {
+    color: TRAIL,
+    weight: 3,
+    opacity: 0.9,
+    dashArray: path.authoritative ? undefined : "6 6",
+    bubblingMouseEvents: false,
+  }).addTo(map);
+  state.selectedTrailLayer = layer;
+  map.flyToBounds(L.latLngBounds(parts.flat()), { padding: [40, 40], maxZoom: 15, duration: 0.5 });
+  animateTrail(layer, parts);
 }
 
 // Fetch + plot individually-precise observations (issue #161): unlike the coarse cell_deg
@@ -305,6 +324,5 @@ function precisePopup(obs: PreciseObservation): HTMLElement {
 export function focusRegion(lat: number, lng: number): void {
   state.focused = { lat, lng };
   loadCamps();
-  loadTrails();
   loadPreciseObservations();
 }

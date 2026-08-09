@@ -239,8 +239,33 @@ export interface paths {
         /**
          * Get Trails
          * @description Trails near a region (by id) or an explicit lat/lng, nearest to the hotspot first.
+         *
+         *     ``kind``/``limit`` scope this to e.g. just the nearest 20 trailheads for a destination
+         *     card's Trails tab, instead of every path/route/trailhead in the radius.
          */
         get: operations["get_trails_api_trails_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/trails/network": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Trail Network
+         * @description The real trail for a selected trailhead - live OSM topology when available, otherwise
+         *     the nearest cached path/route (see ``trails.resolve_trail_network``). ``trail_id`` is a
+         *     query param, not a path segment - trail ids embed a literal ``/`` (``osm:node/123``).
+         */
+        get: operations["get_trail_network_api_trails_network_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -673,6 +698,12 @@ export interface components {
             geometry: {
                 [key: string]: unknown;
             };
+        };
+        /** TrailPath */
+        TrailPath: {
+            trail: components["schemas"]["Trail"];
+            /** Authoritative */
+            authoritative: boolean;
         };
         /** TripPlan */
         TripPlan: {
@@ -1121,6 +1152,8 @@ export interface operations {
                 lat?: number | null;
                 lng?: number | null;
                 radius_km?: number;
+                kind?: string | null;
+                limit?: number | null;
             };
             header?: never;
             path?: never;
@@ -1135,6 +1168,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Trail"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trail_network_api_trails_network_get: {
+        parameters: {
+            query: {
+                trail_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrailPath"];
                 };
             };
             /** @description Validation Error */

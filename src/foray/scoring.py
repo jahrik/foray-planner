@@ -494,7 +494,14 @@ class Trail:
 
 
 def trails_near(
-    con: psycopg.Connection, *, lat: float, lng: float, radius_km: float, with_camp_distance: bool = True
+    con: psycopg.Connection,
+    *,
+    lat: float,
+    lng: float,
+    radius_km: float,
+    with_camp_distance: bool = True,
+    kind: str | None = None,
+    limit: int | None = None,
 ) -> list[Trail]:
     """Trails whose representative point is within ``radius_km`` of a hotspot, nearest first.
 
@@ -505,17 +512,24 @@ def trails_near(
     O(trails-in-bbox * all-campsites) scan (measured ~13s against a 1M-row/17k-camp production
     cache). ``plan_route`` sets it False: each stop already carries its own selected camp, so a
     second "nearest camp to this trail" figure would be redundant there, and it calls this per stop
-    (up to ``max_stops`` times) where the full-catalog scan's cost multiplies fast. No rows
-    ingested yet yields an empty list, mirroring ``camps_near`` / ``land_near``.
+    (up to ``max_stops`` times) where the full-catalog scan's cost multiplies fast. ``kind``
+    restricts to one element class (e.g. ``"trailhead"`` for the destination-card trail list,
+    issue #115 follow-up); ``limit`` caps the ranked result after sorting. No rows ingested yet
+    yields an empty list, mirroring ``camps_near`` / ``land_near``.
     """
     dlat = radius_km / 111.0
     dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
+    params: list[Any] = [lat + dlat, lat - dlat, lng + dlng, lng - dlng]
+    kind_filter = ""
+    if kind is not None:
+        kind_filter = "AND kind = %s"
+        params.append(kind)
     rows = con.execute(
-        """
+        f"""
         SELECT id, name, kind, source, url, center_lat, center_lng, geojson FROM trails
-        WHERE min_lat <= %s AND max_lat >= %s AND min_lng <= %s AND max_lng >= %s
+        WHERE min_lat <= %s AND max_lat >= %s AND min_lng <= %s AND max_lng >= %s {kind_filter}
         """,
-        [lat + dlat, lat - dlat, lng + dlng, lng - dlng],
+        params,
     ).fetchall()
     # Nearest-campsite distance is a per-trail annotation; fetch the camp points once and reuse.
     camps = con.execute("SELECT lat, lng FROM campsites").fetchall() if with_camp_distance else []
@@ -553,7 +567,93 @@ def trails_near(
     # Rank on the unrounded distance so near-ties keep their true order (matches ``camps_near``);
     # the rounded ``distance_km`` is display-only.
     scored.sort(key=lambda item: item[0])
-    return [trail for _, trail in scored]
+    trails = [trail for _, trail in scored]
+    return trails[:limit] if limit is not None else trails
+
+
+def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
+    """Single trail row by id, or None if not cached. No camp-distance annotation (see ``trails_near``)."""
+    row = con.execute(
+        "SELECT id, name, kind, source, url, center_lat, center_lng, geojson FROM trails WHERE id = %s",
+        [trail_id],
+    ).fetchone()
+    if row is None:
+        return None
+    trail_id_, name, kind, source, url, clat, clng, geojson = row
+    return Trail(
+        id=trail_id_,
+        name=name,
+        kind=kind,
+        source=source,
+        url=url,
+        center_lat=clat,
+        center_lng=clng,
+        distance_km=0.0,
+        camp_distance_km=None,
+        geometry=json.loads(geojson),
+    )
+
+
+def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: float = 2.0) -> Trail | None:
+    """Nearest cached path/route to (``lat``, ``lng``), or None if nothing is within ``max_km``.
+
+    Fallback for ``trails.resolve_trail_network`` (issue: "draw the real trail on trailhead
+    selection") when OSM has no topological link between a trailhead node and any way/relation -
+    a heuristic, not an authoritative link, so callers should label it as such. Distance is
+    point-to-vertex haversine over each candidate's already-thinned geometry (<=60 points per
+    line, see ``trails.py``'s ``_MAX_POINTS_PER_LINE``) rather than true point-to-segment distance
+    - close enough given the thinning, and avoids a geometry library dependency for one heuristic.
+    """
+    dlat = max_km / 111.0
+    dlng = max_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
+    rows = con.execute(
+        """
+        SELECT id, name, kind, source, url, center_lat, center_lng, geojson FROM trails
+        WHERE kind IN ('path', 'route')
+          AND min_lat <= %s AND max_lat >= %s AND min_lng <= %s AND max_lng >= %s
+        """,
+        [lat + dlat, lat - dlat, lng + dlng, lng - dlng],
+    ).fetchall()
+
+    best: tuple[float, Trail] | None = None
+    for trail_id, name, kind, source, url, clat, clng, geojson in rows:
+        geometry = json.loads(geojson)
+        coords = geometry["coordinates"]
+        lines = coords if geometry["type"] == "MultiLineString" else [coords]
+        vertex_dist = min(haversine_km(lat, lng, vlat, vlng) for line in lines for vlng, vlat in line)
+        if vertex_dist > max_km:
+            continue
+        if best is None or vertex_dist < best[0]:
+            best = (
+                vertex_dist,
+                Trail(
+                    id=trail_id,
+                    name=name,
+                    kind=kind,
+                    source=source,
+                    url=url,
+                    center_lat=clat,
+                    center_lng=clng,
+                    distance_km=round(vertex_dist, 1),
+                    camp_distance_km=None,
+                    geometry=geometry,
+                ),
+            )
+    return best[1] if best is not None else None
+
+
+@dataclass
+class TrailPath:
+    """A ``Trail`` plus whether its geometry came from a real OSM link or a proximity guess.
+
+    See ``trails.resolve_trail_network``: ``authoritative=True`` means the trailhead node shares
+    OSM topology (way/route membership) with the returned geometry; ``False`` means it's the
+    nearest cached path/route found by ``nearest_trail`` instead - a heuristic the UI should show
+    distinctly (see AGENTS.md, "No claims").
+    """
+
+    trail: Trail
+    authoritative: bool
 
 
 _CALENDAR_SPECIES_PER_MONTH = 15

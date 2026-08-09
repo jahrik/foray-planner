@@ -21,7 +21,9 @@ export const LAND_COLORS: Record<string, string> = {
   Tribal: "#4d79ff", // bright blue - sovereign nation land, visually distinct from BLM/USFS
 };
 export const LAND_DEFAULT = "#b5b5b5"; // any other agency
-export const TRAIL = "#ff5555"; // bright red - the walking network (paths/routes) + trailhead dots
+// Bright red - a destination card's selected trail (layers.ts's selectTrailhead), drawn solid
+// when its geometry comes from real OSM topology, dashed when it's the nearest-cached fallback.
+export const TRAIL = "#ff5555";
 export const PLAN_STOP = "#ffd060"; // neon gold - planned-route stops and connecting line
 export const PRECISE = "#c792ea"; // bright lavender - known-precise (non-obscured) observation pin
 
@@ -63,14 +65,15 @@ export function setTiles(_theme: "dark" | "light"): void {
 // Destination markers (historical/recently-observed) and precise observations (verified-location
 // pins for whichever destination is focused - no layer toggle, see layers.ts's
 // loadPreciseObservations) are on the map by default, so they're always in the legend - camp/
-// trail entries only appear once their layer is actually toggled on, instead of explaining
-// markers that aren't there yet. Called from layers.ts after every camps/trails/precise load or
-// clear, so it always mirrors what's on the map.
+// land entries only appear once their layer is actually toggled on, instead of explaining
+// markers that aren't there yet. Called from layers.ts after every camps/land/precise load or
+// clear, so it always mirrors what's on the map. Trails have no toggle (a destination card's
+// Trails tab draws its own selected-trail line on demand, see selectTrailhead) so they're never
+// in this legend.
 export function renderLegend(): void {
   const el = qs("#legend");
   const camps = (document.getElementById("show-camps") as HTMLInputElement | null)?.checked;
   const dispersed = (document.getElementById("show-dispersed") as HTMLInputElement | null)?.checked;
-  const trails = (document.getElementById("show-trails") as HTMLInputElement | null)?.checked;
   const blm = (document.getElementById("show-land-blm") as HTMLInputElement | null)?.checked;
   const usfs = (document.getElementById("show-land-usfs") as HTMLInputElement | null)?.checked;
   const tribal = (document.getElementById("show-land-tribal") as HTMLInputElement | null)?.checked;
@@ -83,7 +86,6 @@ export function renderLegend(): void {
     entries.push([CAMP_FREE, "Free campground"], [CAMP_PAID, "Paid / unknown campground"]);
   }
   if (dispersed) entries.push([CAMP_OSM, "Reported campsite (OSM)"]);
-  if (trails) entries.push([TRAIL, "Trail / trailhead"]);
   if (blm) entries.push([LAND_COLORS.BLM ?? LAND_DEFAULT, "BLM land"]);
   if (usfs) entries.push([LAND_COLORS.USFS ?? LAND_DEFAULT, "USFS land"]);
   if (tribal) entries.push([LAND_COLORS.Tribal ?? LAND_DEFAULT, "Tribal land"]);
@@ -223,7 +225,8 @@ export function clearMarkers(): void {
   state.markers = [];
   clearCamps();
   clearLand();
-  clearTrails();
+  clearTrailheadMarkers();
+  clearSelectedTrail();
   clearPlanRoute();
   clearPrecise();
   state.focused = null;
@@ -252,10 +255,44 @@ export function clearLand(): void {
   }
 }
 
-export function clearTrails(): void {
-  if (state.trailLayer) {
-    map.removeLayer(state.trailLayer);
-    state.trailLayer = null;
+// Hiking-boot marker for a destination card's Trails tab trailhead list (views.ts) - only the
+// currently open card's trailheads are on the map at once (plotTrailhead clears the previous
+// set first), same "one destination's detail at a time" approach as camps/land. Clicking a
+// marker selects that trailhead's real trail (layers.ts's selectTrailhead), same as clicking
+// its matching list chip; setTrailheadActive keeps the two in visual sync.
+function trailheadIcon(active: boolean): L.DivIcon {
+  return L.divIcon({
+    html: `<div class="trailhead-marker${active ? " active" : ""}">🥾</div>`,
+    className: "trailhead-icon",
+    iconSize: [22, 22],
+    iconAnchor: [11, 20],
+  });
+}
+
+export function clearTrailheadMarkers(): void {
+  state.trailheadMarkers.forEach((marker) => map.removeLayer(marker));
+  state.trailheadMarkers = [];
+}
+
+export function plotTrailhead(lat: number, lng: number, name: string, onSelect: () => void): L.Marker {
+  const marker = L.marker([lat, lng], { icon: trailheadIcon(false), bubblingMouseEvents: false })
+    .addTo(map)
+    .bindTooltip(name, { direction: "top", offset: [0, -18] });
+  marker.on("click", onSelect);
+  state.trailheadMarkers.push(marker);
+  return marker;
+}
+
+export function setTrailheadActive(marker: L.Marker, active: boolean): void {
+  marker.setIcon(trailheadIcon(active));
+}
+
+// Clears whichever trail is currently drawn from a destination card's Trails tab selection
+// (layers.ts's selectTrailhead) - at most one at a time, see state.selectedTrailLayer.
+export function clearSelectedTrail(): void {
+  if (state.selectedTrailLayer) {
+    map.removeLayer(state.selectedTrailLayer);
+    state.selectedTrailLayer = null;
   }
 }
 
