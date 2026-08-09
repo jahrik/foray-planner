@@ -1,7 +1,7 @@
 import L from "leaflet";
 
 import { getJson } from "./api/client";
-import type { CampSite, LandUnit, PreciseObservation, Trail } from "./api/types";
+import type { CampSite, LandUnit, PreciseObservation, Trail, TrailPath } from "./api/types";
 import {
   addPreciseMarker,
   CAMP_FREE,
@@ -10,7 +10,7 @@ import {
   clearCamps,
   clearLand,
   clearPrecise,
-  clearTrails,
+  clearSelectedTrail,
   HOME_RING,
   LAND_COLORS,
   LAND_DEFAULT,
@@ -30,7 +30,6 @@ export const usfsOn = (): boolean => qs<HTMLInputElement>("#show-land-usfs").che
 export const tribalOn = (): boolean => qs<HTMLInputElement>("#show-land-tribal").checked;
 const LAND_TOGGLES: Record<string, () => boolean> = { BLM: blmOn, USFS: usfsOn, Tribal: tribalOn };
 const landOn = (): boolean => blmOn() || usfsOn() || tribalOn();
-export const trailsOn = (): boolean => qs<HTMLInputElement>("#show-trails").checked;
 
 // OSM dispersed layer: real tagged sites ("reported") + the road∩public-land proxy ("dispersed").
 const isDispersed = (site: CampSite): boolean =>
@@ -171,70 +170,39 @@ function landPopup(unit: LandUnit): HTMLElement {
   return root;
 }
 
-// Fetch + draw the OSM trail network around the focused region. Paths/routes render as red
-// polylines; trailheads as small red dots. No-op (just clears) when the toggle is off. Trails sit
-// above the land shading but below the observation/campground markers, and degrade quietly.
-export async function loadTrails(): Promise<void> {
-  clearTrails();
-  renderLegend();
-  if (!trailsOn() || !state.focused) return;
-  const { lat, lng } = state.focused;
-  let found: Trail[];
+// Draws the real trail for a trailhead selected in a destination card's Trails tab (views.ts).
+// Fetches `/api/trails/network`, which resolves it via live OSM topology when the trailhead sits
+// on a real way/route, falling back to the nearest already-cached path/route otherwise - drawn
+// solid for the former, dashed for the latter so the UI doesn't overstate confidence in a guess.
+// At most one selected trail shows at a time (state.selectedTrailLayer); no camera movement, same
+// "don't be jarring" approach as the rest of this file's click interactions.
+export async function selectTrailhead(trail: Trail): Promise<void> {
+  clearSelectedTrail();
+  let path: TrailPath;
   try {
     // See the LandUnit cast above - `geometry` is real GeoJSON, just untyped on the backend.
-    found = (await getJson("/api/trails", { query: { lat, lng } })) as unknown as Trail[];
+    path = (await getJson("/api/trails/network", {
+      query: { trail_id: trail.id },
+    })) as unknown as TrailPath;
   } catch (error) {
     setStatus(errorDetail(error));
     return;
   }
-  const layer = L.geoJSON(undefined, {
-    style: { color: TRAIL, weight: 2, opacity: 0.85, bubblingMouseEvents: false },
-    // Trailheads come through as GeoJSON points; render them as small dots instead of pins.
-    pointToLayer: (_feature, latlng) =>
-      L.circleMarker(latlng, {
-        radius: 5,
+  const feature: GeoJSON.Feature = { type: "Feature", properties: {}, geometry: path.trail.geometry };
+  const layer = L.geoJSON(
+    feature,
+    {
+      style: {
         color: TRAIL,
-        weight: 1,
-        fillColor: TRAIL,
-        fillOpacity: 0.9,
+        weight: 3,
+        opacity: 0.9,
+        dashArray: path.authoritative ? undefined : "6 6",
         bubblingMouseEvents: false,
-      }),
-    onEachFeature: (feature, lyr) => lyr.bindPopup(trailPopup(feature.properties as Trail)),
-  });
-  // Carry each trail's fields as GeoJSON `properties` so the popup can read them.
-  found.forEach((trail) => {
-    const feature: GeoJSON.Feature = {
-      type: "Feature",
-      properties: trail,
-      geometry: trail.geometry,
-    };
-    layer.addData(feature);
-  });
-  layer.addTo(map);
-  state.trailLayer = layer;
-}
-
-// Popup built from DOM nodes: the trail name comes from an external service, so `textContent`
-// escapes it; the source url is a fixed openstreetmap.org element link.
-function trailPopup(trail: Trail): HTMLElement {
-  const root = document.createElement("div");
-  const title = document.createElement("b");
-  title.textContent = trail.name;
-  const camp =
-    trail.camp_distance_km != null ? ` · nearest camp ${dist(trail.camp_distance_km)}` : "";
-  const link = document.createElement("a");
-  link.href = trail.url;
-  link.target = "_blank";
-  link.rel = "noopener";
-  link.textContent = "OpenStreetMap ↗";
-  root.append(
-    title,
-    document.createElement("br"),
-    document.createTextNode(`${trail.kind} · ${dist(trail.distance_km)} away${camp}`),
-    document.createElement("br"),
-    link,
+      },
+    },
   );
-  return root;
+  layer.addTo(map);
+  state.selectedTrailLayer = layer;
 }
 
 // Fetch + plot individually-precise observations (issue #161): unlike the coarse cell_deg
@@ -305,6 +273,5 @@ function precisePopup(obs: PreciseObservation): HTMLElement {
 export function focusRegion(lat: number, lng: number): void {
   state.focused = { lat, lng };
   loadCamps();
-  loadTrails();
   loadPreciseObservations();
 }

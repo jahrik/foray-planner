@@ -31,6 +31,7 @@ path (bbox + haversine to the hotspot) is unaffected either way.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import time
@@ -40,6 +41,7 @@ from typing import Any
 import httpx
 import psycopg
 
+from foray import scoring
 from foray.cache import connect, is_area_covered, is_ingested, record_ingest, upsert_trails
 from foray.config import Config, CoverageRegion
 
@@ -93,6 +95,25 @@ def _trails_query(lat: float, lng: float, radius_m: float) -> str:
         f'relation["route"="hiking"]({around});'
         f'node["highway"="trailhead"]({around});'
         ");"
+        "out geom tags;"
+    )
+
+
+def _network_query(node_id: int, *, timeout_s: int = 25) -> str:
+    """Overpass QL for the way(s)/route touching a specific trailhead node (issue: draw the real
+    trail on selection, not a proximity guess).
+
+    ``way(bn)`` ("by node") returns ways that have ``node_id`` as a member - the real OSM link
+    when a trailhead sits on its path's own vertex list, not always true (many trailheads are a
+    standalone POI near, not on, the path - see ``trails.resolve_trail_network``'s fallback for
+    that case). ``rel(bw.segs)`` ("by way") then pulls in any named ``route=hiking`` relation
+    those ways belong to, so a long-distance trail draws in full rather than one short segment.
+    """
+    return (
+        f"[out:json][timeout:{timeout_s}];"
+        f"node(id:{node_id});"
+        'way(bn)["highway"]->.segs;'
+        '(.segs; rel(bw.segs)["route"="hiking"];);'
         "out geom tags;"
     )
 
@@ -326,6 +347,89 @@ def ingest_trails(
     finally:
         if own_con:
             database.close()
+
+
+def _parse_trailhead_id(trail_id: str) -> int:
+    """``"osm:node/<id>"`` -> the numeric OSM node id, or raise ``ValueError`` for anything else.
+
+    Only trailhead rows should ever reach this - ``resolve_trail_network`` calls it right after
+    confirming ``kind == "trailhead"`` via ``scoring.get_trail``.
+    """
+    prefix = "osm:node/"
+    if not trail_id.startswith(prefix) or not trail_id[len(prefix) :].isdigit():
+        raise ValueError(f"not a trailhead node id: {trail_id!r}")
+    return int(trail_id[len(prefix) :])
+
+
+def trailhead_network(node_id: int, *, client: httpx.Client | None = None) -> dict[str, Any] | None:
+    """The real way/route geometry touching trailhead ``node_id``, or None if OSM has no link.
+
+    Best-effort like ``fetch_trails``: a failed or empty Overpass response yields None rather than
+    raising, so callers (``resolve_trail_network``) can fall back to a proximity guess instead of
+    breaking the whole selection. Multiple returned ways/route members are stitched into one
+    ``MultiLineString`` (same approach as ``_row``'s route-relation handling); a lone way becomes
+    a ``LineString``.
+    """
+    owns = client is None
+    client = client or httpx.Client(timeout=30.0)
+    try:
+        payload = _post_overpass(client, _network_query(node_id))
+    except httpx.HTTPError as error:
+        logger.warning("trails: network query failed for node %d (%s) - falling back", node_id, error)
+        return None
+    finally:
+        if owns:
+            client.close()
+
+    lines: list[list[tuple[float, float]]] = []
+    name = None
+    kind = "path"
+    for element in payload.get("elements", []):
+        tags = element.get("tags") or {}
+        if element.get("type") == "way":
+            coords = _line_coords(element.get("geometry") or [])
+            if coords:
+                lines.append(coords)
+                name = name or tags.get("name") or tags.get("ref")
+        elif element.get("type") == "relation":
+            for member in element.get("members") or []:
+                if member.get("type") == "way" and (coords := _line_coords(member.get("geometry") or [])):
+                    lines.append(coords)
+            name = tags.get("name") or tags.get("ref") or name
+            kind = "route"
+    if not lines:
+        return None
+
+    thinned = [_sample(line, _MAX_POINTS_PER_LINE) for line in lines]
+    geometry: dict[str, Any] = (
+        {"type": "LineString", "coordinates": _to_lnglat(thinned[0])}
+        if len(thinned) == 1
+        else {"type": "MultiLineString", "coordinates": [_to_lnglat(line) for line in thinned]}
+    )
+    return {"name": name or "Trail (OSM)", "kind": kind, "geometry": geometry}
+
+
+def resolve_trail_network(
+    con: psycopg.Connection, trailhead_id: str, *, client: httpx.Client | None = None
+) -> scoring.TrailPath | None:
+    """The real trail for a selected trailhead, falling back to the nearest cached path/route.
+
+    Returns None only if the trailhead id itself doesn't resolve to a cached trailhead row -
+    callers (``api.py``) treat that as a 404, distinct from "no trail found" (which still returns
+    a ``TrailPath`` when the nearest-cached fallback succeeds).
+    """
+    trailhead = scoring.get_trail(con, trailhead_id)
+    if trailhead is None or trailhead.kind != "trailhead":
+        return None
+    node_id = _parse_trailhead_id(trailhead_id)
+    live = trailhead_network(node_id, client=client)
+    if live is not None:
+        trail = dataclasses.replace(trailhead, name=live["name"], kind=live["kind"], geometry=live["geometry"])
+        return scoring.TrailPath(trail=trail, authoritative=True)
+    nearest = scoring.nearest_trail(con, lat=trailhead.center_lat, lng=trailhead.center_lng)
+    if nearest is None:
+        return None
+    return scoring.TrailPath(trail=nearest, authoritative=False)
 
 
 def fetch_trails_bbox(

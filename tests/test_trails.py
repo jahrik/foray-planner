@@ -10,16 +10,20 @@ import pytest
 
 from foray.cache import is_ingested, upsert_campsites, upsert_trails
 from foray.config import Config, CoverageRegion, Home, Ingest
-from foray.scoring import trails_near
+from foray.scoring import get_trail, nearest_trail, trails_near
 from foray.trails import (
     _bbox_filter,
+    _network_query,
     _parse_element,
+    _parse_trailhead_id,
     _parse_trails,
     _sample,
     _tile_bboxes,
     fetch_trails,
     ingest_trails,
     ingest_trails_region,
+    resolve_trail_network,
+    trailhead_network,
 )
 
 HOME_LAT, HOME_LNG = 47.6, -122.3
@@ -341,3 +345,201 @@ def test_ingest_trails_region_does_not_mark_ingested_when_a_tile_fails(con: psyc
     assert count == 1  # only the one tile that succeeded
     assert con.execute("SELECT count(*) FROM trails").fetchone() == (1,)  # its row is still cached
     assert not is_ingested(con, "trails:place:46")  # not marked done - a retry should fill the gaps
+
+
+def test_trails_near_filters_by_kind_and_caps_with_limit(con: psycopg.Connection) -> None:
+    trailhead = _parse_element(
+        {"type": "node", "id": 1, "lat": 47.61, "lon": -122.31, "tags": {"highway": "trailhead"}}
+    )
+    path = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "path", "name": "Ridge"},
+            "geometry": [{"lat": 47.62, "lon": -122.30}, {"lat": 47.63, "lon": -122.29}],
+        }
+    )
+    assert trailhead is not None and path is not None
+    upsert_trails(con, [trailhead, path])
+
+    only_trailheads = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=30.0, kind="trailhead")
+    assert [trail.kind for trail in only_trailheads] == ["trailhead"]
+
+    capped = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=30.0, limit=1)
+    assert len(capped) == 1
+
+
+def test_get_trail_round_trips_by_id(con: psycopg.Connection) -> None:
+    row = _parse_element(
+        {"type": "node", "id": 5, "lat": 47.6, "lon": -122.3, "tags": {"highway": "trailhead", "name": "TH"}}
+    )
+    assert row is not None
+    upsert_trails(con, [row])
+    trail = get_trail(con, "osm:node/5")
+    assert trail is not None
+    assert trail.name == "TH"
+    assert trail.kind == "trailhead"
+
+
+def test_get_trail_missing_id_returns_none(con: psycopg.Connection) -> None:
+    assert get_trail(con, "osm:node/999") is None
+
+
+def test_nearest_trail_finds_closest_within_max_km(con: psycopg.Connection) -> None:
+    near = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "path", "name": "Near"},
+            "geometry": [{"lat": 47.605, "lon": -122.305}, {"lat": 47.606, "lon": -122.304}],
+        }
+    )
+    far = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "path", "name": "Far"},
+            "geometry": [{"lat": 48.0, "lon": -123.0}, {"lat": 48.01, "lon": -122.99}],
+        }
+    )
+    assert near is not None and far is not None
+    upsert_trails(con, [near, far])
+    found = nearest_trail(con, lat=HOME_LAT, lng=HOME_LNG, max_km=2.0)
+    assert found is not None
+    assert found.name == "Near"
+
+
+def test_nearest_trail_returns_none_outside_max_km(con: psycopg.Connection) -> None:
+    far = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "path", "name": "Far"},
+            "geometry": [{"lat": 48.0, "lon": -123.0}, {"lat": 48.01, "lon": -122.99}],
+        }
+    )
+    assert far is not None
+    upsert_trails(con, [far])
+    assert nearest_trail(con, lat=HOME_LAT, lng=HOME_LNG, max_km=2.0) is None
+
+
+def test_network_query_filters_on_the_trailhead_node_and_highway_ways() -> None:
+    query = _network_query(123)
+    assert "node(id:123);" in query
+    assert 'way(bn)["highway"]' in query
+    assert 'rel(bw.segs)["route"="hiking"]' in query
+
+
+def test_parse_trailhead_id_extracts_the_numeric_node_id() -> None:
+    assert _parse_trailhead_id("osm:node/456") == 456
+
+
+def test_parse_trailhead_id_rejects_non_trailhead_ids() -> None:
+    with pytest.raises(ValueError, match="not a trailhead"):
+        _parse_trailhead_id("osm:way/456")
+
+
+def test_trailhead_network_merges_way_and_route_members() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "elements": [
+                    {
+                        "type": "way",
+                        "id": 10,
+                        "tags": {"highway": "path"},
+                        "geometry": [{"lat": 47.6, "lon": -122.3}, {"lat": 47.61, "lon": -122.29}],
+                    },
+                    {
+                        "type": "relation",
+                        "id": 20,
+                        "tags": {"route": "hiking", "name": "Ridge Loop"},
+                        "members": [
+                            {
+                                "type": "way",
+                                "geometry": [{"lat": 47.61, "lon": -122.29}, {"lat": 47.62, "lon": -122.28}],
+                            }
+                        ],
+                    },
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = trailhead_network(1, client=client)
+    assert result is not None
+    assert result["name"] == "Ridge Loop"
+    assert result["kind"] == "route"
+    assert result["geometry"]["type"] == "MultiLineString"
+    assert len(result["geometry"]["coordinates"]) == 2
+
+
+def test_trailhead_network_returns_none_when_no_elements() -> None:
+    client = httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(200, json={"elements": []})))
+    assert trailhead_network(1, client=client) is None
+
+
+def test_trailhead_network_returns_none_on_a_failing_query() -> None:
+    client = httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(500)))
+    assert trailhead_network(1, client=client) is None
+
+
+def test_resolve_trail_network_unknown_trailhead_returns_none(con: psycopg.Connection) -> None:
+    assert resolve_trail_network(con, "osm:node/999", client=httpx.Client()) is None
+
+
+def test_resolve_trail_network_uses_live_topology_when_available(con: psycopg.Connection) -> None:
+    trailhead = _parse_element({"type": "node", "id": 1, "lat": 47.6, "lon": -122.3, "tags": {"highway": "trailhead"}})
+    assert trailhead is not None
+    upsert_trails(con, [trailhead])
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "elements": [
+                    {
+                        "type": "way",
+                        "id": 10,
+                        "tags": {"highway": "path", "name": "Real Trail"},
+                        "geometry": [{"lat": 47.6, "lon": -122.3}, {"lat": 47.61, "lon": -122.29}],
+                    }
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = resolve_trail_network(con, "osm:node/1", client=client)
+    assert result is not None
+    assert result.authoritative is True
+    assert result.trail.name == "Real Trail"
+    assert result.trail.kind == "path"
+
+
+def test_resolve_trail_network_falls_back_to_nearest_cached_trail(con: psycopg.Connection) -> None:
+    trailhead = _parse_element({"type": "node", "id": 1, "lat": 47.6, "lon": -122.3, "tags": {"highway": "trailhead"}})
+    nearby_path = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "path", "name": "Nearby"},
+            "geometry": [{"lat": 47.601, "lon": -122.301}, {"lat": 47.602, "lon": -122.302}],
+        }
+    )
+    assert trailhead is not None and nearby_path is not None
+    upsert_trails(con, [trailhead, nearby_path])
+
+    client = httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(200, json={"elements": []})))
+    result = resolve_trail_network(con, "osm:node/1", client=client)
+    assert result is not None
+    assert result.authoritative is False
+    assert result.trail.name == "Nearby"
+
+
+def test_resolve_trail_network_returns_none_when_nothing_found_at_all(con: psycopg.Connection) -> None:
+    trailhead = _parse_element({"type": "node", "id": 1, "lat": 47.6, "lon": -122.3, "tags": {"highway": "trailhead"}})
+    assert trailhead is not None
+    upsert_trails(con, [trailhead])
+    client = httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(200, json={"elements": []})))
+    assert resolve_trail_network(con, "osm:node/1", client=client) is None

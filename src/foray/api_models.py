@@ -182,6 +182,13 @@ class Trail(BaseModel):
     geometry: dict[str, Any]  # raw GeoJSON geometry, same as LandUnit.geometry
 
 
+class TrailPath(BaseModel):
+    model_config = _FROM_DATACLASS
+
+    trail: Trail
+    authoritative: bool
+
+
 class Stop(BaseModel):
     model_config = _FROM_DATACLASS
 

@@ -195,12 +195,14 @@ main { display: grid; grid-template-columns: 1fr 380px; gap: 0; flex: 1; min-hei
 }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .chip {
-  font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
-  padding: 2px 8px; color: var(--ink); text-decoration: none; display: inline-block;
+  font: inherit; font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 2px 8px; color: var(--ink); text-decoration: none; display: inline-block; cursor: pointer;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 a.chip:hover { border-color: var(--accent); }
 .chip.live { border-color: #22c3e6; color: #22c3e6; }
+/* Selected trailhead in a destination card's Trails tab (views.ts's loadTrailheadsInto). */
+.chip.active { border-color: var(--accent); color: var(--accent); }
 .chip.removable { display: inline-flex; align-items: center; gap: 4px; }
 .chip.removable button {
   padding: 0; border: none; background: none; color: var(--muted); cursor: pointer;
