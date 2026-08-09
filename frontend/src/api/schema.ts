@@ -231,6 +231,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/destinations/{region_id}/place": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Region Place
+         * @description The one notable place name for a destination card's title (issue #206) - a national
+         *     forest, city, etc, whichever `geocode.notable_place_name` finds first for the region's
+         *     centroid. Cached forever per region (`region_places`) since a grid cell's centroid
+         *     never moves: the first card to render for a given region pays one Nominatim round-trip
+         *     (throttled - see `geocode._throttle`), every later view of that region is a DB hit.
+         *     A successful lookup that finds nothing notable nearby caches `None` too, so a remote
+         *     region doesn't retry every time its card renders - a transient network/HTTP failure is
+         *     NOT cached, so it gets retried on the next render instead of being stuck permanently
+         *     titleless.
+         */
+        get: operations["get_region_place_api_destinations__region_id__place_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/trails": {
         parameters: {
             query?: never;
@@ -597,6 +625,15 @@ export interface components {
             observations: components["schemas"]["RecentObservation"][];
             /** Has More */
             has_more: boolean;
+        };
+        /**
+         * RegionPlace
+         * @description A destination card's titling place name (issue #206), or ``None`` when the region has
+         *     no notable place nearby.
+         */
+        RegionPlace: {
+            /** Place Name */
+            place_name: string | null;
         };
         /** RegionScore */
         RegionScore: {
@@ -1135,6 +1172,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LandUnit"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_region_place_api_destinations__region_id__place_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                region_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegionPlace"];
                 };
             };
             /** @description Validation Error */

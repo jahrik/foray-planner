@@ -7,6 +7,8 @@ requires a descriptive User-Agent. Location changes are occasional, so this stay
 from __future__ import annotations
 
 import re
+import threading
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -17,6 +19,46 @@ USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahr
 
 # "43.37, -124.22" or "43.37 -124.22" - a raw coordinate pair.
 _COORDS = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$")
+
+# Nominatim's usage policy caps requests at ~1/s. Every existing caller (location search,
+# `set_location`'s reverse lookup) fires rarely enough that this never mattered - but issue
+# #206's destination-card place titles can trigger one `notable_place_name()` call per uncached
+# region on a single ranking refresh, all from concurrent FastAPI requests. A process-wide lock
+# + minimum interval serializes calls to either function (they share this throttle) the same way
+# camps.py's `_make_throttle` paces RIDB requests, so a burst of cold cards degrades to "one card
+# populates per second" instead of hammering the API. Callers cache results (see
+# cache.region_places) precisely so this only bites once per
+# region, ever.
+_MIN_REQUEST_INTERVAL = 1.1
+_throttle_lock = threading.Lock()
+_last_request_at = 0.0
+
+
+def _throttle() -> None:
+    global _last_request_at
+    with _throttle_lock:
+        wait = _last_request_at + _MIN_REQUEST_INTERVAL - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_request_at = time.monotonic()
+
+
+# Priority order for picking the one "biggest thing here" label out of Nominatim's structured
+# address breakdown (issue #206) - notable/large place types first (a national forest or park
+# beats the city it happens to sit near), then progressively smaller settlement types, down to
+# county as the last resort before giving up entirely.
+_PLACE_PRIORITY = (
+    "national_park",
+    "protected_area",
+    "forest",
+    "state_forest",
+    "nature_reserve",
+    "city",
+    "town",
+    "village",
+    "hamlet",
+    "county",
+)
 
 
 @dataclass(frozen=True)
@@ -49,6 +91,7 @@ def reverse(lat: float, lng: float, *, client: httpx.Client | None = None) -> Lo
     owns = client is None
     client = client or httpx.Client(timeout=15.0)
     try:
+        _throttle()
         resp = client.get(
             NOMINATIM_REVERSE,
             params={"lat": lat, "lon": lng, "format": "json"},
@@ -63,6 +106,40 @@ def reverse(lat: float, lng: float, *, client: httpx.Client | None = None) -> Lo
     if not name:
         raise LookupError(f"no place name found for {lat},{lng}")
     return Location(name=name, lat=lat, lng=lng)
+
+
+def notable_place_name(lat: float, lng: float, *, client: httpx.Client | None = None) -> str | None:
+    """The one "biggest thing here" place name for ``lat``/``lng`` (issue #206), or ``None``
+    when nothing in ``_PLACE_PRIORITY`` is present (a remote/rural point) - a destination card
+    falls back to showing just rank + distance in that case, same as before this existed.
+
+    Uses Nominatim's structured ``address`` breakdown (``addressdetails=1``) rather than the
+    free-text ``display_name`` used by ``reverse()`` - picking a specific field lets a national
+    forest outrank the city it happens to be reverse-geocoded to, instead of always showing
+    whatever the most zoomed-in address component is.
+    """
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        raise ValueError(f"coordinates out of range: {lat},{lng}")
+    owns = client is None
+    client = client or httpx.Client(timeout=15.0)
+    try:
+        _throttle()
+        resp = client.get(
+            NOMINATIM_REVERSE,
+            params={"lat": lat, "lon": lng, "format": "json", "addressdetails": 1, "zoom": 14},
+            headers={"User-Agent": USER_AGENT},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    finally:
+        if owns:
+            client.close()
+    address = data.get("address") or {}
+    for field in _PLACE_PRIORITY:
+        value = address.get(field)
+        if value:
+            return str(value)
+    return None
 
 
 def _geocode(query: str, *, client: httpx.Client | None = None) -> Location:

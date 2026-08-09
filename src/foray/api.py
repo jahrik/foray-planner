@@ -39,6 +39,7 @@ from foray.api_models import (
     PreciseObservation,
     RecentObservation,
     RecentObservationsPage,
+    RegionPlace,
     RegionScore,
     StatusResponse,
     Trail,
@@ -51,8 +52,10 @@ from foray.cache import delete_location as db_delete_location
 from foray.cache import list_selected_genera as db_list_selected_genera
 from foray.cache import load_genera as db_load_genera
 from foray.cache import load_location as db_load_location
+from foray.cache import load_region_place as db_load_region_place
 from foray.cache import remove_genus as db_remove_genus
 from foray.cache import save_location as db_save_location
+from foray.cache import save_region_place as db_save_region_place
 from foray.config import Config, Home, Settings
 from foray.ingest import ingest
 
@@ -701,6 +704,35 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         with pool.connection() as conn:
             units = scoring.land_near(conn, lat=center_lat, lng=center_lng, radius_km=radius_km)
         return [LandUnit.model_validate(unit) for unit in units]
+
+    @app.get("/api/destinations/{region_id}/place")
+    def get_region_place(region_id: str) -> RegionPlace:
+        """The one notable place name for a destination card's title (issue #206) - a national
+        forest, city, etc, whichever `geocode.notable_place_name` finds first for the region's
+        centroid. Cached forever per region (`region_places`) since a grid cell's centroid
+        never moves: the first card to render for a given region pays one Nominatim round-trip
+        (throttled - see `geocode._throttle`), every later view of that region is a DB hit.
+        A successful lookup that finds nothing notable nearby caches `None` too, so a remote
+        region doesn't retry every time its card renders - a transient network/HTTP failure is
+        NOT cached, so it gets retried on the next render instead of being stuck permanently
+        titleless.
+        """
+        require_idle()
+        with pool.connection() as conn:
+            found, place_name = db_load_region_place(conn, region_id)
+            if found:
+                return RegionPlace(place_name=place_name)
+            center_lat, center_lng = region_center(region_id)
+            try:
+                place_name = geocode.notable_place_name(center_lat, center_lng)
+            except (httpx.HTTPError, ValueError) as error:
+                # Transient (network/rate-limit) failure - don't cache it as a permanent "no
+                # place found" negative result, or a region would never get a real answer.
+                # Just answer this one request with no title; the next card render retries.
+                logger.warning("place: reverse geocode failed for region %s (%s)", region_id, error)
+                return RegionPlace(place_name=None)
+            db_save_region_place(conn, region_id, place_name)
+        return RegionPlace(place_name=place_name)
 
     @app.get("/api/trails")
     def get_trails(

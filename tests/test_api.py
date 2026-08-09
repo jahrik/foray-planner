@@ -7,6 +7,7 @@ import threading
 import time
 from collections.abc import Iterator
 
+import httpx
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
@@ -88,6 +89,18 @@ def _no_trail_network_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
         return None
 
     monkeypatch.setattr("foray.trails.trailhead_network", fake_network)
+
+
+@pytest.fixture(autouse=True)
+def _no_place_geocode_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`/api/destinations/{region_id}/place` (issue #206) reverse-geocodes a region's centroid
+    on a cache miss - block the real Nominatim call by default, same as `_no_reverse_geocode_network`
+    above; tests exercising that behavior specifically override this locally."""
+
+    def fake_notable_place_name(lat: float, lng: float, *, client: object = None) -> None:
+        raise httpx.ConnectError("network disabled in tests")
+
+    monkeypatch.setattr("foray.api.geocode.notable_place_name", fake_notable_place_name)
 
 
 def test_get_config(client: TestClient) -> None:
@@ -442,6 +455,54 @@ def test_trail_network_falls_back_to_nearest_cached_trail(client: TestClient, co
 def test_camps_bad_region_id_is_400(client: TestClient) -> None:
     response = client.get("/api/camps", params={"region_id": "not-a-region-id"})
     assert response.status_code == 400
+
+
+def test_region_place_bad_region_id_is_400(client: TestClient) -> None:
+    response = client.get("/api/destinations/not-a-region-id/place")
+    assert response.status_code == 400
+
+
+def test_region_place_network_failure_returns_null(client: TestClient) -> None:
+    # The autouse `_no_place_geocode_network` fixture already makes geocode.notable_place_name
+    # raise, exercising the "answer this request with no title, don't cache the failure" path.
+    response = client.get("/api/destinations/95_-245/place")
+    assert response.status_code == 200
+    assert response.json() == {"place_name": None}
+
+
+def test_region_place_resolves_and_caches(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def fake_notable_place_name(lat: float, lng: float, *, client: object = None) -> str:
+        calls.append((lat, lng))
+        return "Mt. Hood National Forest"
+
+    monkeypatch.setattr("foray.api.geocode.notable_place_name", fake_notable_place_name)
+
+    first = client.get("/api/destinations/95_-245/place")
+    second = client.get("/api/destinations/95_-245/place")
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json() == {"place_name": "Mt. Hood National Forest"}
+    # Only the first request should have actually hit the (fake) geocoder - the second is a
+    # cache hit from region_places.
+    assert len(calls) == 1
+
+
+def test_region_place_caches_a_negative_result(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def fake_notable_place_name(lat: float, lng: float, *, client: object = None) -> None:
+        calls.append((lat, lng))
+        return None
+
+    monkeypatch.setattr("foray.api.geocode.notable_place_name", fake_notable_place_name)
+
+    first = client.get("/api/destinations/95_-245/place")
+    second = client.get("/api/destinations/95_-245/place")
+
+    assert first.json() == second.json() == {"place_name": None}
+    assert len(calls) == 1
 
 
 def test_plan_route(client: TestClient) -> None:
