@@ -193,3 +193,17 @@ def test_camps_near_ranks_by_true_distance_not_rounded(con: psycopg.Connection) 
 
 def test_camps_near_no_rows_ingested_returns_empty(con: psycopg.Connection) -> None:
     assert camps_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0) == []
+
+
+def test_camps_near_limit_caps_ranked_result(con: psycopg.Connection) -> None:
+    upsert_campsites(
+        con,
+        [
+            ("ridb:1", "Paid Close", "campground", "$20", None, 47.61, -122.31, "ridb", "u1"),
+            ("ridb:2", "Free Far", "campground", "No fee", True, 47.9, -122.6, "ridb", "u2"),
+            ("ridb:3", "Free Close", "campground", "No fee", True, 47.62, -122.32, "ridb", "u3"),
+        ],
+    )
+    sites = camps_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=100.0, limit=2)
+    # Same free-first-then-distance order as the unlimited result, just truncated to `limit`.
+    assert [site.name for site in sites] == ["Free Close", "Free Far"]

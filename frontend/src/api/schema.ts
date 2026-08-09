@@ -199,6 +199,8 @@ export interface paths {
         /**
          * Get Camps
          * @description Campsites near a region (by id) or an explicit lat/lng, free-first by distance.
+         *
+         *     ``limit`` caps the ranked result, e.g. a destination card's Campgrounds tab.
          */
         get: operations["get_camps_api_camps_get"];
         put?: never;
@@ -1084,6 +1086,7 @@ export interface operations {
                 lng?: number | null;
                 radius_km?: number;
                 free_only?: boolean;
+                limit?: number | null;
             };
             header?: never;
             path?: never;

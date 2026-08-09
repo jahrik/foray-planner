@@ -4,6 +4,7 @@ import { getJson } from "./api/client";
 import type {
   AlertRegion,
   Calendar,
+  CampSite,
   RecentObservation,
   RecentObservationsPage,
   RegionScore,
@@ -11,15 +12,18 @@ import type {
 } from "./api/types";
 import { focusRegion, selectTrailhead } from "./layers";
 import {
+  clearCardCampMarkers,
   clearMarkers,
   clearTrailheadMarkers,
   deselectSize,
   HEAT_RGB,
   map,
   plot,
+  plotCardCamp,
   plotTrailhead,
   regionRadiusKm,
   selectSize,
+  setCardCampActive,
   setTrailheadActive,
 } from "./map";
 import {
@@ -170,6 +174,7 @@ export async function runDestinations(): Promise<void> {
         <button type="button" class="rank-tab" data-tab="calendar">Calendar</button>
         <button type="button" class="rank-tab" data-tab="photos">Photos</button>
         <button type="button" class="rank-tab" data-tab="trails">Trails</button>
+        <button type="button" class="rank-tab" data-tab="camps">Camps</button>
       </div>
       <div data-tab-content="species">
         <div class="chips">${region.species
@@ -187,18 +192,22 @@ export async function runDestinations(): Promise<void> {
       </div>
       <div class="rank-calendar" data-tab-content="calendar" style="display:none"></div>
       <div class="rank-photos" data-tab-content="photos" style="display:none"></div>
-      <div class="rank-trails" data-tab-content="trails" style="display:none"></div>`;
+      <div class="rank-trails" data-tab-content="trails" style="display:none"></div>
+      <div class="rank-camps" data-tab-content="camps" style="display:none"></div>`;
     const speciesTab = qs<HTMLButtonElement>('[data-tab="species"]', card);
     const calendarTab = qs<HTMLButtonElement>('[data-tab="calendar"]', card);
     const photosTab = qs<HTMLButtonElement>('[data-tab="photos"]', card);
     const trailsTab = qs<HTMLButtonElement>('[data-tab="trails"]', card);
+    const campsTab = qs<HTMLButtonElement>('[data-tab="camps"]', card);
     const speciesBody = qs<HTMLElement>('[data-tab-content="species"]', card);
     const calendarBody = qs<HTMLElement>('[data-tab-content="calendar"]', card);
     const photosBody = qs<HTMLElement>('[data-tab-content="photos"]', card);
     const trailsBody = qs<HTMLElement>('[data-tab-content="trails"]', card);
+    const campsBody = qs<HTMLElement>('[data-tab-content="camps"]', card);
     stopLinkPropagation(speciesBody);
     stopLinkPropagation(photosBody);
     stopLinkPropagation(trailsBody);
+    stopLinkPropagation(campsBody);
     const chipsContainer = qs<HTMLElement>(".chips", speciesBody);
     const showMoreButton = card.querySelector<HTMLButtonElement>(".show-more");
     if (showMoreButton) {
@@ -223,15 +232,18 @@ export async function runDestinations(): Promise<void> {
     let calendarState: "idle" | "loading" | "loaded" = "idle";
     let photosState: "idle" | "loading" | "loaded" = "idle";
     let trailsState: "idle" | "loading" | "loaded" = "idle";
-    const showTab = (tab: "species" | "calendar" | "photos" | "trails") => {
+    let campsState: "idle" | "loading" | "loaded" = "idle";
+    const showTab = (tab: "species" | "calendar" | "photos" | "trails" | "camps") => {
       speciesTab.classList.toggle("active", tab === "species");
       calendarTab.classList.toggle("active", tab === "calendar");
       photosTab.classList.toggle("active", tab === "photos");
       trailsTab.classList.toggle("active", tab === "trails");
+      campsTab.classList.toggle("active", tab === "camps");
       speciesBody.style.display = tab === "species" ? "" : "none";
       calendarBody.style.display = tab === "calendar" ? "" : "none";
       photosBody.style.display = tab === "photos" ? "" : "none";
       trailsBody.style.display = tab === "trails" ? "" : "none";
+      campsBody.style.display = tab === "camps" ? "" : "none";
     };
     speciesTab.onclick = (e) => {
       e.stopPropagation();
@@ -264,6 +276,16 @@ export async function runDestinations(): Promise<void> {
         trailsState = "loading";
         loadTrailheadsInto(region, trailsBody).then((succeeded) => {
           trailsState = succeeded ? "loaded" : "idle";
+        });
+      }
+    };
+    campsTab.onclick = (e) => {
+      e.stopPropagation();
+      showTab("camps");
+      if (campsState === "idle") {
+        campsState = "loading";
+        loadCampgroundsInto(region, campsBody).then((succeeded) => {
+          campsState = succeeded ? "loaded" : "idle";
         });
       }
     };
@@ -472,6 +494,60 @@ async function loadTrailheadsInto(region: RegionScore, container: HTMLElement): 
       selectRow(trailhead, button, marker);
     };
     rows.push({ button, marker });
+    list.appendChild(button);
+  });
+  container.appendChild(list);
+  return true;
+}
+
+// Same fetch-once-per-card pattern as loadTrailheadsInto, scoped to the destination's own true
+// circle (regionRadiusKm()). Unlike a trailhead, a campsite is already a complete point feature
+// (name, fee, coords) - no server-side "resolve the real thing" step, so selecting a row just
+// syncs the active chip/marker pair and opens the marker's popup, instead of drawing anything new.
+async function loadCampgroundsInto(region: RegionScore, container: HTMLElement): Promise<boolean> {
+  container.innerHTML = "<p class='hint'>Loading…</p>";
+  let sites: CampSite[];
+  try {
+    sites = await getJson("/api/camps", {
+      query: { region_id: region.region_id, radius_km: regionRadiusKm(), limit: 20 },
+    });
+  } catch (error) {
+    container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
+    return false;
+  }
+  if (!sites.length) {
+    container.innerHTML = "<p class='hint'>No campgrounds cached in this destination yet.</p>";
+    return true;
+  }
+  container.innerHTML = "";
+  const list = document.createElement("div");
+  list.className = "chips";
+  // Only one card's campgrounds are plotted at a time (plotCardCamp clears the previous set),
+  // same as the Trails tab's trailhead markers.
+  clearCardCampMarkers();
+  const rows: { button: HTMLButtonElement; marker: L.CircleMarker; site: CampSite }[] = [];
+  const selectRow = (site: CampSite, button: HTMLButtonElement, marker: L.CircleMarker): void => {
+    rows.forEach((row) => {
+      row.button.classList.remove("active");
+      setCardCampActive(row.marker, row.site, false);
+    });
+    button.classList.add("active");
+    setCardCampActive(marker, site, true);
+    marker.openPopup();
+  };
+  sites.forEach((site) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "chip";
+    const feeLabel = site.free === true ? "free" : site.fee ? site.fee : "cost unknown";
+    button.textContent = `${site.name} · ${dist(site.distance_km)} · ${feeLabel}`;
+    const marker = plotCardCamp(site, () => selectRow(site, button, marker));
+    marker.bindPopup(`<b>${escapeHtml(site.name)}</b><br>${dist(site.distance_km)} · ${escapeHtml(feeLabel)}`);
+    button.onclick = (e) => {
+      e.stopPropagation();
+      selectRow(site, button, marker);
+    };
+    rows.push({ button, marker, site });
     list.appendChild(button);
   });
   container.appendChild(list);

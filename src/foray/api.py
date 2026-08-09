@@ -660,8 +660,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         lng: float | None = Query(None),
         radius_km: float = Query(40.0),
         free_only: bool = Query(False),
+        limit: int | None = Query(None, gt=0),
     ) -> list[CampSite]:
-        """Campsites near a region (by id) or an explicit lat/lng, free-first by distance."""
+        """Campsites near a region (by id) or an explicit lat/lng, free-first by distance.
+
+        ``limit`` caps the ranked result, e.g. a destination card's Campgrounds tab."""
         require_idle()
         if region_id is not None:
             center_lat, center_lng = region_center(region_id)
@@ -676,6 +679,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 lng=center_lng,
                 radius_km=radius_km,
                 free_only=free_only,
+                limit=limit,
             )
         return [CampSite.model_validate(site) for site in sites]
 
