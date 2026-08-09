@@ -192,15 +192,17 @@ export async function loadTrees(): Promise<void> {
     return;
   }
   const maxCnt = cells.reduce((max, cell) => Math.max(max, cell.cnt), 1);
+  state.treeGenera = new Set(cells.map((cell) => cell.genus));
+  renderLegend(); // re-render now that treeGenera reflects this fetch, not the previous one
   cells.forEach((cell) => {
-    plotTree(cell.center_lat, cell.center_lng, cell.cnt, maxCnt).bindPopup(treePopup(cell));
+    plotTree(cell.center_lat, cell.center_lng, cell.genus, cell.cnt, maxCnt).bindPopup(treePopup(cell));
   });
 }
 
-// v1 renders every host genus in the same flat color (see map.ts's TREE) rather than
-// color-coding per genus, so the popup - not the bubble's color - is where genus identity
-// actually surfaces; `cell.genus` is a scientific name from GloBI/iNat data, not user input,
-// but textContent is used anyway rather than trusting that.
+// The bubble's own color already carries genus identity for the common genera (map.ts's
+// TREE_COLORS); the popup spells it out precisely (including for the grey "other" bucket) and
+// adds the count. `cell.genus` is a scientific name from GloBI/iNat data, not user input, but
+// textContent is used anyway rather than trusting that.
 function treePopup(cell: TreeCell): HTMLElement {
   const root = document.createElement("div");
   const title = document.createElement("b");

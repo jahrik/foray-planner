@@ -26,12 +26,25 @@ export const LAND_DEFAULT = "#b5b5b5"; // any other agency
 export const TRAIL = "#ff5555";
 export const PLAN_STOP = "#ffd060"; // neon gold - planned-route stops and connecting line
 export const PRECISE = "#c792ea"; // bright lavender - known-precise (non-obscured) observation pin
-// Host-tree density (issue #85) - the one green in an otherwise deliberately non-green palette
-// (see the top comment), since "green = trees" reads intuitively here. v1 is a single flat
-// color for every host genus (genus identity surfaces in the popup, not the color - see
-// layers.ts's treePopup) rather than per-genus color-coding, deferred pending real ingested
-// data showing which genera actually dominate.
-export const TREE = "#3ecf5c";
+// Host-tree density (issue #85), one hue per common genus - a flat single color read as "just a
+// green blob, tells you nothing" once real data was on the map (confirmed live: a single-color
+// v1 shipped first, then was replaced by this once GloBI's real association data showed which
+// genera actually dominate). Static, keyed by scientific name - same precedent as LAND_COLORS's
+// per-agency map, chosen over computing colors per-fetch so a given genus reads the same color
+// on every view. Capped to the handful of genera that actually carry the bulk of real ECM
+// interaction weight (confirmed via a live GloBI sweep of the whole genus catalog: Pinus, Quercus,
+// Picea, Betula, Fagus, Abies accounted for the large majority of total interaction weight,
+// with a long tail of far rarer hosts after them) - everything else falls back to TREE_DEFAULT
+// grey rather than growing this map for every one of the ~100 discovered host genera.
+export const TREE_COLORS: Record<string, string> = {
+  Pinus: "#3ecf5c", // green - pine, the single most common ECM host by a wide margin
+  Quercus: "#d9a441", // warm gold-brown - oak
+  Picea: "#4f9bc4", // steel blue - spruce
+  Betula: "#e8e8e8", // pale silver - birch bark
+  Fagus: "#b5651d", // rust brown - beech
+  Abies: "#2f8f6b", // deep teal-green - fir
+};
+export const TREE_DEFAULT = "#8a8a8a"; // any other host genus
 
 // A single standard OSM tile source for both themes - dark mode inverts it via CSS
 // (`invert() hue-rotate()` in style.css) instead of swapping in a separate dark tileset.
@@ -96,7 +109,19 @@ export function renderLegend(): void {
   if (blm) entries.push([LAND_COLORS.BLM ?? LAND_DEFAULT, "BLM land"]);
   if (usfs) entries.push([LAND_COLORS.USFS ?? LAND_DEFAULT, "USFS land"]);
   if (tribal) entries.push([LAND_COLORS.Tribal ?? LAND_DEFAULT, "Tribal land"]);
-  if (trees) entries.push([TREE, "Host-tree density"]);
+  if (trees) {
+    // One entry per named genus actually on the map right now (state.treeGenera, set by
+    // loadTrees), not every key in TREE_COLORS - an unnamed/rare genus in the current view
+    // collapses into one shared "Other host trees" entry instead of the legend listing colors
+    // for genera that aren't even present.
+    let hasOther = false;
+    state.treeGenera.forEach((genus) => {
+      const color = TREE_COLORS[genus];
+      if (color) entries.push([color, genus]);
+      else hasOther = true;
+    });
+    if (hasOther) entries.push([TREE_DEFAULT, "Other host trees"]);
+  }
   el.innerHTML = entries
     .map(([color, label]) => `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`)
     .join("");
@@ -272,18 +297,25 @@ export function clearLand(): void {
 // which doesn't apply to tree cells (they're never "selected") - reusing it here would mean
 // either dragging that unused bookkeeping along or complicating plot()'s signature for a
 // behavior only one caller needs.
-export function plotTree(lat: number, lng: number, cnt: number, maxCnt: number): L.Circle {
+export function plotTree(lat: number, lng: number, genus: string, cnt: number, maxCnt: number): L.Circle {
   const trueRadius = ((state.cellDeg * KM_PER_DEG) / 2) * 1000;
   const weight = maxCnt > 0 ? cnt / maxCnt : 0;
+  const color = TREE_COLORS[genus] ?? TREE_DEFAULT;
+  // Kept deliberately faint (land-layer-style low fillOpacity, no bold stroke) rather than
+  // plot()'s bolder score-bubble look - unlike a handful of destination bubbles, tree cells can
+  // blanket the whole visible map, and an opaque fill there hid the basemap underneath it
+  // entirely (reported after the first pass). bringToBack keeps it under every other marker
+  // layer too, same as land's `layer.bringToBack()`.
   const marker = L.circle([lat, lng], {
     radius: trueRadius * (0.3 + weight),
-    color: TREE,
-    fillColor: TREE,
-    fillOpacity: 0.15 + 0.45 * weight,
-    opacity: 0.4 + 0.5 * weight,
-    weight: 1.5,
+    color,
+    fillColor: color,
+    fillOpacity: 0.06 + 0.14 * weight,
+    opacity: 0.25 + 0.25 * weight,
+    weight: 1,
     bubblingMouseEvents: false,
   }).addTo(map);
+  marker.bringToBack();
   state.treeMarkers.push(marker);
   return marker;
 }
@@ -291,6 +323,7 @@ export function plotTree(lat: number, lng: number, cnt: number, maxCnt: number):
 export function clearTrees(): void {
   state.treeMarkers.forEach((marker) => map.removeLayer(marker));
   state.treeMarkers = [];
+  state.treeGenera = new Set();
 }
 
 // Hiking-boot marker for a destination card's Trails tab trailhead list (views.ts) - only the
