@@ -22,11 +22,12 @@ _COORDS = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$")
 
 # Nominatim's usage policy caps requests at ~1/s. Every existing caller (location search,
 # `set_location`'s reverse lookup) fires rarely enough that this never mattered - but issue
-# #206's destination-card place titles can trigger one `reverse()` call per uncached region on
-# a single ranking refresh, all from concurrent FastAPI requests. A process-wide lock + minimum
-# interval serializes those calls the same way camps.py's `_make_throttle` paces RIDB requests,
-# so a burst of cold cards degrades to "one card populates per second" instead of hammering the
-# API. Callers cache results (see cache.region_places) precisely so this only bites once per
+# #206's destination-card place titles can trigger one `notable_place_name()` call per uncached
+# region on a single ranking refresh, all from concurrent FastAPI requests. A process-wide lock
+# + minimum interval serializes calls to either function (they share this throttle) the same way
+# camps.py's `_make_throttle` paces RIDB requests, so a burst of cold cards degrades to "one card
+# populates per second" instead of hammering the API. Callers cache results (see
+# cache.region_places) precisely so this only bites once per
 # region, ever.
 _MIN_REQUEST_INTERVAL = 1.1
 _throttle_lock = threading.Lock()

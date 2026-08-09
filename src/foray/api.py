@@ -712,8 +712,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         centroid. Cached forever per region (`region_places`) since a grid cell's centroid
         never moves: the first card to render for a given region pays one Nominatim round-trip
         (throttled - see `geocode._throttle`), every later view of that region is a DB hit.
-        A failed lookup caches `None` too, so a remote region with nothing notable nearby
-        doesn't retry every time its card renders.
+        A successful lookup that finds nothing notable nearby caches `None` too, so a remote
+        region doesn't retry every time its card renders - a transient network/HTTP failure is
+        NOT cached, so it gets retried on the next render instead of being stuck permanently
+        titleless.
         """
         require_idle()
         with pool.connection() as conn:
