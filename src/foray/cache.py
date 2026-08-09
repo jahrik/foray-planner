@@ -142,6 +142,17 @@ CREATE TABLE IF NOT EXISTS fungi_genera (
 
 CREATE INDEX IF NOT EXISTS ix_fungi_genera_name ON fungi_genera (name);
 
+-- Destination-card place titling (issue #206): caches one reverse-geocode result per grid
+-- region forever - regions are a fixed grid (scoring.py's cell_deg binning), so a region's
+-- centroid never moves and its notable place name never needs re-resolving. `place_name` is
+-- nullable on purpose: a row existing means "already looked up", regardless of whether a
+-- notable place was found - so a remote/rural region with no notable place nearby is cached
+-- as a negative result instead of re-hitting Nominatim on every destinations refresh.
+CREATE TABLE IF NOT EXISTS region_places (
+    region_id  TEXT PRIMARY KEY,
+    place_name TEXT
+);
+
 -- Per-device genus selection (issue #79 Phase 2): which genera this device wants ranked,
 -- keyed by the same anonymous device-id cookie as app_location - but many rows per device
 -- (one per selected genus), not app_location's one row per device. A device with zero rows
@@ -601,6 +612,23 @@ def latest_obs_date_by_place(con: psycopg.Connection, token: int | str, place_id
     if row is None or row[0] is None:
         return None
     return row[0]
+
+
+def load_region_place(con: psycopg.Connection, region_id: str) -> tuple[bool, str | None]:
+    """Cached place name for a region, if already resolved. ``(found, place_name)`` -
+    ``found=False`` means no lookup has been attempted yet (caller should resolve and save);
+    ``found=True, place_name=None`` means a lookup ran and found nothing notable nearby."""
+    row = con.execute("SELECT place_name FROM region_places WHERE region_id = %s", [region_id]).fetchone()
+    if row is None:
+        return False, None
+    return True, row[0]
+
+
+def save_region_place(con: psycopg.Connection, region_id: str, place_name: str | None) -> None:
+    con.execute(
+        "INSERT INTO region_places (region_id, place_name) VALUES (%s, %s) ON CONFLICT (region_id) DO NOTHING",
+        [region_id, place_name],
+    )
 
 
 def load_location(con: psycopg.Connection, device_id: str) -> dict[str, Any] | None:

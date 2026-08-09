@@ -15,11 +15,13 @@ from foray.cache import (
     latest_obs_date,
     list_selected_genera,
     load_genera,
+    load_region_place,
     mark_revalidated,
     observation_ids_for_genus,
     observation_taxon_ids,
     record_ingest,
     remove_genus,
+    save_region_place,
     search_fungi_genera,
     stale_observation_ids,
     suspect_genus_taxon_ids,
@@ -385,3 +387,28 @@ def test_upsert_campsites_same_key_twice_updates_not_duplicates(con: psycopg.Con
 
     rows = con.execute("SELECT id, name FROM campsites WHERE id = %s", [_CAMPSITE_ROW[0]]).fetchall()
     assert rows == [("osm:way/1", "New Name")]
+
+
+def test_load_region_place_not_found_for_unresolved_region(con: psycopg.Connection) -> None:
+    assert load_region_place(con, "425_-1099") == (False, None)
+
+
+def test_save_and_load_region_place_round_trips(con: psycopg.Connection) -> None:
+    save_region_place(con, "425_-1099", "Mt. Hood National Forest")
+
+    assert load_region_place(con, "425_-1099") == (True, "Mt. Hood National Forest")
+
+
+def test_save_region_place_caches_a_negative_result(con: psycopg.Connection) -> None:
+    """A `None` place_name means "looked up, nothing notable nearby" - distinct from
+    load_region_place's own `(False, None)` for "never looked up"."""
+    save_region_place(con, "425_-1099", None)
+
+    assert load_region_place(con, "425_-1099") == (True, None)
+
+
+def test_save_region_place_keeps_first_result_on_reinsert(con: psycopg.Connection) -> None:
+    save_region_place(con, "425_-1099", "Mt. Hood National Forest")
+    save_region_place(con, "425_-1099", "Something Else")
+
+    assert load_region_place(con, "425_-1099") == (True, "Mt. Hood National Forest")

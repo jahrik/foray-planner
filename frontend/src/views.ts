@@ -7,6 +7,7 @@ import type {
   CampSite,
   RecentObservation,
   RecentObservationsPage,
+  RegionPlace,
   RegionScore,
   Trail,
 } from "./api/types";
@@ -161,6 +162,9 @@ export async function runDestinations(): Promise<void> {
   // Only one region's marker shows its true real-world size at a time; selecting a new one
   // reverts whichever marker held that spot back to its score-scaled preview size.
   let selected: { marker: L.Circle; weight: number } | null = null;
+  // Each card's place-name lookup (issue #206) runs after the initial render, not inline in
+  // this map() - see the sequential loop below.
+  const titleTargets: { region: RegionScore; rank: number; numSpan: HTMLElement }[] = [];
   const markers = regions.map((region, rank) => {
     const marker = plot(region.center_lat, region.center_lng, region.score_norm, region.recent_count > 0);
     const card = document.createElement("div");
@@ -194,6 +198,7 @@ export async function runDestinations(): Promise<void> {
       <div class="rank-photos" data-tab-content="photos" style="display:none"></div>
       <div class="rank-trails" data-tab-content="trails" style="display:none"></div>
       <div class="rank-camps" data-tab-content="camps" style="display:none"></div>`;
+    titleTargets.push({ region, rank, numSpan: qs<HTMLElement>(".num", card) });
     const speciesTab = qs<HTMLButtonElement>('[data-tab="species"]', card);
     const calendarTab = qs<HTMLButtonElement>('[data-tab="calendar"]', card);
     const photosTab = qs<HTMLButtonElement>('[data-tab="photos"]', card);
@@ -328,6 +333,30 @@ export async function runDestinations(): Promise<void> {
     selectSize(topMarker);
     selected = { marker: topMarker, weight: top.score_norm };
   }
+
+  // Card titles start as rank + distance only; each card's notable-place name (issue #206)
+  // loads afterward, one region at a time rather than all N in parallel - Nominatim's usage
+  // policy caps requests at ~1/s (the backend throttles too, see geocode._throttle, but no
+  // sense firing a burst of requests this run will just make the backend queue up anyway).
+  // Cached regions (region_places) resolve near-instantly, so this only visibly staggers on a
+  // cold cache. Fire-and-forget: runDestinations() itself doesn't wait on card titles.
+  void (async () => {
+    for (const { region, rank, numSpan } of titleTargets) {
+      if (token !== destinationsRunToken || state.view !== "destinations") return;
+      let place: RegionPlace;
+      try {
+        const resp = await fetch(`/api/destinations/${encodeURIComponent(region.region_id)}/place`);
+        if (!resp.ok) continue;
+        place = (await resp.json()) as RegionPlace;
+      } catch {
+        continue; // best-effort - leave this card's title as rank + distance
+      }
+      if (token !== destinationsRunToken || state.view !== "destinations") return;
+      if (place.place_name) {
+        numSpan.textContent = `#${rank + 1} · ${place.place_name} · ${dist(region.distance_km)}`;
+      }
+    }
+  })();
 }
 
 // Fetches once per card (cached by the calendarState flag at the call site) and renders straight

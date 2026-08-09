@@ -18,6 +18,9 @@ export type SpeciesHit = components["schemas"]["SpeciesHit"];
 /** One ranked destination region (`GET /api/destinations`). */
 export type RegionScore = components["schemas"]["RegionScore"];
 
+/** A destination card's titling place name (`GET /api/destinations/{region_id}/place`). */
+export type RegionPlace = components["schemas"]["RegionPlace"];
+
 /** A month bucket in the place calendar (`GET /api/calendar`). */
 export type CalendarBucket = components["schemas"]["CalendarBucket"];
 

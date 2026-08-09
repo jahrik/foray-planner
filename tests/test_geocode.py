@@ -5,7 +5,16 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from foray.geocode import resolve, reverse
+from foray import geocode
+from foray.geocode import notable_place_name, resolve, reverse
+
+
+@pytest.fixture(autouse=True)
+def _no_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nominatim's ~1/s throttle (see geocode._throttle) is a real budget in production, but
+    would add ~1.1s per test here for no benefit - each test's MockTransport never talks to
+    the real service, so there's nothing to protect."""
+    monkeypatch.setattr(geocode, "_MIN_REQUEST_INTERVAL", 0.0)
 
 
 def test_parses_raw_coordinates() -> None:
@@ -71,3 +80,43 @@ def test_reverse_geocode_no_match_raises() -> None:
     client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})))
     with pytest.raises(LookupError):
         reverse(0.0, 0.0, client=client)
+
+
+def test_notable_place_name_prefers_forest_over_city() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["addressdetails"] == "1"
+        return httpx.Response(
+            200,
+            json={
+                "display_name": "Mt. Hood National Forest, Hood River County, Oregon",
+                "address": {"forest": "Mt. Hood National Forest", "city": "Hood River", "county": "Hood River County"},
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    assert notable_place_name(45.3, -121.7, client=client) == "Mt. Hood National Forest"
+
+
+def test_notable_place_name_falls_back_to_city_when_no_notable_place() -> None:
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"display_name": "Springfield", "address": {"city": "Springfield", "state": "Oregon"}}
+            )
+        )
+    )
+    assert notable_place_name(44.0, -123.0, client=client) == "Springfield"
+
+
+def test_notable_place_name_returns_none_when_nothing_matches() -> None:
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"display_name": "middle of nowhere", "address": {}})
+        )
+    )
+    assert notable_place_name(0.0, 0.0, client=client) is None
+
+
+def test_notable_place_name_rejects_out_of_range_coordinates() -> None:
+    with pytest.raises(ValueError):
+        notable_place_name(999.0, 999.0)

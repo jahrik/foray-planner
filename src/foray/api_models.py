@@ -82,6 +82,13 @@ class RegionScore(BaseModel):
     species: list[SpeciesHit]
 
 
+class RegionPlace(BaseModel):
+    """A destination card's titling place name (issue #206), or ``None`` when the region has
+    no notable place nearby."""
+
+    place_name: str | None
+
+
 class CalendarBucket(BaseModel):
     total: int
     species: dict[str, int]
