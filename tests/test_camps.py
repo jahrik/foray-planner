@@ -81,6 +81,18 @@ def test_query_centers_cover_the_disk() -> None:
         assert haversine_km(HOME_LAT, HOME_LNG, center_lat, center_lng) <= 300.0 + query_radius
 
 
+def test_query_centers_caps_request_count_for_huge_radius() -> None:
+    from foray.camps import _MAX_QUERY_CENTERS
+    from foray.scoring import haversine_km
+
+    # An uncapped grid at this radius would need tens of thousands of query circles.
+    centers = _query_centers(HOME_LAT, HOME_LNG, radius_km=10000.0, query_radius_km=80.0)
+    assert len(centers) == _MAX_QUERY_CENTERS
+    # The kept centers are the ones closest to home, not an arbitrary slice.
+    distances = [haversine_km(HOME_LAT, HOME_LNG, lat, lng) for lat, lng in centers]
+    assert distances == sorted(distances)
+
+
 def test_fetch_campsites_dedupes_and_clips_to_radius() -> None:
     near = {
         "FacilityID": "1",
