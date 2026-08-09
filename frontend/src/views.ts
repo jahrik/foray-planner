@@ -116,11 +116,14 @@ export async function runDestinations(): Promise<void> {
   try {
     regions = await getJson("/api/destinations", { query: { months: monthsParam() } });
   } catch (error) {
-    if (token !== destinationsRunToken) return; // superseded - a newer call owns the panel/map now
+    // Superseded either by a newer runDestinations() call or by the user switching away from
+    // the Destinations tab entirely while this fetch was in flight - either way, whoever owns
+    // #panel/the map now shouldn't have their state clobbered by a stale response.
+    if (token !== destinationsRunToken || state.view !== "destinations") return;
     setStatus(errorDetail(error));
     return;
   }
-  if (token !== destinationsRunToken) return; // superseded - a newer call owns the panel/map now
+  if (token !== destinationsRunToken || state.view !== "destinations") return;
   const panel = qs("#panel");
   if (!regions.length) {
     panel.innerHTML =
@@ -383,7 +386,9 @@ async function loadPhotosInto(regionId: string, container: HTMLElement): Promise
 }
 
 // Same overlapping-call guard as destinationsRunToken above - runAlerts() can also be triggered
-// more than once in flight (tab switches, refreshCurrentView() calls).
+// more than once in flight (tab switches, refreshCurrentView() calls). Also bails if the user has
+// since switched away from the Alerts tab entirely while the fetch was in flight, not just if a
+// newer runAlerts() call superseded this one.
 let alertsRunToken = 0;
 
 export async function runAlerts(): Promise<void> {
@@ -394,11 +399,11 @@ export async function runAlerts(): Promise<void> {
   try {
     regions = await getJson("/api/alerts");
   } catch (error) {
-    if (token !== alertsRunToken) return;
+    if (token !== alertsRunToken || state.view !== "alerts") return;
     setStatus(errorDetail(error));
     return;
   }
-  if (token !== alertsRunToken) return;
+  if (token !== alertsRunToken || state.view !== "alerts") return;
   const panel = qs("#panel");
   if (!regions.length) {
     panel.innerHTML = "<p class='hint'>No target species observed in the trailing window yet.</p>";
