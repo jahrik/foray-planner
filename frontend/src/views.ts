@@ -174,7 +174,7 @@ export async function runDestinations(): Promise<void> {
         <button type="button" class="rank-tab" data-tab="calendar">Calendar</button>
         <button type="button" class="rank-tab" data-tab="photos">Photos</button>
         <button type="button" class="rank-tab" data-tab="trails">Trails</button>
-        <button type="button" class="rank-tab" data-tab="camps">Camps</button>
+        <button type="button" class="rank-tab" data-tab="camps">Campgrounds</button>
       </div>
       <div data-tab-content="species">
         <div class="chips">${region.species
@@ -522,8 +522,8 @@ async function loadCampgroundsInto(region: RegionScore, container: HTMLElement):
   container.innerHTML = "";
   const list = document.createElement("div");
   list.className = "chips";
-  // Only one card's campgrounds are plotted at a time (plotCardCamp clears the previous set),
-  // same as the Trails tab's trailhead markers.
+  // Only one card's campgrounds are plotted at a time (clearCardCampMarkers below clears the
+  // previous set), same as the Trails tab's trailhead markers.
   clearCardCampMarkers();
   const rows: { button: HTMLButtonElement; marker: L.CircleMarker; site: CampSite }[] = [];
   const selectRow = (site: CampSite, button: HTMLButtonElement, marker: L.CircleMarker): void => {

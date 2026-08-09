@@ -310,9 +310,11 @@ export function clearCardCampMarkers(): void {
 }
 
 export function plotCardCamp(site: CampSite, onSelect: () => void): L.CircleMarker {
+  const tooltip = document.createElement("span");
+  tooltip.textContent = site.name;
   const marker = L.circleMarker([site.center_lat, site.center_lng], cardCampStyle(site, false))
     .addTo(map)
-    .bindTooltip(site.name, { direction: "top", offset: [0, -6] });
+    .bindTooltip(tooltip, { direction: "top", offset: [0, -6] });
   marker.on("click", onSelect);
   state.cardCampMarkers.push(marker);
   return marker;
