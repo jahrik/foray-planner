@@ -163,6 +163,19 @@ class CampSite(BaseModel):
     url: str
 
 
+class TreeCell(BaseModel):
+    """One grid cell's density for one host tree genus (issue #85)."""
+
+    model_config = _FROM_DATACLASS
+
+    region_id: str
+    genus: str
+    center_lat: float
+    center_lng: float
+    distance_km: float
+    cnt: int
+
+
 class LandUnit(BaseModel):
     model_config = _FROM_DATACLASS
 

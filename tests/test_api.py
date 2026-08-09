@@ -384,6 +384,54 @@ def test_camps_limit_caps_the_results(client: TestClient, con: psycopg.Connectio
     assert len(response.json()) == 1
 
 
+def test_trees_requires_region_or_latlng(client: TestClient) -> None:
+    response = client.get("/api/trees")
+    assert response.status_code == 400
+
+
+def test_trees_by_latlng_empty(client: TestClient) -> None:
+    response = client.get("/api/trees", params={"lat": HOME_LAT, "lng": HOME_LNG})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_trees_with_no_genus_selection_returns_every_tracked_genus(client: TestClient, con: psycopg.Connection) -> None:
+    from foray.cache import upsert_tree_density
+
+    upsert_tree_density(
+        con,
+        [
+            ("r1", "Pinus", HOME_LAT + 0.01, HOME_LNG, 42),
+            ("r2", "Quercus", HOME_LAT + 0.01, HOME_LNG, 8),
+        ],
+    )
+    client.cookies.set("device_id", "device-trees-no-selection")
+
+    response = client.get("/api/trees", params={"lat": HOME_LAT, "lng": HOME_LNG})
+    assert response.status_code == 200
+    assert {row["genus"] for row in response.json()} == {"Pinus", "Quercus"}
+
+
+def test_trees_with_genus_selection_filters_to_associated_hosts(client: TestClient, con: psycopg.Connection) -> None:
+    from foray.cache import upsert_tree_associations, upsert_tree_density
+
+    upsert_tree_associations(con, [("Boletus", "Pinus", 10)])
+    upsert_tree_density(
+        con,
+        [
+            ("r1", "Pinus", HOME_LAT + 0.01, HOME_LNG, 42),
+            ("r2", "Quercus", HOME_LAT + 0.01, HOME_LNG, 8),
+        ],
+    )
+    client.cookies.set("device_id", "device-trees-with-selection")
+    added = client.post("/api/genera/333")  # BOLET taxon_id, seeded by the cfg fixture as "Boletus"
+    assert added.status_code == 200
+
+    response = client.get("/api/trees", params={"lat": HOME_LAT, "lng": HOME_LNG})
+    assert response.status_code == 200
+    assert [row["genus"] for row in response.json()] == ["Pinus"]
+
+
 def test_land_by_latlng_empty(client: TestClient) -> None:
     response = client.get("/api/land", params={"lat": HOME_LAT, "lng": HOME_LNG})
     assert response.status_code == 200

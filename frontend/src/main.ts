@@ -6,7 +6,7 @@ import "./style.css";
 import { getJson, postJson } from "./api/client";
 import type { Home } from "./api/types";
 import { initGenusSelection } from "./genera";
-import { loadCamps, loadLand } from "./layers";
+import { loadCamps, loadLand, loadTrees } from "./layers";
 import { initLocationAutocomplete, initPlaceAutocomplete } from "./location";
 import { currentTheme, initMap, map, setMapClickHandler, setTiles, updateHome } from "./map";
 import { runPlan } from "./plan";
@@ -185,6 +185,7 @@ async function main(): Promise<void> {
     });
   });
   loadLand();
+  loadTrees();
   initTabs();
   initRadiusPresets();
   // 'change' (not 'input') so a re-run only fires on blur/enter/stepper-click, not every
@@ -238,6 +239,11 @@ async function main(): Promise<void> {
   wireLayerToggle("#show-land-blm", "land", "Fetching public land…", loadLand);
   wireLayerToggle("#show-land-usfs", "land", "Fetching public land…", loadLand);
   wireLayerToggle("#show-land-tribal", "land", "Fetching public land…", loadLand);
+  // `trees` is a manual, unscheduled ingest (see cli.py's `trees` command) - it isn't in
+  // _VALID_REFRESH_TARGETS, so it can't go through wireLayerToggle/startRefresh's
+  // /api/refresh?target= flow (that would 400). Data is expected to already be present;
+  // toggling just re-fetches from what's cached.
+  qs("#show-trees").onchange = () => loadTrees();
   initLocationAutocomplete();
   initGenusSelection(refreshCurrentView);
 
@@ -252,6 +258,7 @@ async function main(): Promise<void> {
       geoApplied = true;
       updateHome(home);
       loadLand();
+      loadTrees();
       refreshCurrentView();
     }
     return home;
@@ -333,6 +340,7 @@ function initRadiusPresets(): void {
       }
       updateHome(response.home);
       loadLand();
+      loadTrees();
       refreshCurrentView();
     };
   });

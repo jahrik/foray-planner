@@ -44,11 +44,13 @@ from foray.api_models import (
     StatusResponse,
     Trail,
     TrailPath,
+    TreeCell,
     TripPlan,
 )
-from foray.cache import SCHEMA, search_fungi_genera
+from foray.cache import SCHEMA, host_genera_for_fungus_genera, search_fungi_genera
 from foray.cache import add_genus as db_add_genus
 from foray.cache import delete_location as db_delete_location
+from foray.cache import genus_names_for_taxon_ids as db_genus_names_for_taxon_ids
 from foray.cache import list_selected_genera as db_list_selected_genera
 from foray.cache import load_genera as db_load_genera
 from foray.cache import load_location as db_load_location
@@ -283,6 +285,20 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         ``scoring.py``'s ``_taxon_filter`` for how that's honored in SQL.
         """
         return db_load_genera(conn, device_id)
+
+    def relevant_tree_genera(conn: psycopg.Connection, device_id: str) -> set[str] | None:
+        """Host tree genera relevant to this visitor's selected ECM fungi genera (issue #85).
+
+        None means "no filter" (show every tracked genus) - either the visitor has no genus
+        selection, or their selection has no known ECM host association, matching
+        ``resolve_genera``'s "empty selection = everything nearby" convention.
+        """
+        selected_taxon_ids = resolve_genera(conn, device_id)
+        if not selected_taxon_ids:
+            return None
+        fungus_names = db_genus_names_for_taxon_ids(conn, selected_taxon_ids)
+        hosts = host_genera_for_fungus_genera(conn, fungus_names)
+        return hosts or None
 
     def require_idle() -> None:
         if state.refreshing:
@@ -704,6 +720,33 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         with pool.connection() as conn:
             units = scoring.land_near(conn, lat=center_lat, lng=center_lng, radius_km=radius_km)
         return [LandUnit.model_validate(unit) for unit in units]
+
+    @app.get("/api/trees")
+    def get_trees(
+        request: Request,
+        response: Response,
+        region_id: str | None = Query(None),
+        lat: float | None = Query(None),
+        lng: float | None = Query(None),
+        radius_km: float = Query(40.0),
+    ) -> list[TreeCell]:
+        """Host-tree density near a region (by id) or an explicit lat/lng, scoped to this
+        visitor's selected ECM fungi genera (issue #85) - or every tracked genus if they have
+        no selection."""
+        require_idle()
+        if region_id is not None:
+            center_lat, center_lng = region_center(region_id)
+        elif lat is not None and lng is not None:
+            center_lat, center_lng = lat, lng
+        else:
+            raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
+        device_id, is_new = resolve_device_id(request)
+        if is_new:
+            set_device_cookie(request, response, device_id)
+        with pool.connection() as conn:
+            genera = relevant_tree_genera(conn, device_id)
+            cells = scoring.trees_near(conn, lat=center_lat, lng=center_lng, radius_km=radius_km, genera=genera)
+        return [TreeCell.model_validate(cell) for cell in cells]
 
     @app.get("/api/destinations/{region_id}/place")
     def get_region_place(region_id: str) -> RegionPlace:

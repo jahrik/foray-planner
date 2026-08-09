@@ -231,6 +231,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/trees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Trees
+         * @description Host-tree density near a region (by id) or an explicit lat/lng, scoped to this
+         *     visitor's selected ECM fungi genera (issue #85) - or every tracked genus if they have
+         *     no selection.
+         */
+        get: operations["get_trees_api_trees_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/destinations/{region_id}/place": {
         parameters: {
             query?: never;
@@ -744,6 +766,24 @@ export interface components {
             /** Authoritative */
             authoritative: boolean;
         };
+        /**
+         * TreeCell
+         * @description One grid cell's density for one host tree genus (issue #85).
+         */
+        TreeCell: {
+            /** Region Id */
+            region_id: string;
+            /** Genus */
+            genus: string;
+            /** Center Lat */
+            center_lat: number;
+            /** Center Lng */
+            center_lng: number;
+            /** Distance Km */
+            distance_km: number;
+            /** Cnt */
+            cnt: number;
+        };
         /** TripPlan */
         TripPlan: {
             /** Start Lat */
@@ -1172,6 +1212,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LandUnit"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trees_api_trees_get: {
+        parameters: {
+            query?: {
+                region_id?: string | null;
+                lat?: number | null;
+                lng?: number | null;
+                radius_km?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TreeCell"][];
                 };
             };
             /** @description Validation Error */

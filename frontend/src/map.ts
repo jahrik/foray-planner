@@ -26,6 +26,12 @@ export const LAND_DEFAULT = "#b5b5b5"; // any other agency
 export const TRAIL = "#ff5555";
 export const PLAN_STOP = "#ffd060"; // neon gold - planned-route stops and connecting line
 export const PRECISE = "#c792ea"; // bright lavender - known-precise (non-obscured) observation pin
+// Host-tree density (issue #85) - the one green in an otherwise deliberately non-green palette
+// (see the top comment), since "green = trees" reads intuitively here. v1 is a single flat
+// color for every host genus (genus identity surfaces in the popup, not the color - see
+// layers.ts's treePopup) rather than per-genus color-coding, deferred pending real ingested
+// data showing which genera actually dominate.
+export const TREE = "#3ecf5c";
 
 // A single standard OSM tile source for both themes - dark mode inverts it via CSS
 // (`invert() hue-rotate()` in style.css) instead of swapping in a separate dark tileset.
@@ -77,6 +83,7 @@ export function renderLegend(): void {
   const blm = (document.getElementById("show-land-blm") as HTMLInputElement | null)?.checked;
   const usfs = (document.getElementById("show-land-usfs") as HTMLInputElement | null)?.checked;
   const tribal = (document.getElementById("show-land-tribal") as HTMLInputElement | null)?.checked;
+  const trees = (document.getElementById("show-trees") as HTMLInputElement | null)?.checked;
   const entries: [string, string][] = [
     [HEAT, "Destination (historical)"],
     [LIVE, "Recently observed"],
@@ -89,6 +96,7 @@ export function renderLegend(): void {
   if (blm) entries.push([LAND_COLORS.BLM ?? LAND_DEFAULT, "BLM land"]);
   if (usfs) entries.push([LAND_COLORS.USFS ?? LAND_DEFAULT, "USFS land"]);
   if (tribal) entries.push([LAND_COLORS.Tribal ?? LAND_DEFAULT, "Tribal land"]);
+  if (trees) entries.push([TREE, "Host-tree density"]);
   el.innerHTML = entries
     .map(([color, label]) => `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`)
     .join("");
@@ -225,6 +233,7 @@ export function clearMarkers(): void {
   state.markers = [];
   clearCamps();
   clearLand();
+  clearTrees();
   clearTrailheadMarkers();
   clearCardCampMarkers();
   clearSelectedTrail();
@@ -254,6 +263,34 @@ export function clearLand(): void {
     map.removeLayer(state.landLayer);
     state.landLayer = null;
   }
+}
+
+// Host-tree density bubble (issue #85) - same true-cell_deg-footprint math as plot(), scaled by
+// this cell's share of the current fetch's max count rather than a 0..1 score. Kept separate
+// from plot() rather than folded into it: plot() also registers each marker in the `sizing`
+// WeakMap for the destination-selection snap-to-true-size interaction (selectSize/deselectSize),
+// which doesn't apply to tree cells (they're never "selected") - reusing it here would mean
+// either dragging that unused bookkeeping along or complicating plot()'s signature for a
+// behavior only one caller needs.
+export function plotTree(lat: number, lng: number, cnt: number, maxCnt: number): L.Circle {
+  const trueRadius = ((state.cellDeg * KM_PER_DEG) / 2) * 1000;
+  const weight = maxCnt > 0 ? cnt / maxCnt : 0;
+  const marker = L.circle([lat, lng], {
+    radius: trueRadius * (0.3 + weight),
+    color: TREE,
+    fillColor: TREE,
+    fillOpacity: 0.15 + 0.45 * weight,
+    opacity: 0.4 + 0.5 * weight,
+    weight: 1.5,
+    bubblingMouseEvents: false,
+  }).addTo(map);
+  state.treeMarkers.push(marker);
+  return marker;
+}
+
+export function clearTrees(): void {
+  state.treeMarkers.forEach((marker) => map.removeLayer(marker));
+  state.treeMarkers = [];
 }
 
 // Hiking-boot marker for a destination card's Trails tab trailhead list (views.ts) - only the

@@ -17,6 +17,8 @@ from foray.ingest import ingest, ingest_region, resync, revalidate
 from foray.land import ingest_public_land, ingest_public_land_coverage
 from foray.scoring import build_phenology, plan_route
 from foray.trails import ingest_trails, ingest_trails_region
+from foray.tree_associations import refresh_tree_associations
+from foray.trees import ingest_trees_region
 
 
 def _setup_logging() -> None:
@@ -291,6 +293,44 @@ def genera_refresh_cmd() -> None:
             ],
         )
         click.echo(f"Cached {len(rows)} Fungi genera.")
+    finally:
+        con.close()
+
+
+@cli.command("tree-associations-refresh")
+def tree_associations_refresh_cmd() -> None:
+    """Rebuild ECM fungus -> host tree genus associations from GloBI (issue #85).
+
+    One-off, not scheduled: ECM biology doesn't change on human timescales. Run this before
+    `trees` - it discovers which tree genera to track.
+    """
+    con = connect()
+    try:
+        count = refresh_tree_associations(con)
+        click.echo(f"Cached {count} fungus/host-tree associations.")
+    finally:
+        con.close()
+
+
+@cli.command("trees")
+@click.option("--all", "all_coverage", is_flag=True, help="Ingest tree density for every configured country.")
+@click.pass_context
+def trees_cmd(ctx: click.Context, all_coverage: bool) -> None:
+    """Ingest host-tree density from iNat, for the genera `tree-associations-refresh` found
+    (issue #85). One-off, not scheduled - tree distribution doesn't change on human timescales.
+    """
+    cfg = ctx.obj["cfg"]
+    if all_coverage and not cfg.countries:
+        raise click.UsageError("No countries configured (set FORAY_COUNTRIES).")
+    con = connect()
+    try:
+        regions = cfg.countries if all_coverage else cfg.countries[:1]
+        if not regions:
+            raise click.UsageError("No countries configured (set FORAY_COUNTRIES).")
+        for region in regions:
+            click.echo(f"Ingesting tree density for {region.name} (place_id={region.place_id})…")
+            count = ingest_trees_region(region, cfg.cell_deg, con)
+            click.echo(f"  cached {count} region/genus density rows")
     finally:
         con.close()
 

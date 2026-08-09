@@ -16,6 +16,7 @@ export interface State {
   markers: L.CircleMarker[];
   campMarkers: L.CircleMarker[];
   landLayer: L.GeoJSON | null;
+  treeMarkers: L.Circle[];
   trailheadMarkers: L.Marker[];
   cardCampMarkers: L.CircleMarker[];
   selectedTrailLayer: L.Polyline | null;
@@ -33,6 +34,7 @@ export const state: State = {
   markers: [],
   campMarkers: [],
   landLayer: null,
+  treeMarkers: [],
   trailheadMarkers: [],
   cardCampMarkers: [],
   selectedTrailLayer: null,
