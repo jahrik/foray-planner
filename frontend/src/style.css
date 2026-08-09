@@ -198,6 +198,12 @@ main { display: grid; grid-template-columns: 1fr 380px; gap: 0; flex: 1; min-hei
   font: inherit; font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
   padding: 2px 8px; color: var(--ink); text-decoration: none; display: inline-block; cursor: pointer;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* .chips is a flex row; flex items default to min-width:auto, which for nowrap text means
+     "never shrink below the full unwrapped text width" - that silently defeats max-width/
+     ellipsis above. Campground fee text (raw RIDB strings, sometimes a full sentence) is the
+     first chip content long enough to actually hit this; trail/species labels stay short
+     enough to never trip it. min-width:0 lets the flex algorithm honor max-width instead. */
+  min-width: 0;
 }
 a.chip:hover { border-color: var(--accent); }
 .chip.live { border-color: #22c3e6; color: #22c3e6; }
