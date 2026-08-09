@@ -393,6 +393,7 @@ def camps_near(
     lng: float,
     radius_km: float,
     free_only: bool = False,
+    limit: int | None = None,
 ) -> list[CampSite]:
     """Campsites within ``radius_km`` of a point, ranked free-first then by distance.
 
@@ -401,7 +402,8 @@ def camps_near(
     prefilter in SQL (same technique as ``land_near``/``trails_near``) narrows candidates
     before the exact ``haversine_km`` cut in Python - `campsites` has no bbox columns of its
     own (it's points, not polygons), so the filter is directly against `lat`/`lng`. No rows
-    ingested yet yields an empty list, mirroring the other modes.
+    ingested yet yields an empty list, mirroring the other modes. ``limit`` caps the ranked
+    result after sorting, mirroring ``trails_near``.
     """
     dlat = radius_km / 111.0
     dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
@@ -437,7 +439,8 @@ def camps_near(
         scored.append((free is not True, dist, site))
     # Free sites first (True > None/False), then nearest by true distance.
     scored.sort(key=lambda item: (item[0], item[1]))
-    return [site for _, _, site in scored]
+    sites = [site for _, _, site in scored]
+    return sites[:limit] if limit is not None else sites
 
 
 @dataclass

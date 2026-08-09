@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from foray.api import create_app
-from foray.cache import upsert_fungi_genera, upsert_trails
+from foray.cache import upsert_campsites, upsert_fungi_genera, upsert_trails
 from foray.config import Config, Home, Settings
 from foray.scoring import TripPlan, build_phenology
 from foray.trails import _parse_element
@@ -356,6 +356,19 @@ def test_camps_by_latlng_empty(client: TestClient) -> None:
     response = client.get("/api/camps", params={"lat": HOME_LAT, "lng": HOME_LNG})
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_camps_limit_caps_the_results(client: TestClient, con: psycopg.Connection) -> None:
+    upsert_campsites(
+        con,
+        [
+            ("ridb:1", "Close", "campground", None, None, HOME_LAT + 0.01, HOME_LNG, "ridb", "u1"),
+            ("ridb:2", "Far", "campground", None, None, HOME_LAT + 0.05, HOME_LNG, "ridb", "u2"),
+        ],
+    )
+    response = client.get("/api/camps", params={"lat": HOME_LAT, "lng": HOME_LNG, "limit": 1})
+    assert response.status_code == 200
+    assert len(response.json()) == 1
 
 
 def test_land_by_latlng_empty(client: TestClient) -> None:

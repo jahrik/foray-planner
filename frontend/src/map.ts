@@ -1,7 +1,7 @@
 import L from "leaflet";
 import "leaflet.markercluster";
 
-import type { Home } from "./api/types";
+import type { CampSite, Home } from "./api/types";
 import { dist, qs, state } from "./state";
 
 // Marker palette - bright/neon so it pops on the dark basemap (the default), while still
@@ -226,6 +226,7 @@ export function clearMarkers(): void {
   clearCamps();
   clearLand();
   clearTrailheadMarkers();
+  clearCardCampMarkers();
   clearSelectedTrail();
   clearPlanRoute();
   clearPrecise();
@@ -285,6 +286,42 @@ export function plotTrailhead(lat: number, lng: number, name: string, onSelect: 
 
 export function setTrailheadActive(marker: L.Marker, active: boolean): void {
   marker.setIcon(trailheadIcon(active));
+}
+
+// Campground marker for a destination card's Campgrounds tab (views.ts) - same "one card's
+// detail at a time" scoping as the Trails tab's trailhead markers, kept in a dedicated
+// state.cardCampMarkers array rather than reusing state.campMarkers so this doesn't interact
+// with the global #show-camps/#show-dispersed toggle's own marker set (loadCamps in layers.ts).
+// Styled the same free/paid gold-vs-amber as that toggle's markers for visual consistency.
+function cardCampStyle(site: CampSite, active: boolean): L.CircleMarkerOptions {
+  return {
+    radius: active ? 8 : 6,
+    color: HOME_RING,
+    weight: active ? 2 : 1,
+    fillColor: site.free === true ? CAMP_FREE : CAMP_PAID,
+    fillOpacity: 0.9,
+    bubblingMouseEvents: false,
+  };
+}
+
+export function clearCardCampMarkers(): void {
+  state.cardCampMarkers.forEach((marker) => map.removeLayer(marker));
+  state.cardCampMarkers = [];
+}
+
+export function plotCardCamp(site: CampSite, onSelect: () => void): L.CircleMarker {
+  const tooltip = document.createElement("span");
+  tooltip.textContent = site.name;
+  const marker = L.circleMarker([site.center_lat, site.center_lng], cardCampStyle(site, false))
+    .addTo(map)
+    .bindTooltip(tooltip, { direction: "top", offset: [0, -6] });
+  marker.on("click", onSelect);
+  state.cardCampMarkers.push(marker);
+  return marker;
+}
+
+export function setCardCampActive(marker: L.CircleMarker, site: CampSite, active: boolean): void {
+  marker.setStyle(cardCampStyle(site, active));
 }
 
 // Clears whichever trail is currently drawn from a destination card's Trails tab selection
