@@ -10,7 +10,18 @@ import type {
   Trail,
 } from "./api/types";
 import { focusRegion, selectTrailhead } from "./layers";
-import { clearMarkers, deselectSize, HEAT_RGB, map, plot, regionRadiusKm, selectSize } from "./map";
+import {
+  clearMarkers,
+  clearTrailheadMarkers,
+  deselectSize,
+  HEAT_RGB,
+  map,
+  plot,
+  plotTrailhead,
+  regionRadiusKm,
+  selectSize,
+  setTrailheadActive,
+} from "./map";
 import {
   dist,
   displayName,
@@ -420,17 +431,32 @@ async function loadTrailheadsInto(region: RegionScore, container: HTMLElement): 
   container.innerHTML = "";
   const list = document.createElement("div");
   list.className = "chips";
+  // Only one card's trailheads are plotted at a time (plotTrailhead clears the previous set),
+  // same as camps/land - opening a different card's Trails tab replaces these, it doesn't add on.
+  clearTrailheadMarkers();
+  const rows: { button: HTMLButtonElement; marker: L.Marker }[] = [];
+  const selectRow = (trailhead: Trail, button: HTMLButtonElement, marker: L.Marker): void => {
+    rows.forEach((row) => {
+      row.button.classList.remove("active");
+      setTrailheadActive(row.marker, false);
+    });
+    button.classList.add("active");
+    setTrailheadActive(marker, true);
+    selectTrailhead(trailhead);
+  };
   trailheads.forEach((trailhead) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "chip";
     button.textContent = `${trailhead.name} · ${dist(trailhead.distance_km)}`;
+    const marker = plotTrailhead(trailhead.center_lat, trailhead.center_lng, trailhead.name, () =>
+      selectRow(trailhead, button, marker),
+    );
     button.onclick = (e) => {
       e.stopPropagation();
-      list.querySelectorAll(".chip").forEach((el) => el.classList.remove("active"));
-      button.classList.add("active");
-      selectTrailhead(trailhead);
+      selectRow(trailhead, button, marker);
     };
+    rows.push({ button, marker });
     list.appendChild(button);
   });
   container.appendChild(list);

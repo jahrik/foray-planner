@@ -225,6 +225,7 @@ export function clearMarkers(): void {
   state.markers = [];
   clearCamps();
   clearLand();
+  clearTrailheadMarkers();
   clearSelectedTrail();
   clearPlanRoute();
   clearPrecise();
@@ -252,6 +253,38 @@ export function clearLand(): void {
     map.removeLayer(state.landLayer);
     state.landLayer = null;
   }
+}
+
+// Hiking-boot marker for a destination card's Trails tab trailhead list (views.ts) - only the
+// currently open card's trailheads are on the map at once (plotTrailhead clears the previous
+// set first), same "one destination's detail at a time" approach as camps/land. Clicking a
+// marker selects that trailhead's real trail (layers.ts's selectTrailhead), same as clicking
+// its matching list chip; setTrailheadActive keeps the two in visual sync.
+function trailheadIcon(active: boolean): L.DivIcon {
+  return L.divIcon({
+    html: `<div class="trailhead-marker${active ? " active" : ""}">🥾</div>`,
+    className: "trailhead-icon",
+    iconSize: [22, 22],
+    iconAnchor: [11, 20],
+  });
+}
+
+export function clearTrailheadMarkers(): void {
+  state.trailheadMarkers.forEach((marker) => map.removeLayer(marker));
+  state.trailheadMarkers = [];
+}
+
+export function plotTrailhead(lat: number, lng: number, name: string, onSelect: () => void): L.Marker {
+  const marker = L.marker([lat, lng], { icon: trailheadIcon(false), bubblingMouseEvents: false })
+    .addTo(map)
+    .bindTooltip(name, { direction: "top", offset: [0, -18] });
+  marker.on("click", onSelect);
+  state.trailheadMarkers.push(marker);
+  return marker;
+}
+
+export function setTrailheadActive(marker: L.Marker, active: boolean): void {
+  marker.setIcon(trailheadIcon(active));
 }
 
 // Clears whichever trail is currently drawn from a destination card's Trails tab selection

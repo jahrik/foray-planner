@@ -209,6 +209,15 @@ a.chip:hover { border-color: var(--accent); }
   font-size: 12px; line-height: 1;
 }
 .chip.removable button:hover { color: var(--ink); }
+
+/* Trailhead marker (map.ts's plotTrailhead) - a destination card's Trails tab list, plotted on
+   the map. Leaflet's default divIcon box (white bg/border) is cleared so only the emoji shows. */
+.leaflet-div-icon.trailhead-icon { background: transparent; border: none; }
+.trailhead-marker {
+  font-size: 18px; line-height: 20px; text-align: center; cursor: pointer;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
+}
+.trailhead-marker.active { filter: drop-shadow(0 0 4px var(--accent)); transform: scale(1.2); }
 .show-more {
   display: block; margin-top: 6px; padding: 0; border: none; background: none;
   color: var(--muted); cursor: pointer; font-size: 11px; text-decoration: underline;
