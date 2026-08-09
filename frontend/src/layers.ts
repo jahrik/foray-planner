@@ -224,11 +224,14 @@ function animateTrail(layer: L.Polyline, parts: L.LatLngTuple[][]): void {
 // Fetches `/api/trails/network`, which resolves it via live OSM topology when the trailhead sits
 // on a real way/route, falling back to the nearest already-cached path/route otherwise - drawn
 // solid for the former, dashed for the latter so the UI doesn't overstate confidence in a guess.
-// At most one selected trail shows at a time (state.selectedTrailLayer). Zooms to the trail's
-// extent and animates the line drawing in (animateTrail) rather than snapping it in instantly -
-// unlike the rest of this file's click interactions, this one's the whole point of the click.
+// At most one selected trail shows at a time (state.selectedTrailLayer). Zooms to the trailhead
+// itself right away - the live Overpass lookup (trailhead_network) can take a beat, and waiting
+// for it before moving the camera reads as the whole thing being slow, not just the data. Once
+// the real geometry arrives, the view re-fits to the trail's actual extent and animates the line
+// drawing in (animateTrail) rather than snapping it in instantly.
 export async function selectTrailhead(trail: Trail): Promise<void> {
   clearSelectedTrail();
+  map.flyTo([trail.center_lat, trail.center_lng], Math.max(map.getZoom(), 14), { duration: 0.5 });
   let path: TrailPath;
   try {
     // See the LandUnit cast above - `geometry` is real GeoJSON, just untyped on the backend.
@@ -249,7 +252,7 @@ export async function selectTrailhead(trail: Trail): Promise<void> {
     bubblingMouseEvents: false,
   }).addTo(map);
   state.selectedTrailLayer = layer;
-  map.fitBounds(L.latLngBounds(parts.flat()), { padding: [40, 40], maxZoom: 15 });
+  map.flyToBounds(L.latLngBounds(parts.flat()), { padding: [40, 40], maxZoom: 15, duration: 0.5 });
   animateTrail(layer, parts);
 }
 
