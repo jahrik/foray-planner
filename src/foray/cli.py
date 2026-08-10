@@ -329,7 +329,11 @@ def trees_cmd(ctx: click.Context, all_coverage: bool) -> None:
             raise click.UsageError("No countries configured (set FORAY_COUNTRIES).")
         for region in regions:
             click.echo(f"Ingesting tree density for {region.name} (place_id={region.place_id})…")
-            count = ingest_trees_region(region, cfg.cell_deg, con)
+            try:
+                count = ingest_trees_region(region, cfg.cell_deg, con)
+            except InatQuotaExceeded as exc:
+                click.echo(f"  stopped early - {exc}", err=True)
+                ctx.exit(1)
             click.echo(f"  cached {count} region/genus density rows")
     finally:
         con.close()

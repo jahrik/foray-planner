@@ -113,7 +113,15 @@ def ingest_trees_region(
 ) -> int:
     """One-time per-region host-tree density ingest. Manual only (see ``cli.py``'s ``trees``
     command) - never wired into refresh/``_VALID_REFRESH_TARGETS``. Skips if already ingested
-    for this region (one-shot, like other place_id-scoped ingests)."""
+    for this region (one-shot, like other place_id-scoped ingests).
+
+    Fetches and upserts one host genus at a time, recording a per-genus ingest key as each one
+    finishes, rather than holding every genus's rows in memory for a single upsert at the end -
+    a whole-country pull across ~100 genera can run for hours and cross iNat's daily request
+    quota (``InatQuotaExceeded``) partway through, and without per-genus checkpointing that
+    exception would take every already-fetched genus down with it. A rerun skips any genus
+    that already has a recorded ingest key and resumes with the rest.
+    """
     key = f"trees:place:{region.place_id}"
     if is_ingested(con, key):
         logger.info("trees: %s already ingested, skipping", region.name)
@@ -122,8 +130,20 @@ def ingest_trees_region(
     if not host_genera:
         logger.warning("trees: tree_associations is empty - run `foray tree-associations-refresh` first")
         return 0
-    rows = fetch_tree_density(region=region, cell_deg=cell_deg, host_genera=host_genera, progress_cb=progress_cb)
-    upserted = upsert_tree_density(con, rows)
-    record_ingest(con, key, upserted)
-    logger.info("trees: cached %d region/genus density rows for %s", upserted, region.name)
-    return upserted
+    total_upserted = 0
+    for index, genus_name in enumerate(host_genera, start=1):
+        genus_key = f"{key}:genus:{genus_name}"
+        if is_ingested(con, genus_key):
+            continue
+        if progress_cb:
+            progress_cb(
+                f"Fetching {genus_name} observations in {region.name}… ({index}/{len(host_genera)})",
+                (index / len(host_genera)) * 100.0,
+            )
+        rows = fetch_tree_density(region=region, cell_deg=cell_deg, host_genera=[genus_name])
+        upserted = upsert_tree_density(con, rows)
+        record_ingest(con, genus_key, upserted)
+        total_upserted += upserted
+    record_ingest(con, key, total_upserted)
+    logger.info("trees: cached %d region/genus density rows for %s", total_upserted, region.name)
+    return total_upserted

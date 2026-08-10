@@ -5,9 +5,11 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import psycopg
+import pytest
 
 from foray.cache import is_ingested, upsert_tree_associations, upsert_tree_density
 from foray.config import CoverageRegion
+from foray.inat import InatQuotaExceeded
 from foray.scoring import trees_near
 from foray.trees import _region_id, fetch_tree_density, ingest_trees_region
 
@@ -91,6 +93,46 @@ def test_ingest_trees_region_skips_when_no_associations_yet(con: psycopg.Connect
     region = CoverageRegion(name="Washington", place_id=46)
     count = ingest_trees_region(region, 0.25, con)
     assert count == 0
+
+
+def test_ingest_trees_region_checkpoints_per_genus_and_resumes_after_quota_error(con: psycopg.Connection) -> None:
+    """A whole-country pull across many genera can run for hours and cross iNat's daily quota
+    partway through - the run must not lose already-fetched genera when that happens, and a
+    rerun must skip them rather than re-fetching."""
+    upsert_tree_associations(con, [("Boletus", "Pinus", 10), ("Boletus", "Quercus", 10)])
+    region = CoverageRegion(name="Washington", place_id=46)
+
+    def iter_side_effect(*, taxon_id: int, **kwargs: object) -> object:
+        if taxon_id == 1:  # Pinus succeeds
+            return iter([_fake_obs(47.60, -122.30)])
+        raise InatQuotaExceeded(60.0)  # Quercus hits quota
+
+    with (
+        patch("foray.trees.resolve_genus_taxon_id", side_effect=lambda name: {"Pinus": 1, "Quercus": 2}[name]),
+        patch("foray.trees.iter_observations", side_effect=iter_side_effect),
+        pytest.raises(InatQuotaExceeded),
+    ):
+        ingest_trees_region(region, 0.25, con)
+
+    # Pinus's row survived the Quercus failure, and the genus is marked done so a rerun
+    # won't re-fetch it.
+    assert is_ingested(con, "trees:place:46:genus:Pinus")
+    assert not is_ingested(con, "trees:place:46:genus:Quercus")
+    assert not is_ingested(con, "trees:place:46")
+    row = con.execute("SELECT genus, cnt FROM tree_density").fetchone()
+    assert row == ("Pinus", 1)
+
+    # Rerun only re-fetches Quercus (now succeeding) - Pinus is skipped.
+    with (
+        patch("foray.trees.resolve_genus_taxon_id", side_effect=lambda name: {"Pinus": 1, "Quercus": 2}[name]),
+        patch("foray.trees.iter_observations") as mock_iter,
+    ):
+        mock_iter.return_value = iter([_fake_obs(47.60, -122.30)])
+        count = ingest_trees_region(region, 0.25, con)
+
+    assert count == 1
+    assert mock_iter.call_count == 1
+    assert is_ingested(con, "trees:place:46")
 
 
 def test_trees_near_filters_by_radius_and_genus(con: psycopg.Connection) -> None:
