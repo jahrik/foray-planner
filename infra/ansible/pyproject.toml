@@ -5,12 +5,12 @@ description = "Ansible role to deploy foray-planner to Digital Ocean"
 readme = "AGENTS.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
-    "ansible-core>=2.16,<2.22",
+    "ansible-core>=2.21.3,<2.22",
     "ansible-lint>=24.0.0",
     "molecule>=24.0.0",
     "molecule-plugins[docker]>=26.7.15",
     "yamllint>=1.38.0",
     "pydo>=0.40.0",
     "azure-core>=1.26.1",
-    "boto3>=1.43.64",
+    "boto3>=1.43.69",
 ]
