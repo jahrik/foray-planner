@@ -16,6 +16,9 @@ export interface State {
   markers: L.CircleMarker[];
   campMarkers: L.CircleMarker[];
   landLayer: L.GeoJSON | null;
+  // Genera present in the last /api/trees fetch, for renderLegend to build per-genus entries
+  // (map.ts's TREE_COLORS) without needing to re-derive them from the marker layer itself.
+  treeGenera: Set<string>;
   trailheadMarkers: L.Marker[];
   cardCampMarkers: L.CircleMarker[];
   selectedTrailLayer: L.Polyline | null;
@@ -33,6 +36,7 @@ export const state: State = {
   markers: [],
   campMarkers: [],
   landLayer: null,
+  treeGenera: new Set(),
   trailheadMarkers: [],
   cardCampMarkers: [],
   selectedTrailLayer: null,

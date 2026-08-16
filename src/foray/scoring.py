@@ -444,6 +444,62 @@ def camps_near(
 
 
 @dataclass
+class TreeCell:
+    region_id: str
+    genus: str
+    center_lat: float
+    center_lng: float
+    distance_km: float
+    cnt: int
+
+
+def trees_near(
+    con: psycopg.Connection,
+    *,
+    lat: float,
+    lng: float,
+    radius_km: float,
+    genera: Collection[str] | None = None,
+) -> list[TreeCell]:
+    """``tree_density`` cells within ``radius_km`` of a point, optionally restricted to
+    ``genera`` (the host tree genera relevant to the caller's selected ECM fungi genera, via
+    ``cache.host_genera_for_fungus_genera``). ``genera`` empty or None returns every tracked
+    genus - a device with no fungi genera selected sees all tree density, mirroring
+    ``resolve_genera``'s existing "empty selection = everything nearby" convention.
+
+    Same bbox-prefilter + exact haversine-cut shape as ``camps_near``.
+    """
+    dlat = radius_km / 111.0
+    dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
+    query = """
+        SELECT region_id, genus, center_lat, center_lng, cnt FROM tree_density
+        WHERE center_lat BETWEEN %s AND %s AND center_lng BETWEEN %s AND %s
+    """
+    params: list[Any] = [lat - dlat, lat + dlat, lng - dlng, lng + dlng]
+    if genera:
+        query += " AND genus = ANY(%s)"
+        params.append(list(genera))
+    rows = con.execute(query, params).fetchall()
+
+    cells: list[TreeCell] = []
+    for region_id, genus, clat, clng, cnt in rows:
+        dist = haversine_km(lat, lng, clat, clng)
+        if dist > radius_km:
+            continue
+        cells.append(
+            TreeCell(
+                region_id=region_id,
+                genus=genus,
+                center_lat=clat,
+                center_lng=clng,
+                distance_km=round(dist, 1),
+                cnt=cnt,
+            )
+        )
+    return cells
+
+
+@dataclass
 class LandUnit:
     id: str
     agency: str

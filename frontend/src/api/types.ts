@@ -41,6 +41,9 @@ export type LandUnit = Omit<components["schemas"]["LandUnit"], "geometry"> & {
   geometry: GeoJSON.Geometry;
 };
 
+/** A grid cell's density for one host tree genus (`GET /api/trees`, issue #85). */
+export type TreeCell = components["schemas"]["TreeCell"];
+
 /** A trail near a hotspot (`GET /api/trails`). `geometry` is raw GeoJSON (line or point). */
 export type Trail = Omit<components["schemas"]["Trail"], "geometry"> & {
   geometry: GeoJSON.Geometry;

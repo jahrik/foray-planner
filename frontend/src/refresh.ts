@@ -1,6 +1,6 @@
 import { postJson } from "./api/client";
 import type { Home } from "./api/types";
-import { loadLand } from "./layers";
+import { loadLand, loadTrees } from "./layers";
 import { updateHome } from "./map";
 import { errorDetail, qs, setStatus } from "./state";
 import { runDestinations } from "./views";
@@ -149,6 +149,7 @@ export async function setLocation(query: string): Promise<void> {
   }
   updateHome(response.home);
   loadLand();
+  loadTrees();
   runDestinations();
 }
 
@@ -167,5 +168,6 @@ export async function setLocationLatLng(lat: number, lng: number): Promise<void>
   }
   updateHome(response.home);
   loadLand();
+  loadTrees();
   runDestinations();
 }

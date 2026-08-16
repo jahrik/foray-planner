@@ -1,7 +1,7 @@
 import L from "leaflet";
 
 import { getJson } from "./api/client";
-import type { CampSite, LandUnit, PreciseObservation, Trail, TrailPath } from "./api/types";
+import type { CampSite, LandUnit, PreciseObservation, Trail, TrailPath, TreeCell } from "./api/types";
 import {
   addPreciseMarker,
   CAMP_FREE,
@@ -11,10 +11,12 @@ import {
   clearLand,
   clearPrecise,
   clearSelectedTrail,
+  clearTrees,
   HOME_RING,
   LAND_COLORS,
   LAND_DEFAULT,
   map,
+  plotTree,
   PRECISE,
   regionRadiusKm,
   renderLegend,
@@ -30,6 +32,7 @@ export const usfsOn = (): boolean => qs<HTMLInputElement>("#show-land-usfs").che
 export const tribalOn = (): boolean => qs<HTMLInputElement>("#show-land-tribal").checked;
 const LAND_TOGGLES: Record<string, () => boolean> = { BLM: blmOn, USFS: usfsOn, Tribal: tribalOn };
 const landOn = (): boolean => blmOn() || usfsOn() || tribalOn();
+export const treesOn = (): boolean => qs<HTMLInputElement>("#show-trees").checked;
 
 // OSM dispersed layer: real tagged sites ("reported") + the road∩public-land proxy ("dispersed").
 const isDispersed = (site: CampSite): boolean =>
@@ -167,6 +170,44 @@ function landPopup(unit: LandUnit): HTMLElement {
     document.createElement("br"),
     link,
   );
+  return root;
+}
+
+// Fetch + plot host-tree density across the whole search radius (not just the focused
+// destination), same "doesn't depend on which card is focused" scoping as loadLand - tree
+// density is a property of the ground, not of a particular ranked result. Scoped server-side
+// to whichever host tree genera are relevant to this visitor's selected ECM fungi genera (or
+// every tracked genus with no selection - see api.py's relevant_tree_genera). No-op (just
+// clears) when the toggle is off.
+export async function loadTrees(): Promise<void> {
+  clearTrees();
+  renderLegend();
+  if (!treesOn() || !state.home) return;
+  const { lat, lng, radius_km } = state.home;
+  let cells: TreeCell[];
+  try {
+    cells = await getJson("/api/trees", { query: { lat, lng, radius_km } });
+  } catch (error) {
+    setStatus(errorDetail(error));
+    return;
+  }
+  const maxCnt = cells.reduce((max, cell) => Math.max(max, cell.cnt), 1);
+  state.treeGenera = new Set(cells.map((cell) => cell.genus));
+  renderLegend(); // re-render now that treeGenera reflects this fetch, not the previous one
+  cells.forEach((cell) => {
+    plotTree(cell.center_lat, cell.center_lng, cell.genus, cell.cnt, maxCnt).bindPopup(treePopup(cell));
+  });
+}
+
+// The bubble's own color already carries genus identity for the common genera (map.ts's
+// TREE_COLORS); the popup spells it out precisely (including for the grey "other" bucket) and
+// adds the count. `cell.genus` is a scientific name from GloBI/iNat data, not user input, but
+// textContent is used anyway rather than trusting that.
+function treePopup(cell: TreeCell): HTMLElement {
+  const root = document.createElement("div");
+  const title = document.createElement("b");
+  title.textContent = cell.genus;
+  root.append(title, document.createElement("br"), document.createTextNode(`${dist(cell.distance_km)} · ${cell.cnt} observations`));
   return root;
 }
 

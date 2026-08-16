@@ -26,6 +26,25 @@ export const LAND_DEFAULT = "#b5b5b5"; // any other agency
 export const TRAIL = "#ff5555";
 export const PLAN_STOP = "#ffd060"; // neon gold - planned-route stops and connecting line
 export const PRECISE = "#c792ea"; // bright lavender - known-precise (non-obscured) observation pin
+// Host-tree density (issue #85), one hue per common genus - a flat single color read as "just a
+// green blob, tells you nothing" once real data was on the map (confirmed live: a single-color
+// v1 shipped first, then was replaced by this once GloBI's real association data showed which
+// genera actually dominate). Static, keyed by scientific name - same precedent as LAND_COLORS's
+// per-agency map, chosen over computing colors per-fetch so a given genus reads the same color
+// on every view. Capped to the handful of genera that actually carry the bulk of real ECM
+// interaction weight (confirmed via a live GloBI sweep of the whole genus catalog: Pinus, Quercus,
+// Picea, Betula, Fagus, Abies accounted for the large majority of total interaction weight,
+// with a long tail of far rarer hosts after them) - everything else falls back to TREE_DEFAULT
+// grey rather than growing this map for every one of the ~100 discovered host genera.
+export const TREE_COLORS: Record<string, string> = {
+  Pinus: "#3ecf5c", // green - pine, the single most common ECM host by a wide margin
+  Quercus: "#d9a441", // warm gold-brown - oak
+  Picea: "#4f9bc4", // steel blue - spruce
+  Betula: "#e8e8e8", // pale silver - birch bark
+  Fagus: "#b5651d", // rust brown - beech
+  Abies: "#2f8f6b", // deep teal-green - fir
+};
+export const TREE_DEFAULT = "#8a8a8a"; // any other host genus
 
 // A single standard OSM tile source for both themes - dark mode inverts it via CSS
 // (`invert() hue-rotate()` in style.css) instead of swapping in a separate dark tileset.
@@ -47,6 +66,10 @@ let homeMarker: L.CircleMarker;
 // reload) rather than recreated per fetch, since MarkerClusterGroup itself owns the spatial
 // index that makes re-clustering on zoom cheap.
 let preciseCluster: L.MarkerClusterGroup;
+// Host-tree density cluster (issue #85) - same clustering approach as preciseCluster, for the
+// same reason: a wide radius can return far more tree cells than are useful to show as
+// individual dots at a zoomed-out view.
+let treeCluster: L.MarkerClusterGroup;
 
 export const currentTheme = (): "dark" | "light" =>
   document.documentElement.dataset.theme === "light" ? "light" : "dark";
@@ -77,6 +100,7 @@ export function renderLegend(): void {
   const blm = (document.getElementById("show-land-blm") as HTMLInputElement | null)?.checked;
   const usfs = (document.getElementById("show-land-usfs") as HTMLInputElement | null)?.checked;
   const tribal = (document.getElementById("show-land-tribal") as HTMLInputElement | null)?.checked;
+  const trees = (document.getElementById("show-trees") as HTMLInputElement | null)?.checked;
   const entries: [string, string][] = [
     [HEAT, "Destination (historical)"],
     [LIVE, "Recently observed"],
@@ -89,6 +113,19 @@ export function renderLegend(): void {
   if (blm) entries.push([LAND_COLORS.BLM ?? LAND_DEFAULT, "BLM land"]);
   if (usfs) entries.push([LAND_COLORS.USFS ?? LAND_DEFAULT, "USFS land"]);
   if (tribal) entries.push([LAND_COLORS.Tribal ?? LAND_DEFAULT, "Tribal land"]);
+  if (trees) {
+    // One entry per named genus actually on the map right now (state.treeGenera, set by
+    // loadTrees), not every key in TREE_COLORS - an unnamed/rare genus in the current view
+    // collapses into one shared "Other host trees" entry instead of the legend listing colors
+    // for genera that aren't even present.
+    let hasOther = false;
+    state.treeGenera.forEach((genus) => {
+      const color = TREE_COLORS[genus];
+      if (color) entries.push([color, genus]);
+      else hasOther = true;
+    });
+    if (hasOther) entries.push([TREE_DEFAULT, "Other host trees"]);
+  }
   el.innerHTML = entries
     .map(([color, label]) => `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`)
     .join("");
@@ -112,11 +149,35 @@ function preciseClusterIcon(cluster: L.MarkerCluster): L.DivIcon {
   });
 }
 
+// Cluster badge for tree density: same shape/sizing as preciseClusterIcon, but green (the
+// generic "trees" hue, TREE_COLORS.Pinus) rather than per-genus - a cluster mixes cells from
+// whichever genera happen to be nearby, so there's no single genus color to give it. Individual,
+// unclustered markers still carry their own per-genus color once zoomed in past clustering.
+function treeClusterIcon(cluster: L.MarkerCluster): L.DivIcon {
+  const count = cluster.getChildCount();
+  const size = count < 10 ? 30 : count < 100 ? 36 : 42;
+  const green = TREE_COLORS.Pinus ?? TREE_DEFAULT;
+  return L.divIcon({
+    html: `<div style="
+      width:${size}px;height:${size}px;line-height:${size}px;
+      background:${green};border:2px solid ${HOME_RING};border-radius:50%;
+      text-align:center;font-weight:600;color:${HOME_RING};
+    ">${count}</div>`,
+    className: "tree-cluster-icon",
+    iconSize: L.point(size, size),
+  });
+}
+
 export function initMap(home: Home): void {
   map = L.map("map").setView([home.lat, home.lng], 7);
   setTiles(currentTheme());
   preciseCluster = L.markerClusterGroup({
     iconCreateFunction: preciseClusterIcon,
+    maxClusterRadius: 40,
+    spiderfyOnMaxZoom: true,
+  }).addTo(map);
+  treeCluster = L.markerClusterGroup({
+    iconCreateFunction: treeClusterIcon,
     maxClusterRadius: 40,
     spiderfyOnMaxZoom: true,
   }).addTo(map);
@@ -225,6 +286,7 @@ export function clearMarkers(): void {
   state.markers = [];
   clearCamps();
   clearLand();
+  clearTrees();
   clearTrailheadMarkers();
   clearCardCampMarkers();
   clearSelectedTrail();
@@ -254,6 +316,36 @@ export function clearLand(): void {
     map.removeLayer(state.landLayer);
     state.landLayer = null;
   }
+}
+
+// Host-tree density marker (issue #85) - a small fixed-pixel dot clustered via treeCluster
+// (same Leaflet.markercluster approach as the precise-observations pins), not a geographic
+// L.circle scaled to the cell footprint. A wide-radius fetch can return a tree cell for a large
+// share of the visible map, and a geographic circle per cell reads as a giant, permanently-on
+// destination bubble covering the same ground the real destination bubbles use (reported live -
+// confusing at a glance, and its faint fill still greyed out the basemap under a dense cluster
+// of cells). Clustering collapses that into the same "count badge that splits apart on zoom"
+// pattern already established for precise observations, and a small dot's fixed size doesn't
+// try to represent "this many square km" the way plot()'s true-footprint circle legitimately
+// does for a destination region.
+export function plotTree(lat: number, lng: number, genus: string, cnt: number, maxCnt: number): L.CircleMarker {
+  const weight = maxCnt > 0 ? cnt / maxCnt : 0;
+  const color = TREE_COLORS[genus] ?? TREE_DEFAULT;
+  const marker = L.circleMarker([lat, lng], {
+    radius: 4 + 4 * weight,
+    color: HOME_RING,
+    weight: 1,
+    fillColor: color,
+    fillOpacity: 0.85,
+    bubblingMouseEvents: false,
+  });
+  treeCluster.addLayer(marker);
+  return marker;
+}
+
+export function clearTrees(): void {
+  treeCluster.clearLayers();
+  state.treeGenera = new Set();
 }
 
 // Hiking-boot marker for a destination card's Trails tab trailhead list (views.ts) - only the

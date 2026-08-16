@@ -14,7 +14,7 @@ transactions for) - callers that need atomicity across statements (e.g.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from typing import Any, LiteralString
 
 import psycopg
@@ -141,6 +141,37 @@ CREATE TABLE IF NOT EXISTS fungi_genera (
 );
 
 CREATE INDEX IF NOT EXISTS ix_fungi_genera_name ON fungi_genera (name);
+
+-- ECM fungus genus -> host tree genus (issue #85), sourced from GloBI's
+-- hasEctomycorrhizalHost interaction type - not hand-authored, since nothing in this repo or
+-- on iNat records mycorrhizal host relationships. Rebuilt wholesale by
+-- `foray tree-associations-refresh`, keyed by name (not taxon_id) since GloBI has no iNat
+-- taxon_id of its own to join on. `weight` is the kept-interaction count for that pair, after
+-- filtering GloBI's noise (see tree_associations.py) - used to rank hosts, not just list them.
+CREATE TABLE IF NOT EXISTS tree_associations (
+    fungus_genus TEXT NOT NULL,
+    host_genus   TEXT NOT NULL,
+    weight       INTEGER NOT NULL,
+    PRIMARY KEY (fungus_genus, host_genus)
+);
+
+-- Host-tree density per grid cell per genus (issue #85), aggregated from iNat observations of
+-- whichever tree genera tree_associations discovered. Unlike `observations`, no raw point ever
+-- lands here - trees.py aggregates during the ingest page-walk itself, so this table stays
+-- bounded by (grid cells x tracked tree genera) regardless of how many tree observations iNat
+-- has. `center_lat`/`center_lng` are the mean of the real observation points in that cell
+-- (matching `scoring.py`'s `_CENTER_LAT`/`_CENTER_LNG` convention), not the cell's arithmetic
+-- midpoint.
+CREATE TABLE IF NOT EXISTS tree_density (
+    region_id   TEXT NOT NULL,
+    genus       TEXT NOT NULL,
+    center_lat  DOUBLE PRECISION NOT NULL,
+    center_lng  DOUBLE PRECISION NOT NULL,
+    cnt         INTEGER NOT NULL,
+    PRIMARY KEY (region_id, genus)
+);
+
+CREATE INDEX IF NOT EXISTS ix_tree_density_lat_lng ON tree_density (center_lat, center_lng);
 
 -- Destination-card place titling (issue #206): caches one reverse-geocode result per grid
 -- region forever - regions are a fixed grid (scoring.py's cell_deg binning), so a region's
@@ -305,6 +336,16 @@ def known_genus_taxon_ids(con: psycopg.Connection) -> set[int]:
     raises on a duplicate ``name`` (irrelevant here; taxon_id is already the schema's PK)."""
     rows = con.execute("SELECT taxon_id FROM fungi_genera").fetchall()
     return {taxon_id for (taxon_id,) in rows}
+
+
+def genus_names_for_taxon_ids(con: psycopg.Connection, taxon_ids: Sequence[int]) -> list[str]:
+    """Scientific names for a set of catalog taxon_ids (issue #85: a device's selected genera
+    are stored as taxon_ids in app_genera, but tree_associations is keyed by name since GloBI
+    has no iNat taxon_id of its own)."""
+    if not taxon_ids:
+        return []
+    rows = con.execute("SELECT name FROM fungi_genera WHERE taxon_id = ANY(%s)", [list(taxon_ids)]).fetchall()
+    return [row[0] for row in rows]
 
 
 def search_fungi_genera(con: psycopg.Connection, query: str, limit: int = 20) -> list[dict[str, Any]]:
@@ -535,6 +576,82 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
             rows,
         )
     return len(rows)
+
+
+def upsert_tree_associations(
+    con: psycopg.Connection,
+    rows: Sequence[tuple[Any, ...]],
+    replace_genera: Collection[str] = (),
+) -> int:
+    """Upsert (fungus_genus, host_genus, weight) tuples.
+
+    ``replace_genera`` lists every fungus genus that was successfully re-queried this run -
+    their existing pairs are deleted before the new rows are inserted, so a pair that dropped
+    out of GloBI (or fell below the weight threshold) doesn't linger forever. A genus is left
+    out of ``replace_genera`` when its own fetch failed, so a transient GloBI error doesn't
+    wipe out prior data for that genus. Returns rows attempted.
+    """
+    with con.cursor() as cur:
+        if replace_genera:
+            cur.execute(
+                "DELETE FROM tree_associations WHERE fungus_genus = ANY(%s)",
+                (list(replace_genera),),
+            )
+        if not rows:
+            return 0
+        cur.executemany(
+            """
+            INSERT INTO tree_associations (fungus_genus, host_genus, weight)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (fungus_genus, host_genus) DO UPDATE SET
+                weight = EXCLUDED.weight
+            """,
+            rows,
+        )
+    return len(rows)
+
+
+def upsert_tree_density(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
+    """Upsert (region_id, genus, center_lat, center_lng, cnt) tuples, refreshing existing rows
+    in place. A re-ingest fully replaces a cell/genus's count, not additive - a full ingest run
+    recomputes true counts from scratch. Returns rows attempted.
+    """
+    if not rows:
+        return 0
+    with con.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO tree_density (region_id, genus, center_lat, center_lng, cnt)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (region_id, genus) DO UPDATE SET
+                center_lat = EXCLUDED.center_lat,
+                center_lng = EXCLUDED.center_lng,
+                cnt = EXCLUDED.cnt
+            """,
+            rows,
+        )
+    return len(rows)
+
+
+def tracked_host_genera(con: psycopg.Connection) -> list[str]:
+    """Distinct host_genus values from tree_associations - the tree genus list is discovered
+    from real ECM interaction data, not a hardcoded seed list."""
+    rows = con.execute("SELECT DISTINCT host_genus FROM tree_associations ORDER BY host_genus").fetchall()
+    return [row[0] for row in rows]
+
+
+def host_genera_for_fungus_genera(con: psycopg.Connection, fungus_genera: Collection[str]) -> set[str]:
+    """Union of host tree genera associated with any of `fungus_genera` (a device's selected
+    ECM fungi, by name). Empty input returns an empty set - callers treat that as "no filter,
+    show everything" (see api.py's resolve_genera-style empty-selection convention), not "show
+    nothing"."""
+    if not fungus_genera:
+        return set()
+    rows = con.execute(
+        "SELECT DISTINCT host_genus FROM tree_associations WHERE fungus_genus = ANY(%s)",
+        [list(fungus_genera)],
+    ).fetchall()
+    return {row[0] for row in rows}
 
 
 def record_ingest(

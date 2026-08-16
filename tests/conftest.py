@@ -35,6 +35,8 @@ _TABLES = (
     "fungi_genera",
     "app_genera",
     "region_places",
+    "tree_associations",
+    "tree_density",
 )
 
 _TEST_DB_NAME = "foray_test"
