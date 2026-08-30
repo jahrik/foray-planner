@@ -13,6 +13,8 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Sequence
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 
 import httpx
 
@@ -44,11 +46,22 @@ def _throttle(points: int) -> None:
 
 
 def _retry_after_seconds(resp: httpx.Response, attempt: int) -> float:
-    """Seconds to wait before retrying a 429 - the ``Retry-After`` header if present and short
-    enough, else exponential backoff. Capped at ``_MAX_RETRY_WAIT_S``."""
+    """Seconds to wait before retrying a 429 - the ``Retry-After`` header if present and
+    parseable (either the delta-seconds or the HTTP-date form), else exponential backoff. Capped
+    at ``_MAX_RETRY_WAIT_S``."""
     header = resp.headers.get("Retry-After", "").strip()
     if header.isdigit():
         return min(float(header), _MAX_RETRY_WAIT_S)
+    if header:
+        try:
+            retry_at = parsedate_to_datetime(header)
+        except (TypeError, ValueError):
+            retry_at = None
+        if retry_at is not None:
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=UTC)
+            delta = (retry_at - datetime.now(UTC)).total_seconds()
+            return min(max(delta, 0.0), _MAX_RETRY_WAIT_S)
     return min(2.0**attempt, _MAX_RETRY_WAIT_S)
 
 

@@ -74,6 +74,15 @@ def test_retries_a_429_then_succeeds() -> None:
     assert calls["n"] == 2
 
 
+def test_retry_after_honours_http_date_form() -> None:
+    from email.utils import format_datetime
+
+    now = elevation.datetime.now(elevation.UTC)
+    resp = httpx.Response(429, headers={"Retry-After": format_datetime(now)})
+    # An HTTP-date at (or before) "now" means retry immediately, not fall back to backoff.
+    assert elevation._retry_after_seconds(resp, attempt=2) == 0.0
+
+
 def test_gives_up_after_persistent_429() -> None:
     client = httpx.Client(
         transport=httpx.MockTransport(lambda request: httpx.Response(429, headers={"Retry-After": "0"}))
