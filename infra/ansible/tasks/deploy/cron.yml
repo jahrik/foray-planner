@@ -35,6 +35,12 @@
     dest: /opt/foray-planner/scripts/cron-resync.sh
     mode: "0755"
 
+- name: Deploy elevation backfill cron script
+  ansible.builtin.template:
+    src: cron-backfill-elevation.sh.j2
+    dest: /opt/foray-planner/scripts/cron-backfill-elevation.sh
+    mode: "0755"
+
 - name: Schedule daily observation ingest
   ansible.builtin.cron:
     name: foray-ingest
@@ -71,3 +77,9 @@
     name: foray-resync
     minute: "{{ foray_resync_cron_minute }}"
     job: /opt/foray-planner/scripts/cron-resync.sh >> /var/log/foray-resync.log 2>&1
+
+- name: Schedule hourly elevation backfill
+  ansible.builtin.cron:
+    name: foray-backfill-elevation
+    minute: "{{ foray_elevation_cron_minute }}"
+    job: /opt/foray-planner/scripts/cron-backfill-elevation.sh >> /var/log/foray-backfill-elevation.log 2>&1

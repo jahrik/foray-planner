@@ -1,0 +1,10 @@
+#!/bin/sh
+# Managed by the foray-planner ansible role
+# Drains the per-observation elevation backlog (issue #36) from Open-Meteo's free DEM. Each run
+# enriches as many rows as the free tier allows before it 429s, then exits; the hourly schedule
+# keeps chipping away. --no-rebuild: the daily ingest cron rebuilds phenology, so card elevation
+# means refresh once a day rather than every hour on the managed Postgres.
+exec flock -n /tmp/foray-backfill-elevation.lock \
+  docker run --rm --env-file /opt/foray-planner/foray.env \
+    {{ foray_app_image }} \
+    foray backfill-elevation --limit {{ foray_elevation_backfill_limit }} --no-rebuild

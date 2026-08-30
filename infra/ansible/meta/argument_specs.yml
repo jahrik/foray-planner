@@ -161,6 +161,15 @@ argument_specs:
         type: str
         description: Row batch size for the recurring (non-catch-up) observation resync cron
         default: "2000"
+      foray_elevation_cron_minute:
+        type: str
+        description: Minute (every hour) for the hourly elevation backfill cron
+        default: "45"
+      foray_elevation_backfill_limit:
+        type: str
+        description: Upper bound on observations enriched per elevation backfill run (it stops
+          earlier when Open-Meteo's free tier rate-limits it)
+        default: "20000"
       foray_resync_once_batch_size:
         type: str
         description: Row batch size for the one-time foray:resync-once catch-up run

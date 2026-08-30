@@ -75,6 +75,13 @@ foray_revalidate_cron_weekday: "0"
 foray_resync_cron_minute: "30"
 foray_resync_batch_size: "2000"
 
+# Cron: elevation backfill (issue #36, hourly at :45). Each run drains the elevation-enrichment
+# backlog from Open-Meteo's free DEM until the free tier rate-limits it, then exits. The limit
+# is an upper safety bound, not the per-run target. --no-rebuild in the script: the daily ingest
+# rebuilds phenology.
+foray_elevation_cron_minute: "45"
+foray_elevation_backfill_limit: "20000"
+
 # One-time foray:resync-once catch-up (see TODO.md's rollout plan) - much larger than the
 # recurring cron's batch size since this runs once, synchronously, until the whole table is
 # caught up. Overrideable per droplet size/table growth (Copilot review, PR #185).

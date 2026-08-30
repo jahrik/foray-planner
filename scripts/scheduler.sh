@@ -7,7 +7,9 @@ REVALIDATE_INTERVAL="${FORAY_REVALIDATE_INTERVAL_HOURS:-168}"
 RESYNC_INTERVAL="${FORAY_RESYNC_INTERVAL_HOURS:-1}"
 RESYNC_BATCH_SIZE="${FORAY_RESYNC_BATCH_SIZE:-2000}"
 ELEVATION_INTERVAL="${FORAY_ELEVATION_INTERVAL_HOURS:-1}"
-ELEVATION_LIMIT="${FORAY_ELEVATION_LIMIT:-1500}"
+# High cap on purpose - each pass drains until Open-Meteo's free tier 429s it (lookup_batch
+# backs off on Retry-After, then gives up), so this is really just an upper safety bound.
+ELEVATION_LIMIT="${FORAY_ELEVATION_LIMIT:-20000}"
 
 obs_last=0
 layers_last=0

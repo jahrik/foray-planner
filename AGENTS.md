@@ -100,7 +100,8 @@ Guiding principles - keep these in mind for any feature work:
   `FORAY_INGEST_INTERVAL_HOURS` (default 24), `FORAY_LAYERS_INTERVAL_HOURS` (default 168),
   `FORAY_REVALIDATE_INTERVAL_HOURS` (default 168), `FORAY_RESYNC_INTERVAL_HOURS` (default 1),
   `FORAY_RESYNC_BATCH_SIZE` (default 2000), `FORAY_ELEVATION_INTERVAL_HOURS` (default 1), and
-  `FORAY_ELEVATION_LIMIT` (default 1500).
+  `FORAY_ELEVATION_LIMIT` (default 20000 - an upper bound; a run stops earlier when Open-Meteo
+  rate-limits it).
 - `frontend/` - the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern:
   `src/state.ts` (shared `State`, DOM `qs()`/`setStatus()` helpers), `src/map.ts` (Leaflet init,
   theme/tile switching, marker palette, `clear*()` layer helpers), `src/layers.ts` (camps/land/

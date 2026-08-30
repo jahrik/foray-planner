@@ -49,7 +49,7 @@ All settings come from environment variables (prefix `FORAY_`, nested delimiter 
 | `FORAY_LAYERS_INTERVAL_HOURS` | `168` | Scheduler: hours between layer refreshes (camps/land/dispersed/trails) |
 | `FORAY_REVALIDATE_INTERVAL_HOURS` | `168` | Scheduler: hours between cross-kingdom revalidation passes |
 | `FORAY_RESYNC_INTERVAL_HOURS` / `FORAY_RESYNC_BATCH_SIZE` | `1` / `2000` | Scheduler: whole-table resync grind interval + batch size |
-| `FORAY_ELEVATION_INTERVAL_HOURS` / `FORAY_ELEVATION_LIMIT` | `1` / `1500` | Scheduler: elevation backfill drain interval + per-pass cap (issue #36) |
+| `FORAY_ELEVATION_INTERVAL_HOURS` / `FORAY_ELEVATION_LIMIT` | `1` / `20000` | Scheduler: elevation backfill interval + per-run upper bound (a run stops early when Open-Meteo rate-limits it) |
 
 **Database connection** comes from the standard libpq env vars
 (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`), read natively by `psycopg`. Credentials
