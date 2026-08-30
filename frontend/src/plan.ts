@@ -3,7 +3,7 @@ import L from "leaflet";
 import { getJson } from "./api/client";
 import type { Stop, TripPlan } from "./api/types";
 import { focusRegion } from "./layers";
-import { clearMarkers, map, HOME_FILL, HOME_RING, PLAN_STOP } from "./map";
+import { addMarker, clearMarkers, map, setPlanRoute, HOME_FILL, HOME_RING, PLAN_STOP } from "./map";
 import { dist, displayName, errorDetail, inatUrl, monthsParam, MONTHS, qs, setStatus, state } from "./state";
 
 export async function runPlan(): Promise<void> {
@@ -53,13 +53,15 @@ export async function runPlan(): Promise<void> {
     ...trip.stops.map((stop): L.LatLngExpression => [stop.center_lat, stop.center_lng]),
     [trip.destination_lat, trip.destination_lng],
   ];
-  state.planRouteLayer = L.polyline(routePoints, {
-    color: PLAN_STOP,
-    weight: 2.5,
-    opacity: 0.7,
-    dashArray: "8 5",
-    bubblingMouseEvents: false,
-  }).addTo(map);
+  setPlanRoute(
+    L.polyline(routePoints, {
+      color: PLAN_STOP,
+      weight: 2.5,
+      opacity: 0.7,
+      dashArray: "8 5",
+      bubblingMouseEvents: false,
+    }).addTo(map),
+  );
 
   // Start marker (matches the persistent "you are here" home-dot styling).
   const startMarker = L.circleMarker([trip.start_lat, trip.start_lng], {
@@ -72,7 +74,7 @@ export async function runPlan(): Promise<void> {
   })
     .addTo(map)
     .bindPopup("Start");
-  state.markers.push(startMarker);
+  addMarker(startMarker);
 
   // Destination marker - a larger hollow ring in the plan-stop gold so it reads as the "goal",
   // distinct from the filled stop circles along the way.
@@ -89,7 +91,7 @@ export async function runPlan(): Promise<void> {
   })
     .addTo(map)
     .bindPopup(destLabel);
-  state.markers.push(destMarker);
+  addMarker(destMarker);
 
   // Plot stop markers. Build the popup with DOM nodes so name/common_name values from the
   // external API are never injected as raw HTML.
@@ -113,7 +115,7 @@ export async function runPlan(): Promise<void> {
     })
       .addTo(map)
       .bindPopup(popupEl);
-    state.markers.push(marker);
+    addMarker(marker);
   });
 
   // Fit the map to the full route.

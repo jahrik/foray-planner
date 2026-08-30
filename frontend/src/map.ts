@@ -199,6 +199,19 @@ export function plot(lat: number, lng: number, weight: number, live: boolean): L
   return marker;
 }
 
+// Register a marker that plan.ts drew itself (start/destination/stop pins) into the same
+// state.markers set plot() feeds, so clearMarkers() tears it down too. Keeps state.markers
+// writable only from map.ts (issue #103).
+export function addMarker(marker: L.CircleMarker): void {
+  state.markers.push(marker);
+}
+
+// The focused destination drives loadCamps()/loadPreciseObservations() (layers.ts). map.ts owns
+// it because clearMarkers() is what resets it to null (issue #103).
+export function setFocused(lat: number, lng: number): void {
+  state.focused = { lat, lng };
+}
+
 // Selecting a region (marker or card click) snaps its circle from the score-sized preview to
 // its true real-world cell_deg footprint, computed from the same live config value as plot()
 // (never hard-coded), so the user can see exactly how much ground that dot actually represents.
@@ -249,11 +262,19 @@ export function clearCamps(): void {
   state.campMarkers = [];
 }
 
+export function addCampMarker(marker: L.CircleMarker): void {
+  state.campMarkers.push(marker);
+}
+
 export function clearLand(): void {
   if (state.landLayer) {
     map.removeLayer(state.landLayer);
     state.landLayer = null;
   }
+}
+
+export function setLandLayer(layer: L.GeoJSON): void {
+  state.landLayer = layer;
 }
 
 // Hiking-boot marker for a destination card's Trails tab trailhead list (views.ts) - only the
@@ -333,9 +354,17 @@ export function clearSelectedTrail(): void {
   }
 }
 
+export function setSelectedTrail(layer: L.Polyline): void {
+  state.selectedTrailLayer = layer;
+}
+
 export function clearPlanRoute(): void {
   if (state.planRouteLayer) {
     map.removeLayer(state.planRouteLayer);
     state.planRouteLayer = null;
   }
+}
+
+export function setPlanRoute(layer: L.Polyline): void {
+  state.planRouteLayer = layer;
 }
