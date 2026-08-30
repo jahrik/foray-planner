@@ -3,6 +3,7 @@ import L from "leaflet";
 import { getJson } from "./api/client";
 import type { CampSite, LandUnit, PreciseObservation, Trail, TrailPath } from "./api/types";
 import {
+  addCampMarker,
   addPreciseMarker,
   CAMP_FREE,
   CAMP_OSM,
@@ -18,6 +19,9 @@ import {
   PRECISE,
   regionRadiusKm,
   renderLegend,
+  setFocused,
+  setLandLayer,
+  setSelectedTrail,
   TRAIL,
 } from "./map";
 import { dist, displayName, errorDetail, monthsParam, qs, setStatus, state } from "./state";
@@ -66,7 +70,7 @@ export async function loadCamps(): Promise<void> {
     })
       .addTo(map)
       .bindPopup(campPopup(site));
-    state.campMarkers.push(marker);
+    addCampMarker(marker);
   });
 }
 
@@ -146,7 +150,7 @@ export async function loadLand(): Promise<void> {
   });
   layer.addTo(map);
   layer.bringToBack(); // keep observation + campground markers clickable on top
-  state.landLayer = layer;
+  setLandLayer(layer);
 }
 
 // Popup built from DOM nodes: agency/unit come from an external service, so `textContent`
@@ -251,7 +255,7 @@ export async function selectTrailhead(trail: Trail): Promise<void> {
     dashArray: path.authoritative ? undefined : "6 6",
     bubblingMouseEvents: false,
   }).addTo(map);
-  state.selectedTrailLayer = layer;
+  setSelectedTrail(layer);
   map.flyToBounds(L.latLngBounds(parts.flat()), { padding: [40, 40], maxZoom: 15, duration: 0.5 });
   animateTrail(layer, parts);
 }
@@ -322,7 +326,7 @@ function precisePopup(obs: PreciseObservation): HTMLElement {
 // it's loaded whenever home changes (see call sites of updateHome) rather than on every
 // focusRegion() call - otherwise every destination click/auto-focus re-fetches identical polygons.
 export function focusRegion(lat: number, lng: number): void {
-  state.focused = { lat, lng };
+  setFocused(lat, lng);
   loadCamps();
   loadPreciseObservations();
 }
