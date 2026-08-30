@@ -165,10 +165,17 @@ def _region_elevations(con: psycopg.Connection, region_ids: Collection[str]) -> 
     (issue #36). Absent/NULL when no observation in that region is elevation-enriched yet."""
     if not region_ids:
         return {}
-    rows = con.execute(
-        "SELECT region_id, elevation_m FROM regions WHERE region_id = ANY(%s)",
-        [list(region_ids)],
-    ).fetchall()
+    try:
+        rows = con.execute(
+            "SELECT region_id, elevation_m FROM regions WHERE region_id = ANY(%s)",
+            [list(region_ids)],
+        ).fetchall()
+    except psycopg.errors.UndefinedColumn:
+        # `regions` is materialized by build_phenology, not cache.SCHEMA, so a deploy that adds
+        # a column lands before the next ingest/refresh rebuilds the table. Degrade to "no
+        # elevation" rather than 500 the whole ranking; the next rebuild fills it in.
+        con.rollback()
+        return {}
     return dict(rows)
 
 

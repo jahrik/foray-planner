@@ -346,6 +346,26 @@ def test_regions_elevation_is_null_when_no_observation_enriched(con: psycopg.Con
     assert row is not None and row[0] is None
 
 
+def test_rank_survives_stale_regions_without_elevation_column(con: psycopg.Connection) -> None:
+    # `regions` is materialized by build_phenology, not cache.SCHEMA - a deploy that adds a
+    # column lands before the next ingest/refresh rebuilds the table. Ranking must degrade to
+    # "no elevation" rather than 500 on the missing column (prod outage, 2026-08-30).
+    con.execute("ALTER TABLE regions DROP COLUMN elevation_m")
+
+    ranked = rank_destinations(
+        con,
+        months=[4],
+        taxon_ids=[MOREL, CHANTERELLE],
+        home_lat=46.0,
+        home_lng=-121.6,
+        radius_km=500,
+        cell_deg=CELL,
+    )
+
+    assert ranked, "expected ranking to still return regions"
+    assert all(region.elevation_m is None for region in ranked)
+
+
 def test_alerts_center_excludes_obscured_decoy(con: psycopg.Connection) -> None:
     taxon_id = 557
     precise_lat, precise_lng = 40.0, -100.0
