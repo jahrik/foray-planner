@@ -30,3 +30,5 @@
         foray_revalidate_cron_weekday: "0"
         foray_resync_cron_minute: "30"
         foray_resync_batch_size: "2000"
+        foray_elevation_cron_minute: "45"
+        foray_elevation_backfill_limit: "20000"

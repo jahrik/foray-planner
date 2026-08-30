@@ -200,17 +200,24 @@ def revalidate_cmd(ctx: click.Context) -> None:
 
 @cli.command("backfill-elevation")
 @click.option("--limit", type=int, default=None, help="Cap observations enriched this run (default: all outstanding).")
+@click.option(
+    "--rebuild/--no-rebuild",
+    default=True,
+    help="Rebuild phenology afterward so cards pick up the new region means (default). "
+    "The hourly prod cron passes --no-rebuild - the daily ingest rebuild covers it.",
+)
 @click.pass_context
-def backfill_elevation_cmd(ctx: click.Context, limit: int | None) -> None:
+def backfill_elevation_cmd(ctx: click.Context, limit: int | None, rebuild: bool) -> None:
     """Fill in `elevation_m` for cached observations that don't have it yet (issue #36), from
-    Open-Meteo's DEM. Ingest does this automatically for new rows; run this once for the
-    backlog. Rebuilds phenology afterward so destination cards pick up the new averages."""
+    Open-Meteo's DEM. Ingest does this automatically for new rows; run this to drain the
+    backlog. Drains as fast as the free tier allows, then stops - re-run (or let the cron)
+    pick up the rest."""
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
         updated = backfill_elevations(con, max_points=limit)
         click.echo(f"Enriched {updated} observations with elevation.")
-        if updated:
+        if updated and rebuild:
             click.echo("Rebuilding phenology…")
             build_phenology(con, cfg.cell_deg)
     finally:

@@ -76,7 +76,7 @@ The scheduler runs `scripts/scheduler.sh`, which calls `foray ingest --countries
 `FORAY_INGEST_INTERVAL_HOURS` (24), `FORAY_LAYERS_INTERVAL_HOURS` (168),
 `FORAY_REVALIDATE_INTERVAL_HOURS` (168), `FORAY_RESYNC_INTERVAL_HOURS` (1) +
 `FORAY_RESYNC_BATCH_SIZE` (2000), `FORAY_ELEVATION_INTERVAL_HOURS` (1) +
-`FORAY_ELEVATION_LIMIT` (1500).
+`FORAY_ELEVATION_LIMIT` (20000).
 
 ---
 
@@ -88,8 +88,21 @@ data and never triggers network calls. Data stays fresh via:
 **Option A - Cron (production default)**
 
 The Ansible playbook configures host cron jobs that run one-off containers against the
-managed Postgres instance. Observations ingest daily (04:00 UTC), layers refresh weekly
-(Sunday 03:00 UTC). Same image, same DB, spins up, runs, exits.
+managed Postgres instance. Same image, same DB, spins up, runs, exits:
+
+| Job | Schedule (UTC) |
+|---|---|
+| `foray-ingest` (`foray ingest --countries`) | daily 04:00 |
+| `foray-layers` (`foray refresh` layers) | weekly Sun 03:00 |
+| `foray-genera` (`foray genera-refresh`) | weekly Sun 02:00 |
+| `foray-revalidate` (`foray revalidate`) | weekly Sun 05:00 |
+| `foray-resync` (`foray resync --batch-size N`) | hourly :30 |
+| `foray-backfill-elevation` (`foray backfill-elevation`, issue #36) | hourly :45 |
+
+The elevation backfill drains the per-observation elevation backlog from Open-Meteo's free
+DEM; each run enriches as many rows as the free tier allows before it rate-limits, then exits
+(`lookup_batch` backs off on `Retry-After` first). Schedules are Ansible vars
+(`foray_*_cron_*` in `infra/ansible/defaults/main.yml`).
 
 **Option B - UI Refresh button**
 

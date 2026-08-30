@@ -125,3 +125,17 @@ def test_camps_closes_connection_on_error(con: psycopg.Connection, env_config, m
     result = runner.invoke(cli, ["camps"])
     assert result.exit_code != 0
     assert tracker.close_calls == 1
+
+
+def test_backfill_elevation_rebuild_flag(con: psycopg.Connection, env_config, monkeypatch) -> None:
+    monkeypatch.setattr(cli_module, "connect", lambda: _CloseTrackingConnection(con))
+    monkeypatch.setattr(cli_module, "backfill_elevations", lambda con, max_points=None: 5)
+    rebuilds: list[str] = []
+    monkeypatch.setattr(cli_module, "build_phenology", lambda con, cell_deg: rebuilds.append("rebuild"))
+    runner = CliRunner()
+
+    assert runner.invoke(cli, ["backfill-elevation", "--no-rebuild"]).exit_code == 0
+    assert rebuilds == []
+
+    assert runner.invoke(cli, ["backfill-elevation"]).exit_code == 0
+    assert rebuilds == ["rebuild"]

@@ -58,3 +58,25 @@ def test_http_error_propagates() -> None:
     client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(503)))
     with pytest.raises(httpx.HTTPError):
         lookup_batch([(45.3, -121.7)], client=client)
+
+
+def test_retries_a_429_then_succeeds() -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"elevation": [500.0]})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    assert lookup_batch([(45.3, -121.7)], client=client) == [500]
+    assert calls["n"] == 2
+
+
+def test_gives_up_after_persistent_429() -> None:
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(429, headers={"Retry-After": "0"}))
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        lookup_batch([(45.3, -121.7)], client=client)

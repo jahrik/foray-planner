@@ -60,9 +60,14 @@ services:
       <<: *runtime-build
     environment:
       <<: [*postgres-env, *ridb-env]
-      # Fallback defaults (24h / 168h) live in scripts/scheduler.sh, not here.
+      # Fallback defaults live in scripts/scheduler.sh, not here - these only override them.
       FORAY_INGEST_INTERVAL_HOURS: ${FORAY_INGEST_INTERVAL_HOURS:-}
       FORAY_LAYERS_INTERVAL_HOURS: ${FORAY_LAYERS_INTERVAL_HOURS:-}
+      FORAY_REVALIDATE_INTERVAL_HOURS: ${FORAY_REVALIDATE_INTERVAL_HOURS:-}
+      FORAY_RESYNC_INTERVAL_HOURS: ${FORAY_RESYNC_INTERVAL_HOURS:-}
+      FORAY_RESYNC_BATCH_SIZE: ${FORAY_RESYNC_BATCH_SIZE:-}
+      FORAY_ELEVATION_INTERVAL_HOURS: ${FORAY_ELEVATION_INTERVAL_HOURS:-}
+      FORAY_ELEVATION_LIMIT: ${FORAY_ELEVATION_LIMIT:-}
     depends_on:
       <<: *depends-postgres
     command: ["sh", "scripts/scheduler.sh"]
