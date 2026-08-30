@@ -13,7 +13,7 @@ from foray.camps import ingest_campgrounds
 from foray.config import Settings
 from foray.dispersed import ingest_dispersed
 from foray.inat import InatQuotaExceeded, iter_fungi_genera
-from foray.ingest import ingest, ingest_region, resync, revalidate
+from foray.ingest import backfill_elevations, ingest, ingest_region, resync, revalidate
 from foray.land import ingest_public_land, ingest_public_land_coverage
 from foray.scoring import build_phenology, plan_route
 from foray.trails import ingest_trails, ingest_trails_region
@@ -192,6 +192,25 @@ def revalidate_cmd(ctx: click.Context) -> None:
         # falls into, and a reassignment changes its taxon_id outright. Gating on purges alone
         # left phenology/regions stale after a refresh-only or reassign-only run.
         if total_checked:
+            click.echo("Rebuilding phenology…")
+            build_phenology(con, cfg.cell_deg)
+    finally:
+        con.close()
+
+
+@cli.command("backfill-elevation")
+@click.option("--limit", type=int, default=None, help="Cap observations enriched this run (default: all outstanding).")
+@click.pass_context
+def backfill_elevation_cmd(ctx: click.Context, limit: int | None) -> None:
+    """Fill in `elevation_m` for cached observations that don't have it yet (issue #36), from
+    Open-Meteo's DEM. Ingest does this automatically for new rows; run this once for the
+    backlog. Rebuilds phenology afterward so destination cards pick up the new averages."""
+    cfg = ctx.obj["cfg"]
+    con = connect()
+    try:
+        updated = backfill_elevations(con, max_points=limit)
+        click.echo(f"Enriched {updated} observations with elevation.")
+        if updated:
             click.echo("Rebuilding phenology…")
             build_phenology(con, cfg.cell_deg)
     finally:

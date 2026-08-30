@@ -6,12 +6,13 @@ from __future__ import annotations
 import threading
 from unittest.mock import patch
 
+import httpx
 import psycopg
 import pytest
 
 from foray.cache import upsert_fungi_genera
 from foray.config import Settings
-from foray.ingest import ingest
+from foray.ingest import backfill_elevations, ingest
 
 MOREL = 111
 CHANTERELLE = 222
@@ -77,6 +78,83 @@ def test_ingest_queries_whole_fungi_kingdom(con: psycopg.Connection, cfg_with_ho
     row = con.execute("SELECT count(*) FROM observations").fetchone()
     assert row is not None
     assert row[0] == 2
+
+
+def test_ingest_backfills_elevation_for_new_observations(
+    con: psycopg.Connection, cfg_with_home: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from foray import elevation
+
+    seen: list[list[tuple[float, float]]] = []
+
+    def fake_batch(coords: list[tuple[float, float]], **_kwargs: object) -> list[int | None]:
+        seen.append(list(coords))
+        return [123] * len(coords)
+
+    monkeypatch.setattr(elevation, "lookup_batch", fake_batch)
+
+    with patch("foray.ingest.iter_observations") as mock_iter:
+        mock_iter.return_value = iter([_fake_obs(1, MOREL), _fake_obs(2, CHANTERELLE)])
+        ingest(cfg_with_home, con)
+
+    assert seen == [[(47.6, -122.3), (47.6, -122.3)]]
+    rows = con.execute("SELECT elevation_m FROM observations ORDER BY id").fetchall()
+    assert [row[0] for row in rows] == [123, 123]
+
+
+def test_ingest_survives_elevation_backfill_network_failure(con: psycopg.Connection, cfg_with_home: Settings) -> None:
+    # The autouse `_no_elevation_network` fixture makes lookup_batch raise; ingest must still
+    # complete and leave elevation_m NULL for a later backfill.
+    with patch("foray.ingest.iter_observations") as mock_iter:
+        mock_iter.return_value = iter([_fake_obs(1, MOREL)])
+        counts = ingest(cfg_with_home, con)
+
+    assert counts == {MOREL: 1}
+    row = con.execute("SELECT elevation_m FROM observations WHERE id = 1").fetchone()
+    assert row is not None and row[0] is None
+
+
+def _seed_unenriched(con: psycopg.Connection, count: int) -> None:
+    rows = [(obs_id, MOREL, 47.6, -122.3, "2024-05-15", 5, "research", 10) for obs_id in range(1, count + 1)]
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade,"
+            " positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            rows,
+        )
+
+
+def test_backfill_elevations_respects_max_points(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+    from foray import elevation
+
+    _seed_unenriched(con, 250)
+    monkeypatch.setattr(elevation, "lookup_batch", lambda coords, **_kw: [500] * len(coords))
+
+    assert backfill_elevations(con, max_points=150) == 150
+    row = con.execute("SELECT count(*) FROM observations WHERE elevation_m IS NULL").fetchone()
+    assert row is not None and row[0] == 100
+
+
+def test_backfill_elevations_stops_cleanly_on_rate_limit(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from foray import elevation
+
+    _seed_unenriched(con, 250)
+    calls = {"n": 0}
+
+    def flaky(coords: list[tuple[float, float]], **_kw: object) -> list[int]:
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            raise httpx.HTTPStatusError(
+                "rate limited", request=httpx.Request("GET", "http://x"), response=httpx.Response(429)
+            )
+        return [500] * len(coords)
+
+    monkeypatch.setattr(elevation, "lookup_batch", flaky)
+
+    # First batch of 100 lands; the 429 on the second stops the run without raising.
+    assert backfill_elevations(con) == 100
 
 
 def test_ingest_resolves_genus_from_species_rank_ancestry(con: psycopg.Connection, cfg_with_home: Settings) -> None:

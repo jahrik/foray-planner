@@ -46,6 +46,12 @@ WHERE o.quality_grade = 'research'
 _CENTER_LAT = "COALESCE(AVG(lat) FILTER (WHERE NOT COALESCE(obscured, false)), AVG(lat))::double precision"
 _CENTER_LNG = "COALESCE(AVG(lng) FILTER (WHERE NOT COALESCE(obscured, false)), AVG(lng))::double precision"
 
+# Mean ground elevation for a region (issue #36), over the observations that have one - obscured
+# rows are excluded (their point is iNat's decoy, so its elevation is meaningless) unless every
+# row in the group is obscured, matching _CENTER_LAT. NULL when no observation in the region has
+# been elevation-enriched yet (see ingest.backfill_elevations).
+_ELEVATION = "ROUND(COALESCE(AVG(elevation_m) FILTER (WHERE NOT COALESCE(obscured, false)), AVG(elevation_m)))::int"
+
 
 def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
     """(Re)materialize the ``regions`` and ``phenology`` tables from ``observations``.
@@ -80,6 +86,7 @@ def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
                 SELECT region_id,
                        {_CENTER_LAT} AS center_lat,
                        {_CENTER_LNG} AS center_lng,
+                       {_ELEVATION} AS elevation_m,
                        count(*) AS n_obs,
                        count(DISTINCT taxon_id) AS n_taxa
                 FROM ({binned})
@@ -93,6 +100,8 @@ def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
         # observations grow.
         con.execute("CREATE INDEX ix_phenology_taxon_region ON phenology (taxon_id, region_id)")
         con.execute("CREATE INDEX ix_phenology_region ON phenology (region_id)")
+        # _rank_candidates joins `regions` back by region_id to attach each card's mean elevation.
+        con.execute("CREATE INDEX ix_regions_region ON regions (region_id)")
         # Fresh tables have no planner statistics until autovacuum gets to them - without this,
         # requests right after a refresh could still get seq-scan plans despite the indexes above.
         con.execute("ANALYZE phenology")
@@ -148,6 +157,19 @@ class RegionScore:
     n_species: int
     recent_count: int
     species: list[SpeciesHit]
+    elevation_m: int | None = None
+
+
+def _region_elevations(con: psycopg.Connection, region_ids: Collection[str]) -> dict[str, int | None]:
+    """region_id -> mean ground elevation (metres), from the materialized `regions` table
+    (issue #36). Absent/NULL when no observation in that region is elevation-enriched yet."""
+    if not region_ids:
+        return {}
+    rows = con.execute(
+        "SELECT region_id, elevation_m FROM regions WHERE region_id = ANY(%s)",
+        [list(region_ids)],
+    ).fetchall()
+    return dict(rows)
 
 
 def _recent_counts(con: psycopg.Connection, cell_deg: float, taxon_ids: list[int], weeks: int) -> dict[str, int]:
@@ -250,6 +272,8 @@ def _rank_candidates(
         name, common_name = genera.get(taxon_id, (str(taxon_id), None))
         agg["species"].append(SpeciesHit(taxon_id, name, common_name, month_cnt, total_cnt, w_pheno))
 
+    elevations = _region_elevations(con, regions.keys())
+
     results: list[RegionScore] = []
     for region_id, agg in regions.items():
         n_species = len(agg["species"])
@@ -268,6 +292,7 @@ def _rank_candidates(
                 n_species=n_species,
                 recent_count=recent_count,
                 species=agg["species"],
+                elevation_m=elevations.get(region_id),
             )
         )
 

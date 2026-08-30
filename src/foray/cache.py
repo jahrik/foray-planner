@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS observations (
     positional_accuracy INTEGER,
     place_guess         TEXT,
     uri                 TEXT,
-    obscured            BOOLEAN
+    obscured            BOOLEAN,
+    elevation_m         INTEGER   -- ground elevation (issue #36), enriched post-ingest via Open-Meteo
 );
 
 CREATE TABLE IF NOT EXISTS ingest_log (
@@ -208,6 +209,9 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # cost a write on every ingested row for a value nothing consumed. Fully recoverable from
     # observed_on if a future feature ever needs year-based filtering.
     (8, "ALTER TABLE observations DROP COLUMN IF EXISTS year"),
+    # issue #36: per-observation ground elevation, enriched after ingest from Open-Meteo's DEM
+    # (see ingest.backfill_elevations). NULL = not yet looked up.
+    (9, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS elevation_m INTEGER"),
 ]
 
 
@@ -629,6 +633,43 @@ def save_region_place(con: psycopg.Connection, region_id: str, place_name: str |
         "INSERT INTO region_places (region_id, place_name) VALUES (%s, %s) ON CONFLICT (region_id) DO NOTHING",
         [region_id, place_name],
     )
+
+
+def observations_missing_elevation(con: psycopg.Connection, limit: int) -> list[tuple[int, float, float]]:
+    """Up to ``limit`` research-grade observations with in-range coordinates but no elevation
+    yet (issue #36). Non-research-grade rows are skipped - scoring only ever reads research-grade
+    (scoring._BINNED), so enriching the rest would just burn Open-Meteo quota. Obscured rows are
+    skipped too - their cached point is iNat's randomized decoy, so its elevation would be
+    meaningless. Out-of-range lat/lng is excluded here so one bad row can't sit at the head of
+    the ``ORDER BY id`` queue and wedge the backfill (``elevation.lookup_batch`` would raise on
+    it every run)."""
+    rows = con.execute(
+        """
+        SELECT id, lat, lng FROM observations
+        WHERE elevation_m IS NULL
+              AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180
+              AND quality_grade = 'research'
+              AND NOT COALESCE(obscured, false)
+        ORDER BY id
+        LIMIT %s
+        """,
+        [limit],
+    ).fetchall()
+    return [(int(obs_id), float(lat), float(lng)) for obs_id, lat, lng in rows]
+
+
+def set_observation_elevations(con: psycopg.Connection, rows: Sequence[tuple[int, int]]) -> int:
+    """Write looked-up elevations back. ``rows`` is ``(observation_id, elevation_m)`` and carries
+    only rows that got a real value - a point Open-Meteo had no answer for is left NULL and
+    retried on the next backfill (a healthy response always has a value, even 0 for open sea,
+    so this does not loop in practice)."""
+    if not rows:
+        return 0
+    with con.cursor() as cur:
+        cur.executemany(
+            "UPDATE observations SET elevation_m = %s WHERE id = %s", [(elev, obs_id) for obs_id, elev in rows]
+        )
+    return len(rows)
 
 
 def load_location(con: psycopg.Connection, device_id: str) -> dict[str, Any] | None:

@@ -15,8 +15,10 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
+import httpx
 import psycopg
 
+from foray import elevation
 from foray.cache import (
     delete_observations,
     known_genus_taxon_ids,
@@ -25,7 +27,9 @@ from foray.cache import (
     mark_revalidated,
     observation_ids_for_genus,
     observation_taxon_ids,
+    observations_missing_elevation,
     record_ingest,
+    set_observation_elevations,
     stale_observation_ids,
     suspect_genus_taxon_ids,
     upsert_observations,
@@ -36,6 +40,11 @@ from foray.inat import FUNGI_TAXON_ID, fetch_observations, iter_observations
 logger = logging.getLogger(__name__)
 
 _CHUNK_SIZE = 5000
+
+# Open-Meteo's free elevation endpoint rate-limits a burst to a few hundred coordinates, so the
+# post-ingest top-up only enriches a small slice per run (new rows and a bit of backlog). The
+# steady backlog drain is the scheduler's `foray backfill-elevation` job, not this.
+_INGEST_ELEVATION_POINTS = 300
 
 # Heuristic denominator for progress reporting during the single whole-Fungi query - there's
 # no cheap way to know the true row count upfront (that would need a separate iNat count call
@@ -130,6 +139,54 @@ def _to_row(obs: dict[str, Any], genus_taxon_id: int) -> tuple[Any, ...] | None:
         obs.get("uri"),
         obs.get("obscured"),
     )
+
+
+def backfill_elevations(db: psycopg.Connection, *, max_points: int | None = None) -> int:
+    """Enrich observations that have coordinates but no `elevation_m` yet (issue #36), pulling
+    ground elevation from Open-Meteo's DEM in batches of `elevation.MAX_BATCH`.
+
+    Returns the number of observations updated. Best-effort: a network/HTTP failure (including
+    Open-Meteo's aggressive rate limit) stops the run early and leaves the remaining rows for
+    next time rather than raising - callers wire this in after ingest, where it must never fail
+    the ingest itself. `max_points` caps the work per call (default: drain everything
+    outstanding); the ingest path passes a small cap so a perpetual backlog does not turn every
+    run into a rate-limit round-trip.
+    """
+    updated = 0
+    while max_points is None or updated < max_points:
+        limit = elevation.MAX_BATCH
+        if max_points is not None:
+            limit = min(limit, max_points - updated)
+        pending = observations_missing_elevation(db, limit)
+        if not pending:
+            break
+        try:
+            found = elevation.lookup_batch([(lat, lng) for _, lat, lng in pending])
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code == 429:
+                logger.info("elevation: Open-Meteo rate-limited; enriched %d this run, remainder deferred", updated)
+            else:
+                logger.warning(
+                    "elevation: backfill stopped after %d rows (HTTP %s)", updated, error.response.status_code
+                )
+            break
+        except (httpx.HTTPError, ValueError) as error:
+            logger.warning("elevation: backfill stopped after %d rows (%s)", updated, error)
+            break
+        resolved = [
+            (obs_id, metres) for (obs_id, _, _), metres in zip(pending, found, strict=True) if metres is not None
+        ]
+        if not resolved:
+            # Whole batch came back valueless (empty/degraded response) - stop rather than spin
+            # on the same rows; a healthy response always carries values, so next run retries.
+            logger.warning("elevation: backfill stopped, batch of %d returned no values", len(pending))
+            break
+        updated += set_observation_elevations(db, resolved)
+        if len(pending) < limit:
+            break
+    if updated:
+        logger.info("elevation: backfilled %d observations", updated)
+    return updated
 
 
 def ingest(
@@ -227,6 +284,7 @@ def ingest(
         len(counts),
         skipped_no_genus,
     )
+    backfill_elevations(db, max_points=_INGEST_ELEVATION_POINTS)
     return counts
 
 
@@ -315,6 +373,7 @@ def ingest_region(
         len(counts),
         skipped_no_genus,
     )
+    backfill_elevations(db, max_points=_INGEST_ELEVATION_POINTS)
     return counts
 
 

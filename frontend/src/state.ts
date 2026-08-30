@@ -58,6 +58,15 @@ export function distVal(km: number): number {
   return Math.round(km);
 }
 
+const M_TO_FT = 3.28084;
+
+/** Ground elevation label (issue #36), in the same unit system as distances: feet when the
+ * user is on miles, metres when on kilometres. Input is always metres (Open-Meteo's unit). */
+export function elevationLabel(metres: number): string {
+  if (state.units === "mi") return `${Math.round(metres * M_TO_FT).toLocaleString()} ft`;
+  return `${Math.round(metres).toLocaleString()} m`;
+}
+
 export function qs<T extends HTMLElement = HTMLElement>(selector: string, root: ParentNode = document): T {
   const element = root.querySelector<T>(selector);
   if (!element) throw new Error(`missing element: ${selector}`);

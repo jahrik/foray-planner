@@ -185,6 +185,19 @@ def test_destinations_ranks_morel_region(client: TestClient) -> None:
     assert body[0]["species"][0]["common_name"] == "Morels"
 
 
+def test_destinations_carry_elevation_field_null_until_enriched(client: TestClient) -> None:
+    # Fixture observations have no elevation_m, so the field is present but null (issue #36).
+    body = client.get("/api/destinations", params={"months": "4"}).json()
+    assert body and all("elevation_m" in region and region["elevation_m"] is None for region in body)
+
+
+def test_destinations_report_region_mean_elevation(client: TestClient, con: psycopg.Connection) -> None:
+    con.execute("UPDATE observations SET elevation_m = 900 WHERE quality_grade = 'research'")
+    build_phenology(con, CELL)
+    body = client.get("/api/destinations", params={"months": "4"}).json()
+    assert body and all(region["elevation_m"] == 900 for region in body)
+
+
 def test_destinations_bad_months_is_400(client: TestClient) -> None:
     response = client.get("/api/destinations", params={"months": "not-a-month"})
     assert response.status_code == 400

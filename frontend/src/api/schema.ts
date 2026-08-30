@@ -655,6 +655,8 @@ export interface components {
             recent_count: number;
             /** Species */
             species: components["schemas"]["SpeciesHit"][];
+            /** Elevation M */
+            elevation_m?: number | null;
         };
         /**
          * SpeciesHit

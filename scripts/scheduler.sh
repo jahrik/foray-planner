@@ -6,11 +6,14 @@ LAYERS_INTERVAL="${FORAY_LAYERS_INTERVAL_HOURS:-168}"
 REVALIDATE_INTERVAL="${FORAY_REVALIDATE_INTERVAL_HOURS:-168}"
 RESYNC_INTERVAL="${FORAY_RESYNC_INTERVAL_HOURS:-1}"
 RESYNC_BATCH_SIZE="${FORAY_RESYNC_BATCH_SIZE:-2000}"
+ELEVATION_INTERVAL="${FORAY_ELEVATION_INTERVAL_HOURS:-1}"
+ELEVATION_LIMIT="${FORAY_ELEVATION_LIMIT:-1500}"
 
 obs_last=0
 layers_last=0
 revalidate_last=0
 resync_last=0
+elevation_last=0
 
 while true; do
   now=$(date +%s)
@@ -45,6 +48,15 @@ while true; do
   if [ $((now - resync_last)) -ge $((RESYNC_INTERVAL * 3600)) ]; then
     echo "[scheduler] $(date -Iseconds) Starting observation resync (batch of $RESYNC_BATCH_SIZE)…"
     foray resync --batch-size "$RESYNC_BATCH_SIZE" && resync_last=$(date +%s) || echo "[scheduler] resync failed"
+  fi
+
+  # Steady drain of the per-observation elevation backlog (issue #36). Open-Meteo's free DEM
+  # rate-limits a burst hard, so each pass only enriches a few hundred rows regardless of the
+  # limit; the daily ingest also tops up its own new rows. Rebuilds phenology when it enriched
+  # anything so destination cards pick up the new region means.
+  if [ $((now - elevation_last)) -ge $((ELEVATION_INTERVAL * 3600)) ]; then
+    echo "[scheduler] $(date -Iseconds) Starting elevation backfill (limit $ELEVATION_LIMIT)…"
+    foray backfill-elevation --limit "$ELEVATION_LIMIT" && elevation_last=$(date +%s) || echo "[scheduler] elevation backfill failed"
   fi
 
   sleep 300

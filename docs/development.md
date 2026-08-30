@@ -93,7 +93,7 @@ ArcGIS BLM/USFS          Nominatim (geocoding)
 
 Search/scoring is **read-only** against cached data. Data ingestion happens independently:
 
-- **Scheduler service** (`scripts/scheduler.sh`): opt-in via `make scheduler` (docker-compose profile), pulls observations every 24h and refreshes layers (camps/land/dispersed/trails) every 168h
+- **Scheduler service** (`scripts/scheduler.sh`): opt-in via `make scheduler` (docker-compose profile), pulls observations every 24h, refreshes layers (camps/land/dispersed/trails) every 168h, and drains the elevation backfill (issue #36) every 1h
 - **Coverage regions**: state-level, using iNat `place_id` for exact administrative boundaries - all 50 US states by default (`FORAY_COVERAGE`), used by `trails --all` (Overpass can't take a whole-country query in one request)
 - **Countries**: country-level, one iNat `place_id` per country - United States by default (`FORAY_COUNTRIES`). Adding another country later is just one more entry, no code changes
 - **`make ingest`**: one-shot manual ingest for all coverage regions
@@ -119,6 +119,7 @@ uv run foray trails --all        # ingest trails for every coverage region (stat
 uv run foray refresh             # ingest (home radius) + camps + land + dispersed + trails + phenology
 uv run foray refresh --with camps,trails  # refresh only specific layers
 uv run foray refresh --with land,trails --all  # region-scoped land/trails across all coverage; not valid for camps/dispersed (home-radius only)
+uv run foray backfill-elevation  # fill observations.elevation_m for the backlog (Open-Meteo DEM; ingest does new rows inline)
 uv run foray plan                # print a start->destination trip (auto-picks destination if omitted)
 uv run foray plan --destination "Bend, OR"  # plan to a named place (or "lat,lng")
 uv run foray serve               # start the FastAPI server (--host / --port to override)
@@ -189,10 +190,10 @@ shows per-month totals. The alerts view fixes species + recency, ignoring the mo
 
 | Table | Key | Contents |
 |---|---|---|
-| `observations` | `(id)` | Raw iNat research-grade observations: lat, lng, observed_on, taxon_id, place_guess, uri, obscured |
+| `observations` | `(id)` | Raw iNat research-grade observations: lat, lng, observed_on, taxon_id, place_guess, uri, obscured, elevation_m |
 | `fungi_genera` | `taxon_id` | Full Fungi genus catalog: taxon_id -> name/common_name/observations_count |
 | `phenology` | `(region_id, taxon_id, month)` | Materialized per-(region, taxon, month) observation counts |
-| `regions` | `region_id` | Grid cell summaries: center coords, total obs count, distinct taxa |
+| `regions` | `region_id` | Grid cell summaries: center coords, mean elevation, total obs count, distinct taxa |
 | `campsites` | `id` (`"{source}:{source_id}"`) | Developed campgrounds (RIDB) + OSM-reported dispersed-camping sites |
 | `public_land` | `id` (`"{source}:{source_id}"`) | BLM/USFS ownership polygons - GeoJSON text + bbox columns |
 | `trails` | `id` (`"{source}:{osm_type}/{osm_id}"`) | OSM trails/routes/trailheads - GeoJSON text + bbox columns |
