@@ -68,11 +68,15 @@ make scheduler          # starts the background ingest/refresh loop
 
 | Service | Role |
 |---|---|
-| `scheduler` | Background loop: observation ingest every 24h, layers refresh every 168h |
+| `scheduler` | Background loop: observation ingest every 24h, layers refresh every 168h, observation revalidate + resync + elevation backfill hourly |
 
-The scheduler runs `scripts/scheduler.sh` which calls `foray ingest --all-regions` and
-`foray refresh --with camps,land,dispersed,trails` on configurable intervals. Both intervals
-are set via env vars (`FORAY_INGEST_INTERVAL_HOURS`, `FORAY_LAYERS_INTERVAL_HOURS`).
+The scheduler runs `scripts/scheduler.sh`, which calls `foray ingest --countries`,
+`foray refresh` (layers), `foray revalidate`, `foray resync --batch-size N`, and
+`foray backfill-elevation --limit N`, each on its own interval. Set via env vars:
+`FORAY_INGEST_INTERVAL_HOURS` (24), `FORAY_LAYERS_INTERVAL_HOURS` (168),
+`FORAY_REVALIDATE_INTERVAL_HOURS` (168), `FORAY_RESYNC_INTERVAL_HOURS` (1) +
+`FORAY_RESYNC_BATCH_SIZE` (2000), `FORAY_ELEVATION_INTERVAL_HOURS` (1) +
+`FORAY_ELEVATION_LIMIT` (1500).
 
 ---
 
