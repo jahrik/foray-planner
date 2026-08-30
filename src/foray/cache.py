@@ -225,6 +225,20 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     DSN-building code needed anywhere.
     """
     con = psycopg.connect(conninfo, autocommit=True)
+    apply_schema(con)
+    return con
+
+
+def apply_schema(con: psycopg.Connection) -> None:
+    """Ensure the baseline schema, the ``_MIGRATIONS`` chain, and the CONCURRENTLY-built
+    indexes are all present on ``con``.
+
+    Split out of ``connect()`` because the API server never calls ``connect()`` - it runs a
+    psycopg_pool and used to only apply ``SCHEMA`` at lifespan startup, so a column added by a
+    later migration (e.g. ``observations.elevation_m``, migration 9) never landed on a
+    pre-existing prod table until an out-of-process CLI/cron run happened to call ``connect()``.
+    The server lifespan now calls this instead. ``con`` must be autocommit (CREATE INDEX
+    CONCURRENTLY cannot run in a transaction block)."""
     con.execute(SCHEMA)
     con.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations "
@@ -267,7 +281,6 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     # disruptive side effect for a rolling deploy where an older instance might still be
     # running against it. Drop it manually (`DROP TABLE IF EXISTS taxa;`) once nothing older
     # than this change is running.
-    return con
 
 
 def upsert_fungi_genera(con: psycopg.Connection, rows: Iterable[dict[str, Any]]) -> None:
