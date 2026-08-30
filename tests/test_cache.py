@@ -9,6 +9,7 @@ import pytest
 
 from foray.cache import (
     add_genus,
+    apply_schema,
     delete_observations,
     genus_taxon_ids,
     is_ingested,
@@ -447,4 +448,23 @@ def test_set_observation_elevations_round_trips(con: psycopg.Connection) -> None
     assert set_observation_elevations(con, [(1, 1204), (2, 15)]) == 2
     rows = con.execute("SELECT id, elevation_m FROM observations ORDER BY id").fetchall()
     assert rows == [(1, 1204), (2, 15)]
+    assert observations_missing_elevation(con, 10) == []
+
+
+def test_apply_schema_backfills_a_migration_column_on_a_preexisting_table(con: psycopg.Connection) -> None:
+    # Prod's `observations` table predates migration 9, and the API server applies the schema
+    # itself (never cache.connect()), so apply_schema - not just the CREATE TABLE baseline -
+    # has to run the migration chain (prod Refresh 500: "column elevation_m does not exist").
+    con.execute("ALTER TABLE observations DROP COLUMN elevation_m")
+    con.execute("DELETE FROM schema_migrations WHERE version = 9")
+
+    apply_schema(con)
+
+    cols = {
+        row[0]
+        for row in con.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'observations'"
+        ).fetchall()
+    }
+    assert "elevation_m" in cols
     assert observations_missing_elevation(con, 10) == []

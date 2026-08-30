@@ -46,8 +46,8 @@ from foray.api_models import (
     TrailPath,
     TripPlan,
 )
-from foray.cache import SCHEMA, search_fungi_genera
 from foray.cache import add_genus as db_add_genus
+from foray.cache import apply_schema, search_fungi_genera
 from foray.cache import delete_location as db_delete_location
 from foray.cache import list_selected_genera as db_list_selected_genera
 from foray.cache import load_genera as db_load_genera
@@ -158,7 +158,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         pool.open()
         with pool.connection() as conn:
-            conn.execute(SCHEMA)
+            # Full schema + migration chain, not just the CREATE TABLE baseline - the server
+            # never calls cache.connect(), so this is the only place migrations get applied
+            # in-process (a stale prod column otherwise waits on an out-of-process cron run).
+            apply_schema(conn)
         # `state.cfg.home` is now only ever the env/default home - see resolve_device_id
         # and resolve_home below for per-visitor overrides. Multi-user, no accounts: each browser
         # gets its own anonymous device-id cookie and its own saved home/radius in `app_location`.
