@@ -63,3 +63,18 @@ def con(_pg_session: psycopg.Connection) -> psycopg.Connection:
     _pg_session.execute("DROP TABLE IF EXISTS regions")
     _pg_session.execute(f"TRUNCATE {', '.join(_TABLES)} RESTART IDENTITY CASCADE")
     return _pg_session
+
+
+@pytest.fixture(autouse=True)
+def _no_elevation_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`ingest.backfill_elevations` (issue #36) runs at the end of every ingest and hits
+    Open-Meteo. Block that by default so the suite stays offline; the elevation-specific tests
+    override this locally."""
+    import httpx
+
+    from foray import elevation
+
+    def blocked(*_args: object, **_kwargs: object) -> list[int | None]:
+        raise httpx.ConnectError("network disabled in tests")
+
+    monkeypatch.setattr(elevation, "lookup_batch", blocked)

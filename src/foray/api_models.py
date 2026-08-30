@@ -80,6 +80,9 @@ class RegionScore(BaseModel):
     n_species: int
     recent_count: int
     species: list[SpeciesHit]
+    # Mean ground elevation of the region's observations, metres (issue #36). None until at
+    # least one observation in the region has been elevation-enriched.
+    elevation_m: int | None = None
 
 
 class RegionPlace(BaseModel):

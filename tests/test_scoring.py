@@ -301,6 +301,51 @@ def test_regions_center_falls_back_when_all_obscured(con: psycopg.Connection) ->
     assert row[1] == pytest.approx(lng, abs=1e-6)
 
 
+def test_regions_elevation_is_mean_of_enriched_observations(con: psycopg.Connection) -> None:
+    # issue #36: `regions.elevation_m` is the rounded mean over observations that have an
+    # elevation, ignoring the ones not yet enriched (NULL) rather than dragging the average.
+    taxon_id = 560
+    lat, lng = 44.0, -121.0
+    rows = [(870 + i, taxon_id, lat, lng, dt.date(2022, 6, 1), 6, "research", 10) for i in range(3)]
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            rows,
+        )
+        cur.execute("UPDATE observations SET elevation_m = 1000 WHERE id = 870")
+        cur.execute("UPDATE observations SET elevation_m = 1300 WHERE id = 871")
+        # id 872 stays NULL - not yet enriched
+
+    build_phenology(con, CELL)
+
+    row = con.execute(
+        "SELECT elevation_m FROM regions WHERE region_id ="
+        " CAST(floor(%s / %s) AS INTEGER)::text || '_' || CAST(floor(%s / %s) AS INTEGER)::text",
+        [lat, CELL, lng, CELL],
+    ).fetchone()
+    assert row is not None and row[0] == 1150
+
+
+def test_regions_elevation_is_null_when_no_observation_enriched(con: psycopg.Connection) -> None:
+    lat, lng = 44.0, -121.0
+    with con.cursor() as cur:
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (880, 561, lat, lng, dt.date(2022, 6, 1), 6, "research", 10),
+        )
+
+    build_phenology(con, CELL)
+
+    row = con.execute(
+        "SELECT elevation_m FROM regions WHERE region_id ="
+        " CAST(floor(%s / %s) AS INTEGER)::text || '_' || CAST(floor(%s / %s) AS INTEGER)::text",
+        [lat, CELL, lng, CELL],
+    ).fetchone()
+    assert row is not None and row[0] is None
+
+
 def test_alerts_center_excludes_obscured_decoy(con: psycopg.Connection) -> None:
     taxon_id = 557
     precise_lat, precise_lng = 40.0, -100.0

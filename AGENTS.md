@@ -86,16 +86,20 @@ Guiding principles - keep these in mind for any feature work:
   against cached data. `set_location` does not trigger refresh. A `psycopg_pool.ConnectionPool`
   opened/closed via FastAPI `lifespan`; `refresh` runs in a background thread with SSE progress.
 - `src/foray/cli.py` - Click CLI: `foray ingest | camps | land | dispersed | trails | refresh |
-  revalidate | resync | plan | serve | openapi`. `ingest --all-regions` is what the scheduler
-  runs. `resync --until-done` loops batch after batch until the whole cache is caught up
+  revalidate | resync | backfill-elevation | plan | serve | openapi`. `ingest --all-regions` is
+  what the scheduler runs. `backfill-elevation` fills `observations.elevation_m` for the backlog
+  (ingest enriches new rows inline via Open-Meteo); destination cards show the region's mean. `resync --until-done` loops batch after batch until the whole cache is caught up
   (`make resync ARGS="--until-done --batch-size 20000"`) - a deliberate one-off catch-up run,
   not the small-batch/hourly default the scheduler uses.
 - `scripts/scheduler.sh` - shell loop running observation ingest (all regions), layer refresh,
-  observation revalidation (`foray revalidate`, see `ingest.py`), and the whole-table resync
-  grind (`foray resync --batch-size N`), each on their own N-hour interval. Configurable via
+  observation revalidation (`foray revalidate`, see `ingest.py`), the whole-table resync
+  grind (`foray resync --batch-size N`), and the elevation backfill drain
+  (`foray backfill-elevation --limit N`, issue #36 - Open-Meteo rate-limits a burst so each
+  pass only does a few hundred rows), each on their own N-hour interval. Configurable via
   `FORAY_INGEST_INTERVAL_HOURS` (default 24), `FORAY_LAYERS_INTERVAL_HOURS` (default 168),
   `FORAY_REVALIDATE_INTERVAL_HOURS` (default 168), `FORAY_RESYNC_INTERVAL_HOURS` (default 1),
-  and `FORAY_RESYNC_BATCH_SIZE` (default 2000).
+  `FORAY_RESYNC_BATCH_SIZE` (default 2000), `FORAY_ELEVATION_INTERVAL_HOURS` (default 1), and
+  `FORAY_ELEVATION_LIMIT` (default 1500).
 - `frontend/` - the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern:
   `src/state.ts` (shared `State`, DOM `qs()`/`setStatus()` helpers), `src/map.ts` (Leaflet init,
   theme/tile switching, marker palette, `clear*()` layer helpers), `src/layers.ts` (camps/land/

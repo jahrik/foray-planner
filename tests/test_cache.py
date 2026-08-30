@@ -19,10 +19,12 @@ from foray.cache import (
     mark_revalidated,
     observation_ids_for_genus,
     observation_taxon_ids,
+    observations_missing_elevation,
     record_ingest,
     remove_genus,
     save_region_place,
     search_fungi_genera,
+    set_observation_elevations,
     stale_observation_ids,
     suspect_genus_taxon_ids,
     upsert_campsites,
@@ -412,3 +414,37 @@ def test_save_region_place_keeps_first_result_on_reinsert(con: psycopg.Connectio
     save_region_place(con, "425_-1099", "Something Else")
 
     assert load_region_place(con, "425_-1099") == (True, "Mt. Hood National Forest")
+
+
+def _obs_row(
+    obs_id: int, *, obscured: bool = False, quality_grade: str = "research", lat: float = 47.6, lng: float = -122.3
+) -> tuple:
+    return (obs_id, 111, lat, lng, dt.date(2022, 4, 15), 4, quality_grade, 10, "Seattle, WA", None, obscured)
+
+
+def test_observations_missing_elevation_lists_unenriched_precise_rows(con: psycopg.Connection) -> None:
+    _insert(con, _obs_row(1))
+    _insert(con, _obs_row(2, obscured=True))  # decoy point - skipped
+    _insert(con, _obs_row(3))
+    set_observation_elevations(con, [(3, 800)])  # already enriched - skipped
+    _insert(con, _obs_row(4, quality_grade="needs_id"))  # not research-grade - skipped
+    _insert(con, _obs_row(5, lat=999.0, lng=-122.3))  # out-of-range coords - skipped, would wedge the queue
+
+    assert observations_missing_elevation(con, 10) == [(1, 47.6, -122.3)]
+
+
+def test_observations_missing_elevation_respects_limit(con: psycopg.Connection) -> None:
+    for obs_id in (1, 2, 3):
+        _insert(con, _obs_row(obs_id))
+
+    assert [row[0] for row in observations_missing_elevation(con, 2)] == [1, 2]
+
+
+def test_set_observation_elevations_round_trips(con: psycopg.Connection) -> None:
+    _insert(con, _obs_row(1))
+    _insert(con, _obs_row(2))
+
+    assert set_observation_elevations(con, [(1, 1204), (2, 15)]) == 2
+    rows = con.execute("SELECT id, elevation_m FROM observations ORDER BY id").fetchall()
+    assert rows == [(1, 1204), (2, 15)]
+    assert observations_missing_elevation(con, 10) == []
