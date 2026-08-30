@@ -88,7 +88,8 @@ Guiding principles - keep these in mind for any feature work:
 - `src/foray/cli.py` - Click CLI: `foray ingest | camps | land | dispersed | trails | refresh |
   revalidate | resync | backfill-elevation | plan | serve | openapi`. `ingest --all-regions` is
   what the scheduler runs. `backfill-elevation` fills `observations.elevation_m` for the backlog
-  (ingest enriches new rows inline via Open-Meteo); destination cards show the region's mean. `resync --until-done` loops batch after batch until the whole cache is caught up
+  (ingest enriches new rows inline via Open-Meteo); destination cards show the region's mean.
+  `resync --until-done` loops batch after batch until the whole cache is caught up
   (`make resync ARGS="--until-done --batch-size 20000"`) - a deliberate one-off catch-up run,
   not the small-batch/hourly default the scheduler uses.
 - `scripts/scheduler.sh` - shell loop running observation ingest (all regions), layer refresh,
@@ -223,6 +224,8 @@ make frontend
   NULL (unknown).
 - `observations` includes `place_guess`, `uri`, and `obscured` columns enriched from iNat
   during ingest. Existing rows backfill via ON CONFLICT DO UPDATE with COALESCE on next ingest.
+  `elevation_m` (issue #36) is filled separately, post-ingest, from Open-Meteo's DEM
+  (`ingest.backfill_elevations` / `foray backfill-elevation`) - NULL until looked up.
 - Target genera aren't configured in code - `foray genera-refresh` keeps the full catalog
   synced, `foray ingest` pulls every Fungi observation and resolves each one's own genus from
   its taxon ancestry, and users pick their targets in the search UI (per-device, `app_genera`).
