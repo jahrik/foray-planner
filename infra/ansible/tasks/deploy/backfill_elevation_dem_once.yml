@@ -61,6 +61,15 @@
         volumes:
           - "{{ foray_dem_once_cache_dir }}:/cache"
         command: "python scripts/backfill_elevation_dem.py"
+      register: foray_dem_once_run
+
+    # docker_container with detach:false does not fail the task on a non-zero container exit;
+    # the script exits 1 if any tile failed to fetch (the rest are already written - re-run to
+    # retry the failures).
+    - name: Fail if the backfill container exited non-zero
+      ansible.builtin.fail:
+        msg: "backfill_elevation_dem.py exited {{ foray_dem_once_run.container.State.ExitCode }} - see the container output above; re-run to retry failed tiles."
+      when: foray_dem_once_run.container.State.ExitCode | int != 0
   always:
     - name: Remove the DEM tile cache from the droplet
       ansible.builtin.file:

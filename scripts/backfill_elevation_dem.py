@@ -162,7 +162,9 @@ def main() -> int:
                     continue
                 updates.append((round(value), obs_id))
         if updates and not args.dry_run:
-            with con.cursor() as cur:
+            # con is autocommit (cache.connect), so wrap the per-tile batch in one explicit
+            # transaction - otherwise executemany commits once per row across ~1.8M rows.
+            with con.transaction(), con.cursor() as cur:
                 cur.executemany("UPDATE observations SET elevation_m = %s WHERE id = %s", updates)
         filled += len(updates)
         if filled % 100_000 < len(updates):
@@ -174,7 +176,10 @@ def main() -> int:
         build_phenology(con, Settings().cell_deg)
     remaining = (con.execute(f"SELECT count(*) FROM observations WHERE {ELIGIBLE}").fetchone() or (0,))[0]
     print(f"eligible rows still missing elevation: {remaining:,}")
-    return 0
+    # Non-zero exit if any tile failed to fetch, so the Ansible task (and an operator) sees the
+    # run as incomplete and knows to re-run - the succeeded tiles are already written and a
+    # re-run only retries the failures.
+    return 1 if counts["error"] else 0
 
 
 if __name__ == "__main__":
