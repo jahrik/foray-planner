@@ -1,0 +1,11 @@
+# DL3008 (pin apt package versions) is disabled project-wide.
+#
+# The only apt install in the Dockerfile is libexpat1 - a security-tracked system library that
+# rasterio's bundled GDAL dlopen's (python:slim dropped it). Pinning an exact Debian version
+# there is actively harmful: Debian removes superseded versions from the bookworm mirror when a
+# security update lands, so `libexpat1=<version>` starts 404ing at build time, and a pin also
+# opts the image out of picking up the patched build. Unpinned + `apt-get update` in the same
+# layer is the right call here (and the rasterio maintainer's recommended fix). See
+# https://github.com/hadolint/hadolint/issues/884.
+ignored:
+  - DL3008
