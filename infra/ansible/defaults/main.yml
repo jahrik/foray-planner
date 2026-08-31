@@ -82,6 +82,15 @@ foray_resync_batch_size: "2000"
 foray_elevation_cron_minute: "45"
 foray_elevation_backfill_limit: "20000"
 
+# One-time foray:backfill-elevation-dem-once (clears the whole elevation backlog from local
+# Copernicus GLO-90 tiles instead of Open-Meteo's ~10k/day free tier - see
+# scripts/backfill_elevation_dem.py). The tile cache is a throwaway working set: bind-mounted
+# here, removed after the run unless foray_dem_once_keep_cache is set (useful only to avoid a
+# re-download when retrying a partially failed run).
+foray_dem_once_cache_dir: /opt/foray-planner/dem-cache
+foray_dem_once_min_free_gb: "8"
+foray_dem_once_keep_cache: false
+
 # One-time foray:resync-once catch-up (see TODO.md's rollout plan) - much larger than the
 # recurring cron's batch size since this runs once, synchronously, until the whole table is
 # caught up. Overrideable per droplet size/table growth (Copilot review, PR #185).

@@ -170,6 +170,17 @@
         - "foray:bulk-load-once"
         - never
 
+    - name: Include one-off DEM elevation backfill task
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/backfill_elevation_dem_once.yml
+        apply:
+          tags:
+            - "foray:backfill-elevation-dem-once"
+            - never
+      tags:
+        - "foray:backfill-elevation-dem-once"
+        - never
+
     - name: Include one-off observation resync catch-up task
       ansible.builtin.include_tasks:
         file: tasks/deploy/resync_once.yml
