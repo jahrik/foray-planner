@@ -441,6 +441,33 @@ def test_observations_missing_elevation_respects_limit(con: psycopg.Connection) 
     assert [row[0] for row in observations_missing_elevation(con, 2)] == [1, 2]
 
 
+def test_observations_missing_elevation_near_orders_by_distance(con: psycopg.Connection) -> None:
+    # `near` makes a Refresh drain the cells on screen first, not the oldest-id rows nationwide.
+    _insert(con, _obs_row(1, lat=44.0, lng=-121.0))  # central Oregon - lowest id, ~in box
+    _insert(con, _obs_row(2, lat=47.6, lng=-122.3))  # Seattle - on top of `near`
+    _insert(con, _obs_row(3, lat=45.5, lng=-122.7))  # Portland - between the two
+    _insert(con, _obs_row(4, lat=42.4, lng=-71.1))  # Boston - outside the +-15 deg box
+
+    ordered = [row[0] for row in observations_missing_elevation(con, 10, near=(47.6, -122.3))]
+
+    assert ordered == [2, 3, 1]  # sorted by distance; Boston excluded by the bounding box
+    # Without `near` it's still oldest-id-first, no box (the whole-backlog cron path).
+    assert [row[0] for row in observations_missing_elevation(con, 10)] == [1, 2, 3, 4]
+
+
+def test_observations_missing_elevation_near_handles_the_antimeridian(con: psycopg.Connection) -> None:
+    # A visitor in the western Aleutians: the +-15 deg box wraps past +-180, so the longitude
+    # test has to match both sides of the dateline and the distance sort has to see them as close.
+    _insert(con, _obs_row(1, lat=52.0, lng=179.5))  # just west of the dateline, ~on `near`
+    _insert(con, _obs_row(2, lat=52.0, lng=-179.0))  # just east of it - ~55 km away, must be found
+    _insert(con, _obs_row(3, lat=52.0, lng=170.0))  # ~10 deg west - in box, further
+    _insert(con, _obs_row(4, lat=52.0, lng=-71.1))  # far side of the world - excluded
+
+    ordered = [row[0] for row in observations_missing_elevation(con, 10, near=(52.0, 179.5))]
+
+    assert ordered == [1, 2, 3]  # both dateline sides found; wrapped distance keeps 2 ahead of 3
+
+
 def test_set_observation_elevations_round_trips(con: psycopg.Connection) -> None:
     _insert(con, _obs_row(1))
     _insert(con, _obs_row(2))

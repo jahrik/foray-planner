@@ -141,7 +141,9 @@ def _to_row(obs: dict[str, Any], genus_taxon_id: int) -> tuple[Any, ...] | None:
     )
 
 
-def backfill_elevations(db: psycopg.Connection, *, max_points: int | None = None) -> int:
+def backfill_elevations(
+    db: psycopg.Connection, *, max_points: int | None = None, near: tuple[float, float] | None = None
+) -> int:
     """Enrich observations that have coordinates but no `elevation_m` yet (issue #36), pulling
     ground elevation from Open-Meteo's DEM in batches of `elevation.MAX_BATCH`.
 
@@ -150,14 +152,16 @@ def backfill_elevations(db: psycopg.Connection, *, max_points: int | None = None
     next time rather than raising - callers wire this in after ingest, where it must never fail
     the ingest itself. `max_points` caps the work per call (default: drain everything
     outstanding); the ingest path passes a small cap so a perpetual backlog does not turn every
-    run into a rate-limit round-trip.
+    run into a rate-limit round-trip. `near` (a `(lat, lng)`) prioritises rows closest to that
+    point - the post-ingest top-up passes the visitor's home so a Refresh fills the destination
+    cells on screen, not oldest-id rows nationwide.
     """
     updated = 0
     while max_points is None or updated < max_points:
         limit = elevation.MAX_BATCH
         if max_points is not None:
             limit = min(limit, max_points - updated)
-        pending = observations_missing_elevation(db, limit)
+        pending = observations_missing_elevation(db, limit, near=near)
         if not pending:
             break
         try:
@@ -284,7 +288,7 @@ def ingest(
         len(counts),
         skipped_no_genus,
     )
-    backfill_elevations(db, max_points=_INGEST_ELEVATION_POINTS)
+    backfill_elevations(db, max_points=_INGEST_ELEVATION_POINTS, near=(home.lat, home.lng))
     return counts
 
 

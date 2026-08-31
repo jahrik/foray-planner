@@ -648,14 +648,56 @@ def save_region_place(con: psycopg.Connection, region_id: str, place_name: str |
     )
 
 
-def observations_missing_elevation(con: psycopg.Connection, limit: int) -> list[tuple[int, float, float]]:
+# Half-width of the bounding box `observations_missing_elevation(near=...)` restricts to: ~1600
+# km, comfortably past the home radius and any corridor trip, but small enough that the query
+# range-scans ix_observations_lat_lng instead of sorting the whole backlog.
+_NEAR_WINDOW_DEG = 15.0
+
+
+def observations_missing_elevation(
+    con: psycopg.Connection, limit: int, *, near: tuple[float, float] | None = None
+) -> list[tuple[int, float, float]]:
     """Up to ``limit`` research-grade observations with in-range coordinates but no elevation
     yet (issue #36). Non-research-grade rows are skipped - scoring only ever reads research-grade
     (scoring._BINNED), so enriching the rest would just burn Open-Meteo quota. Obscured rows are
     skipped too - their cached point is iNat's randomized decoy, so its elevation would be
     meaningless. Out-of-range lat/lng is excluded here so one bad row can't sit at the head of
-    the ``ORDER BY id`` queue and wedge the backfill (``elevation.lookup_batch`` would raise on
-    it every run)."""
+    the queue and wedge the backfill (``elevation.lookup_batch`` would raise on it every run).
+
+    ``near`` (a ``(lat, lng)``) restricts the queue to a bounding box around that point and
+    orders it by squared planar distance, so a Refresh drains the cells the visitor is actually
+    looking at first instead of the oldest-id rows scattered nationwide. The box (a) keeps
+    Postgres range-scanning ``ix_observations_lat_lng`` instead of sorting the whole
+    missing-elevation backlog on every call, and (b) is wide enough (`_NEAR_WINDOW_DEG`, ~1600
+    km) to cover the home radius and any plausible corridor trip - rows further out aren't on
+    the visitor's cards anyway, and the whole-backlog drain (the hourly prod cron) passes no
+    ``near`` and stays ``ORDER BY id``. The degree-space distance is a cheap proxy: it only
+    decides ordering within the box, and iNat fungal data is effectively all mid-latitude. A box
+    that straddles the antimeridian is split into its two wrapped longitude ranges."""
+    box_sql: LiteralString = ""
+    box_params: list[float] = []
+    if near is not None:
+        plat, plng = near
+        lo_lng, hi_lng = plng - _NEAR_WINDOW_DEG, plng + _NEAR_WINDOW_DEG
+        box_params = [plat - _NEAR_WINDOW_DEG, plat + _NEAR_WINDOW_DEG]
+        if lo_lng < -180.0 or hi_lng > 180.0:
+            # The box straddles the antimeridian (a visitor in the western Aleutians). Split the
+            # longitude test into its two wrapped ranges so Postgres still range-scans
+            # ix_observations_lat_lng instead of matching nothing on the out-of-range bound.
+            box_sql = " AND lat BETWEEN %s AND %s AND (lng BETWEEN %s AND 180 OR lng BETWEEN -180 AND %s) "
+            box_params += [(lo_lng + 180.0) % 360.0 - 180.0, (hi_lng + 180.0) % 360.0 - 180.0]
+        else:
+            box_sql = " AND lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s "
+            box_params += [lo_lng, hi_lng]
+        # Wrap the longitude delta too, so a point just across the dateline sorts as near, not
+        # ~360 deg away.
+        order_sql: LiteralString = (
+            "ORDER BY (lat - %s) * (lat - %s) + power(LEAST(ABS(lng - %s), 360.0 - ABS(lng - %s)), 2)"
+        )
+        order_params: list[float] = [plat, plat, plng, plng]
+    else:
+        order_sql = "ORDER BY id"
+        order_params = []
     rows = con.execute(
         """
         SELECT id, lat, lng FROM observations
@@ -663,10 +705,11 @@ def observations_missing_elevation(con: psycopg.Connection, limit: int) -> list[
               AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180
               AND quality_grade = 'research'
               AND NOT COALESCE(obscured, false)
-        ORDER BY id
-        LIMIT %s
-        """,
-        [limit],
+        """
+        + box_sql
+        + order_sql
+        + " LIMIT %s",
+        [*box_params, *order_params, limit],
     ).fetchall()
     return [(int(obs_id), float(lat), float(lng)) for obs_id, lat, lng in rows]
 
