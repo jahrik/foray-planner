@@ -648,6 +648,12 @@ def save_region_place(con: psycopg.Connection, region_id: str, place_name: str |
     )
 
 
+# Half-width of the bounding box `observations_missing_elevation(near=...)` restricts to: ~1600
+# km, comfortably past the home radius and any corridor trip, but small enough that the query
+# range-scans ix_observations_lat_lng instead of sorting the whole backlog.
+_NEAR_WINDOW_DEG = 15.0
+
+
 def observations_missing_elevation(
     con: psycopg.Connection, limit: int, *, near: tuple[float, float] | None = None
 ) -> list[tuple[int, float, float]]:
@@ -658,15 +664,28 @@ def observations_missing_elevation(
     meaningless. Out-of-range lat/lng is excluded here so one bad row can't sit at the head of
     the queue and wedge the backfill (``elevation.lookup_batch`` would raise on it every run).
 
-    ``near`` (a ``(lat, lng)``) orders the queue by squared planar distance from that point, so
-    a Refresh drains the cells the visitor is actually looking at first instead of the
-    oldest-id rows scattered nationwide (the whole-backlog drain - the hourly prod cron - passes
-    no ``near`` and stays ``ORDER BY id``). A cheap degree-space proxy is fine here: this only
-    decides ordering, not distance itself, and near the poles is irrelevant (iNat fungal data is
-    effectively all mid-latitude)."""
+    ``near`` (a ``(lat, lng)``) restricts the queue to a bounding box around that point and
+    orders it by squared planar distance, so a Refresh drains the cells the visitor is actually
+    looking at first instead of the oldest-id rows scattered nationwide. The box (a) keeps
+    Postgres range-scanning ``ix_observations_lat_lng`` instead of sorting the whole
+    missing-elevation backlog on every call, and (b) is wide enough (`_NEAR_WINDOW_DEG`, ~1600
+    km) to cover the home radius and any plausible corridor trip - rows further out aren't on
+    the visitor's cards anyway, and the whole-backlog drain (the hourly prod cron) passes no
+    ``near`` and stays ``ORDER BY id``. The degree-space distance is a cheap proxy: it only
+    decides ordering within the box, and iNat fungal data is effectively all mid-latitude."""
+    box_sql: LiteralString = ""
+    box_params: list[float] = []
     if near is not None:
+        plat, plng = near
+        box_sql = " AND lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s "
+        box_params = [
+            plat - _NEAR_WINDOW_DEG,
+            plat + _NEAR_WINDOW_DEG,
+            plng - _NEAR_WINDOW_DEG,
+            plng + _NEAR_WINDOW_DEG,
+        ]
         order_sql: LiteralString = "ORDER BY (lat - %s) * (lat - %s) + (lng - %s) * (lng - %s)"
-        order_params: list[float] = [near[0], near[0], near[1], near[1]]
+        order_params: list[float] = [plat, plat, plng, plng]
     else:
         order_sql = "ORDER BY id"
         order_params = []
@@ -678,9 +697,10 @@ def observations_missing_elevation(
               AND quality_grade = 'research'
               AND NOT COALESCE(obscured, false)
         """
+        + box_sql
         + order_sql
         + " LIMIT %s",
-        [*order_params, limit],
+        [*box_params, *order_params, limit],
     ).fetchall()
     return [(int(obs_id), float(lat), float(lng)) for obs_id, lat, lng in rows]
 
