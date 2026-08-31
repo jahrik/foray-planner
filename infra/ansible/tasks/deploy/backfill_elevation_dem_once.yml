@@ -35,9 +35,12 @@
   ansible.builtin.file:
     path: "{{ foray_dem_once_cache_dir }}"
     state: directory
-    # World-writable: the app container runs as the non-root `foray` user (uid 1000, see
-    # Dockerfile) and writes tiles into this bind mount from outside its own uid namespace.
-    mode: "0777"
+    # Owned by the container's `foray` uid (1000, see Dockerfile) so it can write tiles into
+    # this bind mount - no world-writable bit needed. The host has no uid-1000 user; the
+    # numeric id is fine.
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
 
 - name: Run one-off DEM elevation backfill and clean up the tile cache afterwards
   block:

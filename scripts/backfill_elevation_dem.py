@@ -45,9 +45,13 @@ DOWNLOAD_TIMEOUT_S = 180.0
 
 # Only research-grade, unobscured, in-range rows - the same filter scoring reads (obscured
 # points carry iNat's randomized decoy coordinate, so their elevation would be meaningless).
+# The lat/lng bounds are half-open to match the tile grid: a 1x1 degree tile is keyed on its
+# south-west corner over [-90, 90) x [-180, 180), so lat=90 / lng=180 would name a tile
+# (N90 / E180) the mirror does not publish. Any such extreme-boundary row is left for the
+# Open-Meteo backfill path.
 ELIGIBLE = (
     "elevation_m IS NULL AND quality_grade = 'research' AND NOT COALESCE(obscured, false) "
-    "AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180"
+    "AND lat >= -90 AND lat < 90 AND lng >= -180 AND lng < 180"
 )
 
 
@@ -74,17 +78,22 @@ def fetch_tile(cache: Path, tid: str) -> tuple[str, str]:
         return tid, "cached"
     if (cache / f"{tid}.missing").exists():
         return tid, "ocean"
-    try:
-        resp = httpx.get(f"{TILE_BUCKET}/{tid}/{tid}.tif", timeout=DOWNLOAD_TIMEOUT_S, follow_redirects=True)
-    except httpx.HTTPError as error:
-        return tid, f"error: {error}"
-    if resp.status_code == 404:
-        (cache / f"{tid}.missing").touch()
-        return tid, "ocean"
-    if resp.status_code != 200:
-        return tid, f"http {resp.status_code}"
     tmp = tif.with_suffix(".part")
-    tmp.write_bytes(resp.content)
+    try:
+        with httpx.stream(
+            "GET", f"{TILE_BUCKET}/{tid}/{tid}.tif", timeout=DOWNLOAD_TIMEOUT_S, follow_redirects=True
+        ) as resp:
+            if resp.status_code == 404:
+                (cache / f"{tid}.missing").touch()
+                return tid, "ocean"
+            if resp.status_code != 200:
+                return tid, f"http {resp.status_code}"
+            with tmp.open("wb") as handle:
+                for chunk in resp.iter_bytes():
+                    handle.write(chunk)
+    except httpx.HTTPError as error:
+        tmp.unlink(missing_ok=True)
+        return tid, f"error: {error}"
     tmp.replace(tif)
     return tid, "downloaded"
 
