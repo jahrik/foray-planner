@@ -672,19 +672,28 @@ def observations_missing_elevation(
     km) to cover the home radius and any plausible corridor trip - rows further out aren't on
     the visitor's cards anyway, and the whole-backlog drain (the hourly prod cron) passes no
     ``near`` and stays ``ORDER BY id``. The degree-space distance is a cheap proxy: it only
-    decides ordering within the box, and iNat fungal data is effectively all mid-latitude."""
+    decides ordering within the box, and iNat fungal data is effectively all mid-latitude. A box
+    that straddles the antimeridian is split into its two wrapped longitude ranges."""
     box_sql: LiteralString = ""
     box_params: list[float] = []
     if near is not None:
         plat, plng = near
-        box_sql = " AND lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s "
-        box_params = [
-            plat - _NEAR_WINDOW_DEG,
-            plat + _NEAR_WINDOW_DEG,
-            plng - _NEAR_WINDOW_DEG,
-            plng + _NEAR_WINDOW_DEG,
-        ]
-        order_sql: LiteralString = "ORDER BY (lat - %s) * (lat - %s) + (lng - %s) * (lng - %s)"
+        lo_lng, hi_lng = plng - _NEAR_WINDOW_DEG, plng + _NEAR_WINDOW_DEG
+        box_params = [plat - _NEAR_WINDOW_DEG, plat + _NEAR_WINDOW_DEG]
+        if lo_lng < -180.0 or hi_lng > 180.0:
+            # The box straddles the antimeridian (a visitor in the western Aleutians). Split the
+            # longitude test into its two wrapped ranges so Postgres still range-scans
+            # ix_observations_lat_lng instead of matching nothing on the out-of-range bound.
+            box_sql = " AND lat BETWEEN %s AND %s AND (lng BETWEEN %s AND 180 OR lng BETWEEN -180 AND %s) "
+            box_params += [(lo_lng + 180.0) % 360.0 - 180.0, (hi_lng + 180.0) % 360.0 - 180.0]
+        else:
+            box_sql = " AND lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s "
+            box_params += [lo_lng, hi_lng]
+        # Wrap the longitude delta too, so a point just across the dateline sorts as near, not
+        # ~360 deg away.
+        order_sql: LiteralString = (
+            "ORDER BY (lat - %s) * (lat - %s) + power(LEAST(ABS(lng - %s), 360.0 - ABS(lng - %s)), 2)"
+        )
         order_params: list[float] = [plat, plat, plng, plng]
     else:
         order_sql = "ORDER BY id"
