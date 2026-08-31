@@ -1,7 +1,8 @@
 .PHONY: db psql install lint test check frontend check-api-schema lock patch start restart stop scheduler clean \
 	ingest genera-refresh revalidate resync bulk-download bulk-filter bulk-load \
 	ansible-install ansible-lint ansible-deploy ansible-provision ansible-ingest-once \
-	ansible-genera-once ansible-bulk-load-once ansible-cron ansible-resync-once
+	ansible-genera-once ansible-bulk-load-once ansible-cron ansible-resync-once \
+	ansible-backfill-elevation-dem-once
 
 NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
 export PATH := $(NODE_BIN):$(PATH)
@@ -193,6 +194,15 @@ ansible-ingest-once:
 ansible-bulk-load-once:
 	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
 	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:bulk-load-once \
+		-i inventory/hosts.yml \
+		-e foray_droplet_ip=$$FORAY_DROPLET_IP
+
+# One-time: clear the whole per-observation elevation backlog by sampling local Copernicus
+# GLO-90 tiles on the droplet, instead of trickling through Open-Meteo's ~10k/day free tier
+# for ~200 days. Downloads ~5GB of tiles to the droplet, samples, then removes them.
+ansible-backfill-elevation-dem-once:
+	@test -n "$$FORAY_DROPLET_IP" || (echo "ERROR: FORAY_DROPLET_IP not set" && exit 1)
+	cd $(ANSIBLE_DIR) && uv run ansible-playbook site.yml --tags foray:backfill-elevation-dem-once \
 		-i inventory/hosts.yml \
 		-e foray_droplet_ip=$$FORAY_DROPLET_IP
 

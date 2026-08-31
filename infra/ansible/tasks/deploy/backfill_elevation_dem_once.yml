@@ -1,0 +1,62 @@
+---
+# Manual/opt-in only - not part of foray:deploy. The hourly foray-backfill-elevation cron
+# (tasks/deploy/cron.yml) drains the per-observation elevation backlog through Open-Meteo's
+# free API, but that tier caps at ~10k points/day - a multi-million-row backlog is ~200 days
+# of trickle. This runs scripts/backfill_elevation_dem.py once instead: it samples the same
+# Copernicus GLO-90 DEM from 1x1 degree tiles pulled onto the droplet, clearing the whole
+# backlog in one pass (minutes of CPU once the ~5 GB of tiles are down). The tile cache is a
+# throwaway working set - removed afterwards even if the run fails.
+- name: Check for the deploy-rendered env file
+  ansible.builtin.stat:
+    path: /opt/foray-planner/foray.env
+  register: foray_dem_once_env_stat
+
+- name: Fail fast if this droplet has never been deployed to
+  ansible.builtin.fail:
+    msg: >-
+      /opt/foray-planner/foray.env not found - run `make ansible-deploy` at least once on
+      this droplet first (foray:backfill-elevation-dem-once depends on the env file it renders).
+  when: not foray_dem_once_env_stat.stat.exists
+
+- name: Check free disk space for the DEM tile cache
+  ansible.builtin.set_fact:
+    foray_dem_once_free_gb: >-
+      {{ (ansible_mounts | selectattr('mount', 'equalto', '/') | first).size_available
+         / (1024 * 1024 * 1024) }}
+
+- name: Fail fast if the droplet does not have room for the tile cache
+  ansible.builtin.fail:
+    msg: >-
+      Only {{ foray_dem_once_free_gb | float | round(1) }} GB free on / - the DEM tile cache
+      needs ~{{ foray_dem_once_min_free_gb }} GB. Free space or resize the droplet first.
+  when: foray_dem_once_free_gb | float < foray_dem_once_min_free_gb | float
+
+- name: Ensure the DEM tile cache directory exists
+  ansible.builtin.file:
+    path: "{{ foray_dem_once_cache_dir }}"
+    state: directory
+    # World-writable: the app container runs as the non-root `foray` user (uid 1000, see
+    # Dockerfile) and writes tiles into this bind mount from outside its own uid namespace.
+    mode: "0777"
+
+- name: Run one-off DEM elevation backfill and clean up the tile cache afterwards
+  block:
+    - name: Run one-off DEM elevation backfill
+      community.docker.docker_container:
+        name: foray-backfill-elevation-dem-once
+        image: "{{ foray_app_image }}"
+        state: started
+        detach: false
+        cleanup: true
+        env_file: /opt/foray-planner/foray.env
+        env:
+          FORAY_DEM_CACHE: /cache
+        volumes:
+          - "{{ foray_dem_once_cache_dir }}:/cache"
+        command: "python scripts/backfill_elevation_dem.py"
+  always:
+    - name: Remove the DEM tile cache from the droplet
+      ansible.builtin.file:
+        path: "{{ foray_dem_once_cache_dir }}"
+        state: absent
+      when: not (foray_dem_once_keep_cache | bool)

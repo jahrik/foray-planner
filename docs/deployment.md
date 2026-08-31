@@ -104,6 +104,13 @@ DEM; each run enriches as many rows as the free tier allows before it rate-limit
 (`lookup_batch` backs off on `Retry-After` first). Schedules are Ansible vars
 (`foray_*_cron_*` in `infra/ansible/defaults/main.yml`).
 
+Open-Meteo's free tier caps at ~10k points/day, so a fresh multi-million-row backlog would
+take ~200 days to clear at that pace. To clear it in one pass instead, run
+`make ansible-backfill-elevation-dem-once` (tag `foray:backfill-elevation-dem-once`): it
+downloads ~5 GB of Copernicus GLO-90 tiles onto the droplet, samples the same DEM locally for
+every outstanding row, rebuilds phenology, then removes the tiles. The hourly cron then only
+has the trickle of new observations to keep up with. See `scripts/backfill_elevation_dem.py`.
+
 **Option B - UI Refresh button**
 
 The "Refresh data" button in the UI triggers an in-process refresh for the current home radius.
@@ -197,6 +204,7 @@ make ansible-deploy
 | `foray:deploy` | Pull image, restart container |
 | `foray:cron` | Update cron schedules |
 | `foray:ingest-once` | Manual/opt-in full data ingest (`make ansible-ingest-once`) - not part of `foray:deploy` or the `foray` umbrella; the daily `foray-ingest` cron job already keeps data fresh, so this only exists for warming a fresh droplet's data immediately instead of waiting for the next cron run. **Run this only after the first `foray:deploy`** - it depends on the env file that deploy renders (`/opt/foray-planner/foray.env`) and fails fast with a clear message if that hasn't happened yet. |
+| `foray:backfill-elevation-dem-once` | Manual/opt-in one-pass elevation backfill (`make ansible-backfill-elevation-dem-once`) - samples local Copernicus GLO-90 tiles on the droplet to clear the whole elevation backlog at once, instead of the hourly `foray-backfill-elevation` cron trickling through Open-Meteo's ~10k/day free tier. Downloads ~5 GB of tiles, then removes them. Same env-file dependency and fail-fast as `foray:ingest-once`, plus a free-disk precheck. |
 | `foray:firewall-allow-runner` / `foray:firewall-revoke-runner` | CI-internal only - adds/removes the GitHub Actions runner's own IP from the live SSH firewall rule around an automated `foray:deploy` run (see below). Not something an operator runs directly. |
 
 ---
