@@ -18,13 +18,17 @@
       this droplet first (foray:backfill-elevation-dem-once depends on the env file it renders).
   when: not foray_dem_once_env_stat.stat.exists
 
+# df rather than ansible_mounts: site.yml runs this play with gather_facts: false, so the
+# fact isn't populated.
 - name: Check free disk space for the DEM tile cache
-  ansible.builtin.set_fact:
-    foray_dem_once_free_gb: >-
-      {{ (ansible_mounts | selectattr('mount', 'equalto', '/') | first).size_available
-         / (1024 * 1024 * 1024) }}
+  ansible.builtin.command:
+    cmd: df -B1 --output=avail /
+  register: foray_dem_once_df
+  changed_when: false
 
 - name: Fail fast if the droplet does not have room for the tile cache
+  vars:
+    foray_dem_once_free_gb: "{{ (foray_dem_once_df.stdout_lines[1] | trim | int) / (1024**3) }}"
   ansible.builtin.fail:
     msg: >-
       Only {{ foray_dem_once_free_gb | float | round(1) }} GB free on / - the DEM tile cache
