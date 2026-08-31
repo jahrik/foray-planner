@@ -648,14 +648,28 @@ def save_region_place(con: psycopg.Connection, region_id: str, place_name: str |
     )
 
 
-def observations_missing_elevation(con: psycopg.Connection, limit: int) -> list[tuple[int, float, float]]:
+def observations_missing_elevation(
+    con: psycopg.Connection, limit: int, *, near: tuple[float, float] | None = None
+) -> list[tuple[int, float, float]]:
     """Up to ``limit`` research-grade observations with in-range coordinates but no elevation
     yet (issue #36). Non-research-grade rows are skipped - scoring only ever reads research-grade
     (scoring._BINNED), so enriching the rest would just burn Open-Meteo quota. Obscured rows are
     skipped too - their cached point is iNat's randomized decoy, so its elevation would be
     meaningless. Out-of-range lat/lng is excluded here so one bad row can't sit at the head of
-    the ``ORDER BY id`` queue and wedge the backfill (``elevation.lookup_batch`` would raise on
-    it every run)."""
+    the queue and wedge the backfill (``elevation.lookup_batch`` would raise on it every run).
+
+    ``near`` (a ``(lat, lng)``) orders the queue by squared planar distance from that point, so
+    a Refresh drains the cells the visitor is actually looking at first instead of the
+    oldest-id rows scattered nationwide (the whole-backlog drain - the hourly prod cron - passes
+    no ``near`` and stays ``ORDER BY id``). A cheap degree-space proxy is fine here: this only
+    decides ordering, not distance itself, and near the poles is irrelevant (iNat fungal data is
+    effectively all mid-latitude)."""
+    if near is not None:
+        order_sql: LiteralString = "ORDER BY (lat - %s) * (lat - %s) + (lng - %s) * (lng - %s)"
+        order_params: list[float] = [near[0], near[0], near[1], near[1]]
+    else:
+        order_sql = "ORDER BY id"
+        order_params = []
     rows = con.execute(
         """
         SELECT id, lat, lng FROM observations
@@ -663,10 +677,10 @@ def observations_missing_elevation(con: psycopg.Connection, limit: int) -> list[
               AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180
               AND quality_grade = 'research'
               AND NOT COALESCE(obscured, false)
-        ORDER BY id
-        LIMIT %s
-        """,
-        [limit],
+        """
+        + order_sql
+        + " LIMIT %s",
+        [*order_params, limit],
     ).fetchall()
     return [(int(obs_id), float(lat), float(lng)) for obs_id, lat, lng in rows]
 

@@ -441,6 +441,19 @@ def test_observations_missing_elevation_respects_limit(con: psycopg.Connection) 
     assert [row[0] for row in observations_missing_elevation(con, 2)] == [1, 2]
 
 
+def test_observations_missing_elevation_near_orders_by_distance(con: psycopg.Connection) -> None:
+    # `near` makes a Refresh drain the cells on screen first, not the oldest-id rows nationwide.
+    _insert(con, _obs_row(1, lat=40.0, lng=-105.0))  # Colorado - lowest id, far
+    _insert(con, _obs_row(2, lat=47.6, lng=-122.3))  # Seattle - on top of `near`
+    _insert(con, _obs_row(3, lat=45.5, lng=-122.7))  # Portland - closer than CO
+
+    ordered = [row[0] for row in observations_missing_elevation(con, 10, near=(47.6, -122.3))]
+
+    assert ordered == [2, 3, 1]
+    # Without `near` it's still oldest-id-first (the whole-backlog cron path).
+    assert [row[0] for row in observations_missing_elevation(con, 10)] == [1, 2, 3]
+
+
 def test_set_observation_elevations_round_trips(con: psycopg.Connection) -> None:
     _insert(con, _obs_row(1))
     _insert(con, _obs_row(2))
