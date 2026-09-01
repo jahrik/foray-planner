@@ -159,6 +159,13 @@ progress::-moz-progress-bar { background: var(--accent2); border-radius: 5px; }
 .tabs button:hover { color: var(--ink); background: var(--border); }
 .tabs button.active { color: var(--ink); background: var(--panel); border-bottom-color: var(--accent2); }
 
+/* #sheet is a passthrough wrapper on desktop (see index.html): its children (.tabs,
+   .contour-rule) lay out as direct body children exactly as before, and #panel stays in the
+   <main> grid. sheet.ts promotes it to a real fixed, draggable element at the mobile
+   breakpoint (issue #229) and moves #panel inside it. */
+#sheet { display: contents; }
+.sheet-handle, .sheet-summary { display: none; }
+
 
 /* main claims whatever vertical space header/controls/tabs don't use, instead of a hardcoded
    "100vh minus a magic number" that broke whenever the header's height changed. */
@@ -312,29 +319,59 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
      stays light-on-dark-green (light theme) and dark-on-light-green (dark theme) in both cases,
      landing above 6:1 either way. */
   .tabs button.active { background: var(--accent2); color: var(--panel); border-bottom-color: transparent; }
-  /* The map is a fixed-height reference card, not the main event - the destination list below
-     it is the actual payoff, so it gets the majority of the screen instead of being capped to
-     a strip under a map that used to claim whatever space was left. */
+  /* Map-first: #map fills the screen; the destinations list rides over its lower portion in a
+     draggable bottom sheet (issue #229), the way Google/Apple Maps do it. */
   .map-wrap {
-    flex: 0 0 34vh; height: 34vh; min-height: 0;
-    margin: 0 10px; border-radius: 16px; overflow: hidden; border: 1px solid var(--border);
+    flex: 1; min-height: 0; position: relative;
+    margin: 0; border: none; border-radius: 0; overflow: hidden;
   }
   #map { flex: 1; min-height: 0; }
-  /* Tucks up under the map card's rounded bottom corners just enough to merge the seam - the
-     card's last flex child is the legend strip, so the overlap has to stay smaller than the
-     legend's height or it visually eats the legend text instead of just the rounded corner. */
-  #panel {
-    flex: 1; min-height: 0; overflow-y: auto;
-    margin-top: -8px; position: relative; z-index: 1;
-    border-left: none; border-top: none; border-radius: 16px 16px 0 0;
+  /* Float the legend just above the collapsed sheet's peek instead of below it (off-screen). */
+  body[data-sheet="on"] #legend {
+    position: absolute; left: 0; right: 0; bottom: calc(18dvh + 22px); z-index: 900;
+    border-top: none;
   }
-  /* A ::before pseudo-element survives #panel's innerHTML being replaced on every tab/view
-     render (unlike a real child node would), so it's a reliable place for a static "this is a
-     sheet" affordance without wiring it into every render call. */
-  #panel::before {
-    content: ""; display: block; width: 36px; height: 4px; border-radius: 2px;
-    background: var(--border); margin: 8px auto 4px;
+
+  /* ── Bottom sheet ── sheet.ts sets the per-detent translateY inline and toggles
+     [data-detent]; these rules are the resting look. 100dvh so it tracks the mobile URL bar
+     show/hide (see the note by .map-wrap near line 164) instead of being clipped. */
+  body[data-sheet="on"] #sheet {
+    position: fixed; left: 0; right: 0; top: 0; height: 100dvh;
+    z-index: 1100; /* above Leaflet panes/controls (<=1000); #load-bar (2000) stays on top */
+    display: flex; flex-direction: column;
+    background: var(--panel);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.35);
+    transform: translateY(82dvh); /* pre-JS fallback; sheet.ts sets the live px value */
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    touch-action: none; /* the sheet owns vertical drags; #panel re-enables pan-y below */
   }
+  body[data-sheet="on"] .sheet-handle {
+    display: block; flex: 0 0 auto; width: 100%; min-height: 28px;
+    padding: 10px 0 6px; border: none; background: none; cursor: grab;
+    touch-action: none;
+  }
+  body[data-sheet="on"] .sheet-handle::before {
+    content: ""; display: block; width: 40px; height: 5px; border-radius: 3px;
+    background: var(--border); margin: 0 auto;
+  }
+  body[data-sheet="on"] .tabs { flex: 0 0 auto; margin: 0 10px 6px; touch-action: none; }
+  body[data-sheet="on"] .sheet-summary {
+    display: block; flex: 0 0 auto; margin: 0 12px 6px;
+    font-size: 12px; color: var(--muted); touch-action: none;
+  }
+  body[data-sheet="on"] .contour-rule { display: none; }
+  body[data-sheet="on"] #panel {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    margin: 0; padding: 4px 14px 28px;
+    border: none; border-radius: 0;
+    touch-action: pan-y; overscroll-behavior: contain;
+  }
+  body[data-sheet="on"] #panel::before { content: none; } /* real handle replaces the old cosmetic one */
+
+  /* Lift the OSM attribution (bottom-right) clear of the collapsed sheet's peek so it stays
+     visible. The zoom control sits top-left and is never covered at the collapsed detent. */
+  body[data-sheet="on"] .leaflet-bottom.leaflet-right { bottom: 18dvh; }
   /* flex-wrap left a lone "Dec" orphaned on its own row once 12 buttons stopped fitting one
      line - a grid divides the same 12 into two even rows of 6 instead. */
   .months { display: grid; grid-template-columns: repeat(6, 1fr); }
@@ -343,6 +380,12 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
   .months button, .radius-presets button, .toggle-btn span, .filters-toggle {
     min-height: 40px; display: inline-flex; align-items: center; justify-content: center;
   }
+}
+
+/* Reduced motion: the sheet jumps between detents instead of tweening (sheet.ts still snaps
+   to the same detent, just with no animated transition). */
+@media (max-width: 780px) and (prefers-reduced-motion: reduce) {
+  body[data-sheet="on"] #sheet { transition: none; }
 }
 
 /* ── Plan route ── */
