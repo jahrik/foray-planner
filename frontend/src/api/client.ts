@@ -36,7 +36,9 @@ function httpError(response: Response): ApiError {
 
 export async function getJson<Path extends PathsWithMethod<paths, "get">>(
   path: Path,
-  ...params: RequiredKeysOf<OpParams<GetOp<Path>>> extends never ? [OpParams<GetOp<Path>>?] : [OpParams<GetOp<Path>>]
+  ...params: RequiredKeysOf<OpParams<GetOp<Path>>> extends never
+    ? [OpParams<GetOp<Path>>?]
+    : [OpParams<GetOp<Path>>]
 ): Promise<SuccessBody<GetOp<Path>>> {
   const { data, error, response } = await withLoading(() =>
     client.GET(path, (params[0] ? { params: params[0] } : undefined) as never),

@@ -114,7 +114,7 @@ function initTheme(): void {
     toggle.textContent = theme === "dark" ? "🌙" : "☀️";
     toggle.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
     toggle.setAttribute("aria-pressed", String(theme === "dark"));
-    setTiles(theme); // no-op until the map exists; initMap lays the first tiles
+    setTiles(); // no-op until the map exists; initMap lays the first tiles
   };
   apply(currentTheme()); // the inline <head> script already set the attribute (default dark)
   toggle.onclick = () => {
@@ -325,27 +325,29 @@ function geolocateHome(): Promise<Home | null> {
 }
 
 function initRadiusPresets(): void {
-  qs("#radius-presets").querySelectorAll<HTMLButtonElement>("button[data-km]").forEach((button) => {
-    button.onclick = async () => {
-      if (!state.home) return;
-      const radius_km = Number(button.dataset.km);
-      let response: { home: Home };
-      try {
-        response = await postJson("/api/location", {
-          lat: state.home.lat,
-          lng: state.home.lng,
-          name: state.home.name,
-          radius_km,
-        });
-      } catch (error) {
-        setStatus(errorDetail(error));
-        return;
-      }
-      updateHome(response.home);
-      loadLand();
-      refreshCurrentView();
-    };
-  });
+  qs("#radius-presets")
+    .querySelectorAll<HTMLButtonElement>("button[data-km]")
+    .forEach((button) => {
+      button.onclick = async () => {
+        if (!state.home) return;
+        const radius_km = Number(button.dataset.km);
+        let response: { home: Home };
+        try {
+          response = await postJson("/api/location", {
+            lat: state.home.lat,
+            lng: state.home.lng,
+            name: state.home.name,
+            radius_km,
+          });
+        } catch (error) {
+          setStatus(errorDetail(error));
+          return;
+        }
+        updateHome(response.home);
+        loadLand();
+        refreshCurrentView();
+      };
+    });
 }
 
 main();

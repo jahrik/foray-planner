@@ -31,7 +31,11 @@ async function fetchSuggestions(query: string): Promise<NominatimResult[] | null
   }
 }
 
-function renderSuggestions(results: NominatimResult[], list: HTMLUListElement, onSelect: (query: string) => void): void {
+function renderSuggestions(
+  results: NominatimResult[],
+  list: HTMLUListElement,
+  onSelect: (query: string) => void,
+): void {
   list.innerHTML = "";
   activeIndex = -1;
   if (!results.length) {
@@ -51,7 +55,11 @@ function renderSuggestions(results: NominatimResult[], list: HTMLUListElement, o
   list.classList.add("open");
 }
 
-function selectResult(result: NominatimResult, list: HTMLUListElement, onSelect: (query: string) => void): void {
+function selectResult(
+  result: NominatimResult,
+  list: HTMLUListElement,
+  onSelect: (query: string) => void,
+): void {
   list.classList.remove("open");
   onSelect(`${result.lat}, ${result.lon}`);
 }

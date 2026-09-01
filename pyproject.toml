@@ -15,6 +15,11 @@ dependencies = [
     "pydantic-settings>=2.15.0,<3.0",
     "click>=8.1,<9.0",
     "httpx>=0.27,<1.0",
+    # inat.py imports requests.exceptions and pyrate_limiter.exceptions directly (to catch
+    # and re-raise them as typed errors); pin them explicitly rather than relying on
+    # pyinaturalist to keep pulling them in.
+    "requests>=2.32,<3.0",
+    "pyrate-limiter>=2.10,<3.0",
     "tqdm>=4.70.0,<5.0",
     "rasterio>=1.4,<2.0",
 ]
@@ -30,8 +35,10 @@ build-backend = "hatchling.build"
 dev = [
     "pre-commit>=4.6.2,<5.0",
     "pytest>=8.3,<10.0",
+    "pytest-cov>=6.0,<8.0",
     "ruff>=0.16.4,<1.0",
     "ty>=0.0.74,<1.0",
+    "vulture>=2.14,<3.0",
 ]
 
 [tool.ruff]
@@ -39,9 +46,25 @@ line-length = 120
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+# E/F/I/UP/B/SIM/C4 as before, plus:
+#   RUF  - Ruff-native rules (unused noqa, mutable defaults, implicit optional, ...)
+#   PERF - obvious performance anti-patterns (try/except in loop, list() of comprehension)
+#   PIE  - small idiom cleanups (unnecessary pass, dict-literal spread, ...)
+#   PTH  - prefer pathlib over os.path
+# ARG (unused arguments) deliberately left out: too many deliberate callback / test-stub /
+# FastAPI-dependency signatures to be worth the per-line noqa churn.
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF", "PERF", "PIE", "PTH"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# --cov-fail-under is a ratchet-only floor set a few points below the current number (~83%);
+# raise it as coverage improves, never lower it.
+addopts = "-q --cov=foray --cov-report=term-missing:skip-covered --cov-fail-under=78"
 pythonpath = ["."]
+
+[tool.coverage.run]
+branch = true
+source = ["src/foray"]
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]

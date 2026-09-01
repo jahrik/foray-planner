@@ -26,7 +26,7 @@ import httpx
 import psycopg
 
 from foray.cache import connect, is_area_covered, record_ingest, upsert_campsites
-from foray.config import Config
+from foray.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ def fetch_reported_campsites(
 
 
 def ingest_dispersed(
-    cfg: Config,
+    cfg: Settings,
     con: psycopg.Connection | None = None,
     *,
     client: httpx.Client | None = None,

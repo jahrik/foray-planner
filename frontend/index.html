@@ -16,12 +16,7 @@
       <h1>🍄 Foray Planner</h1>
       <div class="locbar" id="locform-wrap">
         <form id="locform" autocomplete="off">
-          <input
-            id="loc"
-            type="text"
-            placeholder="Search location…"
-            autocomplete="off"
-          />
+          <input id="loc" type="text" placeholder="Search location…" autocomplete="off" />
           <ul id="loc-suggestions" class="loc-suggestions"></ul>
         </form>
         <span class="loc-current" id="home-line">
@@ -31,15 +26,36 @@
       </div>
       <div class="header-actions">
         <div class="help-wrap">
-          <button type="button" id="help-toggle" class="theme-toggle" aria-label="Help" aria-expanded="false" aria-controls="help-popover">?</button>
+          <button
+            type="button"
+            id="help-toggle"
+            class="theme-toggle"
+            aria-label="Help"
+            aria-expanded="false"
+            aria-controls="help-popover"
+          >
+            ?
+          </button>
           <div id="help-popover" class="help-popover" hidden>
-            <p>Foray Planner auto-detects your location and ranks nearby regions by mushroom
-              activity. Click a destination card to see its species and 12-month calendar.
-              Use the tabs above to check recent activity alerts or plan a multi-stop route.</p>
+            <p>
+              Foray Planner auto-detects your location and ranks nearby regions by mushroom activity. Click a
+              destination card to see its species and 12-month calendar. Use the tabs above to check recent
+              activity alerts or plan a multi-stop route.
+            </p>
           </div>
         </div>
-        <a href="https://github.com/jahrik/foray-planner" target="_blank" rel="noopener" class="theme-toggle" aria-label="View source on GitHub" title="View source on GitHub">🐙</a>
-        <button type="button" id="text-size-toggle" class="theme-toggle" aria-label="Toggle larger text">A+</button>
+        <a
+          href="https://github.com/jahrik/foray-planner"
+          target="_blank"
+          rel="noopener"
+          class="theme-toggle"
+          aria-label="View source on GitHub"
+          title="View source on GitHub"
+          >🐙</a
+        >
+        <button type="button" id="text-size-toggle" class="theme-toggle" aria-label="Toggle larger text">
+          A+
+        </button>
         <button type="button" id="units-toggle" class="theme-toggle" aria-label="Toggle units">mi</button>
         <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">🌙</button>
       </div>
@@ -47,15 +63,27 @@
 
     <section class="controls">
       <div class="row">
-        <button type="button" id="filters-toggle" class="filters-toggle" aria-expanded="false" aria-controls="filters-row">
+        <button
+          type="button"
+          id="filters-toggle"
+          class="filters-toggle"
+          aria-expanded="false"
+          aria-controls="filters-row"
+        >
           Filters <span class="chevron">▾</span>
         </button>
-        <div class="field" style="align-self:flex-end">
+        <div class="field" style="align-self: flex-end">
           <button id="refresh">Refresh</button>
         </div>
-        <div class="field action-status" style="align-self:flex-end">
+        <div class="field action-status" style="align-self: flex-end">
           <span id="status" role="status" aria-live="polite"></span>
-          <progress id="refresh-progress" value="0" max="100" style="display: none;" aria-label="Refresh Progress"></progress>
+          <progress
+            id="refresh-progress"
+            value="0"
+            max="100"
+            style="display: none"
+            aria-label="Refresh Progress"
+          ></progress>
         </div>
       </div>
       <div class="row" id="filters-row">
@@ -63,9 +91,15 @@
           <label>Radius</label>
           <div class="radius-presets" id="radius-presets">
             <button type="button" data-km="50" aria-label="Set search radius to 50 kilometers">50 km</button>
-            <button type="button" data-km="150" aria-label="Set search radius to 150 kilometers">150 km</button>
-            <button type="button" data-km="300" aria-label="Set search radius to 300 kilometers">300 km</button>
-            <button type="button" data-km="500" aria-label="Set search radius to 500 kilometers">500 km</button>
+            <button type="button" data-km="150" aria-label="Set search radius to 150 kilometers">
+              150 km
+            </button>
+            <button type="button" data-km="300" aria-label="Set search radius to 300 kilometers">
+              300 km
+            </button>
+            <button type="button" data-km="500" aria-label="Set search radius to 500 kilometers">
+              500 km
+            </button>
           </div>
         </div>
         <div class="field" id="months-field">
@@ -90,20 +124,17 @@
           <div class="toggle-group">
             <label class="toggle-btn"><input type="checkbox" id="show-land-blm" /> <span>BLM</span></label>
             <label class="toggle-btn"><input type="checkbox" id="show-land-usfs" /> <span>USFS</span></label>
-            <label class="toggle-btn"><input type="checkbox" id="show-land-tribal" /> <span>Tribal land</span></label>
+            <label class="toggle-btn"
+              ><input type="checkbox" id="show-land-tribal" /> <span>Tribal land</span></label
+            >
           </div>
         </div>
       </div>
-      <div class="row plan-row" id="plan-row" style="display:none">
+      <div class="row plan-row" id="plan-row" style="display: none">
         <div class="field" id="plan-start-field">
           <label for="plan-start">Start</label>
           <form id="plan-start-form" autocomplete="off">
-            <input
-              id="plan-start"
-              type="text"
-              placeholder="Current location…"
-              autocomplete="off"
-            />
+            <input id="plan-start" type="text" placeholder="Current location…" autocomplete="off" />
             <ul id="plan-start-suggestions" class="loc-suggestions"></ul>
           </form>
         </div>
@@ -127,7 +158,7 @@
           <label for="plan-drive">Max leg (km)</label>
           <input id="plan-drive" type="number" min="50" max="2000" value="400" step="50" />
         </div>
-        <div class="field" style="justify-content:flex-end">
+        <div class="field" style="justify-content: flex-end">
           <label class="toggle-btn">
             <input type="checkbox" id="plan-free-camp" />
             <span>Free camp</span>
@@ -136,8 +167,12 @@
         <div class="field">
           <label>Camping</label>
           <div class="toggle-group">
-            <label class="toggle-btn"><input type="checkbox" id="show-camps" /> <span>Campgrounds</span></label>
-            <label class="toggle-btn"><input type="checkbox" id="show-dispersed" /> <span>Dispersed</span></label>
+            <label class="toggle-btn"
+              ><input type="checkbox" id="show-camps" /> <span>Campgrounds</span></label
+            >
+            <label class="toggle-btn"
+              ><input type="checkbox" id="show-dispersed" /> <span>Dispersed</span></label
+            >
             <label class="toggle-btn"><input type="checkbox" id="free-camps" /> <span>Free only</span></label>
           </div>
         </div>

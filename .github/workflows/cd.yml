@@ -66,7 +66,12 @@ jobs:
   deploy:
     name: Deploy to production
     needs: publish
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Skip the prod deploy (image is still built + pushed) when the head commit message
+    # carries [skip deploy] - for merges that change nothing the running container serves
+    # (docs, tests, CI config, lint-only). The next real deploy picks the changes up anyway.
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && !contains(github.event.head_commit.message, '[skip deploy]')
     runs-on: ubuntu-latest
     environment: production
     concurrency:

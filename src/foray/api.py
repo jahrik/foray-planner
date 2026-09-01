@@ -56,7 +56,7 @@ from foray.cache import load_region_place as db_load_region_place
 from foray.cache import remove_genus as db_remove_genus
 from foray.cache import save_location as db_save_location
 from foray.cache import save_region_place as db_save_region_place
-from foray.config import Config, Home, Settings
+from foray.config import Home, Settings
 from foray.ingest import ingest
 
 logger = logging.getLogger(__name__)
@@ -127,11 +127,11 @@ class AppState:
     This used to be a plain ``dict[str, Any]`` - a typo'd string key or a wrong-type write
     (e.g. an ``int`` landing in ``http_client``) only surfaced at runtime, on whatever code
     path happened to read it back. A dataclass gives ``ty`` the same static checking the
-    rest of the file already gets (dataclasses, ``Home``/``Config`` models, typed route
+    rest of the file already gets (dataclasses, ``Home``/``Settings`` models, typed route
     return values).
     """
 
-    cfg: Config
+    cfg: Settings
     refreshing: bool = False
     last_error: str | None = None
     listeners: list[queue.Queue[dict[str, Any]]] = field(default_factory=list)
@@ -144,7 +144,7 @@ class AppState:
     refresh_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
-def create_app(cfg: Config | None = None) -> FastAPI:
+def create_app(cfg: Settings | None = None) -> FastAPI:
     """Wire up the API: a Postgres connection pool + config state, opened/closed via lifespan."""
     cfg = cfg or Settings()
 
@@ -235,7 +235,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
         return cb
 
-    def current() -> Config:
+    def current() -> Settings:
         return state.cfg
 
     _DEVICE_ID_COOKIE = "device_id"
@@ -338,7 +338,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     def run_refresh(home: Home, target: str = "all") -> None:
         # Refresh ingests around *this visitor's* home, not the env-configured default - a
-        # per-request Config with `.home` swapped in lets ingest()/camps.py/land.py/etc. stay
+        # per-request Settings with `.home` swapped in lets ingest()/camps.py/land.py/etc. stay
         # unchanged (they all just read `cfg.home` internally).
         refresh_cfg = current().model_copy(update={"home": home})
         try:

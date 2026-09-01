@@ -29,7 +29,7 @@ import httpx
 import psycopg
 
 from foray.cache import connect, is_area_covered, record_ingest, upsert_campsites
-from foray.config import Config
+from foray.config import Settings
 from foray.scoring import haversine_km
 
 logger = logging.getLogger(__name__)
@@ -252,7 +252,7 @@ def fetch_campsites(
 
 
 def ingest_campgrounds(
-    cfg: Config,
+    cfg: Settings,
     con: psycopg.Connection | None = None,
     *,
     api_key: str | None = None,

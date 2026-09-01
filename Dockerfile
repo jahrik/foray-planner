@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # ---- frontend: build the Vite/TypeScript client bundle ----
-FROM node:26-slim AS frontend
+# Node major kept in sync with frontend/.nvmrc and the CI frontend job.
+FROM node:24-slim AS frontend
 WORKDIR /app/frontend
 
 # Install deps first, keyed only on the lockfiles, so source edits don't bust the cache.

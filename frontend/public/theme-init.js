@@ -3,7 +3,8 @@
 // with no 'unsafe-inline' exception.
 (function () {
   try {
-    document.documentElement.dataset.theme = localStorage.getItem("foray-theme") === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme =
+      localStorage.getItem("foray-theme") === "light" ? "light" : "dark";
     document.documentElement.dataset.textSize =
       localStorage.getItem("foray-text-size") === "large" ? "large" : "normal";
   } catch (e) {

@@ -107,8 +107,7 @@ function setTop(top: number): void {
   sheetEl.style.transform = `translateY(${top}px)`;
 }
 
-const atIndex = (index: number): Detent =>
-  ORDER[Math.max(0, Math.min(ORDER.length - 1, index))] as Detent;
+const atIndex = (index: number): Detent => ORDER[Math.max(0, Math.min(ORDER.length - 1, index))] as Detent;
 
 function nearestDetent(top: number): Detent {
   let best = 0;

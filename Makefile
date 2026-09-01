@@ -4,8 +4,15 @@
 	ansible-genera-once ansible-bulk-load-once ansible-cron ansible-resync-once \
 	ansible-backfill-elevation-dem-once
 
-NODE_BIN := $(HOME)/.nvm/versions/node/v24.18.0/bin
+# Put an nvm-installed Node matching frontend/.nvmrc on PATH if one exists; otherwise assume
+# `node` is already resolvable (e.g. a system install). Keeps the pinned major in one place.
+NODE_MAJOR := $(shell cat frontend/.nvmrc 2>/dev/null)
+ifneq ($(strip $(NODE_MAJOR)),)
+NODE_BIN := $(firstword $(wildcard $(HOME)/.nvm/versions/node/v$(NODE_MAJOR).*/bin))
+ifneq ($(NODE_BIN),)
 export PATH := $(NODE_BIN):$(PATH)
+endif
+endif
 export PGHOST ?= localhost
 export PGPORT ?= 5432
 export PGUSER ?= foray
@@ -33,6 +40,7 @@ lint:
 	uv run ruff format --check .
 	uv run ruff check .
 	uv run ty check
+	uv run vulture src/foray --min-confidence 80
 
 test: db
 	uv run pytest
@@ -40,9 +48,9 @@ test: db
 check: lint test
 
 # Assumes `frontend/node_modules` already exists (`make install` or CI's `npm ci`) - this
-# only runs the type-check + build, not the install.
+# only runs lint + type-check + build, not the install.
 frontend:
-	cd frontend && npm run build
+	cd frontend && npm run lint && npm run build
 
 # Regenerates the OpenAPI-derived frontend types (needs `uv` for `foray openapi` + `npm` for
 # `openapi-typescript`, so `frontend/node_modules` and the Python venv must already exist) and

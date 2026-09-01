@@ -109,7 +109,3 @@ class Settings(BaseSettings):
     @property
     def region_sync_days(self) -> int:
         return self.ingest.region_sync_days
-
-
-# Backwards-compatible alias so callers can still use `Config` type annotations.
-Config = Settings
