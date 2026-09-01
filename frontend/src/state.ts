@@ -104,6 +104,9 @@ export function escapeHtml(text: string): string {
 
 export function setStatus(text: string): void {
   qs("#status").textContent = text;
+  // Mirror into the mobile bottom sheet's peek summary (issue #229), when present.
+  const summary = document.getElementById("sheet-summary");
+  if (summary) summary.textContent = text;
 }
 
 /** No months toggled reads the same as all 12 toggled - there's no actual restriction either

@@ -13,6 +13,7 @@ import type {
 } from "./api/types";
 import { focusRegion, selectTrailhead } from "./layers";
 import { withLoading } from "./loading";
+import { focusOnMap, sheetEnabled, snapTo } from "./sheet";
 import {
   clearCardCampMarkers,
   clearMarkers,
@@ -310,11 +311,20 @@ export async function runDestinations(): Promise<void> {
       selected = { marker, weight: region.score_norm };
     };
     makeActivatable(card, () => {
-      map.setView([region.center_lat, region.center_lng], 9);
+      snapTo("full"); // opening a card's detail expands the mobile sheet
+      focusOnMap(region.center_lat, region.center_lng, 9);
       focusRegion(region.center_lat, region.center_lng);
       selectCard();
     });
+    // Opening any inner tab (Calendar/Trails/Campgrounds/…) is a detail view -> expand the sheet.
+    // Capture phase: the per-tab handlers call stopPropagation(), so a bubble listener here
+    // would never see the click.
+    qs<HTMLElement>(".rank-tabs", card).addEventListener("click", () => snapTo("full"), true);
     marker.on("click", () => {
+      if (sheetEnabled()) {
+        snapTo("half"); // a map-pin tap raises the sheet to its middle detent
+        focusOnMap(region.center_lat, region.center_lng, map.getZoom()); // offset clear of the sheet
+      }
       focusRegion(region.center_lat, region.center_lng);
       selectCard();
     });
@@ -646,11 +656,16 @@ export async function runAlerts(): Promise<void> {
       selected = { marker, weight };
     };
     makeActivatable(card, () => {
-      map.setView([region.center_lat, region.center_lng], 9);
+      snapTo("full");
+      focusOnMap(region.center_lat, region.center_lng, 9);
       focusRegion(region.center_lat, region.center_lng);
       selectCard();
     });
     marker.on("click", () => {
+      if (sheetEnabled()) {
+        snapTo("half");
+        focusOnMap(region.center_lat, region.center_lng, map.getZoom());
+      }
       focusRegion(region.center_lat, region.center_lng);
       selectCard();
     });

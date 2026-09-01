@@ -144,12 +144,26 @@
       </div>
     </section>
 
-    <nav class="tabs">
-      <button data-view="destinations" class="active">Destinations</button>
-      <button data-view="alerts">Fruiting now</button>
-      <button data-view="plan">🗺️ Plan route</button>
-    </nav>
-    <div class="contour-rule" aria-hidden="true"></div>
+    <!-- On mobile #sheet is a fixed, draggable bottom sheet over a full-screen map (issue #229);
+         on desktop it is `display: contents`, so .tabs + .contour-rule lay out exactly as before
+         and #panel stays in the <main> grid (sheet.ts moves #panel in here only on mobile). -->
+    <div id="sheet" role="region" aria-label="Destinations panel">
+      <button
+        type="button"
+        id="sheet-handle"
+        class="sheet-handle"
+        aria-label="Expand destinations panel"
+        aria-expanded="false"
+        aria-controls="panel"
+      ></button>
+      <nav class="tabs">
+        <button data-view="destinations" class="active">Destinations</button>
+        <button data-view="alerts">Fruiting now</button>
+        <button data-view="plan">🗺️ Plan route</button>
+      </nav>
+      <div id="sheet-summary" class="sheet-summary" aria-hidden="true"></div>
+      <div class="contour-rule" aria-hidden="true"></div>
+    </div>
 
     <main>
       <div class="map-wrap">

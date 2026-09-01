@@ -11,6 +11,7 @@ import { initLocationAutocomplete, initPlaceAutocomplete } from "./location";
 import { currentTheme, initMap, map, setMapClickHandler, setTiles, updateHome } from "./map";
 import { runPlan } from "./plan";
 import { cancelRefresh, setLocationLatLng, startRefresh } from "./refresh";
+import { collapseIfOpen, currentDetent, initSheet, snapTo } from "./sheet";
 import { errorDetail, qs, setStatus, state, type Units, type View } from "./state";
 import { initMonths, runAlerts, runDestinations } from "./views";
 
@@ -75,6 +76,8 @@ function initFiltersToggle(): void {
   toggle.onclick = () => {
     const open = row.classList.toggle("open");
     toggle.setAttribute("aria-expanded", String(open));
+    // Keep the filters row (top of the screen) clear of a fully-raised sheet.
+    if (open && currentDetent() === "full") snapTo("half");
     // Opening/closing the filters row changes how much vertical space main (and #map) get on
     // mobile - resync Leaflet's cached container size once the reflow settles, same reason as
     // the resize listener in main().
@@ -166,7 +169,13 @@ async function main(): Promise<void> {
   initFiltersToggle();
   initMonths();
   initMap(config.home);
-  setMapClickHandler(setLocationLatLng);
+  initSheet();
+  // On mobile a tap on the map first collapses an open sheet (and is swallowed); only a tap
+  // with the sheet already at its peek sets the location.
+  setMapClickHandler((lat, lng) => {
+    if (collapseIfOpen()) return;
+    setLocationLatLng(lat, lng);
+  });
   updateHome(config.home);
   // Leaflet measures #map's box once at construction and never re-measures on its own. The
   // mobile media query gives #map an explicit height, but the browser may not have finished
@@ -195,6 +204,7 @@ async function main(): Promise<void> {
   initPlanPlaceField("plan-start", "plan-start-suggestions", "plan-start-form");
   initPlanPlaceField("plan-destination", "plan-destination-suggestions", "plan-destination-form");
   qs("#refresh").onclick = async () => {
+    if (currentDetent() === "full") snapTo("half");
     const succeeded = await startRefresh("Refreshing mushroom data…", "mushrooms");
     if (succeeded) refreshCurrentView();
   };
