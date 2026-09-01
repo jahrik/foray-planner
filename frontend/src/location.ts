@@ -1,3 +1,4 @@
+import { withLoading } from "./loading";
 import { setLocation } from "./refresh";
 import { qs } from "./state";
 
@@ -21,7 +22,7 @@ async function fetchSuggestions(query: string): Promise<NominatimResult[] | null
   activeAbort = controller;
   const params = new URLSearchParams({ q: query, format: "json", limit: "5" });
   try {
-    const resp = await fetch(`${NOMINATIM}?${params}`, { signal: controller.signal });
+    const resp = await withLoading(() => fetch(`${NOMINATIM}?${params}`, { signal: controller.signal }));
     if (!resp.ok) return [];
     return await resp.json();
   } catch (error) {

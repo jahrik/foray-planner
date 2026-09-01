@@ -1,6 +1,7 @@
 import createClient from "openapi-fetch";
 import type { FilterKeys, PathsWithMethod, RequiredKeysOf } from "openapi-typescript-helpers";
 
+import { withLoading } from "../loading";
 import type { paths } from "./schema";
 import type { ApiError } from "./types";
 
@@ -37,9 +38,8 @@ export async function getJson<Path extends PathsWithMethod<paths, "get">>(
   path: Path,
   ...params: RequiredKeysOf<OpParams<GetOp<Path>>> extends never ? [OpParams<GetOp<Path>>?] : [OpParams<GetOp<Path>>]
 ): Promise<SuccessBody<GetOp<Path>>> {
-  const { data, error, response } = await client.GET(
-    path,
-    (params[0] ? { params: params[0] } : undefined) as never,
+  const { data, error, response } = await withLoading(() =>
+    client.GET(path, (params[0] ? { params: params[0] } : undefined) as never),
   );
   if (!response.ok) throw (error as ApiError | undefined) ?? httpError(response);
   return data as SuccessBody<GetOp<Path>>;
@@ -49,7 +49,7 @@ export async function postJson<Path extends PathsWithMethod<paths, "post">>(
   path: Path,
   body: OpBody<PostOp<Path>>,
 ): Promise<SuccessBody<PostOp<Path>>> {
-  const { data, error, response } = await client.POST(path, { body } as never);
+  const { data, error, response } = await withLoading(() => client.POST(path, { body } as never));
   if (!response.ok) throw (error as ApiError | undefined) ?? httpError(response);
   return data as SuccessBody<PostOp<Path>>;
 }
