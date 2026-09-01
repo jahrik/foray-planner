@@ -109,13 +109,34 @@ take ~200 days to clear at that pace. To clear it in one pass instead, run
 `make ansible-backfill-elevation-dem-once` (tag `foray:backfill-elevation-dem-once`): it
 downloads ~5 GB of Copernicus GLO-90 tiles onto the droplet, samples the same DEM locally for
 every outstanding row, then removes the tiles. Writes go through a `COPY` into a TEMP table
-plus one `UPDATE ... FROM` per batch, with `--sleep` pacing and a short `lock_timeout`, so the
-managed Postgres keeps serving the live site during the pass (an earlier per-row version
-saturated it). The Ansible task passes `--no-rebuild` - like the hourly cron, it leaves the
-phenology rematerialize to the next daily ingest - so region elevation means land within a
-day. The hourly cron then only has the trickle of new observations to keep up with. A partial
-run is safe to repeat: `make ansible-backfill-elevation-dem-once` again finishes the rest.
+plus one `UPDATE ... FROM` per batch (`--batch-size`), with `--sleep` pacing, a short
+`lock_timeout` (a batch that can't get its lock is left for a re-run), and
+`synchronous_commit = off`. The Ansible task passes `--no-rebuild` - like the hourly cron, it
+leaves the phenology rematerialize to the next daily ingest, so region elevation means land
+within a day. A partial run is safe to repeat: run the target again to finish the rest.
 See `scripts/backfill_elevation_dem.py`.
+
+Even set-based, a full ~1.8M-row pass saturates the 1-vCPU managed Postgres enough to starve
+the live `/api/destinations` query, so run it inside a **maintenance window**:
+
+```sh
+ssh root@<droplet> 'touch /opt/foray-planner/www/maintenance.on'   # Caddy now serves the 503 page
+ssh root@<droplet> 'docker stop foray-planner'                     # free the DB of the app's queries
+FORAY_DROPLET_IP=<droplet> make ansible-backfill-elevation-dem-once
+ssh root@<droplet> 'docker start foray-planner'
+ssh root@<droplet> 'rm /opt/foray-planner/www/maintenance.on'
+```
+
+The next deploy clears `maintenance.on` on its own (see `tasks/deploy/caddy.yml`), so a
+forgotten flag heals at the next push.
+
+### Maintenance mode
+
+`touch /opt/foray-planner/www/maintenance.on` on the droplet makes Caddy serve
+`www/maintenance.html` (HTTP 503, `Retry-After`) to everyone, whether or not the app is up;
+`rm` it to restore. Caddy also serves the same page automatically whenever the backend is
+unreachable - a deploy restart, a crash - instead of a bare `502`. The page is
+self-contained and refreshes itself every 60s.
 
 **Option B - UI Refresh button**
 

@@ -40,6 +40,23 @@
     owner: root
     group: root
 
+- name: Ensure the Caddy web root exists
+  ansible.builtin.file:
+    path: /opt/foray-planner/www
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Write the maintenance page
+  ansible.builtin.template:
+    src: maintenance.html.j2
+    dest: /opt/foray-planner/www/maintenance.html
+    mode: "0644"
+    owner: root
+    group: root
+  notify: restart caddy
+
 - name: Copy the origin certificate (from local path)
   ansible.builtin.copy:
     src: "{{ foray_tls_cert_path }}"
@@ -103,5 +120,14 @@
     volumes:
       - /opt/foray-planner/Caddyfile:/etc/caddy/Caddyfile:ro
       - /opt/foray-planner/tls:/etc/caddy/tls:ro
+      - /opt/foray-planner/www:/srv:ro
     networks:
       - name: "{{ foray_docker_network }}"
+
+# A deploy always ends maintenance mode: the operator flips it on for a window
+# (`touch /opt/foray-planner/www/maintenance.on`), and shipping new code is the normal way
+# out. The :ro mount only affects the container's view - the host path stays writable here.
+- name: Clear any leftover maintenance-mode flag
+  ansible.builtin.file:
+    path: /opt/foray-planner/www/maintenance.on
+    state: absent

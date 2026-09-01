@@ -1,9 +1,42 @@
 # Managed by the foray-planner ansible role
 http://{{ foray_domain }} {
-    redir https://{{ foray_domain }}{uri} permanent
+	redir https://{{ foray_domain }}{uri} permanent
 }
 
 https://{{ foray_domain }} {
-    tls /etc/caddy/tls/origin.pem /etc/caddy/tls/origin.key
-    reverse_proxy {{ foray_app_container_name }}:8000
+	tls /etc/caddy/tls/origin.pem /etc/caddy/tls/origin.key
+
+	# Static assets for the maintenance page live here (mounted read-only, see
+	# tasks/deploy/caddy.yml). Only the maintenance / error paths ever serve from it.
+	root * /srv
+
+	# Deliberate maintenance mode: `touch /opt/foray-planner/www/maintenance.on` on the
+	# droplet to serve the page to everyone even while the app is up. The next deploy removes
+	# the flag, so maintenance mode never outlives a deploy.
+	@maintenance file /maintenance.on
+	handle @maintenance {
+		rewrite * /maintenance.html
+		file_server {
+			status 503
+		}
+		header Retry-After 900
+		header Cache-Control "no-store"
+	}
+
+	handle {
+		reverse_proxy {{ foray_app_container_name }}:8000
+	}
+
+	# Backstop: any time the backend is unreachable anyway - a deploy restart, a crash, an
+	# OOM - serve the same page instead of a bare 502. Shorter Retry-After since these clear
+	# on their own. (file_server's `status` override needs Caddy >= 2.7; caddy:2-alpine is
+	# well past that.)
+	handle_errors {
+		rewrite * /maintenance.html
+		file_server {
+			status 503
+		}
+		header Retry-After 120
+		header Cache-Control "no-store"
+	}
 }
