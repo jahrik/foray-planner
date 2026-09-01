@@ -50,10 +50,25 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 RUN useradd --uid 1000 --create-home foray
 
+# rasterio (scripts/backfill_elevation_dem.py) ships GDAL in its wheel, but that bundled GDAL
+# still dynamically loads the system libexpat, which python:slim dropped to save space - so
+# `import rasterio` fails with `libexpat.so.1: cannot open shared object file`. Installing
+# libexpat1 is the rasterio maintainer's own recommended fix (rasterio discussions #3257).
+# Unpinned deliberately: it's a security-tracked lib, apt should pull the patched version, and
+# a pin would 404 the moment Debian supersedes it (see .hadolint.yaml for DL3008). The
+# `import rasterio` check below fails the build loudly if the package ever goes missing.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY --from=builder --chown=foray:foray /app /app
 # Overlay the built client bundle (gitignored, so not in the uv builder's context).
 COPY --from=frontend --chown=foray:foray /app/src/foray/web/dist /app/src/foray/web/dist
+
+# Fail the build (not a prod one-off) if a native dep of an optional-at-runtime import is
+# missing. -B so this root-run check leaves no root-owned __pycache__ in the uid-1000 venv.
+RUN python -B -c "import rasterio, rasterio.sample"
 
 USER 1000
 EXPOSE 8000
