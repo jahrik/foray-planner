@@ -1,0 +1,84 @@
+"""Geo primitives shared across scoring, the read repository, and the ingest layer.
+
+Everything here is pure math on lat/lng - no I/O, no DB. ``haversine_km`` is the canonical
+great-circle distance used everywhere an exact distance matters; ``bbox_around`` builds the
+cheap flat-degree bounding box every ``*_near`` query uses to prefilter candidates in SQL
+before the exact haversine cut in Python.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import NamedTuple
+
+# Degrees of latitude per kilometre is very nearly constant (~111 km/deg); longitude is scaled
+# by cos(lat) at the point of interest. This is the flat-degree approximation the bbox
+# prefilters and the corridor tangent-plane projection both rely on - fine at the scales this
+# app works over (tens to low hundreds of km), and deliberately coarse.
+KM_PER_DEG_LAT = 111.0
+
+
+class BBox(NamedTuple):
+    """A lat/lng bounding box. Field order is (min_lat, min_lng, max_lat, max_lng)."""
+
+    min_lat: float
+    min_lng: float
+    max_lat: float
+    max_lng: float
+
+
+def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    earth_radius_km = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lng2 - lng1)
+    inner = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    return 2 * earth_radius_km * math.asin(math.sqrt(inner))
+
+
+def _lng_km_per_deg(lat: float) -> float:
+    """Kilometres per degree of longitude at ``lat`` (floored so it never blows up near a pole)."""
+    return KM_PER_DEG_LAT * max(abs(math.cos(math.radians(lat))), 0.01)
+
+
+def bbox_around(lat: float, lng: float, radius_km: float) -> BBox:
+    """Flat-degree bounding box of the disk of ``radius_km`` around ``(lat, lng)``.
+
+    The same ``radius_km / 111`` / ``radius_km / (111 * cos lat)`` block that every ``*_near``
+    query hand-rolled for its SQL bbox prefilter. Coarse on purpose - it only has to be a
+    superset of the true disk so the exact ``haversine_km`` cut downstream stays correct.
+    """
+    dlat = radius_km / KM_PER_DEG_LAT
+    dlng = radius_km / _lng_km_per_deg(lat)
+    return BBox(lat - dlat, lng - dlng, lat + dlat, lng + dlng)
+
+
+def project_to_plane(ref_lat: float, ref_lng: float, lat: float, lng: float) -> tuple[float, float]:
+    """Local tangent-plane projection (x=east km, y=north km) centered on ``ref_lat``/``ref_lng``.
+
+    Same flat-degree approximation the bbox prefilters use, applied once per point instead of
+    per-bbox-edge. Fine at corridor scale (tens to low hundreds of km); ``ref_lat`` is fixed
+    for every point in a given call so the longitude scale distortion is consistent, not
+    per-point re-biased.
+    """
+    y = (lat - ref_lat) * KM_PER_DEG_LAT
+    x = (lng - ref_lng) * _lng_km_per_deg(ref_lat)
+    return x, y
+
+
+def segment_progress_and_offset(px: float, py: float, dx: float, dy: float) -> tuple[float, float]:
+    """Project point ``(px, py)`` onto the segment from the origin to ``(dx, dy)``.
+
+    Returns ``(t_clamped, offset_km)``: ``t_clamped`` is the projection parameter clamped to
+    ``[0, 1]`` (so a point beyond either end measures its offset to that endpoint, not the
+    infinite line - the correct corridor semantics), and ``offset_km`` is the perpendicular
+    distance from the point to the clamped projection, i.e. the corridor-width test.
+    """
+    seg_len2 = dx * dx + dy * dy
+    if seg_len2 == 0:
+        return 0.0, math.hypot(px, py)
+    t = (px * dx + py * dy) / seg_len2
+    t_clamped = max(0.0, min(1.0, t))
+    proj_x, proj_y = t_clamped * dx, t_clamped * dy
+    offset_km = math.hypot(px - proj_x, py - proj_y)
+    return t_clamped, offset_km

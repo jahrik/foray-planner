@@ -7,10 +7,10 @@ import datetime as dt
 import psycopg
 import pytest
 
+from foray.geo import haversine_km
 from foray.scoring import (
     alerts,
     build_phenology,
-    haversine_km,
     place_calendar,
     precise_observations,
     rank_destinations,

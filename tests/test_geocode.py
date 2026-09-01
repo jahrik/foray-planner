@@ -14,7 +14,7 @@ def _no_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
     """Nominatim's ~1/s throttle (see geocode._throttle) is a real budget in production, but
     would add ~1.1s per test here for no benefit - each test's MockTransport never talks to
     the real service, so there's nothing to protect."""
-    monkeypatch.setattr(geocode, "_MIN_REQUEST_INTERVAL", 0.0)
+    monkeypatch.setattr(geocode._throttle, "min_interval", 0.0)
 
 
 def test_parses_raw_coordinates() -> None:

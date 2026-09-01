@@ -18,31 +18,23 @@ the whole refresh.
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import Callable
 from typing import Any
 
 import httpx
 import psycopg
 
-from foray.cache import connect, is_area_covered, record_ingest, upsert_campsites
+from foray import overpass
+from foray.cache import connection, is_area_covered, record_ingest, upsert_campsites
 from foray.config import Settings
+from foray.http import SOURCE_ERRORS
 
 logger = logging.getLogger(__name__)
-
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
-
-_MIN_REQUEST_INTERVAL = 1.0
-
-
-def _around(lat: float, lng: float, radius_m: float) -> str:
-    return f"around:{radius_m:.0f},{lat},{lng}"
 
 
 def _reported_query(lat: float, lng: float, radius_m: float) -> str:
     """Overpass QL for OSM-tagged campable places within the home disk."""
-    around = _around(lat, lng, radius_m)
+    around = overpass.around(lat, lng, radius_m)
     return (
         "[out:json][timeout:120];"
         "("
@@ -52,24 +44,6 @@ def _reported_query(lat: float, lng: float, radius_m: float) -> str:
         ");"
         "out center tags;"
     )
-
-
-def _post_overpass(client: httpx.Client, query: str, *, attempts: int = 4, base_delay: float = 2.0) -> dict[str, Any]:
-    """POST a query, backing off on Overpass's throttle (429) / timeout (504) responses."""
-    if attempts < 1:
-        raise ValueError(f"attempts must be >= 1, got {attempts}")
-    resp: httpx.Response | None = None
-    for attempt in range(1, attempts + 1):
-        resp = client.post(OVERPASS_URL, data={"data": query}, headers={"User-Agent": USER_AGENT})
-        if resp.status_code in (429, 504) and attempt < attempts:
-            retry_after = resp.headers.get("Retry-After", "")
-            delay = float(retry_after) if retry_after.replace(".", "", 1).isdigit() else base_delay * 2 ** (attempt - 1)
-            time.sleep(delay)
-            continue
-        break
-    assert resp is not None
-    resp.raise_for_status()
-    return resp.json()
 
 
 def _element_point(element: dict[str, Any]) -> tuple[float, float] | None:
@@ -144,10 +118,10 @@ def fetch_reported_campsites(
         try:
             if progress_cb:
                 progress_cb("Fetching reported campsites…", 0.0)
-            payload = _post_overpass(client, _reported_query(lat, lng, radius_m))
+            payload = overpass.post(client, _reported_query(lat, lng, radius_m))
             reported = _parse_reported(payload)
             logger.info("dispersed: %d reported OSM campsites", len(reported))
-        except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+        except SOURCE_ERRORS as error:
             logger.warning("dispersed: reported-sites query failed (%s) - skipping", error)
     finally:
         if owns:
@@ -163,17 +137,13 @@ def ingest_dispersed(
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest OSM reported campsites into ``campsites``. Returns rows upserted."""
-    own_con = con is None
-    database = con if con is not None else connect()
     home = cfg.home
-    if is_area_covered(database, "dispersed:", home.lat, home.lng, home.radius_km):
-        logger.info("dispersed: already ingested for this area, skipping")
-        if progress_cb:
-            progress_cb("Dispersed camping already cached, skipping…", 100.0)
-        if own_con:
-            database.close()
-        return 0
-    try:
+    with connection(con) as database:
+        if is_area_covered(database, "dispersed:", home.lat, home.lng, home.radius_km):
+            logger.info("dispersed: already ingested for this area, skipping")
+            if progress_cb:
+                progress_cb("Dispersed camping already cached, skipping…", 100.0)
+            return 0
         logger.info("dispersed: fetching OSM camping layers within %.0f km of home…", home.radius_km)
         rows = fetch_reported_campsites(
             lat=home.lat,
@@ -187,6 +157,3 @@ def ingest_dispersed(
         record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
         logger.info("dispersed: cached %d reported sites", len(rows))
         return len(rows)
-    finally:
-        if own_con:
-            database.close()

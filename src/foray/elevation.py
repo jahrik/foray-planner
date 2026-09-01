@@ -10,13 +10,12 @@ next scheduled run can pick up where it left off.
 
 from __future__ import annotations
 
-import threading
 import time
 from collections.abc import Sequence
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
 
 import httpx
+
+from foray.http import Throttle, retry_after_seconds
 
 OPEN_METEO_ELEVATION = "https://api.open-meteo.com/v1/elevation"
 MAX_BATCH = 100
@@ -25,44 +24,13 @@ MAX_BATCH = 100
 # 100-point batch counts as 100). Pace by point count just under the published 600/min ceiling;
 # the hourly and daily caps (5k / 10k) are enforced by 429s, which `lookup_batch` rides out with
 # `Retry-After` backoff. A large backfill drains as fast as the free tier allows, then stops.
-_SECONDS_PER_POINT = 0.11
-_throttle_lock = threading.Lock()
-_last_request_at = 0.0
+_throttle = Throttle(0.11)
 
 # On a 429, retry the same batch this many times, honouring the `Retry-After` header (capped so a
 # "come back at midnight UTC" hint doesn't block the run - the caller stops and the next cron
 # tick retries instead).
 _MAX_RETRIES = 3
 _MAX_RETRY_WAIT_S = 120.0
-
-
-def _throttle(points: int) -> None:
-    global _last_request_at
-    with _throttle_lock:
-        wait = _last_request_at + points * _SECONDS_PER_POINT - time.monotonic()
-        if wait > 0:
-            time.sleep(wait)
-        _last_request_at = time.monotonic()
-
-
-def _retry_after_seconds(resp: httpx.Response, attempt: int) -> float:
-    """Seconds to wait before retrying a 429 - the ``Retry-After`` header if present and
-    parseable (either the delta-seconds or the HTTP-date form), else exponential backoff. Capped
-    at ``_MAX_RETRY_WAIT_S``."""
-    header = resp.headers.get("Retry-After", "").strip()
-    if header.isdigit():
-        return min(float(header), _MAX_RETRY_WAIT_S)
-    if header:
-        try:
-            retry_at = parsedate_to_datetime(header)
-        except (TypeError, ValueError):
-            retry_at = None
-        if retry_at is not None:
-            if retry_at.tzinfo is None:
-                retry_at = retry_at.replace(tzinfo=UTC)
-            delta = (retry_at - datetime.now(UTC)).total_seconds()
-            return min(max(delta, 0.0), _MAX_RETRY_WAIT_S)
-    return min(2.0**attempt, _MAX_RETRY_WAIT_S)
 
 
 def lookup_batch(coords: Sequence[tuple[float, float]], *, client: httpx.Client | None = None) -> list[int | None]:
@@ -87,10 +55,10 @@ def lookup_batch(coords: Sequence[tuple[float, float]], *, client: httpx.Client 
     client = client or httpx.Client(timeout=30.0)
     try:
         for attempt in range(_MAX_RETRIES + 1):
-            _throttle(len(coords))
+            _throttle.wait(len(coords))
             resp = client.get(OPEN_METEO_ELEVATION, params=params)
             if resp.status_code == 429 and attempt < _MAX_RETRIES:
-                time.sleep(_retry_after_seconds(resp, attempt))
+                time.sleep(retry_after_seconds(resp, attempt, cap=_MAX_RETRY_WAIT_S))
                 continue
             resp.raise_for_status()
             break

@@ -28,21 +28,20 @@ from typing import Any
 import httpx
 import psycopg
 
-from foray.cache import connect, is_area_covered, record_ingest, upsert_campsites
+from foray.cache import connection, is_area_covered, record_ingest, upsert_campsites
 from foray.config import Settings
-from foray.scoring import haversine_km
+from foray.geo import KM_PER_DEG_LAT, haversine_km
+from foray.http import SOURCE_ERRORS, USER_AGENT, Throttle, retry_after_seconds
 
 logger = logging.getLogger(__name__)
 
 RIDB_FACILITIES = "https://ridb.recreation.gov/api/v1/facilities"
-USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
 
 _KM_PER_MILE = 1.609344
 # RIDB caps the facilities-search radius; 50 mi is the documented max. Query circles of this
 # radius are tiled over the home disk (see `_query_centers`).
 _QUERY_RADIUS_MI = 50.0
 _PAGE_SIZE = 50  # RIDB's max page size for the facilities endpoint
-_KM_PER_DEG_LAT = 111.0
 
 # RIDB rate-limits at 50 requests/minute; a wide radius tiles into dozens of requests, so
 # pace them to stay comfortably under (45/min) and back off on a 429.
@@ -87,8 +86,8 @@ def _query_centers(lat: float, lng: float, radius_km: float, query_radius_km: fl
     whose circle cannot reach the disk are dropped.
     """
     spacing_km = query_radius_km
-    dlat_deg = spacing_km / _KM_PER_DEG_LAT
-    km_per_deg_lng = _KM_PER_DEG_LAT * max(math.cos(math.radians(lat)), 0.01)
+    dlat_deg = spacing_km / KM_PER_DEG_LAT
+    km_per_deg_lng = KM_PER_DEG_LAT * max(math.cos(math.radians(lat)), 0.01)
     dlng_deg = spacing_km / km_per_deg_lng
     steps = max(1, math.ceil(radius_km / spacing_km))
 
@@ -137,24 +136,9 @@ def _parse_facility(record: dict[str, Any]) -> tuple[Any, ...] | None:
     )
 
 
-def _make_throttle(min_interval: float) -> Callable[[], None]:
-    """A pacer that blocks until at least ``min_interval`` has passed since the last call."""
-    last = [0.0]
-
-    def throttle() -> None:
-        if min_interval <= 0:
-            return
-        wait = min_interval - (time.monotonic() - last[0])
-        if wait > 0:
-            time.sleep(wait)
-        last[0] = time.monotonic()
-
-    return throttle
-
-
 def _get_page(
     client: httpx.Client,
-    throttle: Callable[[], None],
+    throttle: Throttle,
     params: dict[str, Any],
     headers: dict[str, str],
     *,
@@ -166,13 +150,11 @@ def _get_page(
         raise ValueError(f"attempts must be >= 1, got {attempts}")
     resp = None
     for attempt in range(1, attempts + 1):
-        throttle()
+        throttle.wait()
         resp = client.get(RIDB_FACILITIES, params=params, headers=headers)
         if resp.status_code != 429 or attempt == attempts:
             break
-        retry_after = resp.headers.get("Retry-After", "")
-        delay = float(retry_after) if retry_after.isdigit() else base_delay * 2 ** (attempt - 1)
-        time.sleep(delay)
+        time.sleep(retry_after_seconds(resp, attempt, base_delay=base_delay))
     assert resp is not None
     resp.raise_for_status()
     return resp
@@ -180,7 +162,7 @@ def _get_page(
 
 def _iter_facilities(
     client: httpx.Client,
-    throttle: Callable[[], None],
+    throttle: Throttle,
     api_key: str,
     lat: float,
     lng: float,
@@ -226,7 +208,7 @@ def fetch_campsites(
     """Fetch developed campgrounds within ``radius_km`` of home, deduped and clipped."""
     owns = client is None
     client = client or httpx.Client(timeout=30.0)
-    throttle = _make_throttle(min_interval)
+    throttle = Throttle(min_interval)
     query_radius_km = _QUERY_RADIUS_MI * _KM_PER_MILE
     by_id: dict[str, tuple[Any, ...]] = {}
     try:
@@ -245,6 +227,11 @@ def fetch_campsites(
                 site_lat, site_lng = row[5], row[6]
                 if haversine_km(lat, lng, site_lat, site_lng) <= radius_km:
                     by_id[row[0]] = row
+    except SOURCE_ERRORS as error:
+        # Match the land / trails / dispersed ingests: a RIDB outage (or a malformed page)
+        # degrades to "no campgrounds this run" rather than aborting the whole refresh. Any
+        # facilities already collected from earlier query circles are kept.
+        logger.warning("camps: RIDB fetch failed (%s) - keeping %d sites gathered so far", error, len(by_id))
     finally:
         if owns:
             client.close()
@@ -264,17 +251,13 @@ def ingest_campgrounds(
     if not api_key:
         logger.info("camps: RIDB_API_KEY unset - skipping campground ingest")
         return 0
-    own_con = con is None
-    database = con if con is not None else connect()
     home = cfg.home
-    if is_area_covered(database, "camps:ridb:", home.lat, home.lng, home.radius_km):
-        logger.info("camps: already ingested for this area, skipping")
-        if progress_cb:
-            progress_cb("Campgrounds already cached, skipping…", 100.0)
-        if own_con:
-            database.close()
-        return 0
-    try:
+    with connection(con) as database:
+        if is_area_covered(database, "camps:ridb:", home.lat, home.lng, home.radius_km):
+            logger.info("camps: already ingested for this area, skipping")
+            if progress_cb:
+                progress_cb("Campgrounds already cached, skipping…", 100.0)
+            return 0
         logger.info("camps: fetching developed campgrounds within %.0f km of home…", home.radius_km)
         rows = fetch_campsites(
             lat=home.lat,
@@ -289,6 +272,3 @@ def ingest_campgrounds(
         record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
         logger.info("camps: cached %d campgrounds", len(rows))
         return len(rows)
-    finally:
-        if own_con:
-            database.close()

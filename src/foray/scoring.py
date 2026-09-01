@@ -23,6 +23,8 @@ from typing import Any, LiteralString, cast
 
 import psycopg
 
+from foray.geo import bbox_around, haversine_km, project_to_plane, segment_progress_and_offset
+
 # The "research-grade only" invariant (see AGENTS.md) is enforced here, centrally, rather
 # than trusted from the iNat API query param it started as (inat.py) - any row that lands in
 # `observations` some other way (a future bulk loader, a manual insert) still can't leak into
@@ -106,15 +108,6 @@ def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
         # requests right after a refresh could still get seq-scan plans despite the indexes above.
         con.execute("ANALYZE phenology")
         con.execute("ANALYZE regions")
-
-
-def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    earth_radius_km = 6371.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    delta_phi = math.radians(lat2 - lat1)
-    delta_lambda = math.radians(lng2 - lng1)
-    inner = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
-    return 2 * earth_radius_km * math.asin(math.sqrt(inner))
 
 
 @dataclass
@@ -335,37 +328,6 @@ def rank_destinations(
     )
 
 
-def _project_to_plane(ref_lat: float, ref_lng: float, lat: float, lng: float) -> tuple[float, float]:
-    """Local tangent-plane projection (x=east km, y=north km) centered on ``ref_lat``/``ref_lng``.
-
-    Same flat-degree approximation ``camps_near``/``trails_near`` already use for bbox
-    prefilters (``km / 111.0``), just applied once per point instead of per-bbox-edge. Fine
-    at corridor scale (tens to low hundreds of km); ``ref_lat`` is fixed for every point in a
-    given call so the longitude scale distortion is consistent, not per-point re-biased.
-    """
-    y = (lat - ref_lat) * 111.0
-    x = (lng - ref_lng) * 111.0 * max(abs(math.cos(math.radians(ref_lat))), 0.01)
-    return x, y
-
-
-def _segment_progress_and_offset(px: float, py: float, dx: float, dy: float) -> tuple[float, float]:
-    """Project point ``(px, py)`` onto the segment from the origin to ``(dx, dy)``.
-
-    Returns ``(t_clamped, offset_km)``: ``t_clamped`` is the projection parameter clamped to
-    ``[0, 1]`` (so a point beyond either end measures its offset to that endpoint, not the
-    infinite line - the correct corridor semantics), and ``offset_km`` is the perpendicular
-    distance from the point to the clamped projection, i.e. the corridor-width test.
-    """
-    seg_len2 = dx * dx + dy * dy
-    if seg_len2 == 0:
-        return 0.0, math.hypot(px, py)
-    t = (px * dx + py * dy) / seg_len2
-    t_clamped = max(0.0, min(1.0, t))
-    proj_x, proj_y = t_clamped * dx, t_clamped * dy
-    offset_km = math.hypot(px - proj_x, py - proj_y)
-    return t_clamped, offset_km
-
-
 def rank_destinations_corridor(
     con: psycopg.Connection,
     *,
@@ -386,13 +348,13 @@ def rank_destinations_corridor(
     callers can order stops "along the way" with a plain sort. A degenerate segment
     (``dest`` ~= ``start``) falls back to plain radial distance from ``start`` as progress.
     """
-    dx, dy = _project_to_plane(start_lat, start_lng, dest_lat, dest_lng)
+    dx, dy = project_to_plane(start_lat, start_lng, dest_lat, dest_lng)
     total_km = haversine_km(start_lat, start_lng, dest_lat, dest_lng)
 
     def keep(clat: float, clng: float) -> tuple[bool, float]:
-        px, py = _project_to_plane(start_lat, start_lng, clat, clng)
-        t, offset_km = _segment_progress_and_offset(px, py, dx, dy)
-        # _segment_progress_and_offset's degenerate-segment branch always returns t=0.0, which
+        px, py = project_to_plane(start_lat, start_lng, clat, clng)
+        t, offset_km = segment_progress_and_offset(px, py, dx, dy)
+        # segment_progress_and_offset's degenerate-segment branch always returns t=0.0, which
         # would make every candidate's progress 0 (collapsing the sort order) - use the radial
         # offset (= distance from start in that branch) as progress instead, matching the
         # docstring's fallback.
@@ -437,14 +399,13 @@ def camps_near(
     ingested yet yields an empty list, mirroring the other modes. ``limit`` caps the ranked
     result after sorting, mirroring ``trails_near``.
     """
-    dlat = radius_km / 111.0
-    dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
+    bbox = bbox_around(lat, lng, radius_km)
     rows = con.execute(
         """
         SELECT id, name, kind, fee, free, lat, lng, source, url FROM campsites
         WHERE lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s
         """,
-        [lat - dlat, lat + dlat, lng - dlng, lng + dlng],
+        [bbox.min_lat, bbox.max_lat, bbox.min_lng, bbox.max_lng],
     ).fetchall()
 
     # Keep the unrounded distance alongside each site so ranking is exact; distance_km is
@@ -492,14 +453,13 @@ def land_near(con: psycopg.Connection, *, lat: float, lng: float, radius_km: flo
     types); it's coarse on purpose - the map just shades approximate ownership. No rows
     ingested yet yields an empty list, mirroring ``camps_near``.
     """
-    dlat = radius_km / 111.0
-    dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
+    bbox = bbox_around(lat, lng, radius_km)
     rows = con.execute(
         """
         SELECT id, agency, unit, source, url, geojson FROM public_land
         WHERE min_lat <= %s AND max_lat >= %s AND min_lng <= %s AND max_lng >= %s
         """,
-        [lat + dlat, lat - dlat, lng + dlng, lng - dlng],
+        [bbox.max_lat, bbox.min_lat, bbox.max_lng, bbox.min_lng],
     ).fetchall()
     return [
         LandUnit(
@@ -552,9 +512,8 @@ def trails_near(
     issue #115 follow-up); ``limit`` caps the ranked result after sorting. No rows ingested yet
     yields an empty list, mirroring ``camps_near`` / ``land_near``.
     """
-    dlat = radius_km / 111.0
-    dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
-    params: list[Any] = [lat + dlat, lat - dlat, lng + dlng, lng - dlng]
+    bbox = bbox_around(lat, lng, radius_km)
+    params: list[Any] = [bbox.max_lat, bbox.min_lat, bbox.max_lng, bbox.min_lng]
     kind_filter = ""
     if kind is not None:
         kind_filter = "AND kind = %s"
@@ -639,15 +598,14 @@ def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: fl
     line, see ``trails.py``'s ``_MAX_POINTS_PER_LINE``) rather than true point-to-segment distance
     - close enough given the thinning, and avoids a geometry library dependency for one heuristic.
     """
-    dlat = max_km / 111.0
-    dlng = max_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
+    bbox = bbox_around(lat, lng, max_km)
     rows = con.execute(
         """
         SELECT id, name, kind, source, url, center_lat, center_lng, geojson FROM trails
         WHERE kind IN ('path', 'route')
           AND min_lat <= %s AND max_lat >= %s AND min_lng <= %s AND max_lng >= %s
         """,
-        [lat + dlat, lat - dlat, lng + dlng, lng - dlng],
+        [bbox.max_lat, bbox.min_lat, bbox.max_lng, bbox.min_lng],
     ).fetchall()
 
     best: tuple[float, Trail] | None = None
@@ -897,8 +855,7 @@ def precise_observations(
     version's 3000-row cap existed to bound a fetch that could span the entire map at once; a
     single destination's own footprint can't realistically produce that.
     """
-    dlat = radius_km / 111.0
-    dlng = radius_km / (111.0 * max(abs(math.cos(math.radians(lat))), 0.01))
+    bbox = bbox_around(lat, lng, radius_km)
     rows = con.execute(
         cast(
             LiteralString,
@@ -911,7 +868,7 @@ def precise_observations(
             ORDER BY o.observed_on DESC
             """,
         ),
-        [lat - dlat, lat + dlat, lng - dlng, lng + dlng, *taxon_ids, *months],
+        [bbox.min_lat, bbox.max_lat, bbox.min_lng, bbox.max_lng, *taxon_ids, *months],
     ).fetchall()
     genera = _genus_name_map(con, {row[1] for row in rows})
 

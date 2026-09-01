@@ -69,7 +69,7 @@ def test_parse_facility_skips_missing_and_zero_coords() -> None:
 
 
 def test_query_centers_cover_the_disk() -> None:
-    from foray.scoring import haversine_km
+    from foray.geo import haversine_km
 
     query_radius = 80.0
     small = _query_centers(HOME_LAT, HOME_LNG, radius_km=5.0, query_radius_km=query_radius)
@@ -83,7 +83,7 @@ def test_query_centers_cover_the_disk() -> None:
 
 def test_query_centers_caps_request_count_for_huge_radius() -> None:
     from foray.camps import _MAX_QUERY_CENTERS
-    from foray.scoring import haversine_km
+    from foray.geo import haversine_km
 
     # An uncapped grid at this radius would need tens of thousands of query circles.
     centers = _query_centers(HOME_LAT, HOME_LNG, radius_km=10000.0, query_radius_km=80.0)

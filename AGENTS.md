@@ -39,6 +39,14 @@ Guiding principles - keep these in mind for any feature work:
   backs off on transient network errors so one blip doesn't abort a long ingest.
 - `src/foray/geocode.py` - resolve a place name (OpenStreetMap Nominatim) or raw `lat,lng`
   to coordinates. Network-mocked in tests.
+- `src/foray/geo.py` - pure lat/lng math shared by scoring + the ingest layer: `haversine_km`
+  (canonical distance), `bbox_around` (the flat-degree disk bbox every `*_near` query
+  prefilters with), `KM_PER_DEG_LAT`, and the corridor tangent-plane projection helpers.
+- `src/foray/http.py` - shared HTTP plumbing for the external-data modules: `USER_AGENT`,
+  `Throttle` (process-wide request pacer), `retry_after_seconds` (`Retry-After` parsing +
+  capped backoff), and `SOURCE_ERRORS` (the "log + degrade to empty" exception tuple).
+- `src/foray/overpass.py` - shared OSM Overpass client (endpoint, `around()`/`bbox()` filter
+  fragments, `post()` with 429/504 backoff) used by `dispersed.py` and `trails.py`.
 - `src/foray/cache.py` - Postgres schema (tables created eagerly on every `connect()`) +
   idempotent upserts (`ON CONFLICT`), ingest log. `connect()` takes no DSN by default - reads
   the standard `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` env vars.

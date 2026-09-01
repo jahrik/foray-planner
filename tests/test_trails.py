@@ -12,7 +12,6 @@ from foray.cache import is_ingested, upsert_campsites, upsert_trails
 from foray.config import CoverageRegion, Home, Ingest, Settings
 from foray.scoring import get_trail, nearest_trail, trails_near
 from foray.trails import (
-    _bbox_filter,
     _network_query,
     _parse_element,
     _parse_trailhead_id,
@@ -253,7 +252,9 @@ def test_ingest_trails_upserts_into_cache(con: psycopg.Connection) -> None:
 
 
 def test_bbox_filter_formats_south_west_north_east() -> None:
-    assert _bbox_filter(45.5, -124.8, 49.0, -116.9) == "(45.5,-124.8,49.0,-116.9)"
+    from foray import overpass
+
+    assert overpass.bbox(45.5, -124.8, 49.0, -116.9) == "(45.5,-124.8,49.0,-116.9)"
 
 
 def test_tile_bboxes_covers_a_wide_region_in_bounded_tiles() -> None:

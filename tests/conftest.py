@@ -66,6 +66,15 @@ def con(_pg_session: psycopg.Connection) -> psycopg.Connection:
 
 
 @pytest.fixture(autouse=True)
+def _no_overpass_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The shared Overpass ~1 req/s pace (foray.overpass._throttle) is real in production but
+    only burns wall-clock against the tests' MockTransport."""
+    from foray import overpass
+
+    monkeypatch.setattr(overpass._throttle, "min_interval", 0.0)
+
+
+@pytest.fixture(autouse=True)
 def _no_elevation_network(monkeypatch: pytest.MonkeyPatch) -> None:
     """`ingest.backfill_elevations` (issue #36) runs at the end of every ingest and hits
     Open-Meteo. Block that by default so the suite stays offline; the elevation-specific tests
