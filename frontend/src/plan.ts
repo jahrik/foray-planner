@@ -5,6 +5,7 @@ import type { Stop, TripPlan } from "./api/types";
 import { escapeXml, feeLabel } from "./format";
 import { focusRegion } from "./layers";
 import { addMarker, clearMarkers, map, setPlanRoute, HOME_FILL, HOME_RING, PLAN_STOP } from "./map";
+import { buildPopup } from "./popup";
 import { dist, displayName, errorDetail, inatUrl, monthsParam, MONTHS, qs, setStatus, state } from "./state";
 
 export async function runPlan(): Promise<void> {
@@ -94,21 +95,18 @@ export async function runPlan(): Promise<void> {
     .bindPopup(destLabel);
   addMarker(destMarker);
 
-  // Plot stop markers. Build the popup with DOM nodes so name/common_name values from the
-  // external API are never injected as raw HTML.
+  // Plot stop markers. buildPopup sets name/common_name values from the external API via
+  // textContent so they're never injected as raw HTML.
   trip.stops.forEach((stop) => {
-    const popupEl = document.createElement("div");
-    const title = document.createElement("b");
-    title.textContent = `Stop ${stop.order}`;
-    const drive = document.createTextNode(` · ${dist(stop.drive_km_from_prev)} leg`);
-    const br = document.createElement("br");
-    const names = document.createTextNode(
-      stop.species
-        .slice(0, 3)
-        .map((hit) => displayName(hit))
-        .join(", "),
-    );
-    popupEl.append(title, drive, br, names);
+    const names = stop.species
+      .slice(0, 3)
+      .map((hit) => displayName(hit))
+      .join(", ");
+    const popupEl = buildPopup({
+      title: `Stop ${stop.order}`,
+      titleSuffix: ` · ${dist(stop.drive_km_from_prev)} leg`,
+      lines: [names],
+    });
     const marker = L.circleMarker([stop.center_lat, stop.center_lng], {
       radius: 6 + 14 * stop.score_norm,
       color: PLAN_STOP,
