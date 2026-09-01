@@ -26,6 +26,7 @@ function hide(): void {
   const element = bar();
   if (!element) return;
   element.classList.remove("active");
+  if (hideTimer !== null) clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
     hideTimer = null;
     element.setAttribute("aria-hidden", "true");
@@ -38,7 +39,10 @@ export function beginLoading(): void {
 }
 
 export function endLoading(): void {
-  inFlight = Math.max(0, inFlight - 1);
+  // No-op when already settled, so a stray/duplicate endLoading() can't drive inFlight
+  // negative or reschedule a hide (which would orphan the pending timeout).
+  if (inFlight === 0) return;
+  inFlight -= 1;
   if (inFlight === 0) hide();
 }
 
