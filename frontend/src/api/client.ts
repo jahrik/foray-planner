@@ -26,7 +26,10 @@ type SuccessBody<Op> = Op extends { responses: { 200: { content: { "application/
   ? Body
   : never;
 type OpParams<Op> = Op extends { parameters: infer Params } ? Params : never;
-type OpBody<Op> = Op extends { requestBody?: { content: { "application/json": infer Body } } } ? Body : never;
+// Non-optional `requestBody` in the pattern: ops without a body have `requestBody?: never` in
+// the generated schema, which would otherwise infer `Body` as `unknown` and make `body`
+// spuriously required.
+type OpBody<Op> = Op extends { requestBody: { content: { "application/json": infer Body } } } ? Body : never;
 
 // Thin wrappers over openapi-fetch's `{ data, error, response }` result, preserving the
 // throw-based ergonomics call sites across layers.ts/main.ts/plan.ts/refresh.ts/views.ts already
@@ -58,39 +61,44 @@ export async function getJson<Path extends PathsWithMethod<paths, "get">>(
 }
 
 // POST and DELETE take a single `init` object passed through to openapi-fetch: `body` for the
-// routes that have a request body (`/api/location`), `params` for the routes that key off a
-// path segment or query string (`/api/genera/{taxon_id}`, `/api/refresh?target=`). Both are
-// optional so a bodyless, paramless call is just `postJson(path)`.
-type PostInit<Path extends PathsWithMethod<paths, "post">> = {
-  body?: OpBody<PostOp<Path>>;
-  params?: OpParams<PostOp<Path>>;
-};
-type DeleteInit<Path extends PathsWithMethod<paths, "delete">> = {
-  params?: OpParams<DeleteOp<Path>>;
-};
+// routes with a request body (`/api/location`), `params` for the ones that key off a path
+// segment or query string (`/api/genera/{taxon_id}`, `/api/refresh?target=`). Each half is
+// required or optional exactly as the schema says (`body` required iff the op has one;
+// `params` required iff it has a required path/query), and the `init` arg itself drops to
+// optional only when neither half is required (`deleteJson("/api/refresh")`).
+type BodyPart<Op> = OpBody<Op> extends never ? { body?: never } : { body: OpBody<Op> };
+type ParamsPart<Op> =
+  RequiredKeysOf<OpParams<Op>> extends never ? { params?: OpParams<Op> } : { params: OpParams<Op> };
+type PostInit<Path extends PathsWithMethod<paths, "post">> = BodyPart<PostOp<Path>> &
+  ParamsPart<PostOp<Path>>;
+type DeleteInit<Path extends PathsWithMethod<paths, "delete">> = ParamsPart<DeleteOp<Path>>;
 
 export async function postJson<Path extends PathsWithMethod<paths, "post">>(
   path: Path,
-  init?: PostInit<Path>,
+  ...init: RequiredKeysOf<PostInit<Path>> extends never ? [init?: PostInit<Path>] : [init: PostInit<Path>]
 ): Promise<SuccessBody<PostOp<Path>>> {
-  const { data, error, response } = await withLoading(() => client.POST(path, (init ?? undefined) as never));
+  const { data, error, response } = await withLoading(() =>
+    client.POST(path, (init[0] ?? undefined) as never),
+  );
   if (!response.ok) throw (error as ApiError | undefined) || httpError(response);
   return data as SuccessBody<PostOp<Path>>;
 }
 
 export async function deleteJson<Path extends PathsWithMethod<paths, "delete">>(
   path: Path,
-  init?: DeleteInit<Path>,
+  ...init: RequiredKeysOf<DeleteInit<Path>> extends never
+    ? [init?: DeleteInit<Path>]
+    : [init: DeleteInit<Path>]
 ): Promise<SuccessBody<DeleteOp<Path>>> {
   const { data, error, response } = await withLoading(() =>
-    client.DELETE(path, (init ?? undefined) as never),
+    client.DELETE(path, (init[0] ?? undefined) as never),
   );
   if (!response.ok) throw (error as ApiError | undefined) || httpError(response);
   return data as SuccessBody<DeleteOp<Path>>;
 }
 
-/** Open the refresh progress stream (`GET /api/refresh/stream`). It's an event-stream, so the
- * payload isn't in the generated schema - `RefreshEvent` mirrors what
+/** Open the refresh progress stream (`GET /api/refresh/stream`). The endpoint is in the schema
+ * as `text/event-stream`, but the per-message JSON shape isn't - `RefreshEvent` mirrors what
  * `foray.api.refresh_runner.broadcast` sends. `onEvent` gets each parsed update; a message
  * that isn't JSON goes to `onMalformed` instead. The caller owns `close()` and `onerror`. */
 export function openRefreshStream(
