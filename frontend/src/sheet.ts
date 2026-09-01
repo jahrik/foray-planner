@@ -63,7 +63,9 @@ export function snapTo(detent: Detent, opts: { fromPopstate?: boolean } = {}): v
   current = detent;
   setTop(detentTopPx(detent));
   sheetEl.dataset.detent = detent;
-  handleEl.setAttribute("aria-expanded", String(detent !== "collapsed"));
+  const open = detent !== "collapsed";
+  handleEl.setAttribute("aria-expanded", String(open));
+  handleEl.setAttribute("aria-label", open ? "Collapse destinations panel" : "Expand destinations panel");
   syncHistory(previous, detent, opts.fromPopstate ?? false);
 }
 
@@ -201,7 +203,12 @@ function disable(): void {
   sheetEl.style.transform = "";
   sheetEl.style.transition = "";
   if (panelEl.parentElement !== mainEl) mainEl.appendChild(panelEl); // back to the desktop grid
-  ownsHistoryEntry = false;
+  // Unwind the sheet-only history entry so a later Back press isn't silently consumed popping
+  // stale sheet state after a resize/orientation switch to desktop.
+  if (ownsHistoryEntry) {
+    ownsHistoryEntry = false;
+    history.back();
+  }
   requestAnimationFrame(() => map.invalidateSize());
 }
 
@@ -220,6 +227,19 @@ export function initSheet(): void {
   window.addEventListener("pointerup", onPointerUp);
   window.addEventListener("pointercancel", onPointerUp);
   window.addEventListener("popstate", onPopstate);
+
+  // Swallow the click synthesised after a drag so a drag that started on a tab button (or the
+  // handle) doesn't also switch tabs / re-toggle. Capture phase so it runs before those targets.
+  sheetEl.addEventListener(
+    "click",
+    (event) => {
+      if (!didDrag) return;
+      didDrag = false;
+      event.stopPropagation();
+      event.preventDefault();
+    },
+    true,
+  );
 
   handleEl.addEventListener("click", () => {
     if (didDrag) return; // a real drag already snapped; don't also toggle
