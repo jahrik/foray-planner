@@ -37,12 +37,12 @@ import psycopg
 
 from foray.cache import connect, is_area_covered, is_ingested, record_ingest, upsert_public_land
 from foray.config import CoverageRegion, Settings
+from foray.geo import bbox_around
 
 logger = logging.getLogger(__name__)
 
 USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
 
-_KM_PER_DEG_LAT = 111.0
 _PAGE_SIZE = 1000
 # Server-side geometry generalization, in degrees (~0.005° ≈ 500 m). Keeps national-forest
 # MultiPolygons small enough to cache and render on a phone; ownership shading needs no more.
@@ -102,16 +102,8 @@ SOURCES: tuple[LandSource, ...] = (
 
 def _envelope(lat: float, lng: float, radius_km: float) -> tuple[float, float, float, float]:
     """(xmin, ymin, xmax, ymax) lon/lat box enclosing the home disk - the ArcGIS query bbox."""
-    dlat = radius_km / _KM_PER_DEG_LAT
-    km_per_deg_lng = _KM_PER_DEG_LAT * max(abs(_cos(lat)), 0.01)
-    dlng = radius_km / km_per_deg_lng
-    return (lng - dlng, lat - dlat, lng + dlng, lat + dlat)
-
-
-def _cos(deg: float) -> float:
-    import math
-
-    return math.cos(math.radians(deg))
+    bbox = bbox_around(lat, lng, radius_km)
+    return (bbox.min_lng, bbox.min_lat, bbox.max_lng, bbox.max_lat)
 
 
 def _get(props: dict[str, Any], field: str) -> Any:

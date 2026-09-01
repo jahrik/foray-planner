@@ -30,7 +30,7 @@ import psycopg
 
 from foray.cache import connect, is_area_covered, record_ingest, upsert_campsites
 from foray.config import Settings
-from foray.scoring import haversine_km
+from foray.geo import KM_PER_DEG_LAT, haversine_km
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,6 @@ _KM_PER_MILE = 1.609344
 # radius are tiled over the home disk (see `_query_centers`).
 _QUERY_RADIUS_MI = 50.0
 _PAGE_SIZE = 50  # RIDB's max page size for the facilities endpoint
-_KM_PER_DEG_LAT = 111.0
 
 # RIDB rate-limits at 50 requests/minute; a wide radius tiles into dozens of requests, so
 # pace them to stay comfortably under (45/min) and back off on a 429.
@@ -87,8 +86,8 @@ def _query_centers(lat: float, lng: float, radius_km: float, query_radius_km: fl
     whose circle cannot reach the disk are dropped.
     """
     spacing_km = query_radius_km
-    dlat_deg = spacing_km / _KM_PER_DEG_LAT
-    km_per_deg_lng = _KM_PER_DEG_LAT * max(math.cos(math.radians(lat)), 0.01)
+    dlat_deg = spacing_km / KM_PER_DEG_LAT
+    km_per_deg_lng = KM_PER_DEG_LAT * max(math.cos(math.radians(lat)), 0.01)
     dlng_deg = spacing_km / km_per_deg_lng
     steps = max(1, math.ceil(radius_km / spacing_km))
 

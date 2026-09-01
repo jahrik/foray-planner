@@ -19,7 +19,7 @@ from typing import Any, LiteralString
 
 import psycopg
 
-from foray.scoring import haversine_km
+from foray.geo import haversine_km
 
 logger = logging.getLogger(__name__)
 

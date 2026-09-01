@@ -32,7 +32,7 @@ from foray.cache import (
     upsert_fungi_genera,
     upsert_observations,
 )
-from foray.scoring import haversine_km
+from foray.geo import haversine_km
 
 # Seattle, used as the "home" point for latest_obs_date's haversine region-matching tests.
 _HOME_LAT, _HOME_LNG = 47.6, -122.3
