@@ -25,9 +25,10 @@ import httpx
 import psycopg
 
 from foray import overpass
-from foray.cache import connection, is_area_covered, record_ingest, upsert_campsites
+from foray.cache import upsert_campsites
 from foray.config import Settings
 from foray.http import SOURCE_ERRORS
+from foray.ingest_base import run_area_ingest
 
 logger = logging.getLogger(__name__)
 
@@ -137,23 +138,13 @@ def ingest_dispersed(
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest OSM reported campsites into ``campsites``. Returns rows upserted."""
-    home = cfg.home
-    with connection(con) as database:
-        if is_area_covered(database, "dispersed:", home.lat, home.lng, home.radius_km):
-            logger.info("dispersed: already ingested for this area, skipping")
-            if progress_cb:
-                progress_cb("Dispersed camping already cached, skipping…", 100.0)
-            return 0
-        logger.info("dispersed: fetching OSM camping layers within %.0f km of home…", home.radius_km)
-        rows = fetch_reported_campsites(
-            lat=home.lat,
-            lng=home.lng,
-            radius_km=home.radius_km,
-            client=client,
-            progress_cb=progress_cb,
-        )
-        upsert_campsites(database, rows)
-        key = f"dispersed:{home.lat}:{home.lng}:{home.radius_km}"
-        record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
-        logger.info("dispersed: cached %d reported sites", len(rows))
-        return len(rows)
+    return run_area_ingest(
+        cfg,
+        con,
+        prefix="dispersed:",
+        label="dispersed",
+        noun="Dispersed camping",
+        fetch=lambda **kw: fetch_reported_campsites(client=client, **kw),
+        upsert=upsert_campsites,
+        progress_cb=progress_cb,
+    )

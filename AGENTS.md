@@ -50,9 +50,13 @@ Guiding principles - keep these in mind for any feature work:
 - `src/foray/cache.py` - Postgres schema (tables created eagerly on every `connect()`) +
   idempotent upserts (`ON CONFLICT`), ingest log. `connect()` takes no DSN by default - reads
   the standard `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` env vars.
+- `src/foray/ingest_base.py` - `run_area_ingest(...)`: the shared skeleton (skip-if-covered ->
+  fetch -> upsert -> record) behind the four home-radius area ingests (campgrounds, dispersed,
+  land, trails). A new area source is a fetch function + an upsert function.
 - `src/foray/ingest.py` - pulls per seed taxon within the home radius or by coverage region
   (`place_id`). Tags each obs with the **seed** taxon_id (not leaf species) so phenology is
-  per foraging target. Region ingest uses chunked inserts (5000 rows) for bounded memory.
+  per foraging target. `ingest` / `ingest_region` share `_consume_observations` (scan ->
+  resolve genus -> chunked upsert, 5000 rows, with progress + abort) for bounded memory.
   `revalidate()` is a separate, recurring re-check pass: a handful of fungal genus names are
   homonyms of common animal genera (fungal *Olla* vs. the ladybug genus, etc), so observations
   occasionally get cached under the wrong (non-fungal) taxon_id and never self-correct since

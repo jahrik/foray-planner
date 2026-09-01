@@ -28,10 +28,11 @@ from typing import Any
 import httpx
 import psycopg
 
-from foray.cache import connection, is_area_covered, record_ingest, upsert_campsites
+from foray.cache import upsert_campsites
 from foray.config import Settings
 from foray.geo import KM_PER_DEG_LAT, haversine_km
 from foray.http import SOURCE_ERRORS, USER_AGENT, Throttle, retry_after_seconds
+from foray.ingest_base import run_area_ingest
 
 logger = logging.getLogger(__name__)
 
@@ -251,24 +252,13 @@ def ingest_campgrounds(
     if not api_key:
         logger.info("camps: RIDB_API_KEY unset - skipping campground ingest")
         return 0
-    home = cfg.home
-    with connection(con) as database:
-        if is_area_covered(database, "camps:ridb:", home.lat, home.lng, home.radius_km):
-            logger.info("camps: already ingested for this area, skipping")
-            if progress_cb:
-                progress_cb("Campgrounds already cached, skipping…", 100.0)
-            return 0
-        logger.info("camps: fetching developed campgrounds within %.0f km of home…", home.radius_km)
-        rows = fetch_campsites(
-            lat=home.lat,
-            lng=home.lng,
-            radius_km=home.radius_km,
-            api_key=api_key,
-            client=client,
-            progress_cb=progress_cb,
-        )
-        upsert_campsites(database, rows)
-        key = f"camps:ridb:{home.lat}:{home.lng}:{home.radius_km}"
-        record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
-        logger.info("camps: cached %d campgrounds", len(rows))
-        return len(rows)
+    return run_area_ingest(
+        cfg,
+        con,
+        prefix="camps:ridb:",
+        label="camps",
+        noun="Campgrounds",
+        fetch=lambda **kw: fetch_campsites(api_key=api_key, client=client, **kw),
+        upsert=upsert_campsites,
+        progress_cb=progress_cb,
+    )

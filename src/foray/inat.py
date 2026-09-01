@@ -140,6 +140,38 @@ def _with_retries[T](fn: Callable[[], T], *, attempts: int = 5, base_delay: floa
             time.sleep(retry_after)
 
 
+def _iter_id_above(fetch_page: Callable[[int], dict[str, Any]]) -> Iterator[dict[str, Any]]:
+    """Walk an iNat listing endpoint page by ascending id via ``id_above``, sidestepping the
+    ~10k deep-paging cap. ``fetch_page(id_above)`` runs one request; iteration stops on an
+    empty or short (< ``_PAGE_SIZE``) page. Each page is retried by ``_with_retries``.
+
+    Shared by ``iter_observations`` (``/v1/observations``) and ``iter_fungi_genera``
+    (``/v1/taxa``) - the loop is identical, only the endpoint call differs.
+    """
+    id_above = 0
+    while True:
+        page = _with_retries(lambda: fetch_page(id_above))  # noqa: B023 (called immediately)
+        results = page.get("results", [])
+        if not results:
+            return
+        yield from results
+        if len(results) < _PAGE_SIZE:
+            return
+        id_above = results[-1]["id"]
+
+
+def _iter_by_ids(ids: list[int]) -> Iterator[dict[str, Any]]:
+    """Fetch full current observation records for ``ids`` in ``_PAGE_SIZE`` chunks, yielding
+    each as it arrives. A generator, not a list - ``resync --until-done`` can pass tens of
+    thousands of ids and holding every verbose record in memory at once is the unbounded-memory
+    pattern the rest of this codebase avoids (see ``ingest_region``'s chunked-insert comment).
+    """
+    for start in range(0, len(ids), _PAGE_SIZE):
+        chunk = ids[start : start + _PAGE_SIZE]
+        page = _with_retries(lambda chunk=chunk: get_observations(id=chunk, per_page=_PAGE_SIZE, user_agent=USER_AGENT))
+        yield from page.get("results", [])
+
+
 def iter_observations(
     *,
     taxon_id: int | list[int],
@@ -170,29 +202,20 @@ def iter_observations(
         geo_kwargs["lng"] = lng
         geo_kwargs["radius"] = radius_km
 
-    id_above = 0
-    while True:
-        page = _with_retries(
-            lambda: get_observations(
-                taxon_id=taxon_id,
-                **geo_kwargs,
-                d1=d1,
-                d2=d2,
-                quality_grade=quality_grade,
-                per_page=_PAGE_SIZE,
-                order_by="id",
-                order="asc",
-                id_above=id_above,  # noqa: B023 (sync loop; lambda called immediately)
-                user_agent=USER_AGENT,
-            )
+    return _iter_id_above(
+        lambda id_above: get_observations(
+            taxon_id=taxon_id,
+            **geo_kwargs,
+            d1=d1,
+            d2=d2,
+            quality_grade=quality_grade,
+            per_page=_PAGE_SIZE,
+            order_by="id",
+            order="asc",
+            id_above=id_above,
+            user_agent=USER_AGENT,
         )
-        results = page.get("results", [])
-        if not results:
-            return
-        yield from results
-        if len(results) < _PAGE_SIZE:
-            return
-        id_above = results[-1]["id"]
+    )
 
 
 def iter_fungi_genera() -> Iterator[dict[str, Any]]:
@@ -202,26 +225,17 @@ def iter_fungi_genera() -> Iterator[dict[str, Any]]:
     accepts it too). ~6,018 results as of 2026-07 - well past a single page, so this always
     walks more than one request.
     """
-    id_above = 0
-    while True:
-        page = _with_retries(
-            lambda: get_taxa(
-                taxon_id=FUNGI_TAXON_ID,
-                rank="genus",
-                per_page=_PAGE_SIZE,
-                order_by="id",
-                order="asc",
-                id_above=id_above,  # noqa: B023 (sync loop; lambda called immediately)
-                user_agent=USER_AGENT,
-            )
+    return _iter_id_above(
+        lambda id_above: get_taxa(
+            taxon_id=FUNGI_TAXON_ID,
+            rank="genus",
+            per_page=_PAGE_SIZE,
+            order_by="id",
+            order="asc",
+            id_above=id_above,
+            user_agent=USER_AGENT,
         )
-        results = page.get("results", [])
-        if not results:
-            return
-        yield from results
-        if len(results) < _PAGE_SIZE:
-            return
-        id_above = results[-1]["id"]
+    )
 
 
 def fetch_observations(ids: list[int]) -> Iterator[dict[str, Any]]:
@@ -231,22 +245,8 @@ def fetch_observations(ids: list[int]) -> Iterator[dict[str, Any]]:
     Used by ``ingest.revalidate``/``ingest.resync`` to re-check previously-cached rows: an
     observation's identification (and therefore its genus/kingdom) can change after ingest, and
     nothing else here ever re-fetches an already-cached id outside its original ingest window.
-
-    A generator, not a list - ``resync --until-done`` can hand this tens of thousands of ids in
-    one call, and holding every page's full JSON in memory at once (verbose records: photos,
-    full taxon ancestry, etc) is exactly the unbounded-memory pattern the rest of this codebase
-    avoids (see ``ingest_region``'s chunked-insert comment).
     """
-    for start in range(0, len(ids), _PAGE_SIZE):
-        chunk = ids[start : start + _PAGE_SIZE]
-        page = _with_retries(
-            lambda chunk=chunk: get_observations(
-                id=chunk,
-                per_page=_PAGE_SIZE,
-                user_agent=USER_AGENT,
-            )
-        )
-        yield from page.get("results", [])
+    return _iter_by_ids(ids)
 
 
 def photos_for_observations(ids: list[int]) -> dict[int, list[dict[str, Any]]]:
@@ -254,20 +254,9 @@ def photos_for_observations(ids: list[int]) -> dict[int, list[dict[str, Any]]]:
 
     Only observations with at least one photo appear in the result.
     """
-    if not ids:
-        return {}
     photos: dict[int, list[dict[str, Any]]] = {}
-    for start in range(0, len(ids), _PAGE_SIZE):
-        chunk = ids[start : start + _PAGE_SIZE]
-        page = _with_retries(
-            lambda chunk=chunk: get_observations(
-                id=chunk,
-                per_page=_PAGE_SIZE,
-                user_agent=USER_AGENT,
-            )
-        )
-        for obs in page.get("results", []):
-            obs_photos = obs.get("photos") or []
-            if obs_photos:
-                photos[obs["id"]] = obs_photos
+    for obs in _iter_by_ids(ids):
+        obs_photos = obs.get("photos") or []
+        if obs_photos:
+            photos[obs["id"]] = obs_photos
     return photos
