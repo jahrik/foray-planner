@@ -1,7 +1,9 @@
 ---
-# Local quality gate - runs the same checks CI does before a commit lands.
-# ruff/ty are driven through `uv run` so their versions come from uv.lock
-# (single source of truth); no separately pinned hook revs to drift.
+# Local quality gate. Fast checks run on every commit; the full test + frontend build run
+# on `git push` (pre-push stage) so commits stay quick. Enable both stages once with:
+#   uv run pre-commit install --hook-type pre-commit --hook-type pre-push
+# ruff/ty/vulture are driven through `uv run` so their versions come from uv.lock (single
+# source of truth); no separately pinned hook revs to drift.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -11,6 +13,8 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
 
   - repo: local
     hooks:
@@ -30,15 +34,25 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: vulture
+        name: vulture (dead code)
+        entry: uv run vulture src/foray --min-confidence 80
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      # Heavier gates - pre-push only.
       - id: make-test
         name: make test
         entry: make test
         language: system
+        stages: [pre-push]
         types: [python]
         pass_filenames: false
-      - id: frontend-build
-        name: frontend build (type-check + vite build)
+      - id: frontend-check
+        name: frontend lint + type-check + build
         entry: make frontend
         language: system
+        stages: [pre-push]
         types_or: [ts, css, html, json, javascript]
         pass_filenames: false

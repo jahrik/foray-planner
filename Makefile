@@ -38,6 +38,7 @@ lint:
 	uv run ruff format --check .
 	uv run ruff check .
 	uv run ty check
+	uv run vulture src/foray --min-confidence 80
 
 test: db
 	uv run pytest
