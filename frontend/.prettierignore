@@ -1,0 +1,10 @@
+# Generated from the backend OpenAPI schema (npm run gen:api)
+src/api/schema.ts
+openapi.json
+
+# Build output
+../src/foray/web/dist
+dev-dist
+dist
+node_modules
+package-lock.json

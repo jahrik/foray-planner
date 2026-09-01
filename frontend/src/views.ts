@@ -188,7 +188,11 @@ export async function runDestinations(): Promise<void> {
           .slice(0, 6)
           .map((hit) => {
             const pct = Math.round(hit.w_pheno * 100);
-            return speciesChip({ ...hit, label: `${pct}% · ${hit.month_count}`, title: phenoTitle(pct, hit.month_count, allMonths) });
+            return speciesChip({
+              ...hit,
+              label: `${pct}% · ${hit.month_count}`,
+              title: phenoTitle(pct, hit.month_count, allMonths),
+            });
           })
           .join("")}</div>
         ${
@@ -227,7 +231,11 @@ export async function runDestinations(): Promise<void> {
           .slice(0, expanded ? undefined : 6)
           .map((hit) => {
             const pct = Math.round(hit.w_pheno * 100);
-            return speciesChip({ ...hit, label: `${pct}% · ${hit.month_count}`, title: phenoTitle(pct, hit.month_count, allMonths) });
+            return speciesChip({
+              ...hit,
+              label: `${pct}% · ${hit.month_count}`,
+              title: phenoTitle(pct, hit.month_count, allMonths),
+            });
           })
           .join("");
         showMoreButton.textContent = expanded ? "Show less" : `Show all ${region.species.length}`;
@@ -585,7 +593,9 @@ async function loadCampgroundsInto(region: RegionScore, container: HTMLElement):
     const feeLabel = site.free === true ? "free" : site.fee ? site.fee : "cost unknown";
     button.textContent = `${site.name} · ${dist(site.distance_km)} · ${feeLabel}`;
     const marker = plotCardCamp(site, () => selectRow(site, button, marker));
-    marker.bindPopup(`<b>${escapeHtml(site.name)}</b><br>${dist(site.distance_km)} · ${escapeHtml(feeLabel)}`);
+    marker.bindPopup(
+      `<b>${escapeHtml(site.name)}</b><br>${dist(site.distance_km)} · ${escapeHtml(feeLabel)}`,
+    );
     button.onclick = (e) => {
       e.stopPropagation();
       selectRow(site, button, marker);
@@ -630,9 +640,7 @@ export async function runAlerts(): Promise<void> {
     const card = document.createElement("div");
     card.className = "rank";
 
-    const placeText = region.species[0]?.place_guess
-      ? ` · ${escapeHtml(region.species[0].place_guess)}`
-      : "";
+    const placeText = region.species[0]?.place_guess ? ` · ${escapeHtml(region.species[0].place_guess)}` : "";
     card.innerHTML = `<h3><span><span class="num">${dist(region.distance_km)}</span>${placeText}</span><span class="num">${region.total} recent</span></h3>
       <div class="chips">${region.species
         .map((hit) => {

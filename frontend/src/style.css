@@ -17,63 +17,167 @@
   --accent2: #3f6b3f;
   --border: #ddd3b8;
 }
-* { box-sizing: border-box; }
-html, body { height: 100%; }
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+}
 body {
   margin: 0;
-  font: 15px/1.5 system-ui, sans-serif;
+  font:
+    15px/1.5 system-ui,
+    sans-serif;
   background: var(--bg);
   color: var(--ink);
   display: flex;
   flex-direction: column;
 }
 header {
-  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
-  padding: 4px 12px; border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
 }
-header h1 { margin: 0; font-size: 13px; white-space: nowrap; flex-shrink: 0; }
+header h1 {
+  margin: 0;
+  font-size: 13px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 .theme-toggle {
-  min-width: 40px; min-height: 40px; padding: 4px 8px; font-size: 14px; line-height: 1;
-  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 4px 8px;
+  font-size: 14px;
+  line-height: 1;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-.locbar { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
-.locbar form { position: relative; flex: 0 1 280px; min-width: 160px; }
+.locbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.locbar form {
+  position: relative;
+  flex: 0 1 280px;
+  min-width: 160px;
+}
 .locbar input {
-  width: 100%; padding: 5px 10px; border-radius: 6px; font-size: 13px;
-  border: 1px solid var(--border); background: var(--panel); color: var(--ink);
+  width: 100%;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink);
 }
-.loc-current { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.loc-current strong { color: var(--ink); }
-.loc-meta { font-size: 11px; }
-.radius-presets { display: flex; gap: 4px; flex-shrink: 0; }
+.loc-current {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.loc-current strong {
+  color: var(--ink);
+}
+.loc-meta {
+  font-size: 11px;
+}
+.radius-presets {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
 .radius-presets button {
-  padding: 3px 7px; font-size: 11px; border-radius: 10px;
-  border: 1px solid var(--border); background: var(--panel); color: var(--muted);
+  padding: 3px 7px;
+  font-size: 11px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
 }
-.radius-presets button:hover { border-color: var(--accent); color: var(--ink); }
-.header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto; }
-.help-wrap { position: relative; }
+.radius-presets button:hover {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.help-wrap {
+  position: relative;
+}
 .help-popover {
-  position: absolute; top: 100%; right: 0; z-index: 1000;
-  margin-top: 6px; width: 260px; padding: 12px 14px;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,.3); font-size: 13px; line-height: 1.5;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 1000;
+  margin-top: 6px;
+  width: 260px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  font-size: 13px;
+  line-height: 1.5;
 }
-.help-popover p { margin: 0; }
-.action-status { gap: 4px !important; }
-.action-status #status { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.help-popover p {
+  margin: 0;
+}
+.action-status {
+  gap: 4px !important;
+}
+.action-status #status {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
 .loc-suggestions {
-  position: absolute; top: 100%; left: 0; right: 0; z-index: 1000;
-  margin: 2px 0 0; padding: 0; list-style: none;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0,0,0,.3); display: none; max-height: 200px; overflow-y: auto;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  display: none;
+  max-height: 200px;
+  overflow-y: auto;
 }
-.loc-suggestions.open { display: block; }
+.loc-suggestions.open {
+  display: block;
+}
 .loc-suggestions li {
-  padding: 6px 10px; font-size: 12px; cursor: pointer;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.loc-suggestions li:hover, .loc-suggestions li.active { background: var(--border); }
+.loc-suggestions li:hover,
+.loc-suggestions li.active {
+  background: var(--border);
+}
 
 .controls {
   display: flex;
@@ -83,11 +187,30 @@ header h1 { margin: 0; font-size: 13px; white-space: nowrap; flex-shrink: 0; }
   padding: 4px 12px;
   border-bottom: 1px solid var(--border);
 }
-.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
-.filters-toggle { display: none; } /* mobile-only; desktop always shows the filters row */
-.field { display: flex; flex-direction: column; gap: 3px; }
-.field label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.field small { color: var(--muted); font-size: 10px; }
+.row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.filters-toggle {
+  display: none;
+} /* mobile-only; desktop always shows the filters row */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.field label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.field small {
+  color: var(--muted);
+  font-size: 10px;
+}
 .toggle-group {
   display: flex;
   flex-wrap: wrap;
@@ -123,73 +246,208 @@ header h1 { margin: 0; font-size: 13px; white-space: nowrap; flex-shrink: 0; }
   border-color: var(--accent2);
   font-weight: 600;
 }
-.months { display: flex; flex-wrap: wrap; gap: 4px; }
+.months {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
 .months button {
-  flex: 1 1 30px; min-width: 30px; padding: 2px 0; border: 1px solid var(--border); font-size: 12px;
-  background: var(--panel); color: var(--ink); border-radius: 6px; cursor: pointer;
+  flex: 1 1 30px;
+  min-width: 30px;
+  padding: 2px 0;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: 6px;
+  cursor: pointer;
 }
-.months button.on { background: var(--accent); color: #241a05; border-color: var(--accent); font-weight: 600; }
+.months button.on {
+  background: var(--accent);
+  color: #241a05;
+  border-color: var(--accent);
+  font-weight: 600;
+}
 select {
-  background: var(--panel); color: var(--ink); border: 1px solid var(--border);
-  border-radius: 6px; padding: 4px; min-width: 180px; font-size: 12px;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  min-width: 180px;
+  font-size: 12px;
 }
-button.primary, button {
-  padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);
-  background: var(--panel); color: var(--ink); cursor: pointer; font-size: 13px;
+button.primary,
+button {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
 }
-button.primary { background: var(--accent2); color: #10230a; border-color: var(--accent2); font-weight: 600; }
-#status { color: var(--muted); font-size: 12px; font-weight: 500; }
+button.primary {
+  background: var(--accent2);
+  color: #10230a;
+  border-color: var(--accent2);
+  font-weight: 600;
+}
+#status {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
 progress {
-  width: 100%; max-width: 400px; height: 10px; border-radius: 5px;
-  appearance: none; -webkit-appearance: none; border: none; background: var(--border);
+  width: 100%;
+  max-width: 400px;
+  height: 10px;
+  border-radius: 5px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: var(--border);
 }
-progress::-webkit-progress-bar { background: var(--border); border-radius: 5px; }
-progress::-webkit-progress-value { background: var(--accent2); border-radius: 5px; }
-progress::-moz-progress-bar { background: var(--accent2); border-radius: 5px; }
+progress::-webkit-progress-bar {
+  background: var(--border);
+  border-radius: 5px;
+}
+progress::-webkit-progress-value {
+  background: var(--accent2);
+  border-radius: 5px;
+}
+progress::-moz-progress-bar {
+  background: var(--accent2);
+  border-radius: 5px;
+}
 
 /* Underline-style tabs - the accent-colored border on .active is the primary "you are here"
    cue (stronger than the old opacity-only treatment, which read as barely-there buttons). */
-.tabs { display: flex; gap: 4px; padding: 6px 12px 0; flex: 0 0 auto; border-bottom: 2px solid var(--border); }
-.tabs button {
-  border: none; border-bottom: 2px solid transparent; margin-bottom: -2px;
-  border-radius: 6px 6px 0 0; padding: 8px 18px; font-size: 13px; font-weight: 600;
-  color: var(--muted); background: transparent;
-  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px 0;
+  flex: 0 0 auto;
+  border-bottom: 2px solid var(--border);
 }
-.tabs button:hover { color: var(--ink); background: var(--border); }
-.tabs button.active { color: var(--ink); background: var(--panel); border-bottom-color: var(--accent2); }
+.tabs button {
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  border-radius: 6px 6px 0 0;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: transparent;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.tabs button:hover {
+  color: var(--ink);
+  background: var(--border);
+}
+.tabs button.active {
+  color: var(--ink);
+  background: var(--panel);
+  border-bottom-color: var(--accent2);
+}
 
 /* #sheet is a passthrough wrapper on desktop (see index.html): its children (.tabs,
    .contour-rule) lay out as direct body children exactly as before, and #panel stays in the
    <main> grid. sheet.ts promotes it to a real fixed, draggable element at the mobile
    breakpoint (issue #229) and moves #panel inside it. */
-#sheet { display: contents; }
-.sheet-handle, .sheet-summary { display: none; }
-
+#sheet {
+  display: contents;
+}
+.sheet-handle,
+.sheet-summary {
+  display: none;
+}
 
 /* main claims whatever vertical space header/controls/tabs don't use, instead of a hardcoded
    "100vh minus a magic number" that broke whenever the header's height changed. */
-main { display: grid; grid-template-columns: 1fr 380px; gap: 0; flex: 1; min-height: 0; }
-.map-wrap { display: flex; flex-direction: column; min-height: 0; }
-#map { flex: 1; min-height: 0; background: #0c0d09; }
+main {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 0;
+  flex: 1;
+  min-height: 0;
+}
+.map-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#map {
+  flex: 1;
+  min-height: 0;
+  background: #0c0d09;
+}
 /* Inverts the standard (light) OSM tiles rather than brightening a separate dark tileset -
    see the comment on TILE_URL in map.ts for why. */
-:root[data-theme="dark"] #map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg); }
-#panel { background: var(--panel); border-left: 1px solid var(--border); overflow-y: auto; padding: 14px 16px; }
-.hint { color: var(--muted); }
+:root[data-theme="dark"] #map .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg);
+}
+#panel {
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 14px 16px;
+}
+.hint {
+  color: var(--muted);
+}
 
-.rank { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; cursor: pointer; }
-.rank:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
-.rank:hover { border-color: var(--accent); }
-.rank.active { border-color: var(--accent); background: var(--bg); }
-.rank h3 { margin: 0 0 4px; font-size: 15px; display: flex; justify-content: space-between; }
-.rank .meta { color: var(--muted); font-size: 12px; }
-.bar { height: 6px; background: var(--border); border-radius: 3px; margin: 6px 0; overflow: hidden; }
-.bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent2), var(--accent)); }
+.rank {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+.rank:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 2px;
+}
+.rank:hover {
+  border-color: var(--accent);
+}
+.rank.active {
+  border-color: var(--accent);
+  background: var(--bg);
+}
+.rank h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  display: flex;
+  justify-content: space-between;
+}
+.rank .meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.bar {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  margin: 6px 0;
+  overflow: hidden;
+}
+.bar > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent2), var(--accent));
+}
 
 /* Distance/species-count/score figures read like a field instrument's readout - tabular
    monospace numerals keep columns of them aligned as you scan down a list of cards. */
-.num { font-family: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+.num {
+  font-family: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
 
 /* The one signature motif (spore-print/contour-map reference) - used once, under the tab bar,
    not repeated elsewhere as decoration. */
@@ -200,11 +458,27 @@ main { display: grid; grid-template-columns: 1fr 380px; gap: 0; flex: 1; min-hei
   background-size: 10px 10px;
   background-position: center;
 }
-.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
 .chip {
-  font: inherit; font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
-  padding: 2px 8px; color: var(--ink); text-decoration: none; display: inline-block; cursor: pointer;
-  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: inherit;
+  font-size: 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 2px 8px;
+  color: var(--ink);
+  text-decoration: none;
+  display: inline-block;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   /* .chips is a flex row; flex items default to min-width:auto, which for nowrap text means
      "never shrink below the full unwrapped text width" - that silently defeats max-width/
      ellipsis above. Campground fee text (raw RIDB strings, sometimes a full sentence) is the
@@ -212,73 +486,180 @@ main { display: grid; grid-template-columns: 1fr 380px; gap: 0; flex: 1; min-hei
      enough to never trip it. min-width:0 lets the flex algorithm honor max-width instead. */
   min-width: 0;
 }
-a.chip:hover { border-color: var(--accent); }
-.chip.live { border-color: #22c3e6; color: #22c3e6; }
-/* Selected trailhead in a destination card's Trails tab (views.ts's loadTrailheadsInto). */
-.chip.active { border-color: var(--accent); color: var(--accent); }
-.chip.removable { display: inline-flex; align-items: center; gap: 4px; }
-.chip.removable button {
-  padding: 0; border: none; background: none; color: var(--muted); cursor: pointer;
-  font-size: 12px; line-height: 1;
+a.chip:hover {
+  border-color: var(--accent);
 }
-.chip.removable button:hover { color: var(--ink); }
+.chip.live {
+  border-color: #22c3e6;
+  color: #22c3e6;
+}
+/* Selected trailhead in a destination card's Trails tab (views.ts's loadTrailheadsInto). */
+.chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.chip.removable {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.chip.removable button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+.chip.removable button:hover {
+  color: var(--ink);
+}
 
 /* Trailhead marker (map.ts's plotTrailhead) - a destination card's Trails tab list, plotted on
    the map. Leaflet's default divIcon box (white bg/border) is cleared so only the emoji shows. */
-.leaflet-div-icon.trailhead-icon { background: transparent; border: none; }
+.leaflet-div-icon.trailhead-icon {
+  background: transparent;
+  border: none;
+}
 .trailhead-marker {
-  font-size: 18px; line-height: 20px; text-align: center; cursor: pointer;
+  font-size: 18px;
+  line-height: 20px;
+  text-align: center;
+  cursor: pointer;
   filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
 }
-.trailhead-marker.active { filter: drop-shadow(0 0 4px var(--accent)); transform: scale(1.2); }
+.trailhead-marker.active {
+  filter: drop-shadow(0 0 4px var(--accent));
+  transform: scale(1.2);
+}
 .show-more {
-  display: block; margin-top: 6px; padding: 0; border: none; background: none;
-  color: var(--muted); cursor: pointer; font-size: 11px; text-decoration: underline;
+  display: block;
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  text-decoration: underline;
 }
-.show-more:hover { color: var(--ink); }
+.show-more:hover {
+  color: var(--ink);
+}
 
-#genus-field { min-width: 200px; }
-#genus-field form { position: relative; }
+#genus-field {
+  min-width: 200px;
+}
+#genus-field form {
+  position: relative;
+}
 #genus-field input {
-  width: 100%; padding: 5px 10px; border-radius: 6px; font-size: 13px;
-  border: 1px solid var(--border); background: var(--panel); color: var(--ink);
+  width: 100%;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink);
 }
 
-.rank-tabs { display: flex; gap: 4px; margin-top: 8px; }
+.rank-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
 .rank-tab {
-  padding: 3px 9px; font-size: 11px; border-radius: 10px;
-  border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer;
+  padding: 3px 9px;
+  font-size: 11px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
 }
-.rank-tab.active { background: var(--accent2); color: #10230a; border-color: var(--accent2); font-weight: 600; }
-.rank-calendar { margin-top: 6px; }
-.rank-calendar table.cal { font-size: 12px; }
+.rank-tab.active {
+  background: var(--accent2);
+  color: #10230a;
+  border-color: var(--accent2);
+  font-weight: 600;
+}
+.rank-calendar {
+  margin-top: 6px;
+}
+.rank-calendar table.cal {
+  font-size: 12px;
+}
 
-table.cal { width: 100%; border-collapse: collapse; font-size: 13px; }
-table.cal td, table.cal th { padding: 4px 6px; text-align: left; }
-table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); font-weight: 600; }
+table.cal {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+table.cal td,
+table.cal th {
+  padding: 4px 6px;
+  text-align: left;
+}
+table.cal .heat {
+  text-align: center;
+  border-radius: 4px;
+  color: var(--ink);
+  font-weight: 600;
+}
 
-.rank-photos { margin-top: 6px; display: flex; flex-direction: column; gap: 10px; }
-.obs-photo { font-size: 12px; }
-.obs-thumb { width: 100%; max-width: 200px; border-radius: 6px; display: block; }
+.rank-photos {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.obs-photo {
+  font-size: 12px;
+}
+.obs-thumb {
+  width: 100%;
+  max-width: 200px;
+  border-radius: 6px;
+  display: block;
+}
 
 /* Collapsed to a one-line peek by default - full contents still there, just scroll within
    the strip to see them, so it never eats map height on small screens. */
 .map-legend {
   flex: 0 0 auto;
-  display: flex; flex-wrap: wrap; column-gap: 12px; row-gap: 2px;
-  background: var(--panel); color: var(--ink); padding: 4px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 12px;
+  row-gap: 2px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 4px 10px;
   border-top: 1px solid var(--border);
-  font-size: 11px; line-height: 1.4;
-  max-height: 28px; overflow-y: auto;
+  font-size: 11px;
+  line-height: 1.4;
+  max-height: 28px;
+  overflow-y: auto;
 }
-.legend-item { display: inline-flex; align-items: center; white-space: nowrap; }
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
 .map-legend i {
-  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-  margin-right: 5px; flex-shrink: 0;
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 5px;
+  flex-shrink: 0;
 }
 
 @media (max-width: 780px) {
-  header { flex-wrap: wrap; row-gap: 6px; }
+  header {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
   /* .locbar (search box + home name/coords) never wrapped, so on a narrow phone it
      could overflow past the viewport or overlap .header-actions. `order` reflows header's
      3 top-level children (h1, .locbar, .header-actions) without touching markup: title +
@@ -286,49 +667,109 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
      and wraps internally. Radius presets moved out of .locbar entirely - they now live in
      #filters-row (see index.html), so on mobile they're collapsed behind the same "Filters"
      disclosure as Months/Layers instead of needing header space of their own. */
-  header h1 { order: 1; }
-  .header-actions { order: 2; }
-  .locbar { order: 3; flex-basis: 100%; flex-wrap: wrap; row-gap: 4px; }
-  .locbar form { flex: 1 1 160px; }
-  .loc-current { flex: 1 1 auto; min-width: 120px; }
-  .controls { padding: 4px 10px; gap: 4px; }
-  .row { gap: 6px; }
-  main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  header h1 {
+    order: 1;
+  }
+  .header-actions {
+    order: 2;
+  }
+  .locbar {
+    order: 3;
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .locbar form {
+    flex: 1 1 160px;
+  }
+  .loc-current {
+    flex: 1 1 auto;
+    min-width: 120px;
+  }
+  .controls {
+    padding: 4px 10px;
+    gap: 4px;
+  }
+  .row {
+    gap: 6px;
+  }
+  main {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
   /* Months/layers are one-off adjustments, not live status - collapse them behind a toggle
      by default so they don't permanently eat map height on a small screen. */
   .filters-toggle {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 4px 10px; font-size: 12px; align-self: flex-end;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    align-self: flex-end;
   }
-  #filters-row:not(.open) { display: none; }
-  .filters-toggle[aria-expanded="true"] .chevron { transform: rotate(180deg); }
-  .chevron { display: inline-block; transition: transform 0.15s ease; }
+  #filters-row:not(.open) {
+    display: none;
+  }
+  .filters-toggle[aria-expanded="true"] .chevron {
+    transform: rotate(180deg);
+  }
+  .chevron {
+    display: inline-block;
+    transition: transform 0.15s ease;
+  }
   /* Segmented-control look instead of the desktop underline style - the tab bar now sits
      directly above the reflowed map card + sheet, so it should read as attached to it. */
   .tabs {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px;
-    margin: 8px 10px 0; padding: 3px; border: 1px solid var(--border); border-radius: 12px;
-    background: var(--panel); border-bottom: none;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 3px;
+    margin: 8px 10px 0;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--panel);
+    border-bottom: none;
   }
   .tabs button {
-    border-radius: 9px; margin-bottom: 0; border-bottom: none; padding: 8px 4px;
+    border-radius: 9px;
+    margin-bottom: 0;
+    border-bottom: none;
+    padding: 8px 4px;
     text-align: center;
   }
   /* var(--panel) rather than a fixed dark hex - accent2 is a dark green in the light theme, so
      a near-black fixed text color read at ~2.7:1 contrast there (fails WCAG AA 4.5:1); --panel
      stays light-on-dark-green (light theme) and dark-on-light-green (dark theme) in both cases,
      landing above 6:1 either way. */
-  .tabs button.active { background: var(--accent2); color: var(--panel); border-bottom-color: transparent; }
+  .tabs button.active {
+    background: var(--accent2);
+    color: var(--panel);
+    border-bottom-color: transparent;
+  }
   /* Map-first: #map fills the screen; the destinations list rides over its lower portion in a
      draggable bottom sheet (issue #229), the way Google/Apple Maps do it. */
   .map-wrap {
-    flex: 1; min-height: 0; position: relative;
-    margin: 0; border: none; border-radius: 0; overflow: hidden;
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    overflow: hidden;
   }
-  #map { flex: 1; min-height: 0; }
+  #map {
+    flex: 1;
+    min-height: 0;
+  }
   /* Float the legend just above the collapsed sheet's peek instead of below it (off-screen). */
   body[data-sheet="on"] #legend {
-    position: absolute; left: 0; right: 0; bottom: calc(18dvh + 22px); z-index: 900;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(18dvh + 22px);
+    z-index: 900;
     border-top: none;
   }
 
@@ -336,9 +777,14 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
      [data-detent]; these rules are the resting look. 100dvh so it tracks the mobile URL bar
      show/hide (see the note by .map-wrap near line 164) instead of being clipped. */
   body[data-sheet="on"] #sheet {
-    position: fixed; left: 0; right: 0; top: 0; height: 100dvh;
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 100dvh;
     z-index: 1100; /* above Leaflet panes/controls (<=1000); #load-bar (2000) stays on top */
-    display: flex; flex-direction: column;
+    display: flex;
+    flex-direction: column;
     background: var(--panel);
     border-radius: 16px 16px 0 0;
     box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.35);
@@ -347,133 +793,273 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
     touch-action: none; /* the sheet owns vertical drags; #panel re-enables pan-y below */
   }
   body[data-sheet="on"] .sheet-handle {
-    display: block; flex: 0 0 auto; width: 100%; min-height: 28px;
-    padding: 10px 0 6px; border: none; background: none; cursor: grab;
+    display: block;
+    flex: 0 0 auto;
+    width: 100%;
+    min-height: 28px;
+    padding: 10px 0 6px;
+    border: none;
+    background: none;
+    cursor: grab;
     touch-action: none;
   }
   body[data-sheet="on"] .sheet-handle::before {
-    content: ""; display: block; width: 40px; height: 5px; border-radius: 3px;
-    background: var(--border); margin: 0 auto;
+    content: "";
+    display: block;
+    width: 40px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--border);
+    margin: 0 auto;
   }
-  body[data-sheet="on"] .tabs { flex: 0 0 auto; margin: 0 10px 6px; touch-action: none; }
+  body[data-sheet="on"] .tabs {
+    flex: 0 0 auto;
+    margin: 0 10px 6px;
+    touch-action: none;
+  }
   body[data-sheet="on"] .sheet-summary {
-    display: block; flex: 0 0 auto; margin: 0 12px 6px;
-    font-size: 12px; color: var(--muted); touch-action: none;
+    display: block;
+    flex: 0 0 auto;
+    margin: 0 12px 6px;
+    font-size: 12px;
+    color: var(--muted);
+    touch-action: none;
   }
-  body[data-sheet="on"] .contour-rule { display: none; }
+  body[data-sheet="on"] .contour-rule {
+    display: none;
+  }
   body[data-sheet="on"] #panel {
-    flex: 1 1 auto; min-height: 0; overflow-y: auto;
-    margin: 0; padding: 4px 14px 28px;
-    border: none; border-radius: 0;
-    touch-action: pan-y; overscroll-behavior: contain;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    margin: 0;
+    padding: 4px 14px 28px;
+    border: none;
+    border-radius: 0;
+    touch-action: pan-y;
+    overscroll-behavior: contain;
   }
-  body[data-sheet="on"] #panel::before { content: none; } /* real handle replaces the old cosmetic one */
+  body[data-sheet="on"] #panel::before {
+    content: none;
+  } /* real handle replaces the old cosmetic one */
 
   /* Lift the OSM attribution (bottom-right) clear of the collapsed sheet's peek so it stays
      visible. The zoom control sits top-left and is never covered at the collapsed detent. */
-  body[data-sheet="on"] .leaflet-bottom.leaflet-right { bottom: 18dvh; }
+  body[data-sheet="on"] .leaflet-bottom.leaflet-right {
+    bottom: 18dvh;
+  }
   /* flex-wrap left a lone "Dec" orphaned on its own row once 12 buttons stopped fitting one
      line - a grid divides the same 12 into two even rows of 6 instead. */
-  .months { display: grid; grid-template-columns: repeat(6, 1fr); }
+  .months {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+  }
   /* Filter/radius controls are tap targets on a touchscreen, not just clickable text - bump
      them close to the 40-44px minimum instead of the ~24px they render at on desktop. */
-  .months button, .radius-presets button, .toggle-btn span, .filters-toggle {
-    min-height: 40px; display: inline-flex; align-items: center; justify-content: center;
+  .months button,
+  .radius-presets button,
+  .toggle-btn span,
+  .filters-toggle {
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 }
 
 /* Reduced motion: the sheet jumps between detents instead of tweening (sheet.ts still snaps
    to the same detent, just with no animated transition). */
 @media (max-width: 780px) and (prefers-reduced-motion: reduce) {
-  body[data-sheet="on"] #sheet { transition: none; }
+  body[data-sheet="on"] #sheet {
+    transition: none;
+  }
 }
 
 /* ── Plan route ── */
 #plan-row input[type="number"] {
-  width: 80px; padding: 6px 8px;
-  border: 1px solid var(--border); border-radius: 6px;
-  background: var(--panel); color: var(--ink); font-size: 14px;
+  width: 80px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 14px;
 }
-#plan-start-field, #plan-destination-field { min-width: 180px; }
-#plan-start-field form, #plan-destination-field form { position: relative; }
-#plan-start-field input, #plan-destination-field input {
-  width: 100%; padding: 5px 10px; border-radius: 6px; font-size: 13px;
-  border: 1px solid var(--border); background: var(--panel); color: var(--ink);
+#plan-start-field,
+#plan-destination-field {
+  min-width: 180px;
+}
+#plan-start-field form,
+#plan-destination-field form {
+  position: relative;
+}
+#plan-start-field input,
+#plan-destination-field input {
+  width: 100%;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink);
 }
 .plan-header {
-  display: flex; justify-content: space-between; align-items: flex-start;
-  gap: 10px; flex-wrap: wrap;
-  margin-bottom: 12px; padding-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--border);
 }
-.plan-summary { font-size: 13px; color: var(--muted); flex: 1; }
-.plan-skipped { margin-left: 6px; color: var(--accent); font-size: 12px; }
-.plan-auto { margin-left: 6px; color: var(--muted); font-size: 12px; font-style: italic; }
-.plan-export { display: flex; gap: 6px; flex-shrink: 0; }
-.plan-export button { padding: 6px 12px; font-size: 13px; }
+.plan-summary {
+  font-size: 13px;
+  color: var(--muted);
+  flex: 1;
+}
+.plan-skipped {
+  margin-left: 6px;
+  color: var(--accent);
+  font-size: 12px;
+}
+.plan-auto {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+}
+.plan-export {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.plan-export button {
+  padding: 6px 12px;
+  font-size: 13px;
+}
 
 .stop-card {
-  border: 1px solid var(--border); border-radius: 8px;
-  padding: 10px 12px; margin-bottom: 10px; cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  cursor: pointer;
 }
-.stop-card:hover { border-color: var(--accent); }
+.stop-card:hover {
+  border-color: var(--accent);
+}
 .stop-head {
-  display: flex; justify-content: space-between; align-items: baseline;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
   margin-bottom: 4px;
 }
-.stop-num { font-weight: 700; font-size: 15px; color: var(--accent); }
-.stop-drive { font-size: 12px; color: var(--muted); }
-.stop-camp, .stop-trail {
-  font-size: 12px; margin-top: 6px;
-  padding: 4px 8px; border-radius: 4px;
-  background: var(--bg); border: 1px solid var(--border);
+.stop-num {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--accent);
 }
-.stop-camp.muted, .stop-trail.muted { color: var(--muted); }
+.stop-drive {
+  font-size: 12px;
+  color: var(--muted);
+}
+.stop-camp,
+.stop-trail {
+  font-size: 12px;
+  margin-top: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.stop-camp.muted,
+.stop-trail.muted {
+  color: var(--muted);
+}
 
 /* Larger text mode (toggle next to mi/km and day/night in the header) - bumps font sizes across
    the panel/cards/calendar/controls, which is the actual reading surface on a phone. Layout
    (padding, radii, gaps) stays the same; only font-size changes, so existing flex-wrap absorbs
    the extra width instead of needing separate large-text layout rules. */
-:root[data-text-size="large"] body { font-size: 17px; }
-:root[data-text-size="large"] header h1 { font-size: 15px; }
+:root[data-text-size="large"] body {
+  font-size: 17px;
+}
+:root[data-text-size="large"] header h1 {
+  font-size: 15px;
+}
 :root[data-text-size="large"] .loc-current,
-:root[data-text-size="large"] .loc-meta { font-size: 14px; }
+:root[data-text-size="large"] .loc-meta {
+  font-size: 14px;
+}
 :root[data-text-size="large"] .radius-presets button,
 :root[data-text-size="large"] .months button,
-:root[data-text-size="large"] .toggle-btn span { font-size: 14px; }
-:root[data-text-size="large"] .rank h3 { font-size: 18px; }
+:root[data-text-size="large"] .toggle-btn span {
+  font-size: 14px;
+}
+:root[data-text-size="large"] .rank h3 {
+  font-size: 18px;
+}
 :root[data-text-size="large"] .rank .meta,
 :root[data-text-size="large"] #status,
 :root[data-text-size="large"] .plan-summary,
 :root[data-text-size="large"] .stop-drive,
 :root[data-text-size="large"] .stop-camp,
-:root[data-text-size="large"] .stop-trail { font-size: 14px; }
+:root[data-text-size="large"] .stop-trail {
+  font-size: 14px;
+}
 :root[data-text-size="large"] .chip,
-:root[data-text-size="large"] .rank-tab { font-size: 13px; }
+:root[data-text-size="large"] .rank-tab {
+  font-size: 13px;
+}
 :root[data-text-size="large"] table.cal,
-:root[data-text-size="large"] .rank-calendar table.cal { font-size: 15px; }
-:root[data-text-size="large"] .stop-num { font-size: 17px; }
-:root[data-text-size="large"] .map-legend { font-size: 13px; }
+:root[data-text-size="large"] .rank-calendar table.cal {
+  font-size: 15px;
+}
+:root[data-text-size="large"] .stop-num {
+  font-size: 17px;
+}
+:root[data-text-size="large"] .map-legend {
+  font-size: 13px;
+}
 /* Place-name/road labels on the map are pixels baked into the tile images themselves, not DOM
    text, so no font-size rule can touch them - only the DOM controls Leaflet draws on top can
    scale. */
-:root[data-text-size="large"] .leaflet-control-zoom a { font-size: 20px; line-height: 26px; }
-:root[data-text-size="large"] .leaflet-control-attribution { font-size: 12px; }
+:root[data-text-size="large"] .leaflet-control-zoom a {
+  font-size: 20px;
+  line-height: 26px;
+}
+:root[data-text-size="large"] .leaflet-control-attribution {
+  font-size: 12px;
+}
 
 /* Global indeterminate loading bar (issue #228) - a thin top-of-viewport bar shown whenever any
    read-only fetch is in flight (see loading.ts). Sits above every Leaflet pane and control.
    `#status` remains the detailed + announced channel; this is purely visual. */
 #load-bar {
-  position: fixed; top: 0; left: 0; right: 0; height: 3px;
-  z-index: 2000; pointer-events: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 2000;
+  pointer-events: none;
   background: var(--border);
-  opacity: 0; transition: opacity 0.2s ease;
+  opacity: 0;
+  transition: opacity 0.2s ease;
   overflow: hidden;
 }
-#load-bar.active { opacity: 1; }
+#load-bar.active {
+  opacity: 1;
+}
 #load-bar::before {
-  content: ""; position: absolute; top: 0; bottom: 0; left: 0;
-  width: 40%; background: var(--accent2);
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 40%;
+  background: var(--accent2);
 }
 /* Animation is gated on .active so the browser does no compositing work while the bar is
    idle (opacity 0). */
@@ -481,16 +1067,28 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
   animation: load-bar-slide 1.1s ease-in-out infinite;
 }
 @keyframes load-bar-slide {
-  0% { left: -40%; }
-  100% { left: 100%; }
+  0% {
+    left: -40%;
+  }
+  100% {
+    left: 100%;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  #load-bar::before { width: 100%; left: 0; }
+  #load-bar::before {
+    width: 100%;
+    left: 0;
+  }
   #load-bar.active::before {
     animation: load-bar-pulse 1.4s ease-in-out infinite;
   }
   @keyframes load-bar-pulse {
-    0%, 100% { opacity: 0.35; }
-    50% { opacity: 1; }
+    0%,
+    100% {
+      opacity: 0.35;
+    }
+    50% {
+      opacity: 1;
+    }
   }
 }

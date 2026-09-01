@@ -36,8 +36,7 @@ const LAND_TOGGLES: Record<string, () => boolean> = { BLM: blmOn, USFS: usfsOn, 
 const landOn = (): boolean => blmOn() || usfsOn() || tribalOn();
 
 // OSM dispersed layer: real tagged sites ("reported") + the road∩public-land proxy ("dispersed").
-const isDispersed = (site: CampSite): boolean =>
-  site.kind === "dispersed" || site.kind === "reported";
+const isDispersed = (site: CampSite): boolean => site.kind === "dispersed" || site.kind === "reported";
 
 // Fetch + plot camping near the focused region. `/api/camps` returns developed campgrounds and
 // the OSM dispersed layer together; each is drawn only when its toggle is on. No-op (just clears)

@@ -102,7 +102,10 @@ export async function runPlan(): Promise<void> {
     const drive = document.createTextNode(` · ${dist(stop.drive_km_from_prev)} leg`);
     const br = document.createElement("br");
     const names = document.createTextNode(
-      stop.species.slice(0, 3).map((hit) => displayName(hit)).join(", "),
+      stop.species
+        .slice(0, 3)
+        .map((hit) => displayName(hit))
+        .join(", "),
     );
     popupEl.append(title, drive, br, names);
     const marker = L.circleMarker([stop.center_lat, stop.center_lng], {
@@ -213,11 +216,7 @@ function buildStopCard(stop: Stop): HTMLElement {
   if (stop.camp) {
     const campName = document.createElement("strong");
     campName.textContent = stop.camp.name;
-    const costText = stop.camp_is_free
-      ? "free"
-      : stop.camp.fee
-        ? stop.camp.fee
-        : "cost unknown";
+    const costText = stop.camp_is_free ? "free" : stop.camp.fee ? stop.camp.fee : "cost unknown";
     campEl.append("🏕️ ", campName, ` · ${dist(stop.camp.distance_km)} · ${costText}`);
   } else {
     campEl.textContent = "No camp in range";
@@ -288,11 +287,7 @@ function exportJson(trip: TripPlan): void {
 
 /** Minimal XML entity escaping for text that goes into GPX element content. */
 function escXml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 /** Trigger a client-side file download without a round-trip to the server. */
