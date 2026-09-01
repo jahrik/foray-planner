@@ -2,6 +2,7 @@ import L from "leaflet";
 
 import { getJson } from "./api/client";
 import type { CampSite, LandUnit, PreciseObservation, Trail, TrailPath } from "./api/types";
+import { feeLabel } from "./format";
 import {
   addCampMarker,
   addPreciseMarker,
@@ -82,11 +83,7 @@ function campPopup(site: CampSite): HTMLElement {
   const detail =
     site.kind === "dispersed"
       ? "likely dispersed-legal - verify with the agency"
-      : site.free === true
-        ? "free"
-        : site.fee
-          ? site.fee
-          : "cost unknown";
+      : feeLabel(site.free === true, site.fee);
   const root = document.createElement("div");
   const title = document.createElement("b");
   title.textContent = site.name;

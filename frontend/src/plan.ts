@@ -2,6 +2,7 @@ import L from "leaflet";
 
 import { getJson } from "./api/client";
 import type { Stop, TripPlan } from "./api/types";
+import { escapeXml, feeLabel } from "./format";
 import { focusRegion } from "./layers";
 import { addMarker, clearMarkers, map, setPlanRoute, HOME_FILL, HOME_RING, PLAN_STOP } from "./map";
 import { dist, displayName, errorDetail, inatUrl, monthsParam, MONTHS, qs, setStatus, state } from "./state";
@@ -216,7 +217,7 @@ function buildStopCard(stop: Stop): HTMLElement {
   if (stop.camp) {
     const campName = document.createElement("strong");
     campName.textContent = stop.camp.name;
-    const costText = stop.camp_is_free ? "free" : stop.camp.fee ? stop.camp.fee : "cost unknown";
+    const costText = feeLabel(stop.camp_is_free, stop.camp.fee);
     campEl.append("🏕️ ", campName, ` · ${dist(stop.camp.distance_km)} · ${costText}`);
   } else {
     campEl.textContent = "No camp in range";
@@ -267,8 +268,8 @@ function exportGpx(trip: TripPlan): void {
   const gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Foray Planner" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata>
-    <name>${escXml(`Foray Trip ${monthNames}`)}</name>
-    <desc>${escXml(`${trip.n_stops} stops, ${dist(trip.total_drive_km)}`)}</desc>
+    <name>${escapeXml(`Foray Trip ${monthNames}`)}</name>
+    <desc>${escapeXml(`${trip.n_stops} stops, ${dist(trip.total_drive_km)}`)}</desc>
   </metadata>
 ${wpts}
 </gpx>`;
@@ -276,18 +277,13 @@ ${wpts}
 }
 
 function wptXml(lat: number, lng: number, name: string, desc: string): string {
-  const descTag = desc ? `\n    <desc>${escXml(desc)}</desc>` : "";
-  return `  <wpt lat="${lat.toFixed(6)}" lon="${lng.toFixed(6)}">\n    <name>${escXml(name)}</name>${descTag}\n  </wpt>`;
+  const descTag = desc ? `\n    <desc>${escapeXml(desc)}</desc>` : "";
+  return `  <wpt lat="${lat.toFixed(6)}" lon="${lng.toFixed(6)}">\n    <name>${escapeXml(name)}</name>${descTag}\n  </wpt>`;
 }
 
 /** Export the trip plan as a pretty-printed JSON file. */
 function exportJson(trip: TripPlan): void {
   downloadFile("foray-trip.json", JSON.stringify(trip, null, 2), "application/json");
-}
-
-/** Minimal XML entity escaping for text that goes into GPX element content. */
-function escXml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 /** Trigger a client-side file download without a round-trip to the server. */
