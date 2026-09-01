@@ -107,6 +107,11 @@ Guiding principles - keep these in mind for any feature work:
   trails,plan,location,refresh,coverage}` + `/` (serves the built client). Search is **read-only**
   against cached data. `set_location` does not trigger refresh. A `psycopg_pool.ConnectionPool`
   opened/closed via FastAPI `lifespan`; `refresh` runs in a background thread with SSE progress.
+- `src/foray/refresh.py` - the refresh vocabulary shared by the CLI and API paths:
+  `REFRESH_LAYERS` / `REFRESH_TARGETS` and `parse_month_list`. Unifying the two refresh
+  orchestrations themselves is the remaining half of issue #242 Part 1f.
+- `src/foray/logging_config.py` - `setup_logging(level)` (env `FORAY_LOG_LEVEL`, default INFO),
+  called by both the CLI group callback and `create_app`.
 - `src/foray/cli.py` - Click CLI: `foray ingest | camps | land | dispersed | trails | refresh |
   revalidate | resync | backfill-elevation | plan | serve | openapi`. `ingest --all-regions` is
   what the scheduler runs. `backfill-elevation` fills `observations.elevation_m` for the backlog
