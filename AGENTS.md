@@ -86,13 +86,23 @@ Guiding principles - keep these in mind for any feature work:
   mostly urban sidewalks), named hiking routes (`route=hiking` relations -> `kind='route'`,
   MultiLineString), and trailheads (`highway=trailhead` nodes -> `kind='trailhead'`, Point).
   Geometry is cached as GeoJSON *text* + bbox + a representative center in `trails`.
-- `src/foray/scoring.py` - `build_phenology` (materializes `regions` + `phenology`) and the
-  scoring modes: `rank_destinations`, `place_calendar`, `alerts`, `camps_near`, `trails_near`,
-  and `plan_route` (start -> destination corridor trip: stops selected along the straight-line
-  buffer between the two, each annotated with a nearby camp *and* trail, ordered by progress
-  along the line; auto-picks a destination via `rank_destinations` when the caller doesn't
-  supply one - see "no real road routing yet" below). Grid binning is one reusable SQL fragment
-  (`_BINNED`). `alerts` includes `place_guess`, `uri`, and `obscured` per observation.
+- `src/foray/` scoring package (was one `scoring.py`; `scoring.py` is now a back-compat
+  re-export shim, to be removed):
+  - `models.py` - the result dataclasses (`SpeciesHit`, `RegionScore`, `CampSite`, `LandUnit`,
+    `Trail`, `TrailPath`, `Stop`, `TripPlan`); mirrored by `api_models.py`.
+  - `regions.py` - `build_phenology` (materializes `regions` + `phenology`) plus the
+    materialized-table helpers.
+  - `ranking.py` - `rank_destinations` / `rank_destinations_corridor` (fix months -> rank
+    regions).
+  - `queries.py` - the point-and-radius read repository: `camps_near`, `land_near`,
+    `trails_near`, `get_trail`, `nearest_trail`, `place_calendar`, `recent_observations`,
+    `alerts` (includes `place_guess` / `uri` / `obscured` per obs), `precise_observations`.
+  - `planner.py` - `plan_route` (start -> destination corridor trip: stops along the
+    straight-line buffer, each annotated with a nearby camp *and* trail, ordered by progress;
+    auto-picks a destination when the caller doesn't - see "no real road routing yet" below).
+  - `_scoring_sql.py` - the SQL fragments shared by the three query modules (grid binning
+    `BINNED`, the decoy-aware center expressions, the `taxon_id` / `IN (...)` helpers,
+    `genus_name_map`).
 - `src/foray/api.py` - FastAPI: `/api/{config,species,destinations,calendar,alerts,camps,land,
   trails,plan,location,refresh,coverage}` + `/` (serves the built client). Search is **read-only**
   against cached data. `set_location` does not trigger refresh. A `psycopg_pool.ConnectionPool`
