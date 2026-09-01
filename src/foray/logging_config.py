@@ -17,13 +17,25 @@ _FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 _DATEFMT = "%H:%M:%S"
 
 
-def setup_logging(level: int | str | None = None) -> None:
-    """Configure root logging once.
+def resolve_level(level: int | str | None) -> int:
+    """Turn ``level`` (or ``$FORAY_LOG_LEVEL``, or the ``INFO`` default) into a numeric level.
 
-    ``level`` falls back to ``$FORAY_LOG_LEVEL`` then ``INFO``. Idempotent:
-    ``logging.basicConfig`` is a no-op when the root logger already has handlers (a second
-    call from the other entry point, or pytest's capture handler, wins), so this never
-    stomps an existing configuration.
+    A string is case-insensitive (``debug`` == ``DEBUG``); an unrecognised or empty value
+    falls back to ``INFO`` rather than raising.
     """
-    resolved = level if level is not None else os.environ.get("FORAY_LOG_LEVEL", _DEFAULT_LEVEL)
-    logging.basicConfig(level=resolved, format=_FORMAT, datefmt=_DATEFMT)
+    if level is None:
+        level = os.environ.get("FORAY_LOG_LEVEL") or _DEFAULT_LEVEL
+    if isinstance(level, int):
+        return level
+    numeric = logging.getLevelName(level.strip().upper())
+    return numeric if isinstance(numeric, int) else logging.INFO
+
+
+def setup_logging(level: int | str | None = None) -> None:
+    """Configure root logging once, at :func:`resolve_level`'s result.
+
+    Idempotent: ``logging.basicConfig`` is a no-op when the root logger already has handlers
+    (a second call from the other entry point, or pytest's capture handler, wins), so this
+    never stomps an existing configuration.
+    """
+    logging.basicConfig(level=resolve_level(level), format=_FORMAT, datefmt=_DATEFMT)
