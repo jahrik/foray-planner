@@ -7,9 +7,11 @@
 # Put an nvm-installed Node matching frontend/.nvmrc on PATH if one exists; otherwise assume
 # `node` is already resolvable (e.g. a system install). Keeps the pinned major in one place.
 NODE_MAJOR := $(shell cat frontend/.nvmrc 2>/dev/null)
+ifneq ($(strip $(NODE_MAJOR)),)
 NODE_BIN := $(firstword $(wildcard $(HOME)/.nvm/versions/node/v$(NODE_MAJOR).*/bin))
 ifneq ($(NODE_BIN),)
 export PATH := $(NODE_BIN):$(PATH)
+endif
 endif
 export PGHOST ?= localhost
 export PGPORT ?= 5432

@@ -41,18 +41,20 @@ repos:
         types: [python]
         pass_filenames: false
 
-      # Heavier gates - pre-push only.
+      # Heavier gates - pre-push only. always_run (no type filter) so a push that only
+      # touches Makefile / pyproject / workflow / lockfiles is still gated - those files
+      # change what the suite and the build do.
       - id: make-test
         name: make test
         entry: make test
         language: system
         stages: [pre-push]
-        types: [python]
+        always_run: true
         pass_filenames: false
       - id: frontend-check
         name: frontend lint + type-check + build
         entry: make frontend
         language: system
         stages: [pre-push]
-        types_or: [ts, css, html, json, javascript]
+        always_run: true
         pass_filenames: false
