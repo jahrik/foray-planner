@@ -116,10 +116,13 @@ Guiding principles - keep these in mind for any feature work:
     anonymous device-id resolution, `resolve_home` / `resolve_genera`, `parse_months` /
     `parse_species`, `region_center`, rate limiting.
   - `state.py` - the `AppState` dataclass. `security.py` - CSP + security headers + body-size cap.
-    `refresh_runner.py` - the API's background `run_refresh` orchestration. `paths.py` - `web/dist`.
-- `src/foray/refresh.py` - the refresh vocabulary shared by the CLI and API paths:
-  `REFRESH_LAYERS` / `REFRESH_TARGETS` and `parse_month_list`. Unifying the two refresh
-  orchestrations themselves is the remaining half of issue #242 Part 1f.
+    `refresh_runner.py` - the API-side wrapper around `run_home_refresh`: background thread,
+    shared HTTP client, cancellation, SSE progress broadcast. `paths.py` - `web/dist`.
+- `src/foray/refresh.py` - the ingest-refresh sequence shared by the CLI and API paths:
+  `run_home_refresh(cfg, conn, layers, *, client, abort_event, progress_cb)` (home-radius
+  ingest per layer + phenology rebuild), plus `REFRESH_LAYERS` / `REFRESH_TARGETS` and
+  `parse_month_list`. The CLI's coverage-wide `foray refresh --all` is a separate per-region
+  sequence and stays in `cli.py`.
 - `src/foray/logging_config.py` - `setup_logging(level)` (env `FORAY_LOG_LEVEL`, default INFO),
   called by both the CLI group callback and `create_app`.
 - `src/foray/cli.py` - Click CLI: `foray ingest | camps | land | dispersed | trails | refresh |

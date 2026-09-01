@@ -1,9 +1,9 @@
 """The background ingest-refresh the API server runs in a thread, streaming SSE progress.
 
-This is the API's orchestration of the shared ingest sequence. The CLI (``foray refresh``)
-has its own orchestration in ``cli.py`` - printing to stdout, with a coverage-wide ``--all``
-mode - and folding the two into one caller is the remaining half of issue #242 Part 1f.
-The target vocabulary and month parsing they share already live in ``foray.refresh``.
+The ingest sequence itself lives in :func:`foray.refresh.run_home_refresh`, shared with the
+CLI's ``foray refresh``. This module owns only the API-side wrapper: a background thread, a
+shared long-timeout HTTP client, cancellation via ``state.abort_event``, and broadcasting
+progress to SSE listeners.
 """
 
 from __future__ import annotations
@@ -15,10 +15,9 @@ from typing import Any
 import httpx
 from psycopg_pool import ConnectionPool
 
-from foray import camps, dispersed, land, scoring, trails
 from foray.api.state import AppState
 from foray.config import Home, Settings
-from foray.ingest import ingest
+from foray.refresh import REFRESH_LAYERS, run_home_refresh
 
 logger = logging.getLogger(__name__)
 
@@ -38,21 +37,12 @@ def broadcast(state: AppState, msg: dict[str, Any]) -> None:
                 pass
 
 
-def _make_cb(state: AppState, base_pct: float, range_pct: float) -> Any:
-    def cb(step: str, local_pct: float) -> None:
-        broadcast(state, {"step": step, "progress": base_pct + range_pct * (local_pct / 100.0)})
-
-    return cb
-
-
 def run_refresh(state: AppState, pool: ConnectionPool, base_cfg: Settings, home: Home, target: str = "all") -> None:
     # Refresh ingests around *this visitor's* home, not the env-configured default - a
     # per-request Settings with `.home` swapped in lets ingest()/camps.py/land.py/etc. stay
     # unchanged (they all just read `cfg.home` internally).
     refresh_cfg = base_cfg.model_copy(update={"home": home})
-
-    def make_cb(base_pct: float, range_pct: float) -> Any:
-        return _make_cb(state, base_pct, range_pct)
+    layers = REFRESH_LAYERS if target == "all" else (target,)
 
     try:
         state.abort_event.clear()
@@ -67,46 +57,14 @@ def run_refresh(state: AppState, pool: ConnectionPool, base_cfg: Settings, home:
         # concurrent readers (other requests borrowing their own connections) natively
         # via MVCC, unlike the DuckDB-era single-writer-file model this replaced.
         with pool.connection() as db:
-            if target in ("all", "mushrooms") and not state.abort_event.is_set():
-                ingest(
-                    refresh_cfg,
-                    db,
-                    progress_cb=make_cb(0.0, 90.0 if target == "mushrooms" else 50.0),
-                    abort_event=state.abort_event,
-                )
-            if target in ("all", "camps") and not state.abort_event.is_set():
-                camps.ingest_campgrounds(
-                    refresh_cfg,
-                    db,
-                    client=state.http_client,
-                    progress_cb=make_cb(50.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
-                )
-            if target in ("all", "land") and not state.abort_event.is_set():
-                land.ingest_public_land(
-                    refresh_cfg,
-                    db,
-                    client=state.http_client,
-                    progress_cb=make_cb(60.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
-                )
-            if target in ("all", "dispersed") and not state.abort_event.is_set():
-                dispersed.ingest_dispersed(
-                    refresh_cfg,
-                    db,
-                    client=state.http_client,
-                    progress_cb=make_cb(70.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
-                )
-            if target in ("all", "trails") and not state.abort_event.is_set():
-                trails.ingest_trails(
-                    refresh_cfg,
-                    db,
-                    client=state.http_client,
-                    progress_cb=make_cb(80.0 if target == "all" else 0.0, 10.0 if target == "all" else 100.0),
-                )
-
-            if target in ("all", "mushrooms") and not state.abort_event.is_set():
-                broadcast(state, {"step": "Building phenology…", "progress": 90.0})
-                logger.info("refresh: building phenology…")
-                scoring.build_phenology(db, refresh_cfg.cell_deg)
+            run_home_refresh(
+                refresh_cfg,
+                db,
+                layers,
+                client=state.http_client,
+                abort_event=state.abort_event,
+                progress_cb=lambda step, pct: broadcast(state, {"step": step, "progress": pct}),
+            )
 
         if state.abort_event.is_set():
             logger.info("refresh: cancelled by user")
