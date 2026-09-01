@@ -18,6 +18,13 @@ the container so a re-run does not re-download.
 Idempotent and resumable: only rows where `elevation_m IS NULL` are touched, and cached tiles
 plus `.missing` markers (for the all-ocean cells the mirror does not publish) are reused.
 
+Writes are set-based: each cell's sampled values go through a `COPY` into a TEMP table and a
+single `UPDATE ... FROM`, chunked at `--batch-size`, with `synchronous_commit = off` and a
+short `lock_timeout` on the session. A naive `executemany` of ~1.8M single-row UPDATEs runs
+at ~180 rows/s against a network-attached managed Postgres and starves the live server of
+locks and WAL bandwidth (it took prod's `/api/destinations` down once); this stays out of
+its way. Use `--sleep` to pace batches further and `--max-cells` to run in slices.
+
 Usage: `make ansible-backfill-elevation-dem-once` (prod), or
 `uv run --with rasterio python scripts/backfill_elevation_dem.py [--dry-run] [--no-rebuild]`.
 """
@@ -29,10 +36,12 @@ import math
 import os
 import sys
 import time
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import httpx
+import psycopg
 import rasterio
 
 from foray.cache import connect
@@ -98,10 +107,64 @@ def fetch_tile(cache: Path, tid: str) -> tuple[str, str]:
     return tid, "downloaded"
 
 
+def _batched(seq: Sequence[tuple[int, int]], size: int) -> list[Sequence[tuple[int, int]]]:
+    """Split ``seq`` into consecutive slices of at most ``size`` (``size <= 0`` -> one slice)."""
+    if size <= 0:
+        return [seq]
+    return [seq[start : start + size] for start in range(0, len(seq), size)]
+
+
+def apply_updates(
+    con: psycopg.Connection, updates: Sequence[tuple[int, int]], *, batch_size: int, sleep_s: float
+) -> tuple[int, int]:
+    """Write ``(obs_id, elevation_m)`` pairs to ``observations`` set-based: per batch, ``COPY``
+    into a session TEMP table then one ``UPDATE ... FROM`` joined on the primary key. Returns
+    ``(applied, stalled)`` - a batch whose transaction times out on a lock (the live server
+    holding it) is counted as stalled and left for a re-run rather than blocking on it."""
+    # Created once (IF NOT EXISTS - this runs per cell); rows cleared at each COMMIT.
+    con.execute(
+        "CREATE TEMP TABLE IF NOT EXISTS _elev_batch (id bigint PRIMARY KEY, elevation_m int) ON COMMIT DELETE ROWS"
+    )
+    applied = stalled = 0
+    for batch in _batched(updates, batch_size):
+        try:
+            with con.transaction(), con.cursor() as cur:
+                # Idempotent + resumable, so a crash that loses the last committed batch just
+                # gets redone on re-run - not worth an fsync round-trip per batch to a network DB.
+                cur.execute("SET LOCAL synchronous_commit = off")
+                with cur.copy("COPY _elev_batch (id, elevation_m) FROM STDIN") as copy:
+                    for obs_id, value in batch:
+                        copy.write_row((obs_id, value))
+                # AND elevation_m IS NULL: never clobber a value the hourly Open-Meteo cron
+                # may have written into this cell since the rows were selected.
+                cur.execute(
+                    "UPDATE observations o SET elevation_m = t.elevation_m "
+                    "FROM _elev_batch t WHERE o.id = t.id AND o.elevation_m IS NULL"
+                )
+            applied += len(batch)
+        except psycopg.OperationalError as exc:  # lock_timeout / statement_timeout / transient
+            stalled += len(batch)
+            print(f"  ! batch of {len(batch)} stalled, left for re-run: {exc}")
+        if sleep_s:
+            time.sleep(sleep_s)
+    return applied, stalled
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="download tiles + report, write nothing")
     parser.add_argument("--workers", type=int, default=12, help="concurrent tile downloads (default 12)")
+    parser.add_argument("--batch-size", type=int, default=5000, help="rows per COPY + UPDATE batch (default 5000)")
+    parser.add_argument(
+        "--sleep", type=float, default=0.0, metavar="SECONDS", help="pause between write batches (default 0)"
+    )
+    parser.add_argument(
+        "--max-cells",
+        type=int,
+        default=0,
+        metavar="N",
+        help="stop after N cells with missing rows (0 = all); for running prod in slices",
+    )
     parser.add_argument(
         "--no-rebuild",
         dest="rebuild",
@@ -139,8 +202,15 @@ def main() -> int:
     if counts["error"]:
         print(f"WARNING: {counts['error']} tiles failed to fetch - re-run to retry them")
 
+    if not args.dry_run:
+        # Yield rather than queue behind the live server: a batch that can't get its lock in
+        # 5s is left for a re-run (apply_updates counts it as stalled -> non-zero exit).
+        con.execute("SET lock_timeout = '5s'")
+        con.execute("SET statement_timeout = '120s'")
+
     started = time.monotonic()
-    filled = no_value = 0
+    filled = no_value = stalled = 0
+    processed_cells = 0
     for south, west in cells:
         tif = cache / f"{tile_id(south, west)}.tif"
         rows = con.execute(
@@ -160,26 +230,34 @@ def main() -> int:
                 if math.isnan(value) or (nodata is not None and value == nodata):
                     no_value += 1
                     continue
-                updates.append((round(value), obs_id))
-        if updates and not args.dry_run:
-            # con is autocommit (cache.connect), so wrap the per-tile batch in one explicit
-            # transaction - otherwise executemany commits once per row across ~1.8M rows.
-            with con.transaction(), con.cursor() as cur:
-                cur.executemany("UPDATE observations SET elevation_m = %s WHERE id = %s", updates)
-        filled += len(updates)
+                updates.append((obs_id, round(value)))
+        if not updates:
+            continue
+        processed_cells += 1
+        if args.dry_run:
+            filled += len(updates)
+        else:
+            applied, cell_stalled = apply_updates(con, updates, batch_size=args.batch_size, sleep_s=args.sleep)
+            filled += applied
+            stalled += cell_stalled
         if filled % 100_000 < len(updates):
             print(f"  filled {filled:,} / {total_missing:,}  ({time.monotonic() - started:.0f}s)")
+        if args.max_cells and processed_cells >= args.max_cells:
+            print(f"stopping after {processed_cells} cells (--max-cells); re-run for the rest")
+            break
 
     print(f"{'DRY RUN - ' if args.dry_run else ''}filled {filled:,} rows; {no_value:,} had no DEM value (ocean/edge)")
+    if stalled:
+        print(f"WARNING: {stalled:,} rows stalled on a lock - re-run to finish them")
     if filled and args.rebuild and not args.dry_run:
         print("Rebuilding phenology so region elevation means pick up the new values…")
         build_phenology(con, Settings().cell_deg)
     remaining = (con.execute(f"SELECT count(*) FROM observations WHERE {ELIGIBLE}").fetchone() or (0,))[0]
     print(f"eligible rows still missing elevation: {remaining:,}")
-    # Non-zero exit if any tile failed to fetch, so the Ansible task (and an operator) sees the
-    # run as incomplete and knows to re-run - the succeeded tiles are already written and a
-    # re-run only retries the failures.
-    return 1 if counts["error"] else 0
+    # Non-zero exit if any tile failed to fetch or any batch stalled, so the Ansible task (and
+    # an operator) sees the run as incomplete and knows to re-run - what succeeded is already
+    # written and a re-run only retries the rest.
+    return 1 if counts["error"] or stalled else 0
 
 
 if __name__ == "__main__":

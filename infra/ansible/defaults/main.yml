@@ -88,7 +88,9 @@ foray_elevation_backfill_limit: "20000"
 # here, removed after the run unless foray_dem_once_keep_cache is set (useful only to avoid a
 # re-download when retrying a partially failed run).
 foray_dem_once_cache_dir: /opt/foray-planner/dem-cache
-foray_dem_once_min_free_gb: "8"
+# The real working set is ~4.7 GB of tiles; 6 leaves headroom without tripping on a droplet
+# that is merely low, not out of room (the 8 GB guess blocked a run at 7.8 GB free).
+foray_dem_once_min_free_gb: "6"
 foray_dem_once_keep_cache: false
 
 # One-time foray:resync-once catch-up (see TODO.md's rollout plan) - much larger than the

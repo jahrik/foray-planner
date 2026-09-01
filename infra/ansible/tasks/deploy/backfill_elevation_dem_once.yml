@@ -68,7 +68,11 @@
           FORAY_DEM_CACHE: /cache
         volumes:
           - "{{ foray_dem_once_cache_dir }}:/cache"
-        command: "python scripts/backfill_elevation_dem.py"
+        # --no-rebuild: skip the in-line phenology rebuild (matches the hourly elevation cron) -
+        # the daily foray-ingest cron rematerializes regions/phenology, so card elevation means
+        # land within a day without a second heavy pass on the managed Postgres right after this.
+        # --sleep: pace the COPY+UPDATE batches so the live server keeps its share of the DB.
+        command: "python scripts/backfill_elevation_dem.py --no-rebuild --sleep 0.25"
       register: foray_dem_once_run
 
     # docker_container with detach:false does not fail the task on a non-zero container exit;
