@@ -38,10 +38,9 @@ import psycopg
 from foray.cache import connection, is_area_covered, is_ingested, record_ingest, upsert_public_land
 from foray.config import CoverageRegion, Settings
 from foray.geo import bbox_around
+from foray.http import USER_AGENT
 
 logger = logging.getLogger(__name__)
-
-USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
 
 _PAGE_SIZE = 1000
 # Server-side geometry generalization, in degrees (~0.005° ≈ 500 m). Keeps national-forest

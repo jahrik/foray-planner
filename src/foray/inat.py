@@ -18,13 +18,13 @@ from pyinaturalist import (
 )
 from pyrate_limiter.exceptions import BucketFullException
 
+from foray.http import USER_AGENT
+
 # Photo license codes iNat's API returns that are safe to redisplay (with attribution) under
 # their terms; cc-by-nd/cc-by-nc-nd forbid derivatives (thumbnailing counts) and a null license
 # means all-rights-reserved (the platform default) - those observations still get listed, just
 # without a thumbnail.
 DISPLAYABLE_PHOTO_LICENSES = frozenset({"cc0", "cc-by", "cc-by-sa", "cc-by-nc", "cc-by-nc-sa"})
-
-USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
 
 # iNat's Fungi kingdom taxon id - root of the full genus catalog (issue #79), replacing the
 # old hardcoded 21-genus seed list.

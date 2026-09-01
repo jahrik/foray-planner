@@ -1,9 +1,11 @@
 """Shared HTTP plumbing for the external data-source modules.
 
 Every source (``inat``, ``elevation``, ``geocode``, ``camps``, ``dispersed``, ``trails``,
-``land``) needs the same three things: a descriptive User-Agent, a process-wide request
-pacer, and "back off on a 429 (or an Overpass 504), honouring ``Retry-After``". This module
-owns all three so a new source (rain #226, fire #227) wires them in instead of copy-pasting.
+``land``) needs the same building blocks: a descriptive User-Agent, a process-wide request
+pacer, ``Retry-After`` parsing, and the "log + degrade to empty" error tuple. This module
+owns them so a new source (rain #226, fire #227) wires them in instead of copy-pasting.
+(``inat`` keeps its own ``_with_retries`` loop - it layers pyinaturalist-specific quota
+handling on top - but takes ``USER_AGENT`` from here.)
 """
 
 from __future__ import annotations

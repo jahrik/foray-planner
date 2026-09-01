@@ -338,7 +338,7 @@ def trailhead_network(node_id: int, *, client: httpx.Client | None = None) -> di
     client = client or httpx.Client(timeout=30.0)
     try:
         payload = overpass.post(client, _network_query(node_id))
-    except httpx.HTTPError as error:
+    except SOURCE_ERRORS as error:
         logger.warning("trails: network query failed for node %d (%s) - falling back", node_id, error)
         return None
     finally:
