@@ -431,6 +431,10 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
 #load-bar::before {
   content: ""; position: absolute; top: 0; bottom: 0; left: 0;
   width: 40%; background: var(--accent2);
+}
+/* Animation is gated on .active so the browser does no compositing work while the bar is
+   idle (opacity 0). */
+#load-bar.active::before {
   animation: load-bar-slide 1.1s ease-in-out infinite;
 }
 @keyframes load-bar-slide {
@@ -438,8 +442,9 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
   100% { left: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #load-bar::before {
-    width: 100%; left: 0; animation: load-bar-pulse 1.4s ease-in-out infinite;
+  #load-bar::before { width: 100%; left: 0; }
+  #load-bar.active::before {
+    animation: load-bar-pulse 1.4s ease-in-out infinite;
   }
   @keyframes load-bar-pulse {
     0%, 100% { opacity: 0.35; }
