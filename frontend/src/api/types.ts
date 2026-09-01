@@ -76,3 +76,13 @@ export type PreciseObservation = components["schemas"]["PreciseObservation"];
 export interface ApiError {
   detail?: string;
 }
+
+/** One server-sent update from `GET /api/refresh/stream`. Not in the OpenAPI schema (the
+ * endpoint is an event-stream, not JSON) - this mirrors the dict broadcast by
+ * `foray.api.refresh_runner.broadcast`. `error` or `done` marks the final message. */
+export interface RefreshEvent {
+  step?: string;
+  progress?: number;
+  error?: string;
+  done?: boolean;
+}

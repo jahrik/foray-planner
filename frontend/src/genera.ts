@@ -1,6 +1,5 @@
-import { getJson } from "./api/client";
+import { deleteJson, getJson, postJson } from "./api/client";
 import type { GenusResult } from "./api/types";
-import { withLoading } from "./loading";
 import { displayName, errorDetail, escapeHtml, qs, setStatus } from "./state";
 
 const DEBOUNCE_MS = 300;
@@ -62,15 +61,10 @@ async function selectGenus(genus: GenusResult): Promise<void> {
   const list = qs<HTMLUListElement>("#genus-suggestions");
   input.value = "";
   list.classList.remove("open");
-  let resp: Response;
   try {
-    resp = await withLoading(() => fetch(`/api/genera/${genus.taxon_id}`, { method: "POST" }));
+    await postJson("/api/genera/{taxon_id}", { params: { path: { taxon_id: genus.taxon_id } } });
   } catch (error) {
     setStatus(errorDetail(error) || "couldn't add genus");
-    return;
-  }
-  if (!resp.ok) {
-    setStatus("couldn't add genus");
     return;
   }
   selected.push(genus);
@@ -80,15 +74,10 @@ async function selectGenus(genus: GenusResult): Promise<void> {
 }
 
 async function removeGenus(taxonId: number): Promise<void> {
-  let resp: Response;
   try {
-    resp = await withLoading(() => fetch(`/api/genera/${taxonId}`, { method: "DELETE" }));
+    await deleteJson("/api/genera/{taxon_id}", { params: { path: { taxon_id: taxonId } } });
   } catch (error) {
     setStatus(errorDetail(error) || "couldn't remove genus");
-    return;
-  }
-  if (!resp.ok) {
-    setStatus("couldn't remove genus");
     return;
   }
   selected = selected.filter((genus) => genus.taxon_id !== taxonId);

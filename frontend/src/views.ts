@@ -12,7 +12,6 @@ import type {
   Trail,
 } from "./api/types";
 import { focusRegion, selectTrailhead } from "./layers";
-import { withLoading } from "./loading";
 import { focusOnMap, sheetEnabled, snapTo } from "./sheet";
 import {
   clearCardCampMarkers,
@@ -365,11 +364,9 @@ export async function runDestinations(): Promise<void> {
       if (token !== destinationsRunToken || state.view !== "destinations") return;
       let place: RegionPlace;
       try {
-        const resp = await withLoading(() =>
-          fetch(`/api/destinations/${encodeURIComponent(region.region_id)}/place`),
-        );
-        if (!resp.ok) continue;
-        place = (await resp.json()) as RegionPlace;
+        place = await getJson("/api/destinations/{region_id}/place", {
+          path: { region_id: region.region_id },
+        });
       } catch {
         continue; // best-effort - leave this card's title as rank + distance
       }

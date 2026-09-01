@@ -1,5 +1,5 @@
-import { postJson } from "./api/client";
-import type { Home } from "./api/types";
+import { deleteJson, openRefreshStream, postJson } from "./api/client";
+import type { LocationResponse } from "./api/types";
 import { loadLand } from "./layers";
 import { updateHome } from "./map";
 import { errorDetail, qs, setStatus } from "./state";
@@ -46,27 +46,14 @@ export async function startRefresh(message: string, target: string = "mushrooms"
   progress.style.display = "inline-block";
   progress.value = 0;
 
-  let started: Response;
+  let body: { status?: string };
   try {
-    started = await fetch(`/api/refresh?target=${target}`, { method: "POST" });
+    body = await postJson("/api/refresh", { params: { query: { target } } });
   } catch (error) {
     setStatus(errorDetail(error) || "refresh failed to start - no connection");
     resetRefreshUI();
     return false;
   }
-  if (!started.ok) {
-    let detail = `refresh failed to start (${started.status})`;
-    try {
-      const body = await started.json();
-      if (body?.detail) detail = body.detail;
-    } catch {
-      // body wasn't JSON; fall back to the status-code message above
-    }
-    setStatus(detail);
-    resetRefreshUI();
-    return false;
-  }
-  const body = await started.json();
   if (cancelRequested) {
     // Cancelled while the POST was still in flight - don't open a stream for it.
     resetRefreshUI();
@@ -76,45 +63,43 @@ export async function startRefresh(message: string, target: string = "mushrooms"
     setStatus("Another refresh is running, showing progress…");
   }
   return new Promise((resolve) => {
-    const source = new EventSource("/api/refresh/stream");
-    activeSource = source;
-    activeResolve = resolve;
-
-    const finish = (succeeded: boolean) => {
+    // Hoisted so the stream callbacks below can call it; by the time an SSE event fires
+    // `source` is assigned. The `=== source` guards keep a straggler event from a superseded
+    // refresh from tearing down the current one.
+    function finish(succeeded: boolean): void {
       if (activeSource === source) activeSource = null;
       if (activeResolve === resolve) activeResolve = null;
       source.close();
       resolve(succeeded);
-    };
+    }
 
-    source.onmessage = (event) => {
-      let data: { step?: string; progress?: number; error?: string; done?: boolean };
-      try {
-        data = JSON.parse(event.data);
-      } catch (error) {
-        console.error("SSE: malformed message", event.data, error);
+    const source = openRefreshStream(
+      (data) => {
+        if (data.step) {
+          setStatus(data.step);
+        }
+        if (data.progress !== undefined) {
+          progress.value = data.progress;
+        }
+        if (data.error) {
+          setStatus("Refresh error: " + data.error);
+          resetRefreshUI();
+          finish(false);
+        } else if (data.done) {
+          setStatus("Data ready.");
+          resetRefreshUI();
+          finish(true);
+        }
+      },
+      (raw, error) => {
+        console.error("SSE: malformed message", raw, error);
         setStatus("Refresh error: malformed update from server");
         resetRefreshUI();
         finish(false);
-        return;
-      }
-      if (data.step) {
-        setStatus(data.step);
-      }
-      if (data.progress !== undefined) {
-        progress.value = data.progress;
-      }
-
-      if (data.error) {
-        setStatus("Refresh error: " + data.error);
-        resetRefreshUI();
-        finish(false);
-      } else if (data.done) {
-        setStatus("Data ready.");
-        resetRefreshUI();
-        finish(true);
-      }
-    };
+      },
+    );
+    activeSource = source;
+    activeResolve = resolve;
 
     source.onerror = (err) => {
       console.error("SSE Error:", err);
@@ -131,7 +116,7 @@ export async function startRefresh(message: string, target: string = "mushrooms"
 // it short-circuit as soon as that await resolves instead of opening a stream anyway.
 export function cancelRefresh(): void {
   cancelRequested = true;
-  fetch("/api/refresh", { method: "DELETE" }).catch(() => {
+  deleteJson("/api/refresh").catch(() => {
     // best-effort - still tear down the client side below regardless
   });
   finishActive(false);
@@ -140,9 +125,9 @@ export function cancelRefresh(): void {
 
 export async function setLocation(query: string): Promise<void> {
   setStatus("Finding location…");
-  let response: { home: Home };
+  let response: LocationResponse;
   try {
-    response = await postJson("/api/location", { query });
+    response = await postJson("/api/location", { body: { query } });
   } catch (error) {
     setStatus(errorDetail(error) || "location not found");
     return;
@@ -158,9 +143,9 @@ export async function setLocation(query: string): Promise<void> {
 // reverse lookup fails.
 export async function setLocationLatLng(lat: number, lng: number): Promise<void> {
   setStatus("Finding location…");
-  let response: { home: Home };
+  let response: LocationResponse;
   try {
-    response = await postJson("/api/location", { lat, lng });
+    response = await postJson("/api/location", { body: { lat, lng } });
   } catch (error) {
     setStatus(errorDetail(error) || "location not found");
     return;

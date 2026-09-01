@@ -50,7 +50,7 @@ check: lint test
 # Assumes `frontend/node_modules` already exists (`make install` or CI's `npm ci`) - this
 # only runs lint + type-check + build, not the install.
 frontend:
-	cd frontend && npm run lint && npm run build
+	cd frontend && npm run lint && npm test && npm run build
 
 # Regenerates the OpenAPI-derived frontend types (needs `uv` for `foray openapi` + `npm` for
 # `openapi-typescript`, so `frontend/node_modules` and the Python venv must already exist) and

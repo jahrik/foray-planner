@@ -148,9 +148,14 @@ Guiding principles - keep these in mind for any feature work:
   trails fetch + render + popups), `src/views.ts` (destinations/calendar/alerts tabs),
   `src/plan.ts` (route planning UI + GPX/JSON export), `src/refresh.ts` (SSE refresh + set-location),
   and `src/main.ts` (DOM wiring/orchestration). `src/api/` holds the typed client (`openapi-fetch`,
-  in `client.ts`) + `schema.ts` generated from the backend's OpenAPI via `openapi-typescript` -
-  `npm run gen:api` regenerates both; CI fails if that produces a diff, so `schema.ts` never
-  drifts from the actual API. `GET /api/coverage` exists on the backend (coverage regions + their
+  in `client.ts`: `getJson` / `postJson` / `deleteJson` throw an `ApiError` on non-2xx, and
+  `openRefreshStream` is the typed SSE reader for `/api/refresh/stream`) + `schema.ts`
+  generated from the backend's OpenAPI via `openapi-typescript` - `npm run gen:api`
+  regenerates both; CI fails if that produces a diff, so `schema.ts` never drifts from the
+  actual API. Every API call goes through `client.ts` - no raw `fetch` (except the
+  browser->Nominatim autocomplete in `location.ts`, issue #145 will move it server-side).
+  Vitest covers the pure helpers (`*.test.ts` beside the source); `npm test` runs in
+  `make frontend`. `GET /api/coverage` exists on the backend (coverage regions + their
   last-ingest freshness) but has no frontend consumer yet. Builds into `../src/foray/web/dist`. A
   **light/dark theme toggle** is `data-theme`-driven with a `localStorage` preference (default
   **dark**); the basemap follows it (CARTO dark / OSM light).
