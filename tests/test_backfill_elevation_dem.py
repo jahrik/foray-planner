@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import psycopg
 import pytest
 
 _spec = importlib.util.spec_from_file_location(
@@ -19,6 +20,7 @@ assert _spec and _spec.loader
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 tile_id = _mod.tile_id
+apply_updates = _mod.apply_updates
 
 
 @pytest.mark.parametrize(
@@ -33,3 +35,29 @@ tile_id = _mod.tile_id
 )
 def test_tile_id_corners(south: int, west: int, expected: str) -> None:
     assert tile_id(south, west) == expected
+
+
+_PAIRS = [(1, 10), (2, 20), (3, 30), (4, 40), (5, 50)]
+
+
+@pytest.mark.parametrize(
+    ("size", "expected"),
+    [
+        (2, [[(1, 10), (2, 20)], [(3, 30), (4, 40)], [(5, 50)]]),
+        (5, [_PAIRS]),
+        (0, [_PAIRS]),
+    ],
+)
+def test_batched(size: int, expected: list[list[tuple[int, int]]]) -> None:
+    assert [list(chunk) for chunk in _mod._batched(_PAIRS, size)] == expected
+
+
+def test_apply_updates_is_set_based_and_null_guarded(con: psycopg.Connection) -> None:
+    """COPY + UPDATE ... FROM fills only the NULL rows, in batches, and never clobbers a value
+    another writer (the Open-Meteo cron) already set."""
+    con.execute("INSERT INTO observations (id, elevation_m) VALUES (1, NULL), (2, NULL), (3, NULL), (4, 777)")
+    # ids 1-3 target NULL rows; id 4 is already set and must be left alone.
+    applied, stalled = apply_updates(con, [(1, 100), (2, 200), (3, 300), (4, 999)], batch_size=2, sleep_s=0.0)
+    assert (applied, stalled) == (4, 0)
+    rows = dict(con.execute("SELECT id, elevation_m FROM observations ORDER BY id").fetchall())
+    assert rows == {1: 100, 2: 200, 3: 300, 4: 777}

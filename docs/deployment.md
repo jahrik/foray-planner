@@ -108,8 +108,14 @@ Open-Meteo's free tier caps at ~10k points/day, so a fresh multi-million-row bac
 take ~200 days to clear at that pace. To clear it in one pass instead, run
 `make ansible-backfill-elevation-dem-once` (tag `foray:backfill-elevation-dem-once`): it
 downloads ~5 GB of Copernicus GLO-90 tiles onto the droplet, samples the same DEM locally for
-every outstanding row, rebuilds phenology, then removes the tiles. The hourly cron then only
-has the trickle of new observations to keep up with. See `scripts/backfill_elevation_dem.py`.
+every outstanding row, then removes the tiles. Writes go through a `COPY` into a TEMP table
+plus one `UPDATE ... FROM` per batch, with `--sleep` pacing and a short `lock_timeout`, so the
+managed Postgres keeps serving the live site during the pass (an earlier per-row version
+saturated it). The Ansible task passes `--no-rebuild` - like the hourly cron, it leaves the
+phenology rematerialize to the next daily ingest - so region elevation means land within a
+day. The hourly cron then only has the trickle of new observations to keep up with. A partial
+run is safe to repeat: `make ansible-backfill-elevation-dem-once` again finishes the rest.
+See `scripts/backfill_elevation_dem.py`.
 
 **Option B - UI Refresh button**
 
@@ -204,7 +210,7 @@ make ansible-deploy
 | `foray:deploy` | Pull image, restart container |
 | `foray:cron` | Update cron schedules |
 | `foray:ingest-once` | Manual/opt-in full data ingest (`make ansible-ingest-once`) - not part of `foray:deploy` or the `foray` umbrella; the daily `foray-ingest` cron job already keeps data fresh, so this only exists for warming a fresh droplet's data immediately instead of waiting for the next cron run. **Run this only after the first `foray:deploy`** - it depends on the env file that deploy renders (`/opt/foray-planner/foray.env`) and fails fast with a clear message if that hasn't happened yet. |
-| `foray:backfill-elevation-dem-once` | Manual/opt-in one-pass elevation backfill (`make ansible-backfill-elevation-dem-once`) - samples local Copernicus GLO-90 tiles on the droplet to clear the whole elevation backlog at once, instead of the hourly `foray-backfill-elevation` cron trickling through Open-Meteo's ~10k/day free tier. Downloads ~5 GB of tiles, then removes them. Same env-file dependency and fail-fast as `foray:ingest-once`, plus a free-disk precheck. |
+| `foray:backfill-elevation-dem-once` | Manual/opt-in one-pass elevation backfill (`make ansible-backfill-elevation-dem-once`) - samples local Copernicus GLO-90 tiles on the droplet to clear the whole elevation backlog at once, instead of the hourly `foray-backfill-elevation` cron trickling through Open-Meteo's ~10k/day free tier. Downloads ~5 GB of tiles, then removes them. Set-based `COPY` + `UPDATE ... FROM` writes with `--sleep` pacing and a short `lock_timeout` so the live site keeps serving; `--no-rebuild` (daily ingest rematerializes phenology). Safe to re-run to finish a partial pass. Same env-file dependency and fail-fast as `foray:ingest-once`, plus a free-disk precheck. |
 | `foray:firewall-allow-runner` / `foray:firewall-revoke-runner` | CI-internal only - adds/removes the GitHub Actions runner's own IP from the live SSH firewall rule around an automated `foray:deploy` run (see below). Not something an operator runs directly. |
 
 ---
