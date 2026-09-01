@@ -63,10 +63,13 @@ export function snapTo(detent: Detent, opts: { fromPopstate?: boolean } = {}): v
   current = detent;
   setTop(detentTopPx(detent));
   sheetEl.dataset.detent = detent;
-  const open = detent !== "collapsed";
+  setHandleAria(detent !== "collapsed");
+  syncHistory(previous, detent, opts.fromPopstate ?? false);
+}
+
+function setHandleAria(open: boolean): void {
   handleEl.setAttribute("aria-expanded", String(open));
   handleEl.setAttribute("aria-label", open ? "Collapse destinations panel" : "Expand destinations panel");
-  syncHistory(previous, detent, opts.fromPopstate ?? false);
 }
 
 // Collapse the sheet if it's open; returns whether it did (so a map tap that collapsed the
@@ -82,12 +85,18 @@ export function collapseIfOpen(): boolean {
 // Center the map on a point, offset upward on mobile so it lands in the visible strip above
 // the sheet rather than behind it. On desktop this is a plain setView.
 export function focusOnMap(lat: number, lng: number, zoom: number): void {
-  map.setView([lat, lng], zoom);
+  // animate:false so the pan below isn't undone when setView's own pan tween settles.
+  map.setView([lat, lng], zoom, { animate: false });
   if (!enabled) return;
   const size = map.getSize();
-  // Put the target ~1/3 of the way down the map area that stays visible above the sheet.
-  const visibleH = size.y * DETENT_TOP[current];
-  map.panBy([0, size.y / 2 - visibleH / 3], { animate: false });
+  // `renderedTop` is the sheet's top edge in viewport px; the map container starts below the
+  // header/controls, so as a map-container y-coordinate that edge is `renderedTop - mapTop`.
+  // setView leaves the target at container centre (size.y / 2); pan it up so it lands ~1/3 of
+  // the way down the strip that stays visible above the sheet. panBy(+dy) moves the target up.
+  const mapTop = map.getContainer().getBoundingClientRect().top;
+  const sheetEdge = Math.max(0, renderedTop - mapTop);
+  const dy = size.y / 2 - sheetEdge / 3;
+  if (dy > 0) map.panBy([0, dy], { animate: false });
 }
 
 function setTop(top: number): void {
@@ -187,6 +196,7 @@ function enable(): void {
   document.body.dataset.sheet = "on";
   current = "collapsed";
   sheetEl.dataset.detent = "collapsed";
+  setHandleAria(false); // a resize back to mobile must not leave the handle stuck "expanded"
   sheetEl.style.transition = "none";
   setTop(detentTopPx("collapsed"));
   // Re-enable the snap transition after the initial position has painted.
