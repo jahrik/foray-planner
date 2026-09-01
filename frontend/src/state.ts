@@ -87,15 +87,9 @@ export const inatUrl = (taxonId: number): string => `https://www.inaturalist.org
 export const displayName = (entry: { name: string; common_name?: string | null }): string =>
   entry.common_name ? `${entry.name} (${entry.common_name})` : entry.name;
 
-/** Escape text destined for an HTML string template (innerHTML / Leaflet popup strings). */
-export function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+// Re-exported so the many `from "./state"` importers keep working; the implementation
+// (and escapeXml / feeLabel) now lives in the pure-helper module.
+export { escapeHtml } from "./format";
 
 export function setStatus(text: string): void {
   qs("#status").textContent = text;

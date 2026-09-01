@@ -28,12 +28,12 @@ import {
   setCardCampActive,
   setTrailheadActive,
 } from "./map";
+import { escapeHtml, feeLabel } from "./format";
 import {
   dist,
   elevationLabel,
   displayName,
   errorDetail,
-  escapeHtml,
   inatUrl,
   monthsParam,
   MONTHS,
@@ -587,12 +587,10 @@ async function loadCampgroundsInto(region: RegionScore, container: HTMLElement):
     const button = document.createElement("button");
     button.type = "button";
     button.className = "chip";
-    const feeLabel = site.free === true ? "free" : site.fee ? site.fee : "cost unknown";
-    button.textContent = `${site.name} · ${dist(site.distance_km)} · ${feeLabel}`;
+    const feeText = feeLabel(site.free === true, site.fee);
+    button.textContent = `${site.name} · ${dist(site.distance_km)} · ${feeText}`;
     const marker = plotCardCamp(site, () => selectRow(site, button, marker));
-    marker.bindPopup(
-      `<b>${escapeHtml(site.name)}</b><br>${dist(site.distance_km)} · ${escapeHtml(feeLabel)}`,
-    );
+    marker.bindPopup(`<b>${escapeHtml(site.name)}</b><br>${dist(site.distance_km)} · ${escapeHtml(feeText)}`);
     button.onclick = (e) => {
       e.stopPropagation();
       selectRow(site, button, marker);
