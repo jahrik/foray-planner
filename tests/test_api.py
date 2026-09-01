@@ -575,7 +575,7 @@ def test_plan_route_geocode_network_failure_is_502_without_leaking_detail(
 def test_plan_route_auto_pick_uses_device_home_radius(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_plan_route(con, **kwargs):  # noqa: ANN001, ANN003 - test double mirrors scoring.plan_route's signature
+    def fake_plan_route(con, **kwargs):
         captured.update(kwargs)
         return TripPlan(
             start_lat=kwargs["start_lat"],

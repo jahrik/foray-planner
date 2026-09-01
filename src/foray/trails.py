@@ -392,9 +392,11 @@ def trailhead_network(node_id: int, *, client: httpx.Client | None = None) -> di
                 lines.append(coords)
                 name = name or tags.get("name") or tags.get("ref")
         elif element.get("type") == "relation":
-            for member in element.get("members") or []:
-                if member.get("type") == "way" and (coords := _line_coords(member.get("geometry") or [])):
-                    lines.append(coords)
+            lines.extend(
+                coords
+                for member in element.get("members") or []
+                if member.get("type") == "way" and (coords := _line_coords(member.get("geometry") or []))
+            )
             name = tags.get("name") or tags.get("ref") or name
             kind = "route"
     if not lines:
