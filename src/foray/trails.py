@@ -43,7 +43,7 @@ import psycopg
 
 from foray import scoring
 from foray.cache import connect, is_area_covered, is_ingested, record_ingest, upsert_trails
-from foray.config import Config, CoverageRegion
+from foray.config import CoverageRegion, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +313,7 @@ def fetch_trails(
 
 
 def ingest_trails(
-    cfg: Config,
+    cfg: Settings,
     con: psycopg.Connection | None = None,
     *,
     client: httpx.Client | None = None,

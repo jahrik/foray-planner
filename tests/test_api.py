@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from foray.api import create_app
 from foray.cache import upsert_campsites, upsert_fungi_genera, upsert_trails
-from foray.config import Config, Home, Settings
+from foray.config import Home, Settings
 from foray.scoring import TripPlan, build_phenology
 from foray.trails import _parse_element
 
@@ -845,7 +845,7 @@ def test_refresh_concurrent_requests_start_only_one(client: TestClient, monkeypa
     call_lock = threading.Lock()
     release = threading.Event()
 
-    def fake_ingest(cfg: Config, db: psycopg.Connection, **kwargs: object) -> None:
+    def fake_ingest(cfg: Settings, db: psycopg.Connection, **kwargs: object) -> None:
         nonlocal call_count
         with call_lock:
             call_count += 1
@@ -881,7 +881,7 @@ def test_refresh_ingests_around_calling_devices_home(client: TestClient, monkeyp
     """Regression: refresh must use the calling device's saved home, not the env-default home."""
     captured_homes: list[Home] = []
 
-    def fake_ingest(cfg: Config, db: psycopg.Connection, **kwargs: object) -> None:
+    def fake_ingest(cfg: Settings, db: psycopg.Connection, **kwargs: object) -> None:
         captured_homes.append(cfg.home)
 
     monkeypatch.setattr("foray.api.ingest", fake_ingest)

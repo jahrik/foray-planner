@@ -9,7 +9,7 @@ import psycopg
 import pytest
 
 from foray.cache import is_ingested, upsert_campsites, upsert_trails
-from foray.config import Config, CoverageRegion, Home, Ingest
+from foray.config import CoverageRegion, Home, Ingest, Settings
 from foray.scoring import get_trail, nearest_trail, trails_near
 from foray.trails import (
     _bbox_filter,
@@ -240,7 +240,7 @@ def test_ingest_trails_upserts_into_cache(con: psycopg.Connection) -> None:
         )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    cfg = Config(
+    cfg = Settings(
         home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=40.0),
         cell_deg=0.5,
         ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=4),

@@ -34,8 +34,8 @@ Guiding principles - keep these in mind for any feature work:
   `app_genera`.
 - `src/foray/defaults.py` - built-in home location and coverage regions (WA/OR/ID).
   Overridden via `FORAY_COVERAGE` env var.
-- `src/foray/inat.py` - throttled pyinaturalist wrapper (observations, species_counts,
-  monthly histogram). Descriptive User-Agent; deep-paginates via `id_above`; `_with_retries`
+- `src/foray/inat.py` - throttled pyinaturalist wrapper (observations, fungi-genera
+  catalog, photos). Descriptive User-Agent; deep-paginates via `id_above`; `_with_retries`
   backs off on transient network errors so one blip doesn't abort a long ingest.
 - `src/foray/geocode.py` - resolve a place name (OpenStreetMap Nominatim) or raw `lat,lng`
   to coordinates. Network-mocked in tests.

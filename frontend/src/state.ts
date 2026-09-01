@@ -53,11 +53,6 @@ export function dist(km: number): string {
   return `${Math.round(km)} km`;
 }
 
-export function distVal(km: number): number {
-  if (state.units === "mi") return Math.round(km * KM_TO_MI);
-  return Math.round(km);
-}
-
 const M_TO_FT = 3.28084;
 
 /** Ground elevation label (issue #36), in the same unit system as distances: feet when the

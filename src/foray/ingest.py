@@ -34,7 +34,7 @@ from foray.cache import (
     suspect_genus_taxon_ids,
     upsert_observations,
 )
-from foray.config import Config, CoverageRegion
+from foray.config import CoverageRegion, Settings
 from foray.inat import FUNGI_TAXON_ID, fetch_observations, iter_observations
 
 logger = logging.getLogger(__name__)
@@ -194,7 +194,7 @@ def backfill_elevations(
 
 
 def ingest(
-    cfg: Config,
+    cfg: Settings,
     db: psycopg.Connection,
     progress_cb: Callable[[str, float], None] | None = None,
     abort_event: threading.Event | None = None,
@@ -293,7 +293,7 @@ def ingest(
 
 
 def ingest_region(
-    cfg: Config,
+    cfg: Settings,
     db: psycopg.Connection,
     region: CoverageRegion,
     progress_cb: Callable[[str, float], None] | None = None,
@@ -447,7 +447,7 @@ def _recheck_ids(
 
 
 def revalidate(
-    cfg: Config,
+    cfg: Settings,
     db: psycopg.Connection,
     progress_cb: Callable[[str, float], None] | None = None,
     abort_event: threading.Event | None = None,
@@ -506,7 +506,7 @@ def revalidate(
 
 
 def resync(
-    cfg: Config,
+    cfg: Settings,
     db: psycopg.Connection,
     batch_size: int = 2000,
     progress_cb: Callable[[str, float], None] | None = None,

@@ -13,8 +13,6 @@ from typing import Any
 
 import requests.exceptions
 from pyinaturalist import (
-    get_observation_histogram,
-    get_observation_species_counts,
     get_observations,
     get_taxa,
 )
@@ -224,55 +222,6 @@ def iter_fungi_genera() -> Iterator[dict[str, Any]]:
         if len(results) < _PAGE_SIZE:
             return
         id_above = results[-1]["id"]
-
-
-def species_counts(
-    *,
-    lat: float,
-    lng: float,
-    radius_km: float,
-    taxon_id: int | list[int] | None = None,
-    d1: str | None = None,
-    d2: str | None = None,
-    month: int | list[int] | None = None,
-    quality_grade: str = "research",
-) -> list[dict[str, Any]]:
-    """Ranked species leaderboard for a geo/time filter (iNat aggregates this server-side)."""
-    resp = get_observation_species_counts(
-        taxon_id=taxon_id,
-        lat=lat,
-        lng=lng,
-        radius=radius_km,
-        d1=d1,
-        d2=d2,
-        month=month,
-        quality_grade=quality_grade,
-        user_agent=USER_AGENT,
-    )
-    return resp.get("results", [])
-
-
-def monthly_histogram(
-    *,
-    taxon_id: int | list[int],
-    lat: float,
-    lng: float,
-    radius_km: float,
-    quality_grade: str = "research",
-) -> dict[int, int]:
-    """Return {month(1-12): observation_count} - the seasonality curve for a taxon+place."""
-    resp = get_observation_histogram(
-        taxon_id=taxon_id,
-        lat=lat,
-        lng=lng,
-        radius=radius_km,
-        date_field="observed",
-        interval="month_of_year",
-        quality_grade=quality_grade,
-        user_agent=USER_AGENT,
-    )
-    # keys come back as month numbers (as ints or strings depending on version)
-    return {int(k): int(v) for k, v in resp.items()}
 
 
 def fetch_observations(ids: list[int]) -> Iterator[dict[str, Any]]:

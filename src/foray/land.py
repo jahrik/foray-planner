@@ -36,7 +36,7 @@ import httpx
 import psycopg
 
 from foray.cache import connect, is_area_covered, is_ingested, record_ingest, upsert_public_land
-from foray.config import Config, CoverageRegion
+from foray.config import CoverageRegion, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +272,7 @@ def fetch_public_land(
 
 
 def ingest_public_land(
-    cfg: Config,
+    cfg: Settings,
     con: psycopg.Connection | None = None,
     *,
     client: httpx.Client | None = None,
@@ -327,7 +327,7 @@ def _coverage_envelope(regions: Iterable[CoverageRegion]) -> tuple[float, float,
 
 
 def ingest_public_land_coverage(
-    cfg: Config,
+    cfg: Settings,
     con: psycopg.Connection | None = None,
     *,
     client: httpx.Client | None = None,

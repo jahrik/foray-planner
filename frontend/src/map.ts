@@ -51,7 +51,7 @@ let preciseCluster: L.MarkerClusterGroup;
 export const currentTheme = (): "dark" | "light" =>
   document.documentElement.dataset.theme === "light" ? "light" : "dark";
 
-export function setTiles(_theme: "dark" | "light"): void {
+export function setTiles(): void {
   if (!map) return; // map not built yet; initMap lays the first tiles for the current theme
   if (tileLayer) return; // same tile source for both themes now; the CSS filter handles dark mode
   tileLayer = L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 14 }).addTo(map);
@@ -114,7 +114,7 @@ function preciseClusterIcon(cluster: L.MarkerCluster): L.DivIcon {
 
 export function initMap(home: Home): void {
   map = L.map("map").setView([home.lat, home.lng], 7);
-  setTiles(currentTheme());
+  setTiles();
   preciseCluster = L.markerClusterGroup({
     iconCreateFunction: preciseClusterIcon,
     maxClusterRadius: 40,

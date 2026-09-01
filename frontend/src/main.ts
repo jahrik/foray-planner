@@ -114,7 +114,7 @@ function initTheme(): void {
     toggle.textContent = theme === "dark" ? "🌙" : "☀️";
     toggle.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
     toggle.setAttribute("aria-pressed", String(theme === "dark"));
-    setTiles(theme); // no-op until the map exists; initMap lays the first tiles
+    setTiles(); // no-op until the map exists; initMap lays the first tiles
   };
   apply(currentTheme()); // the inline <head> script already set the attribute (default dark)
   toggle.onclick = () => {

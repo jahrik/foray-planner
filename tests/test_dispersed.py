@@ -6,7 +6,7 @@ import httpx
 import psycopg
 import pytest
 
-from foray.config import Config, Home, Ingest
+from foray.config import Home, Ingest, Settings
 from foray.dispersed import (
     _parse_reported,
     fetch_reported_campsites,
@@ -117,7 +117,7 @@ def test_ingest_dispersed_upserts_reported_sites(con: psycopg.Connection, monkey
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
 
-    cfg = Config(
+    cfg = Settings(
         home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=40.0),
         cell_deg=0.5,
         ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=4),
