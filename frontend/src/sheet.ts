@@ -85,9 +85,12 @@ export function collapseIfOpen(): boolean {
 // Center the map on a point, offset upward on mobile so it lands in the visible strip above
 // the sheet rather than behind it. On desktop this is a plain setView.
 export function focusOnMap(lat: number, lng: number, zoom: number): void {
+  if (!enabled) {
+    map.setView([lat, lng], zoom); // desktop: plain setView, Leaflet's default animation
+    return;
+  }
   // animate:false so the pan below isn't undone when setView's own pan tween settles.
   map.setView([lat, lng], zoom, { animate: false });
-  if (!enabled) return;
   const size = map.getSize();
   // `renderedTop` is the sheet's top edge in viewport px; the map container starts below the
   // header/controls, so as a map-container y-coordinate that edge is `renderedTop - mapTop`.
@@ -237,6 +240,16 @@ export function initSheet(): void {
   window.addEventListener("pointerup", onPointerUp);
   window.addEventListener("pointercancel", onPointerUp);
   window.addEventListener("popstate", onPopstate);
+
+  // The detent translateY is a pixel value derived from viewport height. Mobile viewport height
+  // changes on URL-bar show/hide and orientation without crossing the media query, which would
+  // leave the sheet stranded between detents (and focusOnMap's offset stale) - re-apply the
+  // current detent's position on any such resize, unless a drag is in progress.
+  const resyncDetent = (): void => {
+    if (enabled && !dragging) setTop(detentTopPx(current));
+  };
+  window.addEventListener("resize", resyncDetent);
+  window.visualViewport?.addEventListener("resize", resyncDetent);
 
   // Swallow the click synthesised after a drag so a drag that started on a tab button (or the
   // handle) doesn't also switch tabs / re-toggle. Capture phase so it runs before those targets.

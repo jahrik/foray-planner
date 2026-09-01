@@ -328,7 +328,7 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
   #map { flex: 1; min-height: 0; }
   /* Float the legend just above the collapsed sheet's peek instead of below it (off-screen). */
   body[data-sheet="on"] #legend {
-    position: absolute; left: 0; right: 0; bottom: calc(18vh + 22px); z-index: 900;
+    position: absolute; left: 0; right: 0; bottom: calc(18dvh + 22px); z-index: 900;
     border-top: none;
   }
 
@@ -342,7 +342,7 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
     background: var(--panel);
     border-radius: 16px 16px 0 0;
     box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.35);
-    transform: translateY(82vh);
+    transform: translateY(82dvh); /* pre-JS fallback; sheet.ts sets the live px value */
     transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
     touch-action: none; /* the sheet owns vertical drags; #panel re-enables pan-y below */
   }
@@ -371,7 +371,7 @@ table.cal .heat { text-align: center; border-radius: 4px; color: var(--ink); fon
 
   /* Lift the OSM attribution (bottom-right) clear of the collapsed sheet's peek so it stays
      visible. The zoom control sits top-left and is never covered at the collapsed detent. */
-  body[data-sheet="on"] .leaflet-bottom.leaflet-right { bottom: 18vh; }
+  body[data-sheet="on"] .leaflet-bottom.leaflet-right { bottom: 18dvh; }
   /* flex-wrap left a lone "Dec" orphaned on its own row once 12 buttons stopped fitting one
      line - a grid divides the same 12 into two even rows of 6 instead. */
   .months { display: grid; grid-template-columns: repeat(6, 1fr); }
