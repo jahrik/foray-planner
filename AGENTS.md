@@ -104,7 +104,7 @@ Guiding principles - keep these in mind for any feature work:
     `BINNED`, the decoy-aware center expressions, the `taxon_id` / `IN (...)` helpers,
     `genus_name_map`).
 - `src/foray/api/` - FastAPI package (was one `api.py`; issue #242 Part 1e). `/api/{config,
-  species,destinations,calendar,alerts,camps,land,trails,plan,location,refresh,coverage}` + `/`
+  genera,destinations,calendar,alerts,camps,land,trails,plan,location,refresh,coverage}` + `/`
   (serves the built client). Search is **read-only** against cached data. `set_location` does not
   trigger refresh. A `psycopg_pool.ConnectionPool` opened/closed via FastAPI `lifespan`; `refresh`
   runs in a background thread with SSE progress.
