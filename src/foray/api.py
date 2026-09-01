@@ -58,6 +58,8 @@ from foray.cache import save_location as db_save_location
 from foray.cache import save_region_place as db_save_region_place
 from foray.config import Home, Settings
 from foray.ingest import ingest
+from foray.logging_config import setup_logging
+from foray.refresh import REFRESH_TARGETS, parse_month_list
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +148,7 @@ class AppState:
 
 def create_app(cfg: Settings | None = None) -> FastAPI:
     """Wire up the API: a Postgres connection pool + config state, opened/closed via lifespan."""
+    setup_logging()
     cfg = cfg or Settings()
 
     # Pool connections carry PG* env vars by default (see cache.connect's docstring) - no
@@ -311,11 +314,9 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
 
     def parse_months(months: str) -> list[int]:
         try:
-            values = [int(token) for token in months.split(",") if token.strip()]
+            values = parse_month_list(months)
         except ValueError as error:
-            raise HTTPException(400, f"bad months: {months}") from error
-        if not all(1 <= month <= 12 for month in values):
-            raise HTTPException(400, "months must be 1-12")
+            raise HTTPException(400, str(error)) from error
         return values or list(range(1, 13))
 
     def parse_species(species: str, conn: psycopg.Connection, device_id: str) -> list[int]:
@@ -900,12 +901,10 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
                 db_delete_location(conn, device_id)
         return StatusResponse(status="deleted")
 
-    _VALID_REFRESH_TARGETS = frozenset({"all", "mushrooms", "camps", "land", "dispersed", "trails"})
-
     @app.post("/api/refresh")
     def refresh(request: Request, response: Response, target: str = Query("mushrooms")) -> StatusResponse:
-        if target not in _VALID_REFRESH_TARGETS:
-            raise HTTPException(400, f"unknown target '{target}'; valid: {sorted(_VALID_REFRESH_TARGETS)}")
+        if target not in REFRESH_TARGETS:
+            raise HTTPException(400, f"unknown target '{target}'; valid: {sorted(REFRESH_TARGETS)}")
         # Check-and-set must be one atomic step, else two concurrent requests can both see
         # `refreshing=False` and both start a refresh thread.
         with state.refresh_lock:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import logging
 
 import click
 
@@ -15,24 +14,17 @@ from foray.dispersed import ingest_dispersed
 from foray.inat import InatQuotaExceeded, iter_fungi_genera
 from foray.ingest import backfill_elevations, ingest, ingest_region, resync, revalidate
 from foray.land import ingest_public_land, ingest_public_land_coverage
+from foray.logging_config import setup_logging
+from foray.refresh import REFRESH_LAYERS, parse_month_list
 from foray.scoring import build_phenology, plan_route
 from foray.trails import ingest_trails, ingest_trails_region
-
-
-def _setup_logging() -> None:
-    """Send `foray.*` progress logs to stderr at INFO. Idempotent (safe to call twice)."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
 
 
 @click.group()
 @click.pass_context
 def cli(ctx: click.Context) -> None:
     """Plan mushroom-hunting trips from iNaturalist phenology."""
-    _setup_logging()
+    setup_logging()
     ctx.ensure_object(dict)
     ctx.obj["cfg"] = Settings()
 
@@ -321,17 +313,14 @@ def genera_refresh_cmd() -> None:
         con.close()
 
 
-_REFRESH_TARGETS = ("mushrooms", "camps", "land", "dispersed", "trails")
-
-
 def _parse_targets(with_: str) -> tuple[str, ...]:
     """Parse a comma-separated `--with` list, raising on unknown targets."""
     if not with_.strip():
-        return _REFRESH_TARGETS
+        return REFRESH_LAYERS
     values = tuple(token.strip() for token in with_.split(",") if token.strip())
-    unknown = [v for v in values if v not in _REFRESH_TARGETS]
+    unknown = [target for target in values if target not in REFRESH_LAYERS]
     if unknown:
-        raise click.BadParameter(f"unknown target(s) {unknown} - choose from {', '.join(_REFRESH_TARGETS)}")
+        raise click.BadParameter(f"unknown target(s) {unknown} - choose from {', '.join(REFRESH_LAYERS)}")
     return values
 
 
@@ -411,12 +400,9 @@ def refresh(ctx: click.Context, with_: str, all_coverage: bool) -> None:
 def _parse_months(months: str) -> list[int]:
     """Parse a comma-separated month list, raising a Click error on junk or out-of-range values."""
     try:
-        values = [int(token) for token in months.split(",") if token.strip()]
+        return parse_month_list(months)
     except ValueError as error:
-        raise click.BadParameter(f"months must be integers 1-12: {months!r}") from error
-    if not all(1 <= month <= 12 for month in values):
-        raise click.BadParameter("months must be in 1-12")
-    return values
+        raise click.BadParameter(str(error)) from error
 
 
 @cli.command("plan")
