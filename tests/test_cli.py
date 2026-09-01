@@ -48,7 +48,10 @@ def calls(monkeypatch):
         seen.append("build_phenology")
         con.execute("CREATE TABLE IF NOT EXISTS regions (region_id VARCHAR)")
 
+    # The home-radius path rebuilds via foray.scoring.build_phenology (inside run_home_refresh);
+    # the coverage-wide `--all` path calls the symbol imported into foray.cli. Patch both.
     monkeypatch.setattr("foray.scoring.build_phenology", fake_build_phenology)
+    monkeypatch.setattr(cli_module, "build_phenology", fake_build_phenology)
     return seen
 
 

@@ -376,10 +376,13 @@ def refresh(ctx: click.Context, with_: str, all_coverage: bool) -> None:
                 for region in cfg.coverage:
                     click.echo(f"Ingesting trails for {region.name}…")
                     ingest_trails_region(region, con)
+            # The home-radius path rebuilds phenology inside run_home_refresh; the
+            # coverage-wide path doesn't use it, so rebuild here instead.
+            if "mushrooms" in targets:
+                build_phenology(con, cfg.cell_deg)
         else:
             run_home_refresh(cfg, con, targets)
         if "mushrooms" in targets:
-            build_phenology(con, cfg.cell_deg)
             region_count = (con.execute("SELECT count(*) FROM regions").fetchone() or (0,))[0]
             click.echo(f"Phenology rebuilt across {region_count} regions ({observation_count(con)} observations).")
         else:
