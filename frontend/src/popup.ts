@@ -1,7 +1,8 @@
 // Shared Leaflet popup builder. Every popup here is assembled from DOM nodes rather than an
 // HTML string so caller-supplied text - names, fees, dates, species from external APIs - is set
-// via `textContent` and can never be injected as markup. Hrefs are always server-constructed
-// (recreation.gov / OSM / iNaturalist / ArcGIS), so anchors are safe. No state - see popup.test.ts.
+// via `textContent` and can never be injected as markup. `link.href` is used as-is, so callers
+// are responsible for passing a trusted URL - every current caller passes a server-constructed
+// one (recreation.gov / OSM / iNaturalist / ArcGIS). No state - see popup.test.ts.
 
 export interface PopupLink {
   href: string;
@@ -21,9 +22,9 @@ export interface PopupSpec {
 
 export function buildPopup(spec: PopupSpec): HTMLElement {
   const root = document.createElement("div");
-  const strong = document.createElement("b");
-  strong.textContent = spec.title;
-  root.append(strong);
+  const bold = document.createElement("b");
+  bold.textContent = spec.title;
+  root.append(bold);
   if (spec.titleSuffix) root.append(document.createTextNode(spec.titleSuffix));
   for (const line of spec.lines ?? []) {
     root.append(document.createElement("br"), document.createTextNode(line));
