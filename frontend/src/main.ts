@@ -4,7 +4,7 @@ import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import "./style.css";
 
 import { getJson, postJson } from "./api/client";
-import type { Home } from "./api/types";
+import type { Home, LocationResponse } from "./api/types";
 import { initGenusSelection } from "./genera";
 import { loadCamps, loadLand } from "./layers";
 import { initLocationAutocomplete, initPlaceAutocomplete } from "./location";
@@ -309,7 +309,7 @@ function geolocateHome(): Promise<Home | null> {
         // Reverse geocoding happens server-side now (issue #145) - no direct browser->Nominatim
         // call, no client-side 200-char guard to duplicate.
         try {
-          const response = await postJson("/api/location", { lat, lng });
+          const response = await postJson("/api/location", { body: { lat, lng } });
           resolve(response.home);
         } catch {
           resolve(null); // keep whatever location is already loaded
@@ -331,13 +331,15 @@ function initRadiusPresets(): void {
       button.onclick = async () => {
         if (!state.home) return;
         const radius_km = Number(button.dataset.km);
-        let response: { home: Home };
+        let response: LocationResponse;
         try {
           response = await postJson("/api/location", {
-            lat: state.home.lat,
-            lng: state.home.lng,
-            name: state.home.name,
-            radius_km,
+            body: {
+              lat: state.home.lat,
+              lng: state.home.lng,
+              name: state.home.name,
+              radius_km,
+            },
           });
         } catch (error) {
           setStatus(errorDetail(error));

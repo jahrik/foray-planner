@@ -59,7 +59,7 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: Type-check + build (tsc --noEmit + vite build)
+      - name: Lint + test + type-check + build (eslint + vitest + tsc --noEmit + vite build)
         run: make frontend
 
       - name: API schema up to date (foray openapi + openapi-typescript, fails on drift)
