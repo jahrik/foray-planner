@@ -15,7 +15,7 @@ from foray.inat import InatQuotaExceeded, iter_fungi_genera
 from foray.ingest import backfill_elevations, ingest, ingest_region, resync, revalidate
 from foray.land import ingest_public_land, ingest_public_land_coverage
 from foray.logging_config import setup_logging
-from foray.refresh import REFRESH_LAYERS, parse_month_list
+from foray.refresh import REFRESH_LAYERS, parse_month_list, run_home_refresh
 from foray.scoring import build_phenology, plan_route
 from foray.trails import ingest_trails, ingest_trails_region
 
@@ -377,16 +377,7 @@ def refresh(ctx: click.Context, with_: str, all_coverage: bool) -> None:
                     click.echo(f"Ingesting trails for {region.name}…")
                     ingest_trails_region(region, con)
         else:
-            if "mushrooms" in targets:
-                ingest(cfg, con)
-            if "camps" in targets:
-                ingest_campgrounds(cfg, con)
-            if "land" in targets:
-                ingest_public_land(cfg, con)
-            if "dispersed" in targets:
-                ingest_dispersed(cfg, con)
-            if "trails" in targets:
-                ingest_trails(cfg, con)
+            run_home_refresh(cfg, con, targets)
         if "mushrooms" in targets:
             build_phenology(con, cfg.cell_deg)
             region_count = (con.execute("SELECT count(*) FROM regions").fetchone() or (0,))[0]

@@ -31,21 +31,24 @@ def env_config(con: psycopg.Connection, monkeypatch):
 
 @pytest.fixture
 def calls(monkeypatch):
+    """Record the ingest sequence `foray refresh` drives through `foray.refresh`."""
     seen: list[str] = []
-    for name in (
-        "ingest",
-        "ingest_campgrounds",
-        "ingest_public_land",
-        "ingest_dispersed",
-        "ingest_trails",
+    # `foray refresh` (non---all) delegates to foray.refresh.run_home_refresh, which resolves
+    # each ingest against its own module, so patch there rather than on foray.cli.
+    for target, name in (
+        ("foray.refresh", "ingest"),
+        ("foray.camps", "ingest_campgrounds"),
+        ("foray.land", "ingest_public_land"),
+        ("foray.dispersed", "ingest_dispersed"),
+        ("foray.trails", "ingest_trails"),
     ):
-        monkeypatch.setattr(cli_module, name, lambda cfg, con, n=name: seen.append(n))
+        monkeypatch.setattr(f"{target}.{name}", lambda *args, label=name, **kwargs: seen.append(label))
 
     def fake_build_phenology(con, cell_deg):
         seen.append("build_phenology")
         con.execute("CREATE TABLE IF NOT EXISTS regions (region_id VARCHAR)")
 
-    monkeypatch.setattr(cli_module, "build_phenology", fake_build_phenology)
+    monkeypatch.setattr("foray.scoring.build_phenology", fake_build_phenology)
     return seen
 
 
