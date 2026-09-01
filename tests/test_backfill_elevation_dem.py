@@ -37,12 +37,19 @@ def test_tile_id_corners(south: int, west: int, expected: str) -> None:
     assert tile_id(south, west) == expected
 
 
+_PAIRS = [(1, 10), (2, 20), (3, 30), (4, 40), (5, 50)]
+
+
 @pytest.mark.parametrize(
     ("size", "expected"),
-    [(2, [[1, 2], [3, 4], [5]]), (5, [[1, 2, 3, 4, 5]]), (0, [[1, 2, 3, 4, 5]])],
+    [
+        (2, [[(1, 10), (2, 20)], [(3, 30), (4, 40)], [(5, 50)]]),
+        (5, [_PAIRS]),
+        (0, [_PAIRS]),
+    ],
 )
-def test_batched(size: int, expected: list[list[int]]) -> None:
-    assert [list(chunk) for chunk in _mod._batched([1, 2, 3, 4, 5], size)] == expected
+def test_batched(size: int, expected: list[list[tuple[int, int]]]) -> None:
+    assert [list(chunk) for chunk in _mod._batched(_PAIRS, size)] == expected
 
 
 def test_apply_updates_is_set_based_and_null_guarded(con: psycopg.Connection) -> None:

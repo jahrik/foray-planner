@@ -107,7 +107,7 @@ def fetch_tile(cache: Path, tid: str) -> tuple[str, str]:
     return tid, "downloaded"
 
 
-def _batched(seq: Sequence[tuple[int, int]], size: int) -> list[Sequence[tuple[int, int]]]:
+def _batched[T](seq: Sequence[T], size: int) -> list[Sequence[T]]:
     """Split ``seq`` into consecutive slices of at most ``size`` (``size <= 0`` -> one slice)."""
     if size <= 0:
         return [seq]
