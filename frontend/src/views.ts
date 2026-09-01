@@ -12,6 +12,7 @@ import type {
   Trail,
 } from "./api/types";
 import { focusRegion, selectTrailhead } from "./layers";
+import { withLoading } from "./loading";
 import {
   clearCardCampMarkers,
   clearMarkers,
@@ -346,7 +347,9 @@ export async function runDestinations(): Promise<void> {
       if (token !== destinationsRunToken || state.view !== "destinations") return;
       let place: RegionPlace;
       try {
-        const resp = await fetch(`/api/destinations/${encodeURIComponent(region.region_id)}/place`);
+        const resp = await withLoading(() =>
+          fetch(`/api/destinations/${encodeURIComponent(region.region_id)}/place`),
+        );
         if (!resp.ok) continue;
         place = (await resp.json()) as RegionPlace;
       } catch {

@@ -1,5 +1,6 @@
 import { getJson } from "./api/client";
 import type { GenusResult } from "./api/types";
+import { withLoading } from "./loading";
 import { displayName, errorDetail, escapeHtml, qs, setStatus } from "./state";
 
 const DEBOUNCE_MS = 300;
@@ -63,7 +64,7 @@ async function selectGenus(genus: GenusResult): Promise<void> {
   list.classList.remove("open");
   let resp: Response;
   try {
-    resp = await fetch(`/api/genera/${genus.taxon_id}`, { method: "POST" });
+    resp = await withLoading(() => fetch(`/api/genera/${genus.taxon_id}`, { method: "POST" }));
   } catch (error) {
     setStatus(errorDetail(error) || "couldn't add genus");
     return;
@@ -81,7 +82,7 @@ async function selectGenus(genus: GenusResult): Promise<void> {
 async function removeGenus(taxonId: number): Promise<void> {
   let resp: Response;
   try {
-    resp = await fetch(`/api/genera/${taxonId}`, { method: "DELETE" });
+    resp = await withLoading(() => fetch(`/api/genera/${taxonId}`, { method: "DELETE" }));
   } catch (error) {
     setStatus(errorDetail(error) || "couldn't remove genus");
     return;
