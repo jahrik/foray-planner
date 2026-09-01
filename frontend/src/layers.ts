@@ -3,6 +3,7 @@ import L from "leaflet";
 import { getJson } from "./api/client";
 import type { CampSite, LandUnit, PreciseObservation, Trail, TrailPath } from "./api/types";
 import { feeLabel } from "./format";
+import { buildPopup } from "./popup";
 import {
   addCampMarker,
   addPreciseMarker,
@@ -74,8 +75,7 @@ export async function loadCamps(): Promise<void> {
   });
 }
 
-// Build the camp popup from DOM nodes rather than an HTML string: `site.name` and the fee text
-// come from an external API, so `textContent` escapes them instead of injecting raw HTML.
+// `site.name` and the fee text come from an external API (buildPopup sets them via textContent);
 // `site.url` is server-constructed (recreation.gov / openstreetmap + id), so it's a safe href.
 function campPopup(site: CampSite): HTMLElement {
   const isOsm = site.source === "osm";
@@ -84,22 +84,11 @@ function campPopup(site: CampSite): HTMLElement {
     site.kind === "dispersed"
       ? "likely dispersed-legal - verify with the agency"
       : feeLabel(site.free === true, site.fee);
-  const root = document.createElement("div");
-  const title = document.createElement("b");
-  title.textContent = site.name;
-  const link = document.createElement("a");
-  link.href = site.url;
-  link.target = "_blank";
-  link.rel = "noopener";
-  link.textContent = isOsm ? "OpenStreetMap ↗" : "Recreation.gov ↗";
-  root.append(
-    title,
-    document.createElement("br"),
-    document.createTextNode(`${dist(site.distance_km)} · ${detail}`),
-    document.createElement("br"),
-    link,
-  );
-  return root;
+  return buildPopup({
+    title: site.name,
+    lines: [`${dist(site.distance_km)} · ${detail}`],
+    link: { href: site.url, text: isOsm ? "OpenStreetMap ↗" : "Recreation.gov ↗" },
+  });
 }
 
 // Fetch + shade public-land ownership across the whole search radius (not just the focused
@@ -149,25 +138,14 @@ export async function loadLand(): Promise<void> {
   setLandLayer(layer);
 }
 
-// Popup built from DOM nodes: agency/unit come from an external service, so `textContent`
-// escapes them; the source url is a fixed ArcGIS service link.
+// agency/unit come from an external service (buildPopup sets them via textContent); the source
+// url is a fixed ArcGIS service link.
 function landPopup(unit: LandUnit): HTMLElement {
-  const root = document.createElement("div");
-  const title = document.createElement("b");
-  title.textContent = unit.unit;
-  const link = document.createElement("a");
-  link.href = unit.url;
-  link.target = "_blank";
-  link.rel = "noopener";
-  link.textContent = "Source (ArcGIS) ↗";
-  root.append(
-    title,
-    document.createElement("br"),
-    document.createTextNode(`${unit.agency} · ownership only, not legal advice`),
-    document.createElement("br"),
-    link,
-  );
-  return root;
+  return buildPopup({
+    title: unit.unit,
+    lines: [`${unit.agency} · ownership only, not legal advice`],
+    link: { href: unit.url, text: "Source (ArcGIS) ↗" },
+  });
 }
 
 // A trail's geometry as one or more ordered point sequences ([lat, lng] pairs, Leaflet's order -
@@ -296,26 +274,14 @@ export async function loadPreciseObservations(): Promise<void> {
   });
 }
 
-// Popup built from DOM nodes: name/observed_on come from an external API, so `textContent`
-// escapes them; `obs.uri` is server-constructed (a fixed iNaturalist observation URL).
+// name/observed_on come from an external API (buildPopup sets them via textContent); `obs.uri`
+// is server-constructed (a fixed iNaturalist observation URL).
 function precisePopup(obs: PreciseObservation): HTMLElement {
-  const root = document.createElement("div");
-  const title = document.createElement("b");
-  title.textContent = displayName(obs);
-  root.append(title);
-  if (obs.observed_on) {
-    root.append(document.createElement("br"), document.createTextNode(obs.observed_on));
-  }
-  if (obs.uri) {
-    root.append(document.createElement("br"));
-    const link = document.createElement("a");
-    link.href = obs.uri;
-    link.target = "_blank";
-    link.rel = "noopener";
-    link.textContent = "iNaturalist ↗";
-    root.append(link);
-  }
-  return root;
+  return buildPopup({
+    title: displayName(obs),
+    lines: obs.observed_on ? [obs.observed_on] : [],
+    ...(obs.uri ? { link: { href: obs.uri, text: "iNaturalist ↗" } } : {}),
+  });
 }
 
 // Public land depends only on state.home (whole search radius), not the focused destination, so
