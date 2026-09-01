@@ -35,7 +35,7 @@ from typing import Any
 import httpx
 import psycopg
 
-from foray.cache import connect, is_area_covered, is_ingested, record_ingest, upsert_public_land
+from foray.cache import connection, is_area_covered, is_ingested, record_ingest, upsert_public_land
 from foray.config import CoverageRegion, Settings
 from foray.geo import bbox_around
 
@@ -272,17 +272,13 @@ def ingest_public_land(
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest public-land ownership polygons into the cache. Returns rows upserted."""
-    own_con = con is None
-    database = con if con is not None else connect()
     home = cfg.home
-    if is_area_covered(database, "land:", home.lat, home.lng, home.radius_km):
-        logger.info("land: already ingested for this area, skipping")
-        if progress_cb:
-            progress_cb("Public land already cached, skipping…", 100.0)
-        if own_con:
-            database.close()
-        return 0
-    try:
+    with connection(con) as database:
+        if is_area_covered(database, "land:", home.lat, home.lng, home.radius_km):
+            logger.info("land: already ingested for this area, skipping")
+            if progress_cb:
+                progress_cb("Public land already cached, skipping…", 100.0)
+            return 0
         logger.info("land: fetching BLM/USFS ownership within %.0f km of home…", home.radius_km)
         rows = fetch_public_land(
             lat=home.lat,
@@ -297,9 +293,6 @@ def ingest_public_land(
         record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
         logger.info("land: cached %d public-land units", len(rows))
         return len(rows)
-    finally:
-        if own_con:
-            database.close()
 
 
 def _coverage_envelope(regions: Iterable[CoverageRegion]) -> tuple[float, float, float, float]:
@@ -333,16 +326,12 @@ def ingest_public_land_coverage(
     by region the way ``trails.py`` has to for Overpass. One-shot: skips entirely once
     ``land:coverage`` is in ``ingest_log``, same as the home-radius path.
     """
-    own_con = con is None
-    database = con if con is not None else connect()
-    if is_ingested(database, "land:coverage"):
-        logger.info("land: coverage-wide ownership already ingested, skipping")
-        if progress_cb:
-            progress_cb("Public land already cached, skipping…", 100.0)
-        if own_con:
-            database.close()
-        return 0
-    try:
+    with connection(con) as database:
+        if is_ingested(database, "land:coverage"):
+            logger.info("land: coverage-wide ownership already ingested, skipping")
+            if progress_cb:
+                progress_cb("Public land already cached, skipping…", 100.0)
+            return 0
         envelope = _coverage_envelope(cfg.coverage)
         logger.info("land: fetching BLM/USFS ownership across %d coverage regions…", len(cfg.coverage))
         rows = _fetch_public_land_envelope(envelope, client=client, sources=sources, progress_cb=progress_cb)
@@ -350,6 +339,3 @@ def ingest_public_land_coverage(
         record_ingest(database, "land:coverage", len(rows))
         logger.info("land: cached %d public-land units (coverage-wide)", len(rows))
         return len(rows)
-    finally:
-        if own_con:
-            database.close()

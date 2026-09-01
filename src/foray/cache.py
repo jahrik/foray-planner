@@ -14,7 +14,8 @@ transactions for) - callers that need atomicity across statements (e.g.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from typing import Any, LiteralString
 
 import psycopg
@@ -229,6 +230,62 @@ def connect(conninfo: str = "") -> psycopg.Connection:
     return con
 
 
+@contextmanager
+def connection(con: psycopg.Connection | None = None) -> Iterator[psycopg.Connection]:
+    """Yield a usable connection, closing it on exit only if this opened it.
+
+    Collapses the ``own_con = con is None`` / ``try: ... finally: if own_con: db.close()``
+    dance every ingest entrypoint repeats: ``with cache.connection(con) as db:`` passes a
+    caller-supplied ``con`` straight through (caller still owns its lifecycle) and otherwise
+    opens a fresh one and guarantees it is closed.
+    """
+    if con is not None:
+        yield con
+        return
+    fresh = connect()
+    try:
+        yield fresh
+    finally:
+        fresh.close()
+
+
+def upsert_rows(
+    con: psycopg.Connection,
+    table: LiteralString,
+    columns: Sequence[LiteralString],
+    rows: Sequence[tuple[Any, ...]],
+    *,
+    conflict: LiteralString = "id",
+    coalesce: Collection[str] = (),
+) -> int:
+    """Bulk ``INSERT ... ON CONFLICT (<conflict>) DO UPDATE`` for a list of positional tuples.
+
+    Every non-conflict column is refreshed from ``EXCLUDED`` on conflict; columns named in
+    ``coalesce`` are wrapped ``COALESCE(EXCLUDED.col, <table>.col)`` so a partial re-upsert
+    that doesn't carry every column can't blank a previously-healed value (the guard
+    ``upsert_observations`` needs). Returns the number of rows attempted.
+
+    ``table``/``columns``/``conflict`` are typed ``LiteralString`` - they come from this
+    module's own call sites, never request data - so composing them into the statement text is
+    safe. Row *values* are always parameterised by ``executemany``.
+    """
+    if not rows:
+        return 0
+    placeholders = ", ".join(["%s"] * len(columns))
+    assignments = ", ".join(
+        f"{col} = COALESCE(EXCLUDED.{col}, {table}.{col})" if col in coalesce else f"{col} = EXCLUDED.{col}"
+        for col in columns
+        if col != conflict
+    )
+    sql: LiteralString = (
+        f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders}) "
+        f"ON CONFLICT ({conflict}) DO UPDATE SET {assignments}"
+    )
+    with con.cursor() as cur:
+        cur.executemany(sql, rows)
+    return len(rows)
+
+
 def apply_schema(con: psycopg.Connection) -> None:
     """Ensure the baseline schema, the ``_MIGRATIONS`` chain, and the CONCURRENTLY-built
     indexes are all present on ``con``.
@@ -365,30 +422,20 @@ def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
     stays wrong here forever. COALESCE still guards against a partial-loader re-upsert (one
     that doesn't carry every column) blanking out a previously-healed value.
     """
-    if not rows:
-        return 0
-    with con.cursor() as cur:
-        cur.executemany(
-            """
-            INSERT INTO observations
-                (id, taxon_id, lat, lng, observed_on, month, quality_grade,
-                 positional_accuracy, place_guess, uri, obscured)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO UPDATE SET
-                taxon_id = COALESCE(EXCLUDED.taxon_id, observations.taxon_id),
-                lat = COALESCE(EXCLUDED.lat, observations.lat),
-                lng = COALESCE(EXCLUDED.lng, observations.lng),
-                observed_on = COALESCE(EXCLUDED.observed_on, observations.observed_on),
-                month = COALESCE(EXCLUDED.month, observations.month),
-                quality_grade = COALESCE(EXCLUDED.quality_grade, observations.quality_grade),
-                positional_accuracy = COALESCE(EXCLUDED.positional_accuracy, observations.positional_accuracy),
-                place_guess = COALESCE(EXCLUDED.place_guess, observations.place_guess),
-                uri = COALESCE(EXCLUDED.uri, observations.uri),
-                obscured = COALESCE(EXCLUDED.obscured, observations.obscured)
-            """,
-            rows,
-        )
-    return len(rows)
+    columns: tuple[LiteralString, ...] = (
+        "id",
+        "taxon_id",
+        "lat",
+        "lng",
+        "observed_on",
+        "month",
+        "quality_grade",
+        "positional_accuracy",
+        "place_guess",
+        "uri",
+        "obscured",
+    )
+    return upsert_rows(con, "observations", columns, rows, coalesce=set(columns) - {"id"})
 
 
 def suspect_genus_taxon_ids(con: psycopg.Connection, ratio: float = 3.0) -> list[int]:
@@ -469,26 +516,8 @@ def upsert_campsites(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -
 
     Each tuple is (id, name, kind, fee, free, lat, lng, source, url).
     """
-    if not rows:
-        return 0
-    with con.cursor() as cur:
-        cur.executemany(
-            """
-            INSERT INTO campsites (id, name, kind, fee, free, lat, lng, source, url)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                kind = EXCLUDED.kind,
-                fee = EXCLUDED.fee,
-                free = EXCLUDED.free,
-                lat = EXCLUDED.lat,
-                lng = EXCLUDED.lng,
-                source = EXCLUDED.source,
-                url = EXCLUDED.url
-            """,
-            rows,
-        )
-    return len(rows)
+    columns: tuple[LiteralString, ...] = ("id", "name", "kind", "fee", "free", "lat", "lng", "source", "url")
+    return upsert_rows(con, "campsites", columns, rows)
 
 
 def upsert_public_land(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
@@ -496,28 +525,19 @@ def upsert_public_land(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]])
 
     Each tuple is (id, agency, unit, source, url, min_lat, min_lng, max_lat, max_lng, geojson).
     """
-    if not rows:
-        return 0
-    with con.cursor() as cur:
-        cur.executemany(
-            """
-            INSERT INTO public_land
-                (id, agency, unit, source, url, min_lat, min_lng, max_lat, max_lng, geojson)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO UPDATE SET
-                agency = EXCLUDED.agency,
-                unit = EXCLUDED.unit,
-                source = EXCLUDED.source,
-                url = EXCLUDED.url,
-                min_lat = EXCLUDED.min_lat,
-                min_lng = EXCLUDED.min_lng,
-                max_lat = EXCLUDED.max_lat,
-                max_lng = EXCLUDED.max_lng,
-                geojson = EXCLUDED.geojson
-            """,
-            rows,
-        )
-    return len(rows)
+    columns: tuple[LiteralString, ...] = (
+        "id",
+        "agency",
+        "unit",
+        "source",
+        "url",
+        "min_lat",
+        "min_lng",
+        "max_lat",
+        "max_lng",
+        "geojson",
+    )
+    return upsert_rows(con, "public_land", columns, rows)
 
 
 def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
@@ -527,31 +547,21 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
     (id, name, kind, source, url, min_lat, min_lng, max_lat, max_lng, center_lat, center_lng,
     geojson).
     """
-    if not rows:
-        return 0
-    with con.cursor() as cur:
-        cur.executemany(
-            """
-            INSERT INTO trails
-                (id, name, kind, source, url, min_lat, min_lng, max_lat, max_lng,
-                 center_lat, center_lng, geojson)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                kind = EXCLUDED.kind,
-                source = EXCLUDED.source,
-                url = EXCLUDED.url,
-                min_lat = EXCLUDED.min_lat,
-                min_lng = EXCLUDED.min_lng,
-                max_lat = EXCLUDED.max_lat,
-                max_lng = EXCLUDED.max_lng,
-                center_lat = EXCLUDED.center_lat,
-                center_lng = EXCLUDED.center_lng,
-                geojson = EXCLUDED.geojson
-            """,
-            rows,
-        )
-    return len(rows)
+    columns: tuple[LiteralString, ...] = (
+        "id",
+        "name",
+        "kind",
+        "source",
+        "url",
+        "min_lat",
+        "min_lng",
+        "max_lat",
+        "max_lng",
+        "center_lat",
+        "center_lng",
+        "geojson",
+    )
+    return upsert_rows(con, "trails", columns, rows)
 
 
 def record_ingest(

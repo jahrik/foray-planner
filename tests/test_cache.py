@@ -10,6 +10,7 @@ import pytest
 from foray.cache import (
     add_genus,
     apply_schema,
+    connection,
     delete_observations,
     genus_taxon_ids,
     is_ingested,
@@ -31,6 +32,7 @@ from foray.cache import (
     upsert_campsites,
     upsert_fungi_genera,
     upsert_observations,
+    upsert_rows,
 )
 from foray.geo import haversine_km
 
@@ -381,6 +383,30 @@ def test_latest_obs_date_ignores_other_tokens(con: psycopg.Connection) -> None:
 
 
 _CAMPSITE_ROW = ("osm:way/1", "Old Name", "reported", None, None, 47.6, -122.3, "osm", "https://example.com/1")
+
+
+def test_upsert_rows_empty_is_a_noop(con: psycopg.Connection) -> None:
+    assert upsert_rows(con, "campsites", ("id", "name"), []) == 0
+
+
+def test_upsert_rows_refreshes_every_non_conflict_column(con: psycopg.Connection) -> None:
+    cols = ("id", "name", "kind", "fee", "free", "lat", "lng", "source", "url")
+    upsert_rows(con, "campsites", cols, [("x:1", "Old", "reported", None, None, 1.0, 2.0, "osm", "u")])
+    upsert_rows(con, "campsites", cols, [("x:1", "New", "reported", None, None, 3.0, 4.0, "osm", "u")])
+    assert con.execute("SELECT name, lat FROM campsites WHERE id = 'x:1'").fetchone() == ("New", 3.0)
+
+
+def test_upsert_rows_coalesce_preserves_a_healed_value_against_a_null(con: psycopg.Connection) -> None:
+    cols = ("id", "name")
+    upsert_rows(con, "campsites", cols, [("x:2", "Named")])
+    upsert_rows(con, "campsites", cols, [("x:2", None)], coalesce={"name"})
+    assert con.execute("SELECT name FROM campsites WHERE id = 'x:2'").fetchone() == ("Named",)
+
+
+def test_connection_passes_through_a_caller_owned_connection(con: psycopg.Connection) -> None:
+    with connection(con) as db:
+        assert db is con
+    assert not con.closed  # context manager must not close a connection it did not open
 
 
 def test_upsert_campsites_same_key_twice_updates_not_duplicates(con: psycopg.Connection) -> None:

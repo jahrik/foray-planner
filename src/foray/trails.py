@@ -41,7 +41,7 @@ import httpx
 import psycopg
 
 from foray import overpass, scoring
-from foray.cache import connect, is_area_covered, is_ingested, record_ingest, upsert_trails
+from foray.cache import connection, is_area_covered, is_ingested, record_ingest, upsert_trails
 from foray.config import CoverageRegion, Settings
 from foray.http import SOURCE_ERRORS
 
@@ -291,17 +291,13 @@ def ingest_trails(
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest the OSM trail network near home into ``trails``. Returns rows upserted."""
-    own_con = con is None
-    database = con if con is not None else connect()
     home = cfg.home
-    if is_area_covered(database, "trails:", home.lat, home.lng, home.radius_km):
-        logger.info("trails: already ingested for this area, skipping")
-        if progress_cb:
-            progress_cb("Trails already cached, skipping…", 100.0)
-        if own_con:
-            database.close()
-        return 0
-    try:
+    with connection(con) as database:
+        if is_area_covered(database, "trails:", home.lat, home.lng, home.radius_km):
+            logger.info("trails: already ingested for this area, skipping")
+            if progress_cb:
+                progress_cb("Trails already cached, skipping…", 100.0)
+            return 0
         logger.info("trails: fetching OSM trail network within %.0f km of home…", home.radius_km)
         rows = fetch_trails(
             lat=home.lat,
@@ -315,9 +311,6 @@ def ingest_trails(
         record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
         logger.info("trails: cached %d trails", len(rows))
         return len(rows)
-    finally:
-        if own_con:
-            database.close()
 
 
 def _parse_trailhead_id(trail_id: str) -> int:
@@ -464,17 +457,13 @@ def ingest_trails_region(
     """
     if region.bbox is None:
         raise ValueError(f"{region.name} has no bbox configured for trails ingest")
-    own_con = con is None
-    database = con if con is not None else connect()
     key = f"trails:place:{region.place_id}"
-    if is_ingested(database, key):
-        logger.info("trails: %s already ingested, skipping", region.name)
-        if progress_cb:
-            progress_cb(f"Trails already cached for {region.name}, skipping…", 100.0)
-        if own_con:
-            database.close()
-        return 0
-    try:
+    with connection(con) as database:
+        if is_ingested(database, key):
+            logger.info("trails: %s already ingested, skipping", region.name)
+            if progress_cb:
+                progress_cb(f"Trails already cached for {region.name}, skipping…", 100.0)
+            return 0
         west, south, east, north = region.bbox
         tiles = _tile_bboxes(south, west, north, east)
         logger.info("trails: fetching OSM trail network for %s (%d tiles)…", region.name, len(tiles))
@@ -513,6 +502,3 @@ def ingest_trails_region(
             record_ingest(database, key, total)
         logger.info("trails: cached %d trails in %s", total, region.name)
         return total
-    finally:
-        if own_con:
-            database.close()
