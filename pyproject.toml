@@ -55,6 +55,12 @@ src = ["src", "tests"]
 # FastAPI-dependency signatures to be worth the per-line noqa churn.
 select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF", "PERF", "PIE", "PTH"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom is `param: T = Depends(callable)` in the signature;
+# ruff already exempts Query/Path/Header/etc from B008 but not Depends. The API package
+# (foray/api/) uses it for the pool + AppState accessors.
+extend-immutable-calls = ["fastapi.Depends"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # --cov-fail-under is a ratchet-only floor set a few points below the current number (~83%);

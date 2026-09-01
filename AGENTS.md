@@ -103,10 +103,20 @@ Guiding principles - keep these in mind for any feature work:
   - `_scoring_sql.py` - the SQL fragments shared by the three query modules (grid binning
     `BINNED`, the decoy-aware center expressions, the `taxon_id` / `IN (...)` helpers,
     `genus_name_map`).
-- `src/foray/api.py` - FastAPI: `/api/{config,species,destinations,calendar,alerts,camps,land,
-  trails,plan,location,refresh,coverage}` + `/` (serves the built client). Search is **read-only**
-  against cached data. `set_location` does not trigger refresh. A `psycopg_pool.ConnectionPool`
-  opened/closed via FastAPI `lifespan`; `refresh` runs in a background thread with SSE progress.
+- `src/foray/api/` - FastAPI package (was one `api.py`; issue #242 Part 1e). `/api/{config,
+  species,destinations,calendar,alerts,camps,land,trails,plan,location,refresh,coverage}` + `/`
+  (serves the built client). Search is **read-only** against cached data. `set_location` does not
+  trigger refresh. A `psycopg_pool.ConnectionPool` opened/closed via FastAPI `lifespan`; `refresh`
+  runs in a background thread with SSE progress.
+  - `app.py` - `create_app()`: builds the `FastAPI`, opens the pool + `AppState` onto `app.state`,
+    registers the routers in OpenAPI-schema order (`foray openapi` output is drift-checked).
+  - `routes/*.py` - one `APIRouter` per domain (`config`, `genera`, `coverage`, `destinations`,
+    `layers`, `plan`, `location`, `refresh`, `index`).
+  - `deps.py` - shared request helpers as module functions: `get_pool` / `get_state` accessors,
+    anonymous device-id resolution, `resolve_home` / `resolve_genera`, `parse_months` /
+    `parse_species`, `region_center`, rate limiting.
+  - `state.py` - the `AppState` dataclass. `security.py` - CSP + security headers + body-size cap.
+    `refresh_runner.py` - the API's background `run_refresh` orchestration. `paths.py` - `web/dist`.
 - `src/foray/refresh.py` - the refresh vocabulary shared by the CLI and API paths:
   `REFRESH_LAYERS` / `REFRESH_TARGETS` and `parse_month_list`. Unifying the two refresh
   orchestrations themselves is the remaining half of issue #242 Part 1f.

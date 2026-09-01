@@ -798,7 +798,7 @@ def _wait_for_idle(client: TestClient) -> None:
 
 def test_refresh_rate_limits_repeat_triggers_from_same_ip(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """A client can't hammer /api/refresh (and the upstream iNat/RIDB calls behind it)."""
-    monkeypatch.setattr("foray.api.ingest", lambda *args, **kwargs: None)
+    monkeypatch.setattr("foray.api.refresh_runner.ingest", lambda *args, **kwargs: None)
     monkeypatch.setattr("foray.scoring.build_phenology", lambda *args, **kwargs: None)
 
     started = client.post("/api/refresh", params={"target": "mushrooms"})
@@ -812,7 +812,7 @@ def test_refresh_rate_limits_repeat_triggers_from_same_ip(client: TestClient, mo
 
 def test_refresh_rate_limit_is_scoped_per_client_ip(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """Cloudflare's CF-Connecting-IP is trusted for the rate-limit key, not a shared bucket."""
-    monkeypatch.setattr("foray.api.ingest", lambda *args, **kwargs: None)
+    monkeypatch.setattr("foray.api.refresh_runner.ingest", lambda *args, **kwargs: None)
     monkeypatch.setattr("foray.scoring.build_phenology", lambda *args, **kwargs: None)
 
     started = client.post("/api/refresh", params={"target": "mushrooms"}, headers={"cf-connecting-ip": "10.0.0.1"})
@@ -826,7 +826,7 @@ def test_refresh_rate_limit_is_scoped_per_client_ip(client: TestClient, monkeypa
 
 def test_refresh_ignores_malformed_cf_connecting_ip(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """A bogus CF-Connecting-IP value must not let a caller dodge the rate limit."""
-    monkeypatch.setattr("foray.api.ingest", lambda *args, **kwargs: None)
+    monkeypatch.setattr("foray.api.refresh_runner.ingest", lambda *args, **kwargs: None)
     monkeypatch.setattr("foray.scoring.build_phenology", lambda *args, **kwargs: None)
 
     bogus_ip = "not-an-ip"
@@ -853,7 +853,7 @@ def test_refresh_concurrent_requests_start_only_one(client: TestClient, monkeypa
         # window the original bug needed to slip through is actually exercised.
         release.wait(timeout=5)
 
-    monkeypatch.setattr("foray.api.ingest", fake_ingest)
+    monkeypatch.setattr("foray.api.refresh_runner.ingest", fake_ingest)
     monkeypatch.setattr("foray.scoring.build_phenology", lambda *args, **kwargs: None)
 
     statuses: list[int] = []
@@ -884,7 +884,7 @@ def test_refresh_ingests_around_calling_devices_home(client: TestClient, monkeyp
     def fake_ingest(cfg: Settings, db: psycopg.Connection, **kwargs: object) -> None:
         captured_homes.append(cfg.home)
 
-    monkeypatch.setattr("foray.api.ingest", fake_ingest)
+    monkeypatch.setattr("foray.api.refresh_runner.ingest", fake_ingest)
     # The assertion only cares which Home was threaded into ingest - stub out the real
     # phenology rebuild (DDL + aggregation) too, so the test doesn't depend on that work
     # finishing within the polling window below on a slower machine/CI.
