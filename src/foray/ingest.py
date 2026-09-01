@@ -141,6 +141,60 @@ def _to_row(obs: dict[str, Any], genus_taxon_id: int) -> tuple[Any, ...] | None:
     )
 
 
+def _consume_observations(
+    db: psycopg.Connection,
+    obs_iter: Any,
+    known_genus_ids: set[int],
+    *,
+    log_label: str,
+    progress_label: str,
+    progress_cb: Callable[[str, float], None] | None = None,
+    abort_event: threading.Event | None = None,
+) -> tuple[dict[int, int], int, bool]:
+    """Scan ``obs_iter`` -> resolve each observation's genus -> build a row -> chunked upsert,
+    with progress reporting and cooperative abort.
+
+    The shared core of ``ingest`` and ``ingest_region``: they differ only in the iNat query
+    that produces ``obs_iter`` and in the completion bookkeeping (the ``record_ingest`` key,
+    the elevation top-up) they do around this call.
+
+    Returns ``(counts, skipped_no_genus, cancelled)`` where ``counts`` is
+    ``{genus_taxon_id: rows}``. Rows already upserted are kept on an abort (idempotent); the
+    caller decides whether to skip ``record_ingest``.
+    """
+    counts: dict[int, int] = {}
+    scanned = 0
+    skipped_no_genus = 0
+    cancelled = False
+    chunk: list[tuple[Any, ...]] = []
+    for obs in obs_iter:
+        if abort_event and abort_event.is_set():
+            logger.info("%s: cancelled at %d observations", log_label, scanned)
+            cancelled = True
+            break
+        scanned += 1
+        if progress_cb and scanned % _CHUNK_SIZE == 0:
+            progress_cb(
+                f"{progress_label} ({scanned:,} so far)",
+                min(90.0, scanned / _PROGRESS_ROWS_ESTIMATE * 90.0),
+            )
+        genus_taxon_id = _resolve_genus_taxon_id(obs, known_genus_ids)
+        if genus_taxon_id is None:
+            skipped_no_genus += 1
+            continue
+        row = _to_row(obs, genus_taxon_id)
+        if row is None:
+            continue
+        chunk.append(row)
+        counts[genus_taxon_id] = counts.get(genus_taxon_id, 0) + 1
+        if len(chunk) >= _CHUNK_SIZE:
+            upsert_observations(db, chunk)
+            chunk = []
+    if chunk:
+        upsert_observations(db, chunk)
+    return counts, skipped_no_genus, cancelled
+
+
 def backfill_elevations(
     db: psycopg.Connection, *, max_points: int | None = None, near: tuple[float, float] | None = None
 ) -> int:
@@ -232,45 +286,23 @@ def ingest(
         end_date,
     )
 
-    counts: dict[int, int] = {}
-    scanned = 0
-    skipped_no_genus = 0
-    cancelled = False
-    chunk: list[tuple[Any, ...]] = []
-    for obs in iter_observations(
-        taxon_id=FUNGI_TAXON_ID,
-        lat=home.lat,
-        lng=home.lng,
-        radius_km=home.radius_km,
-        d1=window_start,
-        d2=end_date,
-        quality_grade=cfg.quality_grade,
-    ):
-        if abort_event and abort_event.is_set():
-            logger.info("ingest: cancelled at %d observations", scanned)
-            cancelled = True
-            break
-        scanned += 1
-        if progress_cb and scanned % _CHUNK_SIZE == 0:
-            progress_cb(
-                f"Fetching Fungi observations… ({scanned:,} so far)",
-                min(90.0, scanned / _PROGRESS_ROWS_ESTIMATE * 90.0),
-            )
-        genus_taxon_id = _resolve_genus_taxon_id(obs, known_genus_ids)
-        if genus_taxon_id is None:
-            skipped_no_genus += 1
-            continue
-        row = _to_row(obs, genus_taxon_id)
-        if row is None:
-            continue
-        chunk.append(row)
-        counts[genus_taxon_id] = counts.get(genus_taxon_id, 0) + 1
-        if len(chunk) >= _CHUNK_SIZE:
-            upsert_observations(db, chunk)
-            chunk = []
-
-    if chunk:
-        upsert_observations(db, chunk)
+    counts, skipped_no_genus, cancelled = _consume_observations(
+        db,
+        iter_observations(
+            taxon_id=FUNGI_TAXON_ID,
+            lat=home.lat,
+            lng=home.lng,
+            radius_km=home.radius_km,
+            d1=window_start,
+            d2=end_date,
+            quality_grade=cfg.quality_grade,
+        ),
+        known_genus_ids,
+        log_label="ingest",
+        progress_label="Fetching Fungi observations…",
+        progress_cb=progress_cb,
+        abort_event=abort_event,
+    )
 
     if cancelled:
         # A partial run must not advance the incremental cursor - record_ingest would mark
@@ -326,43 +358,21 @@ def ingest_region(
         end_date,
     )
 
-    counts: dict[int, int] = {}
-    scanned = 0
-    skipped_no_genus = 0
-    cancelled = False
-    chunk: list[tuple[Any, ...]] = []
-    for obs in iter_observations(
-        taxon_id=FUNGI_TAXON_ID,
-        place_id=region.place_id,
-        d1=window_start,
-        d2=end_date,
-        quality_grade=cfg.quality_grade,
-    ):
-        if abort_event and abort_event.is_set():
-            logger.info("ingest_region: cancelled at %d observations", scanned)
-            cancelled = True
-            break
-        scanned += 1
-        if progress_cb and scanned % _CHUNK_SIZE == 0:
-            progress_cb(
-                f"Fetching Fungi observations ({region.name})… ({scanned:,} so far)",
-                min(90.0, scanned / _PROGRESS_ROWS_ESTIMATE * 90.0),
-            )
-        genus_taxon_id = _resolve_genus_taxon_id(obs, known_genus_ids)
-        if genus_taxon_id is None:
-            skipped_no_genus += 1
-            continue
-        row = _to_row(obs, genus_taxon_id)
-        if row is None:
-            continue
-        chunk.append(row)
-        counts[genus_taxon_id] = counts.get(genus_taxon_id, 0) + 1
-        if len(chunk) >= _CHUNK_SIZE:
-            upsert_observations(db, chunk)
-            chunk = []
-
-    if chunk:
-        upsert_observations(db, chunk)
+    counts, skipped_no_genus, cancelled = _consume_observations(
+        db,
+        iter_observations(
+            taxon_id=FUNGI_TAXON_ID,
+            place_id=region.place_id,
+            d1=window_start,
+            d2=end_date,
+            quality_grade=cfg.quality_grade,
+        ),
+        known_genus_ids,
+        log_label="ingest_region",
+        progress_label=f"Fetching Fungi observations ({region.name})…",
+        progress_cb=progress_cb,
+        abort_event=abort_event,
+    )
 
     if cancelled:
         # See ingest()'s matching comment: don't advance the incremental cursor on a partial run.

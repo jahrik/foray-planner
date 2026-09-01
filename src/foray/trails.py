@@ -41,9 +41,10 @@ import httpx
 import psycopg
 
 from foray import overpass, scoring
-from foray.cache import connection, is_area_covered, is_ingested, record_ingest, upsert_trails
+from foray.cache import connection, is_ingested, record_ingest, upsert_trails
 from foray.config import CoverageRegion, Settings
 from foray.http import SOURCE_ERRORS
+from foray.ingest_base import run_area_ingest
 
 logger = logging.getLogger(__name__)
 
@@ -291,26 +292,16 @@ def ingest_trails(
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest the OSM trail network near home into ``trails``. Returns rows upserted."""
-    home = cfg.home
-    with connection(con) as database:
-        if is_area_covered(database, "trails:", home.lat, home.lng, home.radius_km):
-            logger.info("trails: already ingested for this area, skipping")
-            if progress_cb:
-                progress_cb("Trails already cached, skipping…", 100.0)
-            return 0
-        logger.info("trails: fetching OSM trail network within %.0f km of home…", home.radius_km)
-        rows = fetch_trails(
-            lat=home.lat,
-            lng=home.lng,
-            radius_km=home.radius_km,
-            client=client,
-            progress_cb=progress_cb,
-        )
-        upsert_trails(database, rows)
-        key = f"trails:{home.lat}:{home.lng}:{home.radius_km}"
-        record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
-        logger.info("trails: cached %d trails", len(rows))
-        return len(rows)
+    return run_area_ingest(
+        cfg,
+        con,
+        prefix="trails:",
+        label="trails",
+        noun="Trails",
+        fetch=lambda **kw: fetch_trails(client=client, **kw),
+        upsert=upsert_trails,
+        progress_cb=progress_cb,
+    )
 
 
 def _parse_trailhead_id(trail_id: str) -> int:

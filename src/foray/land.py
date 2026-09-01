@@ -35,10 +35,11 @@ from typing import Any
 import httpx
 import psycopg
 
-from foray.cache import connection, is_area_covered, is_ingested, record_ingest, upsert_public_land
+from foray.cache import connection, is_ingested, record_ingest, upsert_public_land
 from foray.config import CoverageRegion, Settings
 from foray.geo import bbox_around
 from foray.http import USER_AGENT
+from foray.ingest_base import run_area_ingest
 
 logger = logging.getLogger(__name__)
 
@@ -271,27 +272,16 @@ def ingest_public_land(
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest public-land ownership polygons into the cache. Returns rows upserted."""
-    home = cfg.home
-    with connection(con) as database:
-        if is_area_covered(database, "land:", home.lat, home.lng, home.radius_km):
-            logger.info("land: already ingested for this area, skipping")
-            if progress_cb:
-                progress_cb("Public land already cached, skipping…", 100.0)
-            return 0
-        logger.info("land: fetching BLM/USFS ownership within %.0f km of home…", home.radius_km)
-        rows = fetch_public_land(
-            lat=home.lat,
-            lng=home.lng,
-            radius_km=home.radius_km,
-            client=client,
-            sources=sources,
-            progress_cb=progress_cb,
-        )
-        upsert_public_land(database, rows)
-        key = f"land:{home.lat}:{home.lng}:{home.radius_km}"
-        record_ingest(database, key, len(rows), lat=home.lat, lng=home.lng, radius_km=home.radius_km)
-        logger.info("land: cached %d public-land units", len(rows))
-        return len(rows)
+    return run_area_ingest(
+        cfg,
+        con,
+        prefix="land:",
+        label="land",
+        noun="Public land",
+        fetch=lambda **kw: fetch_public_land(client=client, sources=sources, **kw),
+        upsert=upsert_public_land,
+        progress_cb=progress_cb,
+    )
 
 
 def _coverage_envelope(regions: Iterable[CoverageRegion]) -> tuple[float, float, float, float]:
