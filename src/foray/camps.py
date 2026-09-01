@@ -31,11 +31,11 @@ import psycopg
 from foray.cache import connect, is_area_covered, record_ingest, upsert_campsites
 from foray.config import Settings
 from foray.geo import KM_PER_DEG_LAT, haversine_km
+from foray.http import SOURCE_ERRORS, USER_AGENT, Throttle, retry_after_seconds
 
 logger = logging.getLogger(__name__)
 
 RIDB_FACILITIES = "https://ridb.recreation.gov/api/v1/facilities"
-USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
 
 _KM_PER_MILE = 1.609344
 # RIDB caps the facilities-search radius; 50 mi is the documented max. Query circles of this
@@ -136,24 +136,9 @@ def _parse_facility(record: dict[str, Any]) -> tuple[Any, ...] | None:
     )
 
 
-def _make_throttle(min_interval: float) -> Callable[[], None]:
-    """A pacer that blocks until at least ``min_interval`` has passed since the last call."""
-    last = [0.0]
-
-    def throttle() -> None:
-        if min_interval <= 0:
-            return
-        wait = min_interval - (time.monotonic() - last[0])
-        if wait > 0:
-            time.sleep(wait)
-        last[0] = time.monotonic()
-
-    return throttle
-
-
 def _get_page(
     client: httpx.Client,
-    throttle: Callable[[], None],
+    throttle: Throttle,
     params: dict[str, Any],
     headers: dict[str, str],
     *,
@@ -165,13 +150,11 @@ def _get_page(
         raise ValueError(f"attempts must be >= 1, got {attempts}")
     resp = None
     for attempt in range(1, attempts + 1):
-        throttle()
+        throttle.wait()
         resp = client.get(RIDB_FACILITIES, params=params, headers=headers)
         if resp.status_code != 429 or attempt == attempts:
             break
-        retry_after = resp.headers.get("Retry-After", "")
-        delay = float(retry_after) if retry_after.isdigit() else base_delay * 2 ** (attempt - 1)
-        time.sleep(delay)
+        time.sleep(retry_after_seconds(resp, attempt, base_delay=base_delay))
     assert resp is not None
     resp.raise_for_status()
     return resp
@@ -179,7 +162,7 @@ def _get_page(
 
 def _iter_facilities(
     client: httpx.Client,
-    throttle: Callable[[], None],
+    throttle: Throttle,
     api_key: str,
     lat: float,
     lng: float,
@@ -225,7 +208,7 @@ def fetch_campsites(
     """Fetch developed campgrounds within ``radius_km`` of home, deduped and clipped."""
     owns = client is None
     client = client or httpx.Client(timeout=30.0)
-    throttle = _make_throttle(min_interval)
+    throttle = Throttle(min_interval)
     query_radius_km = _QUERY_RADIUS_MI * _KM_PER_MILE
     by_id: dict[str, tuple[Any, ...]] = {}
     try:
@@ -244,6 +227,11 @@ def fetch_campsites(
                 site_lat, site_lng = row[5], row[6]
                 if haversine_km(lat, lng, site_lat, site_lng) <= radius_km:
                     by_id[row[0]] = row
+    except SOURCE_ERRORS as error:
+        # Match the land / trails / dispersed ingests: a RIDB outage (or a malformed page)
+        # degrades to "no campgrounds this run" rather than aborting the whole refresh. Any
+        # facilities already collected from earlier query circles are kept.
+        logger.warning("camps: RIDB fetch failed (%s) - keeping %d sites gathered so far", error, len(by_id))
     finally:
         if owns:
             client.close()

@@ -65,7 +65,7 @@ def test_parse_reported_skips_elements_without_coords() -> None:
 def test_fetch_reported_campsites_handles_overpass_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("foray.dispersed.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("foray.overpass.time.sleep", lambda _seconds: None)
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500)
@@ -78,7 +78,7 @@ def test_fetch_reported_campsites_handles_overpass_failure(
 def test_fetch_reported_campsites_retries_on_overpass_throttle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("foray.dispersed.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("foray.overpass.time.sleep", lambda _seconds: None)
     calls = {"count": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -97,7 +97,7 @@ def test_fetch_reported_campsites_retries_on_overpass_throttle(
 
 
 def test_ingest_dispersed_upserts_reported_sites(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("foray.dispersed.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("foray.overpass.time.sleep", lambda _seconds: None)
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

@@ -34,21 +34,18 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
 import httpx
 import psycopg
 
-from foray import scoring
+from foray import overpass, scoring
 from foray.cache import connect, is_area_covered, is_ingested, record_ingest, upsert_trails
 from foray.config import CoverageRegion, Settings
+from foray.http import SOURCE_ERRORS
 
 logger = logging.getLogger(__name__)
-
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
 
 # A single path can carry hundreds of vertices; the map only needs enough to trace its shape, so
 # each line is thinned to at most this many evenly-spaced points before caching.
@@ -81,13 +78,9 @@ def _tile_bboxes(
     return tiles
 
 
-def _around(lat: float, lng: float, radius_m: float) -> str:
-    return f"around:{radius_m:.0f},{lat},{lng}"
-
-
 def _trails_query(lat: float, lng: float, radius_m: float) -> str:
     """Overpass QL for walkable paths, hiking routes, and trailheads within the home disk."""
-    around = _around(lat, lng, radius_m)
+    around = overpass.around(lat, lng, radius_m)
     return (
         "[out:json][timeout:180];"
         "("
@@ -118,10 +111,6 @@ def _network_query(node_id: int, *, timeout_s: int = 25) -> str:
     )
 
 
-def _bbox_filter(min_lat: float, min_lng: float, max_lat: float, max_lng: float) -> str:
-    return f"({min_lat},{min_lng},{max_lat},{max_lng})"
-
-
 def _trails_query_bbox(min_lat: float, min_lng: float, max_lat: float, max_lng: float, *, timeout_s: int = 300) -> str:
     """Overpass QL for the same three element classes within a state-sized bbox.
 
@@ -129,7 +118,7 @@ def _trails_query_bbox(min_lat: float, min_lng: float, max_lat: float, max_lng: 
     longer server-side timeout - Overpass rejects a query outright if its own [timeout:N] is
     exceeded, so this defaults higher than the home-radius query's 180s.
     """
-    bbox = _bbox_filter(min_lat, min_lng, max_lat, max_lng)
+    bbox = overpass.bbox(min_lat, min_lng, max_lat, max_lng)
     return (
         f"[out:json][timeout:{timeout_s}];"
         "("
@@ -139,24 +128,6 @@ def _trails_query_bbox(min_lat: float, min_lng: float, max_lat: float, max_lng: 
         ");"
         "out geom tags;"
     )
-
-
-def _post_overpass(client: httpx.Client, query: str, *, attempts: int = 4, base_delay: float = 2.0) -> dict[str, Any]:
-    """POST a query, backing off on Overpass's throttle (429) / timeout (504) responses."""
-    if attempts < 1:
-        raise ValueError(f"attempts must be >= 1, got {attempts}")
-    resp: httpx.Response | None = None
-    for attempt in range(1, attempts + 1):
-        resp = client.post(OVERPASS_URL, data={"data": query}, headers={"User-Agent": USER_AGENT})
-        if resp.status_code in (429, 504) and attempt < attempts:
-            retry_after = resp.headers.get("Retry-After", "")
-            delay = float(retry_after) if retry_after.replace(".", "", 1).isdigit() else base_delay * 2 ** (attempt - 1)
-            time.sleep(delay)
-            continue
-        break
-    assert resp is not None
-    resp.raise_for_status()
-    return resp.json()
 
 
 def _line_coords(geometry: Sequence[dict[str, Any]]) -> list[tuple[float, float]]:
@@ -300,11 +271,11 @@ def fetch_trails(
     try:
         if progress_cb:
             progress_cb("Fetching trails…", 50.0)
-        payload = _post_overpass(client, _trails_query(lat, lng, radius_m))
+        payload = overpass.post(client, _trails_query(lat, lng, radius_m))
         rows = _parse_trails(payload)
         logger.info("trails: %d trails/routes/trailheads", len(rows))
         return rows
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+    except SOURCE_ERRORS as error:
         logger.warning("trails: query failed (%s) - skipping", error)
         return []
     finally:
@@ -373,7 +344,7 @@ def trailhead_network(node_id: int, *, client: httpx.Client | None = None) -> di
     owns = client is None
     client = client or httpx.Client(timeout=30.0)
     try:
-        payload = _post_overpass(client, _network_query(node_id))
+        payload = overpass.post(client, _network_query(node_id))
     except httpx.HTTPError as error:
         logger.warning("trails: network query failed for node %d (%s) - falling back", node_id, error)
         return None
@@ -459,11 +430,11 @@ def fetch_trails_bbox(
     try:
         if progress_cb:
             progress_cb("Fetching trails…", 50.0)
-        payload = _post_overpass(client, _trails_query_bbox(min_lat, min_lng, max_lat, max_lng, timeout_s=timeout_s))
+        payload = overpass.post(client, _trails_query_bbox(min_lat, min_lng, max_lat, max_lng, timeout_s=timeout_s))
         rows = _parse_trails(payload)
         logger.info("trails: %d trails/routes/trailheads", len(rows))
         return rows
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+    except SOURCE_ERRORS as error:
         if raise_on_error:
             raise
         logger.warning("trails: bbox query failed (%s) - skipping", error)
@@ -521,7 +492,7 @@ def ingest_trails_region(
                     client=client,
                     raise_on_error=True,
                 )
-            except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+            except SOURCE_ERRORS as error:
                 logger.warning(
                     "trails: tile %d/%d for %s failed (%s) - region won't be marked ingested, will retry next run",
                     index,

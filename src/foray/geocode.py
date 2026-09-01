@@ -7,15 +7,14 @@ requires a descriptive User-Agent. Location changes are occasional, so this stay
 from __future__ import annotations
 
 import re
-import threading
-import time
 from dataclasses import dataclass
 
 import httpx
 
+from foray.http import USER_AGENT, Throttle
+
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_REVERSE = "https://nominatim.openstreetmap.org/reverse"
-USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
 
 # "43.37, -124.22" or "43.37 -124.22" - a raw coordinate pair.
 _COORDS = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$")
@@ -24,23 +23,12 @@ _COORDS = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$")
 # `set_location`'s reverse lookup) fires rarely enough that this never mattered - but issue
 # #206's destination-card place titles can trigger one `notable_place_name()` call per uncached
 # region on a single ranking refresh, all from concurrent FastAPI requests. A process-wide lock
-# + minimum interval serializes calls to either function (they share this throttle) the same way
-# camps.py's `_make_throttle` paces RIDB requests, so a burst of cold cards degrades to "one card
-# populates per second" instead of hammering the API. Callers cache results (see
+# + minimum interval (foray.http.Throttle) serializes calls to either function (they share this
+# throttle), so a burst of cold cards degrades to "one card populates per second" instead of
+# hammering the API. Callers cache results (see
 # cache.region_places) precisely so this only bites once per
 # region, ever.
-_MIN_REQUEST_INTERVAL = 1.1
-_throttle_lock = threading.Lock()
-_last_request_at = 0.0
-
-
-def _throttle() -> None:
-    global _last_request_at
-    with _throttle_lock:
-        wait = _last_request_at + _MIN_REQUEST_INTERVAL - time.monotonic()
-        if wait > 0:
-            time.sleep(wait)
-        _last_request_at = time.monotonic()
+_throttle = Throttle(1.1)
 
 
 # Priority order for picking the one "biggest thing here" label out of Nominatim's structured
@@ -91,7 +79,7 @@ def reverse(lat: float, lng: float, *, client: httpx.Client | None = None) -> Lo
     owns = client is None
     client = client or httpx.Client(timeout=15.0)
     try:
-        _throttle()
+        _throttle.wait()
         resp = client.get(
             NOMINATIM_REVERSE,
             params={"lat": lat, "lon": lng, "format": "json"},
@@ -123,7 +111,7 @@ def notable_place_name(lat: float, lng: float, *, client: httpx.Client | None = 
     owns = client is None
     client = client or httpx.Client(timeout=15.0)
     try:
-        _throttle()
+        _throttle.wait()
         resp = client.get(
             NOMINATIM_REVERSE,
             params={"lat": lat, "lon": lng, "format": "json", "addressdetails": 1, "zoom": 14},

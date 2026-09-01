@@ -13,7 +13,7 @@ from foray.elevation import lookup_batch
 def _no_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
     """Open-Meteo's politeness throttle (see elevation._throttle) only wastes wall-clock here -
     every test's MockTransport is offline."""
-    monkeypatch.setattr(elevation, "_SECONDS_PER_POINT", 0.0)
+    monkeypatch.setattr(elevation._throttle, "min_interval", 0.0)
 
 
 def test_empty_input_returns_empty() -> None:
@@ -75,12 +75,14 @@ def test_retries_a_429_then_succeeds() -> None:
 
 
 def test_retry_after_honours_http_date_form() -> None:
+    from datetime import UTC, datetime
     from email.utils import format_datetime
 
-    now = elevation.datetime.now(elevation.UTC)
-    resp = httpx.Response(429, headers={"Retry-After": format_datetime(now)})
+    from foray.http import retry_after_seconds
+
+    resp = httpx.Response(429, headers={"Retry-After": format_datetime(datetime.now(UTC))})
     # An HTTP-date at (or before) "now" means retry immediately, not fall back to backoff.
-    assert elevation._retry_after_seconds(resp, attempt=2) == 0.0
+    assert retry_after_seconds(resp, 2, cap=120.0) == 0.0
 
 
 def test_gives_up_after_persistent_429() -> None:
