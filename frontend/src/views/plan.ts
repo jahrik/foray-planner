@@ -220,6 +220,19 @@ function buildStopCard(stop: Stop): HTMLElement {
   }
   card.appendChild(trailEl);
 
+  // Active-fire warning on the corridor stop (issue #227) - burn scars aren't a hazard, so
+  // planner.py only threads active fires onto stop.fire_nearby.
+  const nearestFire = stop.fire_nearby[0];
+  if (nearestFire) {
+    const fireEl = document.createElement("div");
+    fireEl.className = "fire-warn";
+    fireEl.textContent =
+      `⚠ Corridor passes ~${dist(nearestFire.distance_km)} from ${nearestFire.name}` +
+      (stop.fire_nearby.length > 1 ? ` (+${stop.fire_nearby.length - 1} more active)` : "") +
+      " - verify road/forest status officially";
+    card.appendChild(fireEl);
+  }
+
   // Click → zoom the map to this stop and load layers around it.
   card.onclick = () => {
     map.setView([stop.center_lat, stop.center_lng], 10);
@@ -236,10 +249,14 @@ function exportGpx(trip: TripPlan): void {
     const lat = stop.camp ? stop.camp.center_lat : stop.center_lat;
     const lng = stop.camp ? stop.camp.center_lng : stop.center_lng;
     const name = stop.camp ? `Stop ${stop.order}: ${stop.camp.name}` : `Stop ${stop.order}`;
+    const stopFire = stop.fire_nearby[0];
+    const fireNote = stopFire
+      ? ` · ⚠ active fire ~${dist(stopFire.distance_km)} away (verify officially)`
+      : "";
     const desc = `${stop.species
       .slice(0, 3)
       .map((hit) => displayName(hit))
-      .join(", ")} · ${dist(stop.drive_km_from_prev)} leg`;
+      .join(", ")} · ${dist(stop.drive_km_from_prev)} leg${fireNote}`;
     return wptXml(lat, lng, name, desc);
   });
   const destName = trip.auto_destination ? "Destination (auto-picked)" : "Destination";

@@ -92,6 +92,15 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   mostly urban sidewalks), named hiking routes (`route=hiking` relations -> `kind='route'`,
   MultiLineString), and trailheads (`highway=trailhead` nodes -> `kind='trailhead'`, Point).
   Geometry is cached as GeoJSON *text* + bbox + a representative center in `trails`.
+- `src/foray/sources/fire.py` - wildfire perimeters + burn scars from NIFC / MTBS ArcGIS
+  (httpx, no key, issue #227), cloned from `land.py`. One table `fire_perimeters`, split by
+  `source_key` into two refresh lanes: `wfigs_active` (fast, **replace semantics** -
+  `cache.replace_fire_lane` deletes rows the source dropped, so a contained fire falls off)
+  and `perimeter_history` (slow upsert, last 3 completed fire years + current). MTBS burn
+  severity (`dominant_severity`) is a backfill-style join by IRWIN/MTBS id, NULL until MTBS
+  publishes (~1.5-2 yr out). Informational only - links the incident page, asserts no closure.
+  `scoring.fire_near` reads it; `rank_destinations` applies an active-fire proximity penalty
+  and a *Morchella*-scoped burn-scar boost (severity-aware) - weights in `ranking.py`.
 - `src/foray/scoring/` package (was one `scoring.py`; its `__init__.py` re-exports the public
   surface so `from foray.scoring import ...` and `foray.scoring.<name>` keep working):
   - `models.py` - the result dataclasses (`SpeciesHit`, `RegionScore`, `CampSite`, `LandUnit`,
@@ -132,12 +141,13 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
 - `src/foray/logging_config.py` - `setup_logging(level)` (env `FORAY_LOG_LEVEL`, default INFO),
   called by both the CLI group callback and `create_app`.
 - `src/foray/cli.py` - Click CLI: `foray ingest | camps | land | dispersed | trails | refresh |
-  revalidate | resync | backfill-elevation | backfill-precip | refresh-precip | plan | serve |
-  openapi`. `ingest --all-regions` is what the scheduler runs. `backfill-elevation` fills
+  revalidate | resync | backfill-elevation | backfill-precip | refresh-precip | fire | plan |
+  serve | openapi`. `ingest --all-regions` is what the scheduler runs. `backfill-elevation` fills
   `observations.elevation_m` for the backlog (ingest enriches new rows inline via Open-Meteo);
   destination cards show the region's mean. `backfill-precip` does the same for
   `observations.precip_7d_mm` / `precip_30d_mm` (antecedent rainfall, issue #226, ERA5 archive);
   `refresh-precip` rebuilds the recent-rain-per-destination layer from the forecast API.
+  `fire` refreshes the wildfire perimeters / burn scars / MTBS severity (issue #227).
   `resync --until-done` loops batch after batch until the whole cache is caught up
   (`just resync "--until-done --batch-size 20000"`) - a deliberate one-off catch-up run,
   not the small-batch/hourly default the scheduler uses.
@@ -152,7 +162,7 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   `FORAY_RESYNC_BATCH_SIZE` (default 2000), `FORAY_ELEVATION_INTERVAL_HOURS` (default 1),
   `FORAY_ELEVATION_LIMIT` (default 20000 - an upper bound; a run stops earlier when Open-Meteo
   rate-limits it), and `FORAY_PRECIP_INTERVAL_HOURS` (default 24 - rain changes far faster than
-  the 168h layers).
+  the 168h layers), and `FORAY_FIRE_INTERVAL_HOURS` (default 24 - perimeter data updates ~daily).
 - `frontend/` - the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern
   (issue #242 Part 2 broke the big files up and grouped them into `src/{map,ui,views}/`
   subfolders). Roughly: `src/state.ts` (shared `State`, `qs()`/`setStatus()` helpers),

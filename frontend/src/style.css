@@ -429,6 +429,23 @@ main {
   color: var(--muted);
   font-size: 12px;
 }
+/* Fire annotations (issue #227) - informational, not a claimed closure. */
+.fire-warn,
+.fire-scar {
+  font-size: 12px;
+  margin-top: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  line-height: 1.35;
+}
+.fire-warn {
+  color: #ff6b52;
+  background: rgba(255, 59, 31, 0.12);
+}
+.fire-scar {
+  color: #ffa45c;
+  background: rgba(255, 140, 66, 0.12);
+}
 .bar {
   height: 6px;
   background: var(--border);

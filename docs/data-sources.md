@@ -87,6 +87,29 @@ spots" value without the license problem. Do not add iOverlander or The Dyrt.
 
 ---
 
+## NIFC / MTBS wildfire ArcGIS services
+
+**Role:** Active wildfire perimeters + points (safety/access) and recent burn scars
+(burn-morel opportunity), issue #227. Cloned from the BLM/USFS ArcGIS pattern.
+
+- **Client:** httpx (no key required)
+- **Endpoints (public ArcGIS feature services):**
+  - Active perimeters: NIFC **WFIGS Current Interagency Fire Perimeters**
+  - Active points: NIFC **WFIGS Current Interagency Fire Locations** (small/new fires, no perimeter yet)
+  - History: NIFC **InterAgency Fire Perimeter History** (windowed to the last 3 completed fire
+    years + current, matching the burn-morel productivity curve)
+  - Severity: **MTBS Burned Area Boundaries** (`dominant_severity` join, published ~1.5-2 yr
+    after a season - recent scars stay `NULL` and the layer still works)
+- **Storage:** GeoJSON text + bbox + representative center in `fire_perimeters`. No PostGIS.
+- **Refresh lanes:** `wfigs_active` uses replace semantics (a contained fire is deleted, not
+  kept); `perimeter_history` is a plain upsert.
+- **Terms:** US government open data, free to use.
+- **No claims:** popups link the official incident page (InciWeb / NIFC); the app never asserts
+  a road or forest closure - same posture as land ownership.
+- **Tests:** Network-mocked with `httpx.MockTransport`.
+
+---
+
 ## OpenStreetMap Nominatim (geocoding)
 
 **Role:** Resolves place-name strings typed in the location bar to lat/lng coordinates.

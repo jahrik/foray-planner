@@ -8,7 +8,7 @@ query code.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -42,6 +42,8 @@ class RegionScore:
     precip_recent_7d_mm: float | None = None
     precip_recent_14d_mm: float | None = None
     precip_recent_30d_mm: float | None = None
+    # Nearby active fires (warnings) and recent burn scars (morel opportunities), issue #227.
+    fire_nearby: list[FireNear] = field(default_factory=list)
 
 
 @dataclass
@@ -56,6 +58,26 @@ class CampSite:
     distance_km: float
     source: str
     url: str
+
+
+@dataclass
+class FireNear:
+    """An active wildfire or recent burn scar near a point (issue #227). ``geometry`` is only
+    populated for the map layer (`GET /api/fire`); the card/scoring paths leave it None."""
+
+    id: str
+    name: str
+    status: str  # 'active' | 'historical'
+    fire_year: int | None
+    center_lat: float
+    center_lng: float
+    distance_km: float
+    percent_contained: float | None
+    gis_acres: float | None
+    dominant_severity: str | None  # 'low' | 'moderate' | 'high' | None
+    is_point: bool
+    incident_url: str | None
+    geometry: dict[str, Any] | None = None
 
 
 @dataclass
@@ -115,6 +137,7 @@ class Stop:
     camp_is_free: bool
     trail: Trail | None  # closest trail in range, if any
     trail_distance_km: float | None
+    fire_nearby: list[FireNear] = field(default_factory=list)  # active-fire warnings on this stop (issue #227)
 
 
 @dataclass

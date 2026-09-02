@@ -107,6 +107,49 @@ CREATE TABLE IF NOT EXISTS trails (
     geojson     TEXT                 -- GeoJSON text (LineString / MultiLineString / Point)
 );
 
+-- Wildfire perimeters + points (issue #227). An active fire and a recent burn scar are the
+-- same polygon at different life stages, so one table holds both, split by `source_key` into
+-- two refresh lanes that never clobber each other:
+--   'wfigs_active'      status='active'      - fast cadence, REPLACE semantics (rows gone from
+--                                              the source each refresh are deleted, not kept)
+--   'perimeter_history' status='historical'  - slow cadence, plain upsert; last 3 completed
+--                                              fire years + current (the morel productivity curve)
+-- Geometry is GeoJSON *text* + bbox + representative center, same as public_land/trails - the
+-- read/map path needs no PostGIS. Informational only: links the official incident page, never
+-- asserts a road/forest closure (see AGENTS.md). MTBS severity columns stay NULL until MTBS
+-- publishes (~1.5-2 yr after the season); the layer works without them.
+CREATE TABLE IF NOT EXISTS fire_perimeters (
+    id                       TEXT PRIMARY KEY,   -- "{source_key}:{feature_id}"
+    source_key               TEXT,               -- 'wfigs_active' | 'wfigs_points' | 'perimeter_history'
+    feature_id               TEXT,               -- stable per-feature id from the source
+    irwin_id                 TEXT,               -- IRWIN incident id where available (MTBS/dedupe join key)
+    name                     TEXT,
+    status                   TEXT,               -- 'active' | 'historical'
+    fire_year                INTEGER,
+    discovery_date           DATE,
+    percent_contained        DOUBLE PRECISION,   -- active only
+    gis_acres                DOUBLE PRECISION,
+    incident_url             TEXT,               -- official InciWeb / NIFC incident page
+    severity_unburned_acres  DOUBLE PRECISION,   -- MTBS enrichment, NULL until published
+    severity_low_acres       DOUBLE PRECISION,
+    severity_moderate_acres  DOUBLE PRECISION,
+    severity_high_acres      DOUBLE PRECISION,
+    dominant_severity        TEXT,               -- 'low' | 'moderate' | 'high' | NULL
+    mtbs_fire_id             TEXT,
+    is_point                 BOOLEAN,            -- true for a WFIGS location with no perimeter yet
+    min_lat                  DOUBLE PRECISION,
+    min_lng                  DOUBLE PRECISION,
+    max_lat                  DOUBLE PRECISION,
+    max_lng                  DOUBLE PRECISION,
+    center_lat               DOUBLE PRECISION,
+    center_lng               DOUBLE PRECISION,
+    geojson                  TEXT,
+    fetched_at               TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS ix_fire_perimeters_bbox ON fire_perimeters (min_lat, max_lat, min_lng, max_lng);
+CREATE INDEX IF NOT EXISTS ix_fire_perimeters_lane ON fire_perimeters (source_key);
+
 -- One-time migration: app_location used to be a single global row shared by every visitor
 -- (BOOLEAN PK + CHECK enforcing at most one row). The app is now multi-user (anonymous
 -- per-device cookie, see api.py), so it needs one row per device instead. Rename the old
@@ -604,6 +647,93 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
         "geojson",
     )
     return upsert_rows(con, "trails", columns, rows)
+
+
+_FIRE_COLUMNS: tuple[LiteralString, ...] = (
+    "id",
+    "source_key",
+    "feature_id",
+    "irwin_id",
+    "name",
+    "status",
+    "fire_year",
+    "discovery_date",
+    "percent_contained",
+    "gis_acres",
+    "incident_url",
+    "is_point",
+    "min_lat",
+    "min_lng",
+    "max_lat",
+    "max_lng",
+    "center_lat",
+    "center_lng",
+    "geojson",
+    "fetched_at",
+)
+
+
+def upsert_fire_perimeters(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
+    """Upsert fire perimeter / point rows (issue #227), refreshing existing rows in place.
+
+    Tuple order is :data:`_FIRE_COLUMNS`. The MTBS severity columns are written separately by
+    :func:`apply_fire_severity` (backfill-style), so a plain refresh never blanks them."""
+    return upsert_rows(con, "fire_perimeters", _FIRE_COLUMNS, rows)
+
+
+def replace_fire_lane(con: psycopg.Connection, source_key: str, rows: Sequence[tuple[Any, ...]]) -> int:
+    """Upsert ``rows`` for ``source_key`` and delete any existing row in that lane no longer
+    present in the source (issue #227's active lane - "a contained fire drops out").
+
+    Wrapped in one transaction so a reader never sees the lane mid-swap. Returns rows upserted.
+    An empty ``rows`` with no prior data is a no-op; an empty ``rows`` after the source
+    legitimately reports zero active fires clears the lane."""
+    keep_ids = [row[0] for row in rows]
+    with con.transaction():
+        if keep_ids:
+            con.execute(
+                "DELETE FROM fire_perimeters WHERE source_key = %s AND id <> ALL(%s)",
+                [source_key, keep_ids],
+            )
+        else:
+            con.execute("DELETE FROM fire_perimeters WHERE source_key = %s", [source_key])
+        upsert_fire_perimeters(con, rows)
+    return len(rows)
+
+
+_MTBS_UPDATE: dict[str, LiteralString] = {
+    "irwin_id": (
+        "UPDATE fire_perimeters SET severity_unburned_acres = %s, severity_low_acres = %s, "
+        "severity_moderate_acres = %s, severity_high_acres = %s, dominant_severity = %s, "
+        "mtbs_fire_id = COALESCE(%s, mtbs_fire_id) WHERE irwin_id = %s"
+    ),
+    "mtbs_fire_id": (
+        "UPDATE fire_perimeters SET severity_unburned_acres = %s, severity_low_acres = %s, "
+        "severity_moderate_acres = %s, severity_high_acres = %s, dominant_severity = %s, "
+        "mtbs_fire_id = COALESCE(%s, mtbs_fire_id) WHERE mtbs_fire_id = %s"
+    ),
+}
+
+
+def apply_fire_severity(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
+    """Write MTBS burn-severity enrichment onto existing fire rows (issue #227), matched by
+    ``irwin_id`` or ``mtbs_fire_id``. Tuple:
+    ``(match_key, match_value, unburned, low, moderate, high, dominant, mtbs_fire_id)`` where
+    ``match_key`` is ``"irwin_id"`` or ``"mtbs_fire_id"``. Returns rows whose match updated at
+    least one perimeter."""
+    updated = 0
+    for match_key, match_value, unburned, low, moderate, high, dominant, mtbs_fire_id in rows:
+        if match_key not in _MTBS_UPDATE:
+            raise ValueError(f"bad MTBS match key: {match_key!r}")
+        if match_value in (None, ""):
+            continue
+        result = con.execute(
+            _MTBS_UPDATE[match_key],
+            [unburned, low, moderate, high, dominant, mtbs_fire_id, match_value],
+        )
+        if result.rowcount:
+            updated += 1
+    return updated
 
 
 def record_ingest(

@@ -68,6 +68,27 @@ class SpeciesHit(BaseModel):
     w_pheno: float
 
 
+class FireNear(BaseModel):
+    """An active wildfire or recent burn scar near a point (issue #227). ``geometry`` is only
+    populated for the map layer (`GET /api/fire`)."""
+
+    model_config = _FROM_DATACLASS
+
+    id: str
+    name: str
+    status: str
+    fire_year: int | None
+    center_lat: float
+    center_lng: float
+    distance_km: float
+    percent_contained: float | None
+    gis_acres: float | None
+    dominant_severity: str | None
+    is_point: bool
+    incident_url: str | None
+    geometry: dict[str, Any] | None = None
+
+
 class RegionScore(BaseModel):
     model_config = _FROM_DATACLASS
 
@@ -92,6 +113,8 @@ class RegionScore(BaseModel):
     precip_recent_7d_mm: float | None = None
     precip_recent_14d_mm: float | None = None
     precip_recent_30d_mm: float | None = None
+    # Nearby active fires (warnings) + recent burn scars (morel opportunities), issue #227.
+    fire_nearby: list[FireNear] = []
 
 
 class RegionPlace(BaseModel):
@@ -163,6 +186,8 @@ class AlertRegion(BaseModel):
     precip_recent_7d_mm: float | None = None
     precip_recent_14d_mm: float | None = None
     precip_recent_30d_mm: float | None = None
+    # Nearby active fires + recent burn scars (issue #227).
+    fire_nearby: list[FireNear] = []
 
 
 class CampSite(BaseModel):
@@ -231,6 +256,7 @@ class Stop(BaseModel):
     camp_is_free: bool
     trail: Trail | None
     trail_distance_km: float | None
+    fire_nearby: list[FireNear] = []
 
 
 class TripPlan(BaseModel):

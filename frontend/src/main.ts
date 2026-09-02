@@ -7,7 +7,7 @@ import { getJson, postJson } from "./api/client";
 import type { Home, LocationResponse } from "./api/types";
 import { initGenusSelection } from "./genera";
 import { initLayerToggles } from "./ui/layer-toggles";
-import { loadLand } from "./map/layers";
+import { loadFire, loadLand } from "./map/layers";
 import { initLocationAutocomplete, initPlaceAutocomplete } from "./location";
 import { initMap, map, setMapClickHandler, updateHome } from "./map/map";
 import { runPlan } from "./views/plan";
@@ -136,6 +136,7 @@ async function main(): Promise<void> {
     });
   });
   loadLand();
+  loadFire();
   initTabs();
   initRadiusPresets();
   // 'change' (not 'input') so a re-run only fires on blur/enter/stepper-click, not every
@@ -166,6 +167,7 @@ async function main(): Promise<void> {
       updateHome(home);
       refreshCurrentView(); // before loadLand() - see refresh.ts setLocation
       loadLand();
+      loadFire();
     }
     return home;
   });
@@ -251,6 +253,7 @@ function initRadiusPresets(): void {
         updateHome(response.home);
         refreshCurrentView(); // before loadLand() - see refresh.ts setLocation
         loadLand();
+        loadFire();
       };
     });
 }

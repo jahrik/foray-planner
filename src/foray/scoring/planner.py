@@ -163,6 +163,8 @@ def plan_route(
                 camp_is_free=camp_is_free,
                 trail=trail,
                 trail_distance_km=trail.distance_km if trail else None,
+                # Active-fire warnings only - a burn scar near a stop isn't a hazard (issue #227).
+                fire_nearby=[fire for fire in region.fire_nearby if fire.status == "active"],
             )
         )
         cur_lat, cur_lng = region.center_lat, region.center_lng

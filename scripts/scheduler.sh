@@ -9,6 +9,8 @@ RESYNC_BATCH_SIZE="${FORAY_RESYNC_BATCH_SIZE:-2000}"
 ELEVATION_INTERVAL="${FORAY_ELEVATION_INTERVAL_HOURS:-1}"
 # Rain changes far faster than the 168h camps/land/trails layers, so it gets its own knob.
 PRECIP_INTERVAL="${FORAY_PRECIP_INTERVAL_HOURS:-24}"
+# Perimeter data updates ~daily; prod can drop this during fire season without a code change.
+FIRE_INTERVAL="${FORAY_FIRE_INTERVAL_HOURS:-24}"
 # High cap on purpose - each pass drains until Open-Meteo's free tier 429s it (lookup_batch
 # backs off on Retry-After, then gives up), so this is really just an upper safety bound.
 ELEVATION_LIMIT="${FORAY_ELEVATION_LIMIT:-20000}"
@@ -19,6 +21,7 @@ revalidate_last=0
 resync_last=0
 elevation_last=0
 precip_last=0
+fire_last=0
 
 while true; do
   now=$(date +%s)
@@ -75,6 +78,13 @@ while true; do
     else
       echo "[scheduler] rainfall refresh failed"
     fi
+  fi
+
+  # Wildfire (issue #227): active perimeters + points (replace semantics), 3+current years of
+  # burn-scar history, MTBS severity. NIFC/MTBS ArcGIS; one source down is skipped, not fatal.
+  if [ $((now - fire_last)) -ge $((FIRE_INTERVAL * 3600)) ]; then
+    echo "[scheduler] $(date -Iseconds) Starting wildfire refresh (active + burn scars + MTBS)…"
+    foray fire && fire_last=$(date +%s) || echo "[scheduler] wildfire refresh failed"
   fi
 
   sleep 300

@@ -17,6 +17,7 @@ export interface State {
   markers: L.CircleMarker[];
   campMarkers: L.CircleMarker[];
   landLayer: L.GeoJSON | null;
+  fireLayer: L.GeoJSON | null;
   trailheadMarkers: L.Marker[];
   cardCampMarkers: L.CircleMarker[];
   selectedTrailLayer: L.Polyline | null;
@@ -34,6 +35,7 @@ export const state: State = {
   markers: [],
   campMarkers: [],
   landLayer: null,
+  fireLayer: null,
   trailheadMarkers: [],
   cardCampMarkers: [],
   selectedTrailLayer: null,
@@ -90,6 +92,40 @@ export function rainMeta(r: {
     r.precip_recent_7d_mm != null ? rainLabel(r.precip_recent_7d_mm) : rainLabel(r.precip_obs_7d_mm ?? 0);
   const title = `Rain (Open-Meteo, informational): ${parts.join(" · ")}`;
   return ` · <span class="num" title="${title}">rain ${inline}</span>`;
+}
+
+/** The card-annotation fields of a `fire_nearby` entry (issue #227) - a structural subset so
+ * both the generated schema type and the `./api/types` alias satisfy it. */
+export interface FireBadge {
+  status: string;
+  name: string;
+  fire_year: number | null;
+  distance_km: number;
+}
+
+/** Fire annotation line for a destination / alert / plan-stop card (issue #227). Active fires
+ * render as a warning; low/moderate/unknown-severity year-1/2 burn scars as a morel
+ * opportunity. Informational only - never asserts a closure. Empty string when nothing nearby. */
+export function fireBadges(fires: readonly FireBadge[] | undefined): string {
+  const active = (fires ?? []).filter((fire) => fire.status === "active");
+  const scars = (fires ?? []).filter((fire) => fire.status === "historical");
+  const rows: string[] = [];
+  const nearestActive = active[0];
+  if (nearestActive) {
+    rows.push(
+      `<div class="fire-warn">⚠ Active fire ${dist(nearestActive.distance_km)} away` +
+        (active.length > 1 ? ` (+${active.length - 1} more)` : "") +
+        ` · safety/access, verify officially</div>`,
+    );
+  }
+  const nearestScar = scars[0];
+  if (nearestScar) {
+    const year = nearestScar.fire_year ? ` (${nearestScar.fire_year})` : "";
+    rows.push(
+      `<div class="fire-scar">🔥 Burn scar${year} ${dist(nearestScar.distance_km)} away · burn-morel opportunity</div>`,
+    );
+  }
+  return rows.join("");
 }
 
 export function qs<T extends HTMLElement = HTMLElement>(selector: string, root: ParentNode = document): T {

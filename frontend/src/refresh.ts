@@ -1,6 +1,6 @@
 import { deleteJson, openRefreshStream, postJson } from "./api/client";
 import type { LocationResponse } from "./api/types";
-import { loadLand } from "./map/layers";
+import { loadFire, loadLand } from "./map/layers";
 import { updateHome } from "./map/map";
 import { errorDetail, qs, setStatus } from "./state";
 import { refreshCurrentView } from "./views/view-run";
@@ -138,6 +138,7 @@ export async function setLocation(query: string): Promise<void> {
   // Alerts/Plan views, which don't redraw land themselves).
   refreshCurrentView();
   loadLand();
+  loadFire();
 }
 
 // Map clicks (e.g. on a city label on the base tiles) carry only coordinates; the backend
@@ -156,4 +157,5 @@ export async function setLocationLatLng(lat: number, lng: number): Promise<void>
   updateHome(response.home);
   refreshCurrentView(); // before loadLand() - see setLocation
   loadLand();
+  loadFire();
 }
