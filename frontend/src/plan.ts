@@ -4,7 +4,8 @@ import { getJson } from "./api/client";
 import type { Stop, TripPlan } from "./api/types";
 import { escapeXml, feeLabel } from "./format";
 import { focusRegion } from "./layers";
-import { addMarker, clearMarkers, map, setPlanRoute, HOME_FILL, HOME_RING, PLAN_STOP } from "./map";
+import { addMarker, clearMarkers, map, setPlanRoute, HOME_DOT_STYLE, PLAN_STOP } from "./map";
+import { circleStyle } from "./markers";
 import { buildPopup } from "./popup";
 import { dist, displayName, errorDetail, inatUrl, monthsParam, MONTHS, qs, setStatus, state } from "./state";
 
@@ -66,14 +67,7 @@ export async function runPlan(): Promise<void> {
   );
 
   // Start marker (matches the persistent "you are here" home-dot styling).
-  const startMarker = L.circleMarker([trip.start_lat, trip.start_lng], {
-    radius: 7,
-    color: HOME_RING,
-    weight: 3,
-    fillColor: HOME_FILL,
-    fillOpacity: 1,
-    bubblingMouseEvents: false,
-  })
+  const startMarker = L.circleMarker([trip.start_lat, trip.start_lng], HOME_DOT_STYLE)
     .addTo(map)
     .bindPopup("Start");
   addMarker(startMarker);
@@ -83,14 +77,10 @@ export async function runPlan(): Promise<void> {
   const destLabel = trip.auto_destination
     ? `Auto-picked destination${trip.destination_name ? ` (region ${trip.destination_name})` : ""}`
     : "Destination";
-  const destMarker = L.circleMarker([trip.destination_lat, trip.destination_lng], {
-    radius: 10,
-    color: PLAN_STOP,
-    weight: 3,
-    fillColor: PLAN_STOP,
-    fillOpacity: 0.15,
-    bubblingMouseEvents: false,
-  })
+  const destMarker = L.circleMarker(
+    [trip.destination_lat, trip.destination_lng],
+    circleStyle({ radius: 10, fill: PLAN_STOP, weight: 3, fillOpacity: 0.15 }),
+  )
     .addTo(map)
     .bindPopup(destLabel);
   addMarker(destMarker);
@@ -107,14 +97,10 @@ export async function runPlan(): Promise<void> {
       titleSuffix: ` · ${dist(stop.drive_km_from_prev)} leg`,
       lines: [names],
     });
-    const marker = L.circleMarker([stop.center_lat, stop.center_lng], {
-      radius: 6 + 14 * stop.score_norm,
-      color: PLAN_STOP,
-      fillColor: PLAN_STOP,
-      fillOpacity: 0.6,
-      weight: 1.5,
-      bubblingMouseEvents: false,
-    })
+    const marker = L.circleMarker(
+      [stop.center_lat, stop.center_lng],
+      circleStyle({ radius: 6 + 14 * stop.score_norm, fill: PLAN_STOP, fillOpacity: 0.6, weight: 1.5 }),
+    )
       .addTo(map)
       .bindPopup(popupEl);
     addMarker(marker);

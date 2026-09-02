@@ -3,6 +3,7 @@ import L from "leaflet";
 import { getJson } from "./api/client";
 import type { CampSite, LandUnit, PreciseObservation, Trail, TrailPath } from "./api/types";
 import { feeLabel } from "./format";
+import { circleStyle } from "./markers";
 import { buildPopup } from "./popup";
 import {
   addCampMarker,
@@ -60,15 +61,17 @@ export async function loadCamps(): Promise<void> {
     if (dispersed ? !dispersedOn() : !campsOn()) return; // gated by the matching toggle
     const proxy = site.kind === "dispersed"; // inferred point (vs a tagged "reported" site)
     const isFree = site.free === true;
-    const marker = L.circleMarker([site.center_lat, site.center_lng], {
-      radius: dispersed ? 6 : 5,
-      color: proxy ? CAMP_OSM : HOME_RING,
-      weight: proxy ? 2 : 1,
-      dashArray: proxy ? "3 3" : undefined, // dashed ring signals the low-confidence proxy
-      fillColor: dispersed ? CAMP_OSM : isFree ? CAMP_FREE : CAMP_PAID,
-      fillOpacity: proxy ? 0.35 : 0.9,
-      bubblingMouseEvents: false,
-    })
+    const marker = L.circleMarker(
+      [site.center_lat, site.center_lng],
+      circleStyle({
+        radius: dispersed ? 6 : 5,
+        fill: dispersed ? CAMP_OSM : isFree ? CAMP_FREE : CAMP_PAID,
+        stroke: proxy ? CAMP_OSM : HOME_RING,
+        weight: proxy ? 2 : 1,
+        fillOpacity: proxy ? 0.35 : 0.9,
+        dashArray: proxy ? "3 3" : undefined, // dashed ring signals the low-confidence proxy
+      }),
+    )
       .addTo(map)
       .bindPopup(campPopup(site));
     addCampMarker(marker);
@@ -262,14 +265,10 @@ export async function loadPreciseObservations(): Promise<void> {
     return;
   }
   observations.forEach((obs) => {
-    const marker = L.circleMarker([obs.lat, obs.lng], {
-      radius: 4,
-      color: HOME_RING,
-      weight: 1,
-      fillColor: PRECISE,
-      fillOpacity: 0.9,
-      bubblingMouseEvents: false,
-    }).bindPopup(precisePopup(obs));
+    const marker = L.circleMarker(
+      [obs.lat, obs.lng],
+      circleStyle({ radius: 4, fill: PRECISE, stroke: HOME_RING, weight: 1, fillOpacity: 0.9 }),
+    ).bindPopup(precisePopup(obs));
     addPreciseMarker(marker);
   });
 }
