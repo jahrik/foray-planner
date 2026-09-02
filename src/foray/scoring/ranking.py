@@ -18,10 +18,11 @@ from typing import Any, LiteralString, cast
 
 import psycopg
 
+from foray.cache import region_precip
 from foray.geo import haversine_km, project_to_plane, segment_progress_and_offset
 from foray.scoring._sql import genus_name_map, sql_in, taxon_filter
 from foray.scoring.models import RegionScore, SpeciesHit
-from foray.scoring.regions import recent_counts, region_elevations
+from foray.scoring.regions import recent_counts, region_elevations, region_precip_obs
 
 
 def _rank_candidates(
@@ -88,6 +89,8 @@ def _rank_candidates(
         agg["species"].append(SpeciesHit(taxon_id, name, common_name, month_cnt, total_cnt, w_pheno))
 
     elevations = region_elevations(con, regions.keys())
+    precip_obs = region_precip_obs(con, regions.keys())
+    recent_rain = region_precip(con, regions.keys())
 
     results: list[RegionScore] = []
     for region_id, agg in regions.items():
@@ -108,6 +111,11 @@ def _rank_candidates(
                 recent_count=recent_count,
                 species=agg["species"],
                 elevation_m=elevations.get(region_id),
+                precip_obs_7d_mm=precip_obs.get(region_id, {}).get("precip_obs_7d_mm"),
+                precip_obs_30d_mm=precip_obs.get(region_id, {}).get("precip_obs_30d_mm"),
+                precip_recent_7d_mm=recent_rain.get(region_id, {}).get("precip_7d_mm"),
+                precip_recent_14d_mm=recent_rain.get(region_id, {}).get("precip_14d_mm"),
+                precip_recent_30d_mm=recent_rain.get(region_id, {}).get("precip_30d_mm"),
             )
         )
 

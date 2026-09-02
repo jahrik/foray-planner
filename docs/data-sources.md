@@ -97,3 +97,29 @@ spots" value without the license problem. Do not add iOverlander or The Dyrt.
 - **Attribution:** "© OpenStreetMap contributors"
 - **Fallback:** Raw `lat,lng` input bypasses geocoding entirely (parsed directly in `sources/geocode.py`)
 - **Tests:** Network-mocked with `httpx.MockTransport` - geocoding tests never hit the real API
+
+---
+
+## Open-Meteo (elevation + precipitation)
+
+**Role:** Ground elevation per observation (issue #36) and rainfall (issue #226) - antecedent
+rain per observation plus recent rain per destination. Informational readouts only; no scoring
+or filtering, same posture as land ownership.
+
+- **Client:** httpx (no key required)
+- **Endpoints:**
+  - Elevation: `https://api.open-meteo.com/v1/elevation` (Copernicus GLO-90 DEM)
+  - Rain history: `https://archive-api.open-meteo.com/v1/archive` (`daily=precipitation_sum`,
+    ERA5). ERA5 runs ~5-7 days behind and returns `null` for a day it has no value for yet -
+    a window containing a null day is left `NULL` and retried, never summed partially.
+  - Recent rain: `https://api.open-meteo.com/v1/forecast` (`past_days=30&daily=precipitation_sum`)
+- **Rate limit:** 600 requests/min free tier (plus hourly/daily caps). A process-wide throttle
+  (`sources/http.Throttle`) paces requests; 429s are honoured via `Retry-After` and the run
+  resumes on the next scheduled pass.
+- **Grid snapping:** precipitation lookups snap to the same `{ilat}_{ilng}` region grid the
+  phenology tables use (`foray.geo.grid_cell`) and cache raw daily values in `precip_daily`, so
+  many observations and the per-destination layer share one series per cell - "reuse the grid,
+  don't invent a second geography."
+- **Terms:** Free for non-commercial use; [Open-Meteo terms](https://open-meteo.com/en/terms).
+  "© Open-Meteo" is shown in the map credits line (`map.ts` `TILE_ATTRIBUTION`).
+- **Tests:** Network-mocked with `httpx.MockTransport`; the suite never hits the real API.

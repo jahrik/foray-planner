@@ -97,7 +97,7 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   - `models.py` - the result dataclasses (`SpeciesHit`, `RegionScore`, `CampSite`, `LandUnit`,
     `Trail`, `TrailPath`, `Stop`, `TripPlan`); mirrored by `api_models.py`.
   - `regions.py` - `build_phenology` (materializes `regions` + `phenology`) plus the
-    materialized-table helpers.
+    materialized-table helpers (`region_elevations`, `region_precip_obs`, ...).
   - `ranking.py` - `rank_destinations` / `rank_destinations_corridor` (fix months -> rank
     regions).
   - `queries.py` - the point-and-radius read repository: `camps_near`, `land_near`,
@@ -132,9 +132,12 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
 - `src/foray/logging_config.py` - `setup_logging(level)` (env `FORAY_LOG_LEVEL`, default INFO),
   called by both the CLI group callback and `create_app`.
 - `src/foray/cli.py` - Click CLI: `foray ingest | camps | land | dispersed | trails | refresh |
-  revalidate | resync | backfill-elevation | plan | serve | openapi`. `ingest --all-regions` is
-  what the scheduler runs. `backfill-elevation` fills `observations.elevation_m` for the backlog
-  (ingest enriches new rows inline via Open-Meteo); destination cards show the region's mean.
+  revalidate | resync | backfill-elevation | backfill-precip | refresh-precip | plan | serve |
+  openapi`. `ingest --all-regions` is what the scheduler runs. `backfill-elevation` fills
+  `observations.elevation_m` for the backlog (ingest enriches new rows inline via Open-Meteo);
+  destination cards show the region's mean. `backfill-precip` does the same for
+  `observations.precip_7d_mm` / `precip_30d_mm` (antecedent rainfall, issue #226, ERA5 archive);
+  `refresh-precip` rebuilds the recent-rain-per-destination layer from the forecast API.
   `resync --until-done` loops batch after batch until the whole cache is caught up
   (`just resync "--until-done --batch-size 20000"`) - a deliberate one-off catch-up run,
   not the small-batch/hourly default the scheduler uses.
@@ -142,12 +145,14 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   observation revalidation (`foray revalidate`, see `ingest.py`), the whole-table resync
   grind (`foray resync --batch-size N`), and the elevation backfill drain
   (`foray backfill-elevation --limit N`, issue #36 - Open-Meteo rate-limits a burst so each
-  pass only does a few hundred rows), each on their own N-hour interval. Configurable via
+  pass only does a few hundred rows), and the rainfall pass (`foray backfill-precip` +
+  `foray refresh-precip`, issue #226), each on their own N-hour interval. Configurable via
   `FORAY_INGEST_INTERVAL_HOURS` (default 24), `FORAY_LAYERS_INTERVAL_HOURS` (default 168),
   `FORAY_REVALIDATE_INTERVAL_HOURS` (default 168), `FORAY_RESYNC_INTERVAL_HOURS` (default 1),
-  `FORAY_RESYNC_BATCH_SIZE` (default 2000), `FORAY_ELEVATION_INTERVAL_HOURS` (default 1), and
+  `FORAY_RESYNC_BATCH_SIZE` (default 2000), `FORAY_ELEVATION_INTERVAL_HOURS` (default 1),
   `FORAY_ELEVATION_LIMIT` (default 20000 - an upper bound; a run stops earlier when Open-Meteo
-  rate-limits it).
+  rate-limits it), and `FORAY_PRECIP_INTERVAL_HOURS` (default 24 - rain changes far faster than
+  the 168h layers).
 - `frontend/` - the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern
   (issue #242 Part 2 broke the big files up and grouped them into `src/{map,ui,views}/`
   subfolders). Roughly: `src/state.ts` (shared `State`, `qs()`/`setStatus()` helpers),
@@ -288,6 +293,12 @@ just frontend
   during ingest. Existing rows backfill via ON CONFLICT DO UPDATE with COALESCE on next ingest.
   `elevation_m` (issue #36) is filled separately, post-ingest, from Open-Meteo's DEM
   (`ingest.backfill_elevations` / `foray backfill-elevation`) - NULL until looked up.
+  `precip_7d_mm` / `precip_30d_mm` (issue #226) are filled the same way from Open-Meteo's ERA5
+  archive (`ingest.backfill_precip` / `foray backfill-precip`), snapping to the region grid and
+  caching daily values in `precip_daily`; a window still inside ERA5's ~5-7 day lag stays NULL
+  and is retried. The `precipitation` layer table holds recent rain per region cell
+  (`ingest.refresh_precipitation` / `foray refresh-precip`, forecast API). Informational only,
+  no scoring - same posture as elevation.
 - Target genera aren't configured in code - `foray genera-refresh` keeps the full catalog
   synced, `foray ingest` pulls every Fungi observation and resolves each one's own genus from
   its taxon ancestry, and users pick their targets in the search UI (per-device, `app_genera`).

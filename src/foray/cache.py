@@ -12,8 +12,9 @@ transactions) - callers that need atomicity across statements (e.g.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
-from collections.abc import Collection, Iterable, Iterator, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any, LiteralString
 
@@ -36,7 +37,9 @@ CREATE TABLE IF NOT EXISTS observations (
     place_guess         TEXT,
     uri                 TEXT,
     obscured            BOOLEAN,
-    elevation_m         INTEGER   -- ground elevation (issue #36), enriched post-ingest via Open-Meteo
+    elevation_m         INTEGER,  -- ground elevation (issue #36), enriched post-ingest via Open-Meteo
+    precip_7d_mm        DOUBLE PRECISION,  -- rain in the 7 d before observed_on (issue #226), post-ingest
+    precip_30d_mm       DOUBLE PRECISION   -- rain in the 30 d before observed_on (issue #226), post-ingest
 );
 
 CREATE TABLE IF NOT EXISTS ingest_log (
@@ -154,6 +157,33 @@ CREATE TABLE IF NOT EXISTS region_places (
     place_name TEXT
 );
 
+-- Daily precipitation cache (issue #226). One row per grid cell per day - `cell_id` is the
+-- same "{ilat}_{ilng}" key `regions`/`phenology` derive in SQL (foray.geo.grid_cell), so the
+-- weather geography reuses the region grid rather than inventing a second one. Raw per-day
+-- values (mm) so the derived windows (7/14/30 d) are the only thing schema locks in. `precip_mm`
+-- is nullable: Open-Meteo's ERA5 archive runs ~5-7 days behind and returns null for a day it
+-- has no value for yet - stored as NULL and retried, never coerced to 0.
+CREATE TABLE IF NOT EXISTS precip_daily (
+    cell_id     TEXT NOT NULL,
+    date        DATE NOT NULL,
+    precip_mm   DOUBLE PRECISION,   -- daily precipitation_sum, mm; NULL = source had no value yet
+    source      TEXT,               -- "open-meteo-archive" | "open-meteo-forecast"
+    fetched_at  TIMESTAMPTZ,
+    PRIMARY KEY (cell_id, date)
+);
+
+-- Recent-rainfall-per-destination layer (issue #226 Part 2). One row per active region cell,
+-- refreshed on its own scheduler cadence (FORAY_PRECIP_INTERVAL_HOURS, default 24) from
+-- Open-Meteo's forecast API (past_days). Trailing-window sums ending "today"; informational
+-- only, no scoring (deferred).
+CREATE TABLE IF NOT EXISTS precipitation (
+    region_id     TEXT PRIMARY KEY,
+    precip_7d_mm  DOUBLE PRECISION,
+    precip_14d_mm DOUBLE PRECISION,
+    precip_30d_mm DOUBLE PRECISION,
+    updated_at    TIMESTAMPTZ
+);
+
 -- Per-device genus selection (issue #79 Phase 2): which genera this device wants ranked,
 -- keyed by the same anonymous device-id cookie as app_location - but many rows per device
 -- (one per selected genus), not app_location's one row per device. A device with zero rows
@@ -222,6 +252,12 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # post-#250 code that touches neither table, so the drop is safe on a rolling deploy.
     (10, "DROP TABLE IF EXISTS taxa"),
     (11, "DROP TABLE IF EXISTS app_location_legacy_singleton"),
+    # issue #226: antecedent rainfall per observation, summed from the precip_daily cache over
+    # the 7 and 30 days before observed_on (see ingest.backfill_precip). NULL = not yet
+    # enriched, or a day inside the window that Open-Meteo's ERA5 archive still returns null for
+    # (a partial sum is never recorded).
+    (12, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS precip_7d_mm DOUBLE PRECISION"),
+    (13, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS precip_30d_mm DOUBLE PRECISION"),
 ]
 
 
@@ -740,6 +776,142 @@ def set_observation_elevations(con: psycopg.Connection, rows: Sequence[tuple[int
     with con.cursor() as cur:
         cur.executemany(
             "UPDATE observations SET elevation_m = %s WHERE id = %s", [(elev, obs_id) for obs_id, elev in rows]
+        )
+    return len(rows)
+
+
+# --- Precipitation cache (issue #226) -------------------------------------------------------
+
+
+def cached_precip(
+    con: psycopg.Connection, cell_id: str, start: dt.date, end: dt.date, *, source: str | None = None
+) -> dict[dt.date, float | None]:
+    """``date -> precip_mm`` already cached for ``cell_id`` in ``[start, end]`` (inclusive).
+
+    A day absent from the result is one never fetched; a day present with value ``None`` is one
+    Open-Meteo returned null for (ERA5 lag) - the caller retries the latter, not the former.
+    ``source`` restricts to one origin: the per-observation backfill trusts only ERA5 archive
+    rows, never the provisional forecast rows the layer refresh also writes."""
+    query: LiteralString = "SELECT date, precip_mm FROM precip_daily WHERE cell_id = %s AND date BETWEEN %s AND %s"
+    params: list[Any] = [cell_id, start, end]
+    if source is not None:
+        query += " AND source = %s"
+        params.append(source)
+    rows = con.execute(query, params).fetchall()
+    return {day: (float(mm) if mm is not None else None) for day, mm in rows}
+
+
+def upsert_precip_days(con: psycopg.Connection, cell_id: str, days: Mapping[dt.date, float | None], source: str) -> int:
+    """Cache per-day precipitation for one grid cell. Overwrites an existing ``(cell_id, date)``
+    row so a later archive pull can replace a forecast estimate (or fill a previously-null day).
+    Returns rows written."""
+    if not days:
+        return 0
+    now = dt.datetime.now(dt.UTC)
+    with con.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO precip_daily (cell_id, date, precip_mm, source, fetched_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (cell_id, date) DO UPDATE SET
+                precip_mm = EXCLUDED.precip_mm, source = EXCLUDED.source, fetched_at = EXCLUDED.fetched_at
+            """,
+            [(cell_id, day, mm, source, now) for day, mm in days.items()],
+        )
+    return len(days)
+
+
+def observations_missing_precip(
+    con: psycopg.Connection, limit: int, *, near: tuple[float, float] | None = None
+) -> list[tuple[int, float, float, dt.date]]:
+    """Up to ``limit`` research-grade, non-obscured observations with coordinates and an
+    ``observed_on`` but no ``precip_7d_mm`` yet (issue #226). Same research-grade/obscured/
+    in-range filters as :func:`observations_missing_elevation`; ordered by ``near`` (planar
+    distance) when given, else oldest ``observed_on`` first so a cell's history fills in order.
+
+    ``precip_7d_mm IS NULL`` is the pending sentinel: a row whose window still has an
+    ERA5-null day is left unwritten and reappears here next pass (intended retry)."""
+    box_sql: LiteralString = ""
+    params: list[Any] = []
+    order_sql: LiteralString = "ORDER BY observed_on"
+    if near is not None:
+        plat, plng = near
+        box_sql = " AND lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s "
+        params += [plat - _NEAR_WINDOW_DEG, plat + _NEAR_WINDOW_DEG, plng - _NEAR_WINDOW_DEG, plng + _NEAR_WINDOW_DEG]
+        order_sql = "ORDER BY (lat - %s) * (lat - %s) + (lng - %s) * (lng - %s)"
+        params += [plat, plat, plng, plng]
+    rows = con.execute(
+        """
+        SELECT id, lat, lng, observed_on FROM observations
+        WHERE precip_7d_mm IS NULL
+              AND observed_on IS NOT NULL
+              AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180
+              AND quality_grade = 'research'
+              AND NOT COALESCE(obscured, false)
+        """
+        + box_sql
+        + order_sql
+        + " LIMIT %s",
+        [*params, limit],
+    ).fetchall()
+    return [(int(obs_id), float(lat), float(lng), observed_on) for obs_id, lat, lng, observed_on in rows]
+
+
+def set_observation_precip(con: psycopg.Connection, rows: Sequence[tuple[int, float | None, float | None]]) -> int:
+    """Write ``(observation_id, precip_7d_mm, precip_30d_mm)`` back. Callers pass only rows whose
+    7 d window was fully covered - a row still missing an ERA5 day is left NULL (pending)."""
+    if not rows:
+        return 0
+    with con.cursor() as cur:
+        cur.executemany(
+            "UPDATE observations SET precip_7d_mm = %s, precip_30d_mm = %s WHERE id = %s",
+            [(mm7, mm30, obs_id) for obs_id, mm7, mm30 in rows],
+        )
+    return len(rows)
+
+
+def active_region_ids(con: psycopg.Connection) -> list[str]:
+    """Every ``region_id`` present in the materialized ``regions`` table - the bounded set of
+    grid cells the per-destination precip refresh (issue #226 Part 2) needs to fetch."""
+    return [region_id for (region_id,) in con.execute("SELECT region_id FROM regions").fetchall()]
+
+
+def region_precip(con: psycopg.Connection, region_ids: Collection[str]) -> dict[str, dict[str, float | None]]:
+    """``region_id -> {"precip_7d_mm", "precip_14d_mm", "precip_30d_mm"}`` from the
+    ``precipitation`` layer table (issue #226). Absent when that cell has never been refreshed."""
+    if not region_ids:
+        return {}
+    try:
+        rows = con.execute(
+            "SELECT region_id, precip_7d_mm, precip_14d_mm, precip_30d_mm FROM precipitation WHERE region_id = ANY(%s)",
+            [list(region_ids)],
+        ).fetchall()
+    except psycopg.errors.UndefinedTable:
+        con.rollback()
+        return {}
+    return {
+        region_id: {"precip_7d_mm": mm7, "precip_14d_mm": mm14, "precip_30d_mm": mm30}
+        for region_id, mm7, mm14, mm30 in rows
+    }
+
+
+def upsert_region_precip(
+    con: psycopg.Connection, rows: Sequence[tuple[str, float | None, float | None, float | None]]
+) -> int:
+    """Upsert ``(region_id, precip_7d_mm, precip_14d_mm, precip_30d_mm)`` into ``precipitation``."""
+    if not rows:
+        return 0
+    now = dt.datetime.now(dt.UTC)
+    with con.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO precipitation (region_id, precip_7d_mm, precip_14d_mm, precip_30d_mm, updated_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (region_id) DO UPDATE SET
+                precip_7d_mm = EXCLUDED.precip_7d_mm, precip_14d_mm = EXCLUDED.precip_14d_mm,
+                precip_30d_mm = EXCLUDED.precip_30d_mm, updated_at = EXCLUDED.updated_at
+            """,
+            [(region_id, mm7, mm14, mm30, now) for region_id, mm7, mm14, mm30 in rows],
         )
     return len(rows)
 

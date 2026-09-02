@@ -60,6 +60,38 @@ export function elevationLabel(metres: number): string {
   return `${Math.round(metres).toLocaleString()} m`;
 }
 
+const MM_TO_IN = 0.0393701;
+
+/** Rainfall label (issue #226): inches when the user is on miles, millimetres on kilometres.
+ * Input is always millimetres (Open-Meteo's unit). Data is informational only (Open-Meteo). */
+export function rainLabel(mm: number): string {
+  if (state.units === "mi") return `${(mm * MM_TO_IN).toFixed(mm * MM_TO_IN < 1 ? 2 : 1)} in`;
+  return `${mm < 10 ? mm.toFixed(1) : Math.round(mm).toString()} mm`;
+}
+
+/** Rain readout for a destination/alert card's meta line (issue #226). Shows the recent 7-day
+ * total inline (the "go now" signal) with the fuller breakdown - other recent windows and the
+ * per-observation antecedent means - in the hover title. Empty string when no rain data yet. */
+export function rainMeta(r: {
+  precip_recent_7d_mm?: number | null;
+  precip_recent_14d_mm?: number | null;
+  precip_recent_30d_mm?: number | null;
+  precip_obs_7d_mm?: number | null;
+  precip_obs_30d_mm?: number | null;
+}): string {
+  if (r.precip_recent_7d_mm == null && r.precip_obs_7d_mm == null) return "";
+  const parts: string[] = [];
+  if (r.precip_recent_7d_mm != null) parts.push(`recent 7d ${rainLabel(r.precip_recent_7d_mm)}`);
+  if (r.precip_recent_14d_mm != null) parts.push(`14d ${rainLabel(r.precip_recent_14d_mm)}`);
+  if (r.precip_recent_30d_mm != null) parts.push(`30d ${rainLabel(r.precip_recent_30d_mm)}`);
+  if (r.precip_obs_7d_mm != null) parts.push(`observed-here 7d mean ${rainLabel(r.precip_obs_7d_mm)}`);
+  if (r.precip_obs_30d_mm != null) parts.push(`30d mean ${rainLabel(r.precip_obs_30d_mm)}`);
+  const inline =
+    r.precip_recent_7d_mm != null ? rainLabel(r.precip_recent_7d_mm) : rainLabel(r.precip_obs_7d_mm ?? 0);
+  const title = `Rain (Open-Meteo, informational): ${parts.join(" · ")}`;
+  return ` · <span class="num" title="${title}">rain ${inline}</span>`;
+}
+
 export function qs<T extends HTMLElement = HTMLElement>(selector: string, root: ParentNode = document): T {
   const element = root.querySelector<T>(selector);
   if (!element) throw new Error(`missing element: ${selector}`);
