@@ -2,6 +2,7 @@ import L from "leaflet";
 
 import { getJson } from "./api/client";
 import type { CampSite, LandUnit, PreciseObservation, Trail, TrailPath } from "./api/types";
+import { createRunGuard } from "./card-select";
 import { feeLabel } from "./format";
 import { circleStyle } from "./markers";
 import { buildPopup } from "./popup";
@@ -168,9 +169,9 @@ function trailParts(geometry: GeoJSON.Geometry): L.LatLngTuple[][] {
 
 // Only the most recently started animation should still be drawing - if the user clicks a
 // different trailhead mid-animation, clearSelectedTrail() already removed the in-progress layer
-// from the map, but without this token the orphaned rAF loop would keep computing frames for a
+// from the map, but without this guard the orphaned rAF loop would keep computing frames for a
 // layer nobody sees until it finishes on its own.
-let trailAnimationToken = 0;
+const trailAnimationGuard = createRunGuard();
 
 // Progressively reveals `parts` on `layer` over a short, point-count-scaled duration (capped so a
 // simple trailhead-to-junction segment and a long merged route both feel like "watching it get
@@ -178,13 +179,13 @@ let trailAnimationToken = 0;
 // parts stay empty until earlier ones finish - so a multi-segment trail reads as one continuous
 // draw across its pieces.
 function animateTrail(layer: L.Polyline, parts: L.LatLngTuple[][]): void {
-  const token = ++trailAnimationToken;
+  const isCurrent = trailAnimationGuard.begin();
   const totalPoints = parts.reduce((sum, part) => sum + part.length, 0);
   if (totalPoints === 0) return;
   const duration = Math.min(1400, Math.max(500, totalPoints * 25));
   const start = performance.now();
   const frame = (now: number): void => {
-    if (token !== trailAnimationToken) return; // superseded by a newer selection
+    if (!isCurrent()) return; // superseded by a newer selection
     const elapsed = now - start;
     const revealed = Math.min(totalPoints, Math.ceil((elapsed / duration) * totalPoints));
     let remaining = revealed;

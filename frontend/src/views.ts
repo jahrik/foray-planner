@@ -11,20 +11,19 @@ import type {
   RegionScore,
   Trail,
 } from "./api/types";
+import { createCardSelection, createRunGuard } from "./card-select";
 import { focusRegion, selectTrailhead } from "./layers";
 import { focusOnMap, sheetEnabled, snapTo } from "./sheet";
 import {
   clearCardCampMarkers,
   clearMarkers,
   clearTrailheadMarkers,
-  deselectSize,
   HEAT_RGB,
   map,
   plot,
   plotCardCamp,
   plotTrailhead,
   regionRadiusKm,
-  selectSize,
   setCardCampActive,
   setTrailheadActive,
 } from "./map";
@@ -128,10 +127,10 @@ const phenoTitle = (pct: number, monthCount: number, allMonths: boolean): string
 // own clearMarkers() already ran, before either fetch started) - duplicate destination circles
 // that never go away until the next run. A stale call bails out entirely once it notices a newer
 // one has started, rather than touching the panel or the map at all.
-let destinationsRunToken = 0;
+const destinationsGuard = createRunGuard("destinations");
 
 export async function runDestinations(): Promise<void> {
-  const token = ++destinationsRunToken;
+  const isCurrent = destinationsGuard.begin();
   setStatus("Ranking…");
   clearMarkers();
   // No months toggled reads the same as all 12 toggled (monthsParam()'s fallback) - either way
@@ -144,11 +143,11 @@ export async function runDestinations(): Promise<void> {
     // Superseded either by a newer runDestinations() call or by the user switching away from
     // the Destinations tab entirely while this fetch was in flight - either way, whoever owns
     // #panel/the map now shouldn't have their state clobbered by a stale response.
-    if (token !== destinationsRunToken || state.view !== "destinations") return;
+    if (!isCurrent()) return;
     setStatus(errorDetail(error));
     return;
   }
-  if (token !== destinationsRunToken || state.view !== "destinations") return;
+  if (!isCurrent()) return;
   const panel = qs("#panel");
   if (!regions.length) {
     panel.innerHTML =
@@ -163,7 +162,7 @@ export async function runDestinations(): Promise<void> {
   const rankList = qs("#rank-list");
   // Only one region's marker shows its true real-world size at a time; selecting a new one
   // reverts whichever marker held that spot back to its score-scaled preview size.
-  let selected: { marker: L.Circle; weight: number } | null = null;
+  const cardSelection = createCardSelection(rankList);
   // Each card's place-name lookup (issue #206) runs after the initial render, not inline in
   // this map() - see the sequential loop below.
   const titleTargets: { region: RegionScore; rank: number; numSpan: HTMLElement }[] = [];
@@ -309,14 +308,7 @@ export async function runDestinations(): Promise<void> {
     // very thing you were trying to look at). The card already shows everything the popup used to.
     // Its marker also snaps to its true cell-footprint size (see selectSize in map.ts), with the
     // previously selected marker (if any) reverting to its score-scaled preview size.
-    const selectCard = () => {
-      rankList.querySelectorAll(".rank").forEach((el) => el.classList.remove("active"));
-      card.classList.add("active");
-      card.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      if (selected && selected.marker !== marker) deselectSize(selected.marker, selected.weight);
-      selectSize(marker);
-      selected = { marker, weight: region.score_norm };
-    };
+    const selectCard = () => cardSelection.select(card, marker, region.score_norm);
     makeActivatable(card, () => {
       snapTo("full"); // opening a card's detail expands the mobile sheet
       focusOnMap(region.center_lat, region.center_lng, 9);
@@ -346,11 +338,10 @@ export async function runDestinations(): Promise<void> {
   // loads on demand from the Calendar tab like every other card.
   const top = regions[0];
   const topMarker = markers[0];
-  if (top && topMarker) {
+  const topCard = rankList.querySelector<HTMLElement>(".rank");
+  if (top && topMarker && topCard) {
     focusRegion(top.center_lat, top.center_lng);
-    rankList.querySelector(".rank")?.classList.add("active");
-    selectSize(topMarker);
-    selected = { marker: topMarker, weight: top.score_norm };
+    cardSelection.selectInitial(topCard, topMarker, top.score_norm);
   }
 
   // Card titles start as rank + distance only; each card's notable-place name (issue #206)
@@ -361,7 +352,7 @@ export async function runDestinations(): Promise<void> {
   // cold cache. Fire-and-forget: runDestinations() itself doesn't wait on card titles.
   void (async () => {
     for (const { region, rank, numSpan } of titleTargets) {
-      if (token !== destinationsRunToken || state.view !== "destinations") return;
+      if (!isCurrent()) return;
       let place: RegionPlace;
       try {
         place = await getJson("/api/destinations/{region_id}/place", {
@@ -370,7 +361,7 @@ export async function runDestinations(): Promise<void> {
       } catch {
         continue; // best-effort - leave this card's title as rank + distance
       }
-      if (token !== destinationsRunToken || state.view !== "destinations") return;
+      if (!isCurrent()) return;
       if (place.place_name) {
         numSpan.textContent = `#${rank + 1} · ${place.place_name} · ${dist(region.distance_km)}`;
       }
@@ -602,25 +593,25 @@ async function loadCampgroundsInto(region: RegionScore, container: HTMLElement):
   return true;
 }
 
-// Same overlapping-call guard as destinationsRunToken above - runAlerts() can also be triggered
-// more than once in flight (tab switches, refreshCurrentView() calls). Also bails if the user has
-// since switched away from the Alerts tab entirely while the fetch was in flight, not just if a
-// newer runAlerts() call superseded this one.
-let alertsRunToken = 0;
+// Same overlapping-call guard as runDestinations above - runAlerts() can also be triggered
+// more than once in flight (tab switches, refreshCurrentView() calls). createRunGuard("alerts")
+// also bails if the user has since switched away from the Alerts tab entirely while the fetch
+// was in flight, not just if a newer runAlerts() call superseded this one.
+const alertsGuard = createRunGuard("alerts");
 
 export async function runAlerts(): Promise<void> {
-  const token = ++alertsRunToken;
+  const isCurrent = alertsGuard.begin();
   setStatus("Checking recent activity…");
   clearMarkers();
   let regions: AlertRegion[];
   try {
     regions = await getJson("/api/alerts");
   } catch (error) {
-    if (token !== alertsRunToken || state.view !== "alerts") return;
+    if (!isCurrent()) return;
     setStatus(errorDetail(error));
     return;
   }
-  if (token !== alertsRunToken || state.view !== "alerts") return;
+  if (!isCurrent()) return;
   const panel = qs("#panel");
   if (!regions.length) {
     panel.innerHTML = "<p class='hint'>No target species observed in the trailing window yet.</p>";
@@ -628,7 +619,7 @@ export async function runAlerts(): Promise<void> {
     return;
   }
   panel.innerHTML = "<h3 style='margin-top:0'>Fruiting now / recently</h3>";
-  let selected: { marker: L.Circle; weight: number } | null = null;
+  const cardSelection = createCardSelection(panel);
   regions.forEach((region) => {
     const weight = Math.min(1, region.total / 10);
     const marker = plot(region.center_lat, region.center_lng, weight, true);
@@ -650,14 +641,7 @@ export async function runAlerts(): Promise<void> {
         })
         .join("")}</div>`;
     stopLinkPropagation(qs<HTMLElement>(".chips", card));
-    const selectCard = () => {
-      panel.querySelectorAll(".rank").forEach((el) => el.classList.remove("active"));
-      card.classList.add("active");
-      card.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      if (selected && selected.marker !== marker) deselectSize(selected.marker, selected.weight);
-      selectSize(marker);
-      selected = { marker, weight };
-    };
+    const selectCard = () => cardSelection.select(card, marker, weight);
     makeActivatable(card, () => {
       snapTo("full");
       focusOnMap(region.center_lat, region.center_lng, 9);
