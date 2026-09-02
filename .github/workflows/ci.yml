@@ -25,14 +25,17 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Set up just
+        uses: extractions/setup-just@v3
+
       - name: Install dependencies
         run: uv sync --frozen
 
       - name: Lint + type-check
-        run: make lint
+        run: just lint
 
       - name: Tests
-        run: make test
+        run: just test
 
   frontend:
     name: Build client (type-check + bundle)
@@ -52,6 +55,9 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Set up just
+        uses: extractions/setup-just@v3
+
       - name: Install dependencies
         run: uv sync --frozen
 
@@ -60,10 +66,10 @@ jobs:
         run: npm ci
 
       - name: Lint + test + type-check + build (eslint + vitest + tsc --noEmit + vite build)
-        run: make frontend
+        run: just frontend
 
       - name: API schema up to date (foray openapi + openapi-typescript, fails on drift)
-        run: make check-api-schema
+        run: just check-api-schema
 
   docker:
     name: Lint + build image

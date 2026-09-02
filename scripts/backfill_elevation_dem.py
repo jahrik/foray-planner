@@ -25,7 +25,7 @@ at ~180 rows/s against a network-attached managed Postgres and starves the live 
 locks and WAL bandwidth (it took prod's `/api/destinations` down once); this stays out of
 its way. Use `--sleep` to pace batches further and `--max-cells` to run in slices.
 
-Usage: `make ansible-backfill-elevation-dem-once` (prod), or
+Usage: `just ansible backfill-elevation-dem-once` (prod), or
 `uv run --with rasterio python scripts/backfill_elevation_dem.py [--dry-run] [--no-rebuild]`.
 """
 

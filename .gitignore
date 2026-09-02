@@ -34,5 +34,5 @@ FRONTEND.md
 # playwright-mcp session output (snapshots/console logs from manual browser testing)
 .playwright-mcp/
 
-# Ansible local collection/role/module cache (reinstalled via `make ansible-install`)
+# Ansible local collection/role/module cache (reinstalled via `just ansible install`)
 infra/ansible/.ansible/

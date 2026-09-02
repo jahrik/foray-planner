@@ -10,8 +10,8 @@ Not fresh-schema-per-test either: recreating the whole schema per test adds real
 across this many test files. Truncate is the standard, fast, pool-safe answer.
 
 Runs against its own `foray_test` database (created here on first run if missing), not the
-`foray` database local dev/QA uses - so `make test` truncating tables can't wipe real data
-you loaded into local dev Postgres (e.g. via `make genera-refresh`). Same Postgres server/
+`foray` database local dev/QA uses - so `just test` truncating tables can't wipe real data
+you loaded into local dev Postgres (e.g. via `just genera-refresh`). Same Postgres server/
 container either way, just a different database on it.
 """
 

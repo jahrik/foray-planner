@@ -30,7 +30,7 @@ conninfo - point it at prod by exporting PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATAB
 Not part of the foray package - reads/writes the gitignored `data/` dir; this script itself
 lives under version control in `scripts/`.
 
-Usage: make bulk-load (or `uv run python scripts/load_inat_bulk.py` directly)
+Usage: just bulk-load (or `uv run python scripts/load_inat_bulk.py` directly)
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ def _parse_date(event_date: str | None) -> dt.date | None:
 
 def main() -> None:
     if not INPUT_PATH.exists():
-        raise SystemExit(f"Missing {INPUT_PATH} - run `make bulk-filter` first.")
+        raise SystemExit(f"Missing {INPUT_PATH} - run `just bulk-filter` first.")
 
     _confirm_non_local_host()
     con = connect()

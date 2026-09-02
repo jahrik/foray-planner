@@ -3,7 +3,9 @@
 ## Prerequisites
 
 - **Python 3.13+** and **[uv](https://docs.astral.sh/uv/)** - uv manages the venv and lockfile
-- **Node 22+** via [nvm](https://github.com/nvm-sh/nvm) - not on `PATH` by default, see below
+- **[just](https://github.com/casey/just)** - the command runner (`uv tool install rust-just`)
+- **Node 24+** via [nvm](https://github.com/nvm-sh/nvm) - not on `PATH` by default, see below
+  (`frontend/.nvmrc` pins the exact major)
 - **Docker / Podman** - runs the local Postgres instance (`docker-compose.yml`); also
   used for the container workflow
 - **RIDB_API_KEY** *(optional)* - free key from [Recreation.gov](https://ridb.recreation.gov/landing)
@@ -14,19 +16,21 @@
 ## Quick start
 
 ```bash
-make install            # uv sync + frontend npm ci
-make db                 # start Postgres (docker compose)
+uv tool install rust-just  # one-time: the `just` command runner
+just install            # uv sync + frontend npm ci
+just db                 # start Postgres (docker compose)
 
 # Optional: create a .env file with your RIDB key
 echo "RIDB_API_KEY=your_key_here" > .env   # omit to skip campground ingest
 
-make ingest             # one-shot all-regions observation ingest + phenology rebuild
-make start              # start app + postgres (http://localhost:8000)
-make scheduler          # optional: start background ingest/refresh loop
+just ingest             # one-shot all-regions observation ingest + phenology rebuild
+just start              # start app + postgres (http://localhost:8000)
+just scheduler          # optional: start background ingest/refresh loop
 ```
 
-The Makefile exports `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` and prepends
-the nvm Node path automatically, so you never need to set them manually.
+The justfile exports `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` and prepends
+the nvm Node path automatically, so you never need to set them manually. Run `just` with no
+arguments to see all recipes grouped by area (`just ansible` for the deploy recipes).
 
 ---
 
@@ -53,7 +57,7 @@ All settings come from environment variables (prefix `FORAY_`, nested delimiter 
 
 **Database connection** comes from the standard libpq env vars
 (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`), read natively by `psycopg`. Credentials
-never belong in a committed file. `docker-compose.yml` + the Makefile export cover local dev;
+never belong in a committed file. `docker-compose.yml` + the justfile export cover local dev;
 production gets them from the ansible-managed environment file on the host (see
 `docs/deployment.md`).
 
@@ -97,10 +101,10 @@ ArcGIS BLM/USFS          Nominatim (geocoding)
 
 Search/scoring is **read-only** against cached data. Data ingestion happens independently:
 
-- **Scheduler service** (`scripts/scheduler.sh`): opt-in via `make scheduler` (docker-compose profile), pulls observations every 24h, refreshes layers (camps/land/dispersed/trails) every 168h, and drains the elevation backfill (issue #36) every 1h
+- **Scheduler service** (`scripts/scheduler.sh`): opt-in via `just scheduler` (docker-compose profile), pulls observations every 24h, refreshes layers (camps/land/dispersed/trails) every 168h, and drains the elevation backfill (issue #36) every 1h
 - **Coverage regions**: state-level, using iNat `place_id` for exact administrative boundaries - all 50 US states by default (`FORAY_COVERAGE`), used by `trails --all` (Overpass can't take a whole-country query in one request)
 - **Countries**: country-level, one iNat `place_id` per country - United States by default (`FORAY_COUNTRIES`). Adding another country later is just one more entry, no code changes
-- **`make ingest`**: one-shot manual ingest for all coverage regions
+- **`just ingest`**: one-shot manual ingest for all coverage regions
 - **UI Refresh button**: triggers an in-process refresh for the current home radius
 
 The UI's "Set Location" never triggers data fetching. It updates the home coordinates and immediately runs scoring against whatever is already in the database.
@@ -150,7 +154,7 @@ Run the backend and the Vite dev server together for live development:
 
 ```bash
 # Terminal 1 - backend
-make db && uv run foray serve
+just db && uv run foray serve
 
 # Terminal 2 - frontend (Vite on :5173, proxies /api/* to uvicorn on :8000)
 cd frontend && npm run dev
@@ -159,7 +163,7 @@ cd frontend && npm run dev
 Other frontend commands:
 
 ```bash
-make frontend      # tsc --noEmit + vite build (the CI gate)
+just frontend      # tsc --noEmit + vite build (the CI gate)
 npm run gen:api    # regenerate src/api/schema.ts from the live OpenAPI schema (from frontend/)
 ```
 
@@ -230,15 +234,15 @@ codebase. The UI links each taxon to its iNaturalist page. Keep it that way.
 The full local CI gate (starts Postgres if needed, runs lint + type-check + tests):
 
 ```bash
-make check
+just check
 ```
 
 Or run pieces individually:
 
 ```bash
-make lint          # ruff format + ruff check + ty check
-make test          # pytest (starts Postgres automatically)
-make frontend      # frontend type-check + bundle (after frontend or API changes)
+just lint          # ruff format + ruff check + ty check
+just test          # pytest (starts Postgres automatically)
+just frontend      # frontend type-check + bundle (after frontend or API changes)
 ```
 
 Focused test runs:
@@ -266,10 +270,10 @@ docker build -t local/foray-planner:dev .
 Or use the full stack:
 
 ```bash
-make start         # builds + starts app + postgres
-make scheduler     # optional: starts the background ingest/refresh loop
-make stop          # stop all containers (including scheduler if running)
-make clean         # tear down containers + volumes
+just start         # builds + starts app + postgres
+just scheduler     # optional: starts the background ingest/refresh loop
+just stop          # stop all containers (including scheduler if running)
+just clean         # tear down containers + volumes
 ```
 
 The Dockerfile uses a three-stage build:

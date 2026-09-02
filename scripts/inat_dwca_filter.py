@@ -20,7 +20,7 @@ the zip entry's decompressed stream against its exact uncompressed size (from th
 central directory, via ZipInfo.file_size), so the percentage/ETA are accurate without guessing
 a row count.
 
-Usage: make bulk-download bulk-filter (or `uv run python scripts/inat_dwca_filter.py` directly)
+Usage: just bulk-download && just bulk-filter (or `uv run python scripts/inat_dwca_filter.py` directly)
 Output: data/inat_us_observations.jsonl (one JSON object per matching record)
 """
 
@@ -86,7 +86,7 @@ def _load_genus_taxon_ids() -> dict[str, int]:
 
 def main() -> None:
     if not ZIP_PATH.exists():
-        sys.exit(f"Missing {ZIP_PATH} - run `make bulk-download` first.")
+        sys.exit(f"Missing {ZIP_PATH} - run `just bulk-download` first.")
 
     _confirm_non_local_host()
     taxon_id_by_genus = _load_genus_taxon_ids()
