@@ -719,8 +719,9 @@ def apply_fire_severity(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
     """Write MTBS burn-severity enrichment onto existing fire rows (issue #227), matched by
     ``irwin_id`` or ``mtbs_fire_id``. Tuple:
     ``(match_key, match_value, unburned, low, moderate, high, dominant, mtbs_fire_id)`` where
-    ``match_key`` is ``"irwin_id"`` or ``"mtbs_fire_id"``. Returns rows whose match updated at
-    least one perimeter."""
+    ``match_key`` is ``"irwin_id"`` or ``"mtbs_fire_id"``. Returns the total number of perimeter
+    rows updated (a single MTBS row can match more than one, e.g. the same ``irwin_id`` in both
+    the active and history lanes during the brief overlap window)."""
     updated = 0
     for match_key, match_value, unburned, low, moderate, high, dominant, mtbs_fire_id in rows:
         if match_key not in _MTBS_UPDATE:
@@ -731,8 +732,7 @@ def apply_fire_severity(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
             _MTBS_UPDATE[match_key],
             [unburned, low, moderate, high, dominant, mtbs_fire_id, match_value],
         )
-        if result.rowcount:
-            updated += 1
+        updated += result.rowcount or 0
     return updated
 
 

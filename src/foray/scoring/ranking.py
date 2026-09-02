@@ -15,6 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any, LiteralString, cast
 
 import psycopg
@@ -181,16 +182,19 @@ def _apply_fire(con: psycopg.Connection, results: list[RegionScore], *, taxon_id
         boost = 1.0
         for fire in fires:
             gap = haversine_km(region.center_lat, region.center_lng, fire.center_lat, fire.center_lng)
+            # `fires` carries distance_km relative to the fetch centroid - copy each hit with
+            # the distance to *this* region so cards/plan-stop warnings show the right number.
+            local = replace(fire, distance_km=round(gap, 1))
             if fire.status == "active" and gap <= FIRE_PENALTY_RADIUS_KM:
                 penalty = True
-                nearby.append(fire)
+                nearby.append(local)
             elif (
                 fire.status == "historical"
                 and gap <= BURN_SCAR_BOOST_RADIUS_KM
                 and fire.dominant_severity in _BOOSTABLE_SEVERITY
                 and fire.fire_year is not None
             ):
-                nearby.append(fire)
+                nearby.append(local)
                 if boost_ok:
                     age = dt.date.today().year - fire.fire_year
                     boost = max(

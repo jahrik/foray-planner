@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from dataclasses import replace
 from typing import Any, LiteralString, cast
 
 import psycopg
@@ -522,14 +523,14 @@ def alerts(
         entry["precip_recent_7d_mm"] = rain.get("precip_7d_mm")
         entry["precip_recent_14d_mm"] = rain.get("precip_14d_mm")
         entry["precip_recent_30d_mm"] = rain.get("precip_30d_mm")
-        entry["fire_nearby"] = sorted(
-            (
-                fire
-                for fire in fires
-                if haversine_km(entry["center_lat"], entry["center_lng"], fire.center_lat, fire.center_lng) <= 30.0
-            ),
-            key=lambda fire: fire.distance_km,
-        )[:5]
+        # `fires` carries distance_km relative to home; re-measure to this region and copy each
+        # hit so the card shows the distance from the region, not from home.
+        region_fires: list[FireNear] = []
+        for fire in fires:
+            gap = haversine_km(entry["center_lat"], entry["center_lng"], fire.center_lat, fire.center_lng)
+            if gap <= 30.0:
+                region_fires.append(replace(fire, distance_km=round(gap, 1)))
+        entry["fire_nearby"] = sorted(region_fires, key=lambda fire: fire.distance_km)[:5]
     results = list(by_region.values())
     results.sort(key=lambda region: region["total"], reverse=True)
     return results

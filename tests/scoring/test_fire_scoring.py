@@ -70,6 +70,35 @@ def test_fire_near_filters_by_distance(con: psycopg.Connection) -> None:
     assert [f.id for f in got] == ["near"]
 
 
+def test_fire_nearby_distance_is_region_relative(con: psycopg.Connection) -> None:
+    # A second region ~65 km NE of the first. `_apply_fire` fetches fires from the *centroid*
+    # of all regions, so a fire sitting on region 2 must have its distance re-measured to
+    # region 2 (~0), not left at the centroid distance (~30+ km).
+    far_lat, far_lng = LAT + 0.5, LNG + 0.5
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade)"
+            " VALUES (%s, %s, %s, %s, %s, %s, 'research')",
+            [(100 + i, MORCHELLA, far_lat, far_lng, dt.date(2022, 5, 15), 5) for i in range(6)],
+        )
+    build_phenology(con, CELL)
+    _add_fire(
+        con,
+        id="onfar",
+        center_lat=far_lat,
+        center_lng=far_lng,
+        min_lat=far_lat - 0.1,
+        max_lat=far_lat + 0.1,
+        min_lng=far_lng - 0.1,
+        max_lng=far_lng + 0.1,
+    )
+    ranked = rank_destinations(
+        con, months=[5], taxon_ids=[MORCHELLA], home_lat=far_lat, home_lng=far_lng, radius_km=300, cell_deg=CELL
+    )
+    far_region = next(r for r in ranked if abs(r.center_lat - far_lat) < CELL)
+    assert far_region.fire_nearby and far_region.fire_nearby[0].distance_km < 10
+
+
 def test_active_fire_penalises_the_region(con: psycopg.Connection) -> None:
     baseline = _rank(con, [MORCHELLA, OTHER])[0].score
     _add_fire(con)
