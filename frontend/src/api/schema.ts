@@ -348,6 +348,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/location/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Location
+         * @description Typeahead place search (issue #145): proxies Nominatim server-side so the browser never
+         *     calls it directly and the one User-Agent/rate-limit policy (geocode._throttle) covers it.
+         *     Degrades to an empty list on a geocoder failure - the autocomplete just shows no matches
+         *     rather than surfacing an error mid-keystroke.
+         */
+        get: operations["search_location_api_location_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/refresh": {
         parameters: {
             query?: never;
@@ -578,6 +601,18 @@ export interface components {
             license_code: string;
             /** Attribution */
             attribution: string;
+        };
+        /**
+         * PlaceSuggestion
+         * @description One typeahead hit from ``/api/location/search`` (issue #145).
+         */
+        PlaceSuggestion: {
+            /** Name */
+            name: string;
+            /** Lat */
+            lat: number;
+            /** Lng */
+            lng: number;
         };
         /** PreciseObservation */
         PreciseObservation: {
@@ -1373,6 +1408,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+        };
+    };
+    search_location_api_location_search_get: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaceSuggestion"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -6,14 +6,17 @@ import "./style.css";
 import { getJson, postJson } from "./api/client";
 import type { Home, LocationResponse } from "./api/types";
 import { initGenusSelection } from "./genera";
-import { loadCamps, loadLand } from "./layers";
+import { initLayerToggles } from "./layer-toggles";
+import { loadLand } from "./layers";
 import { initLocationAutocomplete, initPlaceAutocomplete } from "./location";
-import { currentTheme, initMap, map, setMapClickHandler, setTiles, updateHome } from "./map";
+import { initMap, map, setMapClickHandler, updateHome } from "./map";
 import { runPlan } from "./plan";
-import { cancelRefresh, setLocationLatLng, startRefresh } from "./refresh";
+import { setLocationLatLng, startRefresh } from "./refresh";
 import { collapseIfOpen, currentDetent, initSheet, snapTo } from "./sheet";
-import { errorDetail, qs, setStatus, state, type Units, type View } from "./state";
-import { initMonths, runAlerts, runDestinations } from "./views";
+import { errorDetail, qs, setStatus, state } from "./state";
+import { initTextSize, initTheme, initUnits } from "./ui-prefs";
+import { refreshCurrentView } from "./view-run";
+import { initMonths, runDestinations } from "./views";
 
 // Wires a plan-tab Start/Destination field: unlike the header's home search (which persists the
 // choice via /api/location), a selected suggestion here just fills the input with resolved
@@ -33,20 +36,12 @@ function initPlanPlaceField(inputId: string, listId: string, formId: string): vo
   );
 }
 
-// Re-runs whichever view is currently open - used after a data refresh finishes so the new
-// data actually shows up without the user having to switch tabs back and forth to force it.
-function refreshCurrentView(): void {
-  if (state.view === "destinations") runDestinations();
-  else if (state.view === "alerts") runAlerts();
-  else if (state.view === "plan") runPlan();
-}
-
 function initTabs(): void {
   document.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((button) => {
     button.onclick = () => {
       document.querySelectorAll(".tabs button").forEach((other) => other.classList.remove("active"));
       button.classList.add("active");
-      state.view = (button.dataset.view as View) ?? "destinations";
+      state.view = (button.dataset.view as typeof state.view) ?? "destinations";
 
       // Show plan controls only while on the Plan tab.
       const planRow = document.getElementById("plan-row");
@@ -62,9 +57,7 @@ function initTabs(): void {
       // easy to mistake for the new tab's data since nothing visibly changed yet.
       qs("#panel").innerHTML = "<p class='hint'>Loading…</p>";
 
-      if (state.view === "destinations") runDestinations();
-      else if (state.view === "alerts") runAlerts();
-      else if (state.view === "plan") runPlan();
+      refreshCurrentView();
     };
   });
 }
@@ -105,57 +98,6 @@ function initHelp(): void {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") close();
   });
-}
-
-function initTheme(): void {
-  const toggle = qs<HTMLButtonElement>("#theme-toggle");
-  const apply = (theme: "dark" | "light"): void => {
-    document.documentElement.dataset.theme = theme;
-    toggle.textContent = theme === "dark" ? "🌙" : "☀️";
-    toggle.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
-    toggle.setAttribute("aria-pressed", String(theme === "dark"));
-    setTiles(); // no-op until the map exists; initMap lays the first tiles
-  };
-  apply(currentTheme()); // the inline <head> script already set the attribute (default dark)
-  toggle.onclick = () => {
-    const next = currentTheme() === "dark" ? "light" : "dark";
-    localStorage.setItem("foray-theme", next);
-    apply(next);
-  };
-}
-
-// Persisted like theme/units - toggles a root data attribute that style.css uses to bump up
-// font sizes across the panel/cards/map controls for readability on a phone.
-function initTextSize(): void {
-  const toggle = qs<HTMLButtonElement>("#text-size-toggle");
-  const apply = (large: boolean): void => {
-    document.documentElement.dataset.textSize = large ? "large" : "normal";
-    toggle.setAttribute("aria-pressed", String(large));
-    toggle.title = large ? "Switch to normal text size" : "Switch to larger text";
-  };
-  apply(localStorage.getItem("foray-text-size") === "large");
-  toggle.onclick = () => {
-    const next = document.documentElement.dataset.textSize !== "large";
-    localStorage.setItem("foray-text-size", next ? "large" : "normal");
-    apply(next);
-  };
-}
-
-function initUnits(): void {
-  const toggle = qs<HTMLButtonElement>("#units-toggle");
-  const apply = (units: Units): void => {
-    state.units = units;
-    toggle.textContent = units;
-    toggle.title = units === "mi" ? "Switch to kilometers" : "Switch to miles";
-    toggle.setAttribute("aria-pressed", String(units === "mi"));
-    if (state.home) updateHome(state.home);
-  };
-  apply(state.units);
-  toggle.onclick = () => {
-    const next: Units = state.units === "mi" ? "km" : "mi";
-    localStorage.setItem("foray-units", next);
-    apply(next);
-  };
 }
 
 async function main(): Promise<void> {
@@ -208,46 +150,7 @@ async function main(): Promise<void> {
     const succeeded = await startRefresh("Refreshing mushroom data…", "mushrooms");
     if (succeeded) refreshCurrentView();
   };
-
-  let currentRefreshTarget: string | null = null;
-
-  const ensureLayer = async (target: string, msg: string) => {
-    // startRefresh will instantly skip if the backend detects it's already ingested
-    await startRefresh(msg, target);
-    // If the user toggled a different layer (or cancelled) while this await was in flight,
-    // currentRefreshTarget has already moved on - don't clobber its state or reload out of order.
-    if (currentRefreshTarget !== target) return;
-    currentRefreshTarget = null;
-    loadCamps();
-    loadLand();
-  };
-  const cancelLayerRefresh = (target: string) => {
-    // Only cancel if the in-flight refresh is for this specific layer, so we
-    // don't accidentally abort an unrelated mushroom refresh.
-    if (currentRefreshTarget === target) {
-      cancelRefresh();
-      currentRefreshTarget = null;
-    }
-  };
-
-  const wireLayerToggle = (id: string, target: string, msg: string, loader: () => void) => {
-    qs(id).onchange = (e) => {
-      if ((e.target as HTMLInputElement).checked) {
-        currentRefreshTarget = target;
-        ensureLayer(target, msg);
-      } else {
-        cancelLayerRefresh(target);
-        loader();
-      }
-    };
-  };
-
-  wireLayerToggle("#show-camps", "camps", "Fetching campgrounds…", loadCamps);
-  wireLayerToggle("#show-dispersed", "dispersed", "Fetching dispersed camping…", loadCamps);
-  qs("#free-camps").onchange = () => loadCamps();
-  wireLayerToggle("#show-land-blm", "land", "Fetching public land…", loadLand);
-  wireLayerToggle("#show-land-usfs", "land", "Fetching public land…", loadLand);
-  wireLayerToggle("#show-land-tribal", "land", "Fetching public land…", loadLand);
+  initLayerToggles();
   initLocationAutocomplete();
   initGenusSelection(refreshCurrentView);
 
@@ -261,8 +164,8 @@ async function main(): Promise<void> {
     if (home) {
       geoApplied = true;
       updateHome(home);
+      refreshCurrentView(); // before loadLand() - see refresh.ts setLocation
       loadLand();
-      refreshCurrentView();
     }
     return home;
   });
@@ -346,8 +249,8 @@ function initRadiusPresets(): void {
           return;
         }
         updateHome(response.home);
+        refreshCurrentView(); // before loadLand() - see refresh.ts setLocation
         loadLand();
-        refreshCurrentView();
       };
     });
 }

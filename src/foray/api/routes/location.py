@@ -5,14 +5,14 @@ from __future__ import annotations
 import logging
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
 from foray import geocode
 from foray.api.deps import get_pool, get_state, resolve_device_id, resolve_home, set_device_cookie
 from foray.api.state import AppState
-from foray.api_models import LocationResponse, StatusResponse
+from foray.api_models import LocationResponse, PlaceSuggestion, StatusResponse
 from foray.cache import delete_location as db_delete_location
 from foray.cache import save_location as db_save_location
 from foray.config import Home
@@ -83,6 +83,24 @@ def set_location(
         )
 
     return LocationResponse(home=home)
+
+
+@router.get("/api/location/search")
+def search_location(
+    query: str = Query("", alias="q", max_length=200),
+) -> list[PlaceSuggestion]:
+    """Typeahead place search (issue #145): proxies Nominatim server-side so the browser never
+    calls it directly and the one User-Agent/rate-limit policy (geocode._throttle) covers it.
+    Degrades to an empty list on a geocoder failure - the autocomplete just shows no matches
+    rather than surfacing an error mid-keystroke."""
+    try:
+        hits = geocode.suggest(query)
+    except ValueError:
+        return []
+    except (httpx.HTTPError, LookupError):
+        logger.warning("location: place search failed for %r", query, exc_info=True)
+        return []
+    return [PlaceSuggestion(name=hit.name, lat=hit.lat, lng=hit.lng) for hit in hits]
 
 
 @router.delete("/api/location")

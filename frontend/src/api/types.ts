@@ -57,6 +57,9 @@ export type TripPlan = components["schemas"]["TripPlan"];
 
 export type LocationResponse = components["schemas"]["LocationResponse"];
 
+/** One typeahead place-search hit (`GET /api/location/search`, issue #145). */
+export type PlaceSuggestion = components["schemas"]["PlaceSuggestion"];
+
 /** A configured coverage region with ingest freshness info (`GET /api/coverage`). */
 export type CoverageRegion = components["schemas"]["CoverageRegionResponse"];
 

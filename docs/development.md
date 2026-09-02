@@ -54,12 +54,13 @@ All settings come from environment variables (prefix `FORAY_`, nested delimiter 
 **Database connection** comes from the standard libpq env vars
 (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`), read natively by `psycopg`. Credentials
 never belong in a committed file. `docker-compose.yml` + the Makefile export cover local dev;
-production gets them injected from AWS Secrets Manager (see `docs/deployment.md`).
+production gets them from the ansible-managed environment file on the host (see
+`docs/deployment.md`).
 
 **The home-location override** (written by the UI's Set Location form) lives in Postgres now, in
-the single-row `app_location` table - not a `location.json` file. It survives `foray refresh`
-and container restarts automatically; there's nothing to delete to reset it besides truncating
-that table.
+the `app_location` table, one row per anonymous device-id cookie - not a `location.json` file
+and no longer a single global row. It survives `foray refresh` and container restarts
+automatically; there's nothing to delete to reset it besides truncating that table.
 
 ---
 

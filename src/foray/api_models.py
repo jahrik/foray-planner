@@ -236,6 +236,14 @@ class TripPlan(BaseModel):
     skipped_unreachable: int
 
 
+class PlaceSuggestion(BaseModel):
+    """One typeahead hit from ``/api/location/search`` (issue #145)."""
+
+    name: str
+    lat: float
+    lng: float
+
+
 class LocationResponse(BaseModel):
     home: Home
 
