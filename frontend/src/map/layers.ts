@@ -39,8 +39,8 @@ export const tribalOn = (): boolean => qs<HTMLInputElement>("#show-land-tribal")
 const LAND_TOGGLES: Record<string, () => boolean> = { BLM: blmOn, USFS: usfsOn, Tribal: tribalOn };
 const landOn = (): boolean => blmOn() || usfsOn() || tribalOn();
 
-// OSM dispersed layer: real tagged sites ("reported") + the road∩public-land proxy ("dispersed").
-const isDispersed = (site: CampSite): boolean => site.kind === "dispersed" || site.kind === "reported";
+// OSM dispersed-camping layer: sites tagged campable in OpenStreetMap (kind='reported').
+const isDispersed = (site: CampSite): boolean => site.kind === "reported";
 
 // Fetch + plot camping near the focused region. `/api/camps` returns developed campgrounds and
 // the OSM dispersed layer together; each is drawn only when its toggle is on. No-op (just clears)
@@ -60,17 +60,15 @@ export async function loadCamps(): Promise<void> {
   sites.forEach((site) => {
     const dispersed = isDispersed(site);
     if (dispersed ? !dispersedOn() : !campsOn()) return; // gated by the matching toggle
-    const proxy = site.kind === "dispersed"; // inferred point (vs a tagged "reported" site)
     const isFree = site.free === true;
     const marker = L.circleMarker(
       [site.center_lat, site.center_lng],
       circleStyle({
         radius: dispersed ? 6 : 5,
         fill: dispersed ? CAMP_OSM : isFree ? CAMP_FREE : CAMP_PAID,
-        stroke: proxy ? CAMP_OSM : HOME_RING,
-        weight: proxy ? 2 : 1,
-        fillOpacity: proxy ? 0.35 : 0.9,
-        dashArray: proxy ? "3 3" : undefined, // dashed ring signals the low-confidence proxy
+        stroke: HOME_RING,
+        weight: 1,
+        fillOpacity: 0.9,
       }),
     )
       .addTo(map)
@@ -83,11 +81,7 @@ export async function loadCamps(): Promise<void> {
 // `site.url` is server-constructed (recreation.gov / openstreetmap + id), so it's a safe href.
 function campPopup(site: CampSite): HTMLElement {
   const isOsm = site.source === "osm";
-  // The proxy is a guess, so its detail line carries the "verify" caveat instead of a cost.
-  const detail =
-    site.kind === "dispersed"
-      ? "likely dispersed-legal - verify with the agency"
-      : feeLabel(site.free === true, site.fee);
+  const detail = feeLabel(site.free === true, site.fee);
   return buildPopup({
     title: site.name,
     lines: [`${dist(site.distance_km)} · ${detail}`],
