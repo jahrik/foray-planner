@@ -38,7 +38,8 @@ Guiding principles - keep these in mind for any feature work:
   catalog, photos). Descriptive User-Agent; deep-paginates via `id_above`; `_with_retries`
   backs off on transient network errors so one blip doesn't abort a long ingest.
 - `src/foray/geocode.py` - resolve a place name (OpenStreetMap Nominatim) or raw `lat,lng`
-  to coordinates. Network-mocked in tests.
+  to coordinates: `resolve` (one hit), `suggest` (typeahead list, backs
+  `GET /api/location/search`), `reverse` / `notable_place_name`. Network-mocked in tests.
 - `src/foray/geo.py` - pure lat/lng math shared by scoring + the ingest layer: `haversine_km`
   (canonical distance), `bbox_around` (the flat-degree disk bbox every `*_near` query
   prefilters with), `KM_PER_DEG_LAT`, and the corridor tangent-plane projection helpers.
@@ -142,18 +143,25 @@ Guiding principles - keep these in mind for any feature work:
   `FORAY_RESYNC_BATCH_SIZE` (default 2000), `FORAY_ELEVATION_INTERVAL_HOURS` (default 1), and
   `FORAY_ELEVATION_LIMIT` (default 20000 - an upper bound; a run stops earlier when Open-Meteo
   rate-limits it).
-- `frontend/` - the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern:
-  `src/state.ts` (shared `State`, DOM `qs()`/`setStatus()` helpers), `src/map.ts` (Leaflet init,
-  theme/tile switching, marker palette, `clear*()` layer helpers), `src/layers.ts` (camps/land/
-  trails fetch + render + popups), `src/views.ts` (destinations/calendar/alerts tabs),
-  `src/plan.ts` (route planning UI + GPX/JSON export), `src/refresh.ts` (SSE refresh + set-location),
-  and `src/main.ts` (DOM wiring/orchestration). `src/api/` holds the typed client (`openapi-fetch`,
+- `frontend/` - the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern
+  (issue #242 Part 2 broke the big files up; a `src/{map,ui,views}/` subfolder move is the next
+  step). Roughly: `src/state.ts` (shared `State`, `qs()`/`setStatus()` helpers), `src/prefs.ts`
+  (the 3 persisted `localStorage` prefs), `src/map.ts` (Leaflet init, theme/tile switching,
+  marker palette, `clear*()` helpers), `src/layers.ts` (camps/land/trails/precise fetch +
+  render), `src/popup.ts` / `src/markers.ts` / `src/layer-lifecycle.ts` (map primitives),
+  `src/views.ts` + `src/alerts-view.ts` + `src/destination-tabs.ts` (the destinations + alerts
+  panels and the per-card detail tabs), `src/plan.ts` (route planning UI + GPX/JSON export),
+  `src/view-run.ts` (`refreshCurrentView` - the single "re-run the open panel" owner),
+  `src/card-select.ts` / `src/card-dom.ts` / `src/lazy-panel.ts` / `src/autocomplete.ts`
+  (shared UI primitives), `src/sheet.ts` (mobile bottom sheet), `src/refresh.ts` (SSE refresh +
+  set-location), `src/ui-prefs.ts` + `src/layer-toggles.ts` (header toggle wiring), and
+  `src/main.ts` (DOM wiring/orchestration). `src/api/` holds the typed client (`openapi-fetch`,
   in `client.ts`: `getJson` / `postJson` / `deleteJson` throw an `ApiError` on non-2xx, and
   `openRefreshStream` is the typed SSE reader for `/api/refresh/stream`) + `schema.ts`
   generated from the backend's OpenAPI via `openapi-typescript` - `npm run gen:api`
   regenerates both; CI fails if that produces a diff, so `schema.ts` never drifts from the
-  actual API. Every API call goes through `client.ts` - no raw `fetch` (except the
-  browser->Nominatim autocomplete in `location.ts`, issue #145 will move it server-side).
+  actual API. Every API call goes through `client.ts` - no raw `fetch` (place-search
+  autocomplete is `GET /api/location/search`, proxied server-side, issue #145).
   Vitest covers the pure helpers (`*.test.ts` beside the source); `npm test` runs in
   `make frontend`. `GET /api/coverage` exists on the backend (coverage regions + their
   last-ingest freshness) but has no frontend consumer yet. Builds into `../src/foray/web/dist`. A

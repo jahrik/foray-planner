@@ -1,6 +1,7 @@
 import type L from "leaflet";
 
 import type { ApiError, Home, TripPlan } from "./api/types";
+import { getUnits } from "./prefs";
 
 export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 export const CURRENT_MONTH = new Date().getMonth() + 1; // 1-12
@@ -40,10 +41,7 @@ export const state: State = {
   planTrip: null,
   focused: null,
   cellDeg: 0.25, // overwritten from /api/config once it loads; matches the backend default
-  units: ((): Units => {
-    const stored = localStorage.getItem("foray-units");
-    return stored === "km" || stored === "mi" ? stored : "mi";
-  })(),
+  units: getUnits(),
 };
 
 const KM_TO_MI = 0.621371;

@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from foray import geocode
-from foray.geocode import notable_place_name, resolve, reverse
+from foray.geocode import notable_place_name, resolve, reverse, suggest
 
 
 @pytest.fixture(autouse=True)
@@ -60,6 +60,42 @@ def test_geocode_no_match_raises() -> None:
     client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[])))
     with pytest.raises(LookupError):
         resolve("asdfqwerzxcv nowhere", client=client)
+
+
+def test_suggest_returns_multiple_matches() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["q"] == "Bend"
+        assert request.url.params["limit"] == "5"
+        return httpx.Response(
+            200,
+            json=[
+                {"lat": "44.058", "lon": "-121.315", "display_name": "Bend, Deschutes County, Oregon"},
+                {"lat": "45.612", "lon": "-121.199", "display_name": "Bend, Klickitat County, Washington"},
+            ],
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    hits = suggest("Bend", client=client)
+    assert [hit.lat for hit in hits] == pytest.approx([44.058, 45.612])
+    assert "Deschutes" in hits[0].name
+
+
+def test_suggest_blank_query_makes_no_request() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover - must not run
+        raise AssertionError("blank query should not hit Nominatim")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    assert suggest("   ", client=client) == []
+
+
+def test_suggest_passes_through_raw_coordinates() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover - must not run
+        raise AssertionError("a raw coordinate pair should short-circuit")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    hits = suggest("44.05, -121.31", client=client)
+    assert len(hits) == 1
+    assert hits[0].lat == pytest.approx(44.05)
 
 
 def test_reverse_geocodes_coordinates_via_nominatim() -> None:

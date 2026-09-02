@@ -3,7 +3,7 @@ import type { LocationResponse } from "./api/types";
 import { loadLand } from "./layers";
 import { updateHome } from "./map";
 import { errorDetail, qs, setStatus } from "./state";
-import { runDestinations } from "./views";
+import { refreshCurrentView } from "./view-run";
 
 // Tracks the in-flight refresh's SSE connection + its promise resolver, so cancelRefresh()
 // can tear both down immediately instead of waiting for the server to report cancellation.
@@ -134,7 +134,7 @@ export async function setLocation(query: string): Promise<void> {
   }
   updateHome(response.home);
   loadLand();
-  runDestinations();
+  refreshCurrentView();
 }
 
 // Map clicks (e.g. on a city label on the base tiles) carry only coordinates; the backend
@@ -152,5 +152,5 @@ export async function setLocationLatLng(lat: number, lng: number): Promise<void>
   }
   updateHome(response.home);
   loadLand();
-  runDestinations();
+  refreshCurrentView();
 }

@@ -67,6 +67,42 @@ def resolve(query: str, *, client: httpx.Client | None = None) -> Location:
     return _geocode(query, client=client)
 
 
+def suggest(query: str, *, limit: int = 5, client: httpx.Client | None = None) -> list[Location]:
+    """Typeahead place search (issue #145): the first ``limit`` Nominatim matches for ``query``.
+
+    Backs the header/plan-tab place-search autocomplete, moving the browser->Nominatim call
+    server-side so the one User-Agent/rate-limit policy (``_throttle``) covers it too. A raw
+    ``lat,lng`` pair short-circuits to a single synthesised result, matching ``resolve()``.
+    Returns ``[]`` for a blank query rather than calling out.
+    """
+    stripped = query.strip()
+    if not stripped:
+        return []
+    match = _COORDS.match(stripped)
+    if match:
+        lat, lng = float(match.group(1)), float(match.group(2))
+        if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+            raise ValueError(f"coordinates out of range: {query!r}")
+        return [Location(name=f"{lat:.4f}, {lng:.4f}", lat=lat, lng=lng)]
+    owns = client is None
+    client = client or httpx.Client(timeout=15.0)
+    try:
+        _throttle.wait()
+        resp = client.get(
+            NOMINATIM,
+            params={"q": stripped, "format": "json", "limit": max(1, min(limit, 10))},
+            headers={"User-Agent": USER_AGENT},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    finally:
+        if owns:
+            client.close()
+    return [
+        Location(name=row.get("display_name", stripped), lat=float(row["lat"]), lng=float(row["lon"])) for row in data
+    ]
+
+
 def reverse(lat: float, lng: float, *, client: httpx.Client | None = None) -> Location:
     """Reverse-geocode ``lat``/``lng`` to a human-readable place name.
 

@@ -19,8 +19,9 @@ export interface AutocompleteConfig<T> {
   /** Drop items before they're shown (e.g. genera already selected). Applied wherever the
    * result list is read, so keyboard nav indexes the same filtered set. */
   filter?: (item: T) => boolean;
-  /** Runs synchronously on every keystroke, before the debounce and min-length checks - lets
-   * the caller abort an in-flight fetch (see location.ts). */
+  /** Runs synchronously on every keystroke, before the debounce and min-length checks - a hook
+   * for per-keystroke side effects (e.g. cancelling an in-flight fetch). Unused since the
+   * place search moved server-side (issue #145); kept for callers that need it. */
   onInput?: () => void;
   /** Form submitted with non-empty text and no suggestion picked: called with the trimmed
    * text. Omit to only preventDefault (the genus picker has no free-text path). */

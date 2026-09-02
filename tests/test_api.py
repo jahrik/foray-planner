@@ -655,6 +655,33 @@ def test_set_location_latlng_client_name_skips_reverse_geocode(
     assert response.json()["home"]["name"] == "My spot"
 
 
+def test_location_search_returns_suggestions(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from foray.geocode import Location
+
+    def fake_suggest(query: str, *, limit: int = 5, client: object = None) -> list[Location]:
+        assert query == "Bend"
+        return [Location(name="Bend, Oregon", lat=44.06, lng=-121.31)]
+
+    monkeypatch.setattr("foray.api.geocode.suggest", fake_suggest)
+    response = client.get("/api/location/search", params={"q": "Bend"})
+    assert response.status_code == 200
+    assert response.json() == [{"name": "Bend, Oregon", "lat": 44.06, "lng": -121.31}]
+
+
+def test_location_search_degrades_to_empty_list_on_geocoder_failure(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    def boom(query: str, *, limit: int = 5, client: object = None) -> list[object]:
+        raise httpx.ConnectError("nominatim unreachable")
+
+    monkeypatch.setattr("foray.api.geocode.suggest", boom)
+    response = client.get("/api/location/search", params={"q": "anywhere"})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
 def test_config_sets_device_id_cookie_on_first_visit(client: TestClient) -> None:
     response = client.get("/api/config")
     assert response.status_code == 200

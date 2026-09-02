@@ -4,10 +4,9 @@ Observations are keyed by iNat id, so re-ingesting the same window is a no-op
 (``ON CONFLICT DO NOTHING``). Region binning (grid cell) is derived in SQL from
 lat/lng and ``cell_deg`` so it is never stored redundantly.
 
-Connections are opened with ``autocommit=True`` (matching the DuckDB-era code's implicit
-per-statement commit semantics, which nothing here was written against explicit
-transactions for) - callers that need atomicity across statements (e.g.
-``scoring.build_phenology``'s drop+rebuild) wrap them in an explicit
+Connections are opened with ``autocommit=True`` (nothing here was written against explicit
+transactions) - callers that need atomicity across statements (e.g.
+``regions.build_phenology``'s drop+rebuild) wrap them in an explicit
 ``with con.transaction():`` block instead.
 """
 
@@ -213,6 +212,16 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # issue #36: per-observation ground elevation, enriched after ingest from Open-Meteo's DEM
     # (see ingest.backfill_elevations). NULL = not yet looked up.
     (9, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS elevation_m INTEGER"),
+    # issue #242 Part 5: drop two retired artifacts that were left in place with manual-TODO
+    # comments rather than a migration. `taxa` (issue #79 Phase 4) was superseded by
+    # fungi_genera - every name lookup reads the full catalog now (regions._genus_name_map);
+    # nothing has referenced `taxa` since. `app_location_legacy_singleton` is the pre-multi-user
+    # single-row `app_location` table, renamed out of the way (not dropped) by the SCHEMA block
+    # above when the per-device table was introduced - its one row was a stale global home that
+    # no code path reads. By the time this migration ships, every running instance is on the
+    # post-#250 code that touches neither table, so the drop is safe on a rolling deploy.
+    (10, "DROP TABLE IF EXISTS taxa"),
+    (11, "DROP TABLE IF EXISTS app_location_legacy_singleton"),
 ]
 
 
@@ -221,9 +230,9 @@ def connect(conninfo: str = "") -> psycopg.Connection:
 
     ``conninfo`` empty (the default) means "use libpq's usual env vars"
     (``PGHOST``/``PGPORT``/``PGUSER``/``PGPASSWORD``/``PGDATABASE``), which is how the
-    ECS task, local dev (via ``docker-compose.yml``'s port mapping + a ``.env``), and
-    tests (via CI service container env or local PG* vars) are all wired - no
-    DSN-building code needed anywhere.
+    deployed container (ansible-managed env file), local dev (via
+    ``docker-compose.yml``'s port mapping + a ``.env``), and tests (via CI service
+    container env or local PG* vars) are all wired - no DSN-building code needed anywhere.
     """
     con = psycopg.connect(conninfo, autocommit=True)
     apply_schema(con)
@@ -332,12 +341,9 @@ def apply_schema(con: psycopg.Connection) -> None:
             "CREATE INDEX race with another starting instance) - resync will still work, just "
             "without the index speeding up its stale-row lookup until a later connect() retries it."
         )
-    # `taxa` is retired (issue #79 Phase 4): superseded by fungi_genera, the full catalog
-    # every name lookup now reads from (see scoring.py's _genus_name_map). Left in place
-    # rather than dropped here - a DROP TABLE running unconditionally on every connect() is a
-    # disruptive side effect for a rolling deploy where an older instance might still be
-    # running against it. Drop it manually (`DROP TABLE IF EXISTS taxa;`) once nothing older
-    # than this change is running.
+    # `taxa` and `app_location_legacy_singleton` (both retired) are dropped by migrations 10
+    # and 11 above, not here - a bare DROP on every connect() would be a disruptive side
+    # effect, whereas the migration chain runs each statement exactly once and records it.
 
 
 def upsert_fungi_genera(con: psycopg.Connection, rows: Iterable[dict[str, Any]]) -> None:
