@@ -13,6 +13,7 @@ import type {
 } from "./api/types";
 import { createCardSelection, createRunGuard } from "./card-select";
 import { focusRegion, selectTrailhead } from "./layers";
+import { createLazyLoader } from "./lazy-panel";
 import { focusOnMap, sheetEnabled, snapTo } from "./sheet";
 import {
   clearCardCampMarkers,
@@ -240,13 +241,12 @@ export async function runDestinations(): Promise<void> {
         showMoreButton.setAttribute("aria-expanded", String(expanded));
       };
     }
-    // "loading" (not just a boolean) guards against a second click firing a duplicate fetch
-    // while the first is still in flight; a failed fetch resets to "idle" so the tab can be
-    // retried, rather than permanently disabling it like a plain "already loaded" flag would.
-    let calendarState: "idle" | "loading" | "loaded" = "idle";
-    let photosState: "idle" | "loading" | "loaded" = "idle";
-    let trailsState: "idle" | "loading" | "loaded" = "idle";
-    let campsState: "idle" | "loading" | "loaded" = "idle";
+    // Each detail tab fetches once, on first open (createLazyLoader owns the idle/loading/loaded
+    // guard and the retry-on-failure reset).
+    const calendarLoader = createLazyLoader(() => loadCalendarInto(region.region_id, calendarBody));
+    const photosLoader = createLazyLoader(() => loadPhotosInto(region.region_id, photosBody));
+    const trailsLoader = createLazyLoader(() => loadTrailheadsInto(region, trailsBody));
+    const campsLoader = createLazyLoader(() => loadCampgroundsInto(region, campsBody));
     const showTab = (tab: "species" | "calendar" | "photos" | "trails" | "camps") => {
       speciesTab.classList.toggle("active", tab === "species");
       calendarTab.classList.toggle("active", tab === "calendar");
@@ -266,42 +266,22 @@ export async function runDestinations(): Promise<void> {
     calendarTab.onclick = (e) => {
       e.stopPropagation();
       showTab("calendar");
-      if (calendarState === "idle") {
-        calendarState = "loading";
-        loadCalendarInto(region.region_id, calendarBody).then((succeeded) => {
-          calendarState = succeeded ? "loaded" : "idle";
-        });
-      }
+      calendarLoader.open();
     };
     photosTab.onclick = (e) => {
       e.stopPropagation();
       showTab("photos");
-      if (photosState === "idle") {
-        photosState = "loading";
-        loadPhotosInto(region.region_id, photosBody).then((succeeded) => {
-          photosState = succeeded ? "loaded" : "idle";
-        });
-      }
+      photosLoader.open();
     };
     trailsTab.onclick = (e) => {
       e.stopPropagation();
       showTab("trails");
-      if (trailsState === "idle") {
-        trailsState = "loading";
-        loadTrailheadsInto(region, trailsBody).then((succeeded) => {
-          trailsState = succeeded ? "loaded" : "idle";
-        });
-      }
+      trailsLoader.open();
     };
     campsTab.onclick = (e) => {
       e.stopPropagation();
       showTab("camps");
-      if (campsState === "idle") {
-        campsState = "loading";
-        loadCampgroundsInto(region, campsBody).then((succeeded) => {
-          campsState = succeeded ? "loaded" : "idle";
-        });
-      }
+      campsLoader.open();
     };
     // Selecting a region - from either its card or its map marker - highlights the card and
     // scrolls it into view instead of popping a bubble over the marker (which covered up the
