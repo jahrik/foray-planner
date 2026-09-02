@@ -788,10 +788,11 @@ def cached_precip(
 ) -> dict[dt.date, float | None]:
     """``date -> precip_mm`` already cached for ``cell_id`` in ``[start, end]`` (inclusive).
 
-    A day absent from the result is one never fetched; a day present with value ``None`` is one
-    Open-Meteo returned null for (ERA5 lag) - the caller retries the latter, not the former.
-    ``source`` restricts to one origin: the per-observation backfill trusts only ERA5 archive
-    rows, never the provisional forecast rows the layer refresh also writes."""
+    A day absent from the result was never fetched; a day present with value ``None`` is one
+    Open-Meteo returned null for (ERA5 lag). ``backfill_precip`` treats both the same - "not
+    known yet", so it refetches the span - and never records a window sum that touches such a
+    day. ``source`` restricts to one origin: the per-observation backfill trusts only ERA5
+    archive rows, never the provisional forecast rows the layer refresh also writes."""
     query: LiteralString = "SELECT date, precip_mm FROM precip_daily WHERE cell_id = %s AND date BETWEEN %s AND %s"
     params: list[Any] = [cell_id, start, end]
     if source is not None:
@@ -825,12 +826,14 @@ def observations_missing_precip(
     con: psycopg.Connection, limit: int, *, near: tuple[float, float] | None = None
 ) -> list[tuple[int, float, float, dt.date]]:
     """Up to ``limit`` research-grade, non-obscured observations with coordinates and an
-    ``observed_on`` but no ``precip_7d_mm`` yet (issue #226). Same research-grade/obscured/
-    in-range filters as :func:`observations_missing_elevation`; ordered by ``near`` (planar
-    distance) when given, else oldest ``observed_on`` first so a cell's history fills in order.
+    ``observed_on`` but at least one of ``precip_7d_mm`` / ``precip_30d_mm`` still unset
+    (issue #226). Same research-grade/obscured/in-range filters as
+    :func:`observations_missing_elevation`; ordered by ``near`` (planar distance) when given,
+    else oldest ``observed_on`` first so a cell's history fills in order.
 
-    ``precip_7d_mm IS NULL`` is the pending sentinel: a row whose window still has an
-    ERA5-null day is left unwritten and reappears here next pass (intended retry)."""
+    ``precip_7d_mm IS NULL OR precip_30d_mm IS NULL`` is the pending sentinel: a row whose 7 d
+    sum lands but whose 30 d sum still touches an ERA5-null day is written partially (7 d only)
+    and reappears here next pass so the 30 d column gets retried too."""
     box_sql: LiteralString = ""
     params: list[Any] = []
     order_sql: LiteralString = "ORDER BY observed_on"
@@ -843,7 +846,7 @@ def observations_missing_precip(
     rows = con.execute(
         """
         SELECT id, lat, lng, observed_on FROM observations
-        WHERE precip_7d_mm IS NULL
+        WHERE (precip_7d_mm IS NULL OR precip_30d_mm IS NULL)
               AND observed_on IS NOT NULL
               AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180
               AND quality_grade = 'research'
@@ -872,8 +875,13 @@ def set_observation_precip(con: psycopg.Connection, rows: Sequence[tuple[int, fl
 
 def active_region_ids(con: psycopg.Connection) -> list[str]:
     """Every ``region_id`` present in the materialized ``regions`` table - the bounded set of
-    grid cells the per-destination precip refresh (issue #226 Part 2) needs to fetch."""
-    return [region_id for (region_id,) in con.execute("SELECT region_id FROM regions").fetchall()]
+    grid cells the per-destination precip refresh (issue #226 Part 2) needs to fetch. Empty
+    when ``regions`` doesn't exist yet (no ``build_phenology`` has run)."""
+    try:
+        return [region_id for (region_id,) in con.execute("SELECT region_id FROM regions").fetchall()]
+    except psycopg.errors.UndefinedTable:
+        con.rollback()
+        return []
 
 
 def region_precip(con: psycopg.Connection, region_ids: Collection[str]) -> dict[str, dict[str, float | None]]:

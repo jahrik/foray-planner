@@ -280,14 +280,15 @@ def backfill_precip(
     near: tuple[float, float] | None = None,
     client: httpx.Client | None = None,
 ) -> int:
-    """Enrich observations that have no ``precip_7d_mm`` yet (issue #226), from Open-Meteo's
-    ERA5 archive.
+    """Enrich observations missing ``precip_7d_mm`` or ``precip_30d_mm`` (issue #226), from
+    Open-Meteo's ERA5 archive.
 
     Pending observations are grouped by grid cell (``foray.geo.grid_cell`` - the same key
     ``regions`` uses); each cell needs one archive call spanning min(observed_on) - 30 d to
     max(observed_on) - 1 d, cached in ``precip_daily`` so overlapping windows and the layer
-    refresh reuse it. Per observation the 7 d / 30 d sums are written back only when the window
-    is fully covered - a still-null ERA5 day leaves the column ``NULL`` and the row pending.
+    refresh reuse it. A window sum is written only when every day in it is covered; the 7 d sum
+    can land while the wider 30 d sum stays ``NULL`` (an ERA5-null day in days 8-30), and the
+    row then reappears in the pending set so the 30 d column is retried too.
 
     Best-effort: an HTTP/network failure stops the run early (rows deferred), never raises -
     callers wire this in after ingest where it must not fail the ingest. ``max_cells`` caps the

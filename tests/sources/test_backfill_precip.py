@@ -79,6 +79,26 @@ def test_partial_window_leaves_column_null_and_stays_pending(
     assert [obs_id for obs_id, *_ in still_pending] == [1]
 
 
+def test_7d_lands_while_30d_stays_pending(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+    observed = dt.date(2026, 5, 20)
+    _seed_obs(con, [(1, GENUS, LAT, LNG, observed, 5, False)])
+
+    def fake_archive(
+        clat: float, clng: float, start: dt.date, end: dt.date, *, client: object = None
+    ) -> dict[dt.date, float | None]:
+        # All present except one day 20 back - inside the 30d window, outside the 7d window.
+        series: dict[dt.date, float | None] = {start + dt.timedelta(days=i): 1.0 for i in range((end - start).days + 1)}
+        series[observed - dt.timedelta(days=20)] = None
+        return series
+
+    monkeypatch.setattr(precip, "fetch_archive_precip", fake_archive)
+    assert ingest.backfill_precip(con, cell_deg=CELL) == 1
+    row = con.execute("SELECT precip_7d_mm, precip_30d_mm FROM observations WHERE id = 1").fetchone()
+    assert row == (7.0, None)
+    # Still pending so the 30d column gets retried once ERA5 fills that day.
+    assert [obs_id for obs_id, *_ in cache.observations_missing_precip(con, 10)] == [1]
+
+
 def test_region_precip_obs_mean_excludes_the_decoy(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     observed = dt.date(2026, 5, 20)
     _seed_obs(
