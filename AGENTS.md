@@ -144,18 +144,19 @@ Guiding principles - keep these in mind for any feature work:
   `FORAY_ELEVATION_LIMIT` (default 20000 - an upper bound; a run stops earlier when Open-Meteo
   rate-limits it).
 - `frontend/` - the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern
-  (issue #242 Part 2 broke the big files up; a `src/{map,ui,views}/` subfolder move is the next
-  step). Roughly: `src/state.ts` (shared `State`, `qs()`/`setStatus()` helpers), `src/prefs.ts`
-  (the 3 persisted `localStorage` prefs), `src/map.ts` (Leaflet init, theme/tile switching,
-  marker palette, `clear*()` helpers), `src/layers.ts` (camps/land/trails/precise fetch +
-  render), `src/popup.ts` / `src/markers.ts` / `src/layer-lifecycle.ts` (map primitives),
-  `src/views.ts` + `src/alerts-view.ts` + `src/destination-tabs.ts` (the destinations + alerts
-  panels and the per-card detail tabs), `src/plan.ts` (route planning UI + GPX/JSON export),
-  `src/view-run.ts` (`refreshCurrentView` - the single "re-run the open panel" owner),
-  `src/card-select.ts` / `src/card-dom.ts` / `src/lazy-panel.ts` / `src/autocomplete.ts`
-  (shared UI primitives), `src/sheet.ts` (mobile bottom sheet), `src/refresh.ts` (SSE refresh +
-  set-location), `src/ui-prefs.ts` + `src/layer-toggles.ts` (header toggle wiring), and
-  `src/main.ts` (DOM wiring/orchestration). `src/api/` holds the typed client (`openapi-fetch`,
+  (issue #242 Part 2 broke the big files up and grouped them into `src/{map,ui,views}/`
+  subfolders). Roughly: `src/state.ts` (shared `State`, `qs()`/`setStatus()` helpers),
+  `src/prefs.ts` (the 3 persisted `localStorage` prefs), `src/map/map.ts` (Leaflet init,
+  theme/tile switching, marker palette, `clear*()` helpers), `src/map/layers.ts` (camps/land/
+  trails/precise fetch + render), `src/map/popup.ts` / `src/map/markers.ts` /
+  `src/map/layer-lifecycle.ts` (map primitives), `src/map/sheet.ts` (mobile bottom sheet),
+  `src/views/views.ts` + `src/views/alerts-view.ts` + `src/views/destination-tabs.ts` (the
+  destinations + alerts panels and the per-card detail tabs), `src/views/plan.ts` (route
+  planning UI + GPX/JSON export), `src/views/view-run.ts` (`refreshCurrentView` - the single
+  "re-run the open panel" owner), `src/ui/card-select.ts` / `src/ui/card-dom.ts` /
+  `src/ui/lazy-panel.ts` / `src/ui/autocomplete.ts` (shared UI primitives), `src/ui/ui-prefs.ts`
+  + `src/ui/layer-toggles.ts` (header toggle wiring), `src/refresh.ts` (SSE refresh +
+  set-location), and `src/main.ts` (DOM wiring/orchestration). `src/api/` holds the typed client (`openapi-fetch`,
   in `client.ts`: `getJson` / `postJson` / `deleteJson` throw an `ApiError` on non-2xx, and
   `openRefreshStream` is the typed SSE reader for `/api/refresh/stream`) + `schema.ts`
   generated from the backend's OpenAPI via `openapi-typescript` - `npm run gen:api`

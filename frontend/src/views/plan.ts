@@ -1,13 +1,13 @@
 import L from "leaflet";
 
-import { getJson } from "./api/client";
-import type { Stop, TripPlan } from "./api/types";
-import { escapeXml, feeLabel } from "./format";
-import { focusRegion } from "./layers";
-import { addMarker, clearMarkers, map, setPlanRoute, HOME_DOT_STYLE, PLAN_STOP } from "./map";
-import { circleStyle } from "./markers";
-import { buildPopup } from "./popup";
-import { dist, displayName, errorDetail, inatUrl, monthsParam, MONTHS, qs, setStatus, state } from "./state";
+import { getJson } from "../api/client";
+import type { Stop, TripPlan } from "../api/types";
+import { escapeXml, feeLabel } from "../format";
+import { focusRegion } from "../map/layers";
+import { addMarker, clearMarkers, map, setPlanRoute, HOME_DOT_STYLE, PLAN_STOP } from "../map/map";
+import { circleStyle } from "../map/markers";
+import { buildPopup } from "../map/popup";
+import { dist, displayName, errorDetail, inatUrl, monthsParam, MONTHS, qs, setStatus, state } from "../state";
 
 export async function runPlan(): Promise<void> {
   setStatus("Planning route…");

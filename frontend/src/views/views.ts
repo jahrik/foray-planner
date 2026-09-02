@@ -1,18 +1,18 @@
-import { getJson } from "./api/client";
-import type { RegionPlace, RegionScore } from "./api/types";
-import { createCardSelection, createRunGuard } from "./card-select";
-import { makeActivatable, speciesChip, stopLinkPropagation } from "./card-dom";
+import { getJson } from "../api/client";
+import type { RegionPlace, RegionScore } from "../api/types";
+import { createCardSelection, createRunGuard } from "../ui/card-select";
+import { makeActivatable, speciesChip, stopLinkPropagation } from "../ui/card-dom";
 import {
   loadCalendarInto,
   loadCampgroundsInto,
   loadPhotosInto,
   loadTrailheadsInto,
 } from "./destination-tabs";
-import { focusRegion } from "./layers";
-import { createLazyLoader } from "./lazy-panel";
-import { focusOnMap, sheetEnabled, snapTo } from "./sheet";
-import { clearMarkers, map, plot } from "./map";
-import { dist, elevationLabel, errorDetail, monthsParam, MONTHS, qs, setStatus, state } from "./state";
+import { focusRegion } from "../map/layers";
+import { createLazyLoader } from "../ui/lazy-panel";
+import { focusOnMap, sheetEnabled, snapTo } from "../map/sheet";
+import { clearMarkers, map, plot } from "../map/map";
+import { dist, elevationLabel, errorDetail, monthsParam, MONTHS, qs, setStatus, state } from "../state";
 
 export function initMonths(): void {
   const box = qs("#months");

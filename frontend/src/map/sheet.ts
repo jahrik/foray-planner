@@ -1,5 +1,5 @@
 import { map } from "./map";
-import { qs } from "./state";
+import { qs } from "../state";
 
 // Mobile bottom sheet (issue #229) - a Google/Apple Maps-style draggable sheet over a
 // full-screen map. Vanilla TS, Pointer Events, hand-rolled snap: there's no animation lib in

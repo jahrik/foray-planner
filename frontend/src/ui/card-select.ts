@@ -2,8 +2,8 @@
 // the trail-draw animation. No DOM template, no network - see card-select.test.ts.
 import type L from "leaflet";
 
-import { deselectSize, selectSize } from "./map";
-import { state, type View } from "./state";
+import { deselectSize, selectSize } from "../map/map";
+import { state, type View } from "../state";
 
 /**
  * Stale-response guard for an async render that can be re-entered while a previous run of

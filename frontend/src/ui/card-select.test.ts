@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const selectSize = vi.fn();
 const deselectSize = vi.fn();
-vi.mock("./map", () => ({
+vi.mock("../map/map", () => ({
   selectSize: (marker: unknown) => selectSize(marker),
   deselectSize: (marker: unknown, weight: number) => deselectSize(marker, weight),
 }));
 
 const viewState = { view: "destinations" };
-vi.mock("./state", () => ({
+vi.mock("../state", () => ({
   get state() {
     return viewState;
   },

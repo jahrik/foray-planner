@@ -6,17 +6,17 @@ import "./style.css";
 import { getJson, postJson } from "./api/client";
 import type { Home, LocationResponse } from "./api/types";
 import { initGenusSelection } from "./genera";
-import { initLayerToggles } from "./layer-toggles";
-import { loadLand } from "./layers";
+import { initLayerToggles } from "./ui/layer-toggles";
+import { loadLand } from "./map/layers";
 import { initLocationAutocomplete, initPlaceAutocomplete } from "./location";
-import { initMap, map, setMapClickHandler, updateHome } from "./map";
-import { runPlan } from "./plan";
+import { initMap, map, setMapClickHandler, updateHome } from "./map/map";
+import { runPlan } from "./views/plan";
 import { setLocationLatLng, startRefresh } from "./refresh";
-import { collapseIfOpen, currentDetent, initSheet, snapTo } from "./sheet";
+import { collapseIfOpen, currentDetent, initSheet, snapTo } from "./map/sheet";
 import { errorDetail, qs, setStatus, state } from "./state";
-import { initTextSize, initTheme, initUnits } from "./ui-prefs";
-import { refreshCurrentView } from "./view-run";
-import { initMonths, runDestinations } from "./views";
+import { initTextSize, initTheme, initUnits } from "./ui/ui-prefs";
+import { refreshCurrentView } from "./views/view-run";
+import { initMonths, runDestinations } from "./views/views";
 
 // Wires a plan-tab Start/Destination field: unlike the header's home search (which persists the
 // choice via /api/location), a selected suggestion here just fills the input with resolved

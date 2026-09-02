@@ -1,6 +1,6 @@
 import { deleteJson, getJson, postJson } from "./api/client";
 import type { GenusResult } from "./api/types";
-import { initAutocomplete } from "./autocomplete";
+import { initAutocomplete } from "./ui/autocomplete";
 import { displayName, errorDetail, escapeHtml, qs, setStatus } from "./state";
 
 let selected: GenusResult[] = [];

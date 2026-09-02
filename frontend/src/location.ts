@@ -1,6 +1,6 @@
 import { getJson } from "./api/client";
 import type { PlaceSuggestion } from "./api/types";
-import { initAutocomplete } from "./autocomplete";
+import { initAutocomplete } from "./ui/autocomplete";
 import { setLocation } from "./refresh";
 import { qs } from "./state";
 

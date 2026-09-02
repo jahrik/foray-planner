@@ -1,9 +1,9 @@
 import { deleteJson, openRefreshStream, postJson } from "./api/client";
 import type { LocationResponse } from "./api/types";
-import { loadLand } from "./layers";
-import { updateHome } from "./map";
+import { loadLand } from "./map/layers";
+import { updateHome } from "./map/map";
 import { errorDetail, qs, setStatus } from "./state";
-import { refreshCurrentView } from "./view-run";
+import { refreshCurrentView } from "./views/view-run";
 
 // Tracks the in-flight refresh's SSE connection + its promise resolver, so cancelRefresh()
 // can tear both down immediately instead of waiting for the server to report cancellation.
