@@ -9,9 +9,10 @@ Submodules:
 * ``foray.scoring.planner`` - ``plan_route``
 * ``foray.scoring._sql`` - shared SQL fragment builders
 
-(Pure lat/lng math is ``foray.geo``, a package-level primitive shared with ``cache``/``camps``/
-``land``.) This ``__init__`` re-exports the public surface so ``from foray.scoring import
-rank_destinations`` and ``foray.scoring.<name>`` keep working from call sites and tests.
+(Pure lat/lng math is ``foray.geo``, a package-level primitive shared with ``cache`` and the
+``foray.sources`` clients.) This ``__init__`` re-exports the public surface so ``from
+foray.scoring import rank_destinations`` and ``foray.scoring.<name>`` keep working from call
+sites and tests.
 """
 
 from __future__ import annotations
