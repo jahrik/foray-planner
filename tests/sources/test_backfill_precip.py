@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+import httpx
 import psycopg
 import pytest
 
@@ -148,3 +149,78 @@ def test_refresh_precipitation_populates_the_layer_and_flows_to_ranking(
     assert ranked
     assert ranked[0].precip_recent_7d_mm == 21.0  # 7 * 3.0
     assert ranked[0].precip_recent_14d_mm == 42.0
+
+
+def test_ancient_observations_are_excluded_from_the_pending_set(con: psycopg.Connection) -> None:
+    _seed_obs(
+        con,
+        [
+            (1, GENUS, LAT, LNG, dt.date(1921, 1, 14), 1, False),  # pre-ERA5, must be skipped
+            (2, GENUS, LAT, LNG, dt.date(2024, 6, 1), 6, False),
+        ],
+    )
+    assert [obs_id for obs_id, *_ in cache.observations_missing_precip(con, 10)] == [2]
+
+
+def test_backfill_skips_a_cell_that_400s_and_keeps_going(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two cells; the first archive call 400s, the second succeeds.
+    _seed_obs(
+        con,
+        [
+            (1, GENUS, LAT, LNG, dt.date(2024, 6, 1), 6, False),
+            (2, GENUS, LAT + 1.0, LNG + 1.0, dt.date(2024, 6, 1), 6, False),
+        ],
+    )
+    seen: list[float] = []
+
+    def fake_archive(
+        clat: float, clng: float, start: dt.date, end: dt.date, *, client: object = None
+    ) -> dict[dt.date, float | None]:
+        seen.append(clat)
+        if len(seen) == 1:
+            raise httpx.HTTPStatusError("bad", request=httpx.Request("GET", "http://x"), response=httpx.Response(400))
+        return {start + dt.timedelta(days=i): 1.0 for i in range((end - start).days + 1)}
+
+    monkeypatch.setattr(precip, "fetch_archive_precip", fake_archive)
+    updated = ingest.backfill_precip(con, cell_deg=CELL)
+    assert len(seen) == 2  # did not stop after the 400
+    assert updated == 1  # the good cell's observation still got enriched
+
+
+def test_backfill_never_requests_before_era5(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+    _seed_obs(con, [(1, GENUS, LAT, LNG, dt.date(1955, 3, 1), 3, False)])
+    starts: list[dt.date] = []
+
+    def fake_archive(
+        clat: float, clng: float, start: dt.date, end: dt.date, *, client: object = None
+    ) -> dict[dt.date, float | None]:
+        starts.append(start)
+        return {start + dt.timedelta(days=i): 0.5 for i in range((end - start).days + 1)}
+
+    monkeypatch.setattr(precip, "fetch_archive_precip", fake_archive)
+    ingest.backfill_precip(con, cell_deg=CELL)
+    assert starts and starts[0] >= dt.date(1940, 1, 1)
+
+
+def test_refresh_precipitation_skips_fresh_regions_and_batches(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_obs(con, [(i, GENUS, LAT, LNG, dt.date(2026, 5, 15), 5, False) for i in range(1, 4)])
+    build_phenology(con, CELL)
+    region_row = con.execute("SELECT region_id FROM regions LIMIT 1").fetchone()
+    assert region_row is not None
+    region_id = region_row[0]
+    con.execute(
+        "INSERT INTO precipitation (region_id, precip_7d_mm, updated_at) VALUES (%s, 5.0, now())",
+        [region_id],
+    )
+
+    def fake_recent(
+        clat: float, clng: float, *, past_days: int = 30, client: object = None
+    ) -> dict[dt.date, float | None]:
+        raise AssertionError("should not fetch a region refreshed moments ago")
+
+    monkeypatch.setattr(precip, "fetch_recent_precip", fake_recent)
+    assert ingest.refresh_precipitation(con, Settings()) == 0

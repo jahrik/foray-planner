@@ -19,7 +19,6 @@ import httpx
 import psycopg
 
 from foray.cache import (
-    active_region_ids,
     cached_precip,
     delete_observations,
     known_genus_taxon_ids,
@@ -34,6 +33,7 @@ from foray.cache import (
     set_observation_elevations,
     set_observation_precip,
     stale_observation_ids,
+    stale_precip_region_ids,
     suspect_genus_taxon_ids,
     upsert_observations,
     upsert_precip_days,
@@ -60,6 +60,13 @@ _INGEST_PRECIP_CELLS = 25
 _PRECIP_SCAN_LIMIT = 5000
 # Antecedent windows (days before observed_on) recorded per observation.
 _PRECIP_WINDOWS = (7, 30)
+# Open-Meteo's archive (ERA5) only serves 1940 onward; a request that starts earlier 400s and,
+# unguarded, wedges the whole backfill. Keep a margin for the 30 d window reach-back.
+_ERA5_MIN_DATE = dt.date(1940, 2, 1)
+# Cap the archive span fetched per cell in one pass. A cell whose observations span decades
+# would otherwise pull a single ~15k-day series; the remaining older observations stay pending
+# and are picked up on the next pass (oldest first).
+_MAX_ARCHIVE_SPAN_DAYS = 1200
 
 # Heuristic denominator for progress reporting during the single whole-Fungi query - there's
 # no cheap way to know the true row count upfront (that would need a separate iNat count call
@@ -306,16 +313,37 @@ def backfill_precip(
     widest = max(_PRECIP_WINDOWS)
     updated = 0
     for cell_id, members in list(by_cell.items())[: max_cells or len(by_cell)]:
-        earliest = min(day for _, day in members) - dt.timedelta(days=widest)
-        latest = max(day for _, day in members) - dt.timedelta(days=1)
+        members.sort(key=lambda item: item[1])
+        # Bound the fetch: only the oldest chunk within _MAX_ARCHIVE_SPAN_DAYS this pass, and
+        # never earlier than ERA5's coverage. Anything older stays pending for the next pass.
+        chunk_start = max(members[0][1], _ERA5_MIN_DATE)
+        chunk_end = min(members[-1][1], chunk_start + dt.timedelta(days=_MAX_ARCHIVE_SPAN_DAYS))
+        members = [(obs_id, day) for obs_id, day in members if chunk_start <= day <= chunk_end]
+        if not members:
+            continue
+        earliest = max(chunk_start - dt.timedelta(days=widest), _ERA5_MIN_DATE)
+        latest = chunk_end - dt.timedelta(days=1)
         series = cached_precip(db, cell_id, earliest, latest, source=precip.ARCHIVE_SOURCE)
         if not _span_covered(series, earliest, latest):
             center_lat, center_lng = centers[cell_id]
             try:
                 fetched = precip.fetch_archive_precip(center_lat, center_lng, earliest, latest, client=client)
-            except (httpx.HTTPError, ValueError) as error:
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code == 429:
+                    logger.info("precip: Open-Meteo rate-limited; enriched %d this run, remainder deferred", updated)
+                    break
+                # A 4xx for one cell (e.g. a still-bad date range) must not wedge the backfill -
+                # skip this cell and keep going, same as the layer refresh does per cell.
+                logger.warning(
+                    "precip: cell %s archive fetch failed (HTTP %s) - skipping", cell_id, error.response.status_code
+                )
+                continue
+            except httpx.HTTPError as error:
                 logger.warning("precip: backfill stopped after %d observations (%s)", updated, error)
                 break
+            except ValueError as error:
+                logger.warning("precip: cell %s archive response unusable (%s) - skipping", cell_id, error)
+                continue
             upsert_precip_days(db, cell_id, fetched, precip.ARCHIVE_SOURCE)
             series.update(fetched)
         writeback: list[tuple[int, float | None, float | None]] = []
@@ -330,19 +358,37 @@ def backfill_precip(
     return updated
 
 
-def refresh_precipitation(db: psycopg.Connection, cfg: Settings, *, client: httpx.Client | None = None) -> int:
-    """Rebuild the ``precipitation`` layer (issue #226 Part 2): for every active region cell,
-    pull the trailing ~30 days from Open-Meteo's forecast API and store the 7 / 14 / 30 d
-    totals ending today. Also caches the daily values (forecast source) in ``precip_daily``.
+# Region cells refreshed within this many hours are skipped, so a re-run (or a run resumed
+# after the scheduler restarted mid-pass) picks up where it left off instead of starting over.
+_PRECIP_LAYER_TTL_HOURS = 20
+# Flush accumulated `precipitation` rows every N cells so a long or interrupted run still
+# surfaces data (the read path is the `precipitation` table, not `precip_daily`).
+_PRECIP_LAYER_BATCH = 100
 
-    Returns the number of region rows written. Best-effort per cell: one cell's HTTP failure is
-    logged and skipped, the rest still refresh."""
-    region_ids = active_region_ids(db)
+
+def refresh_precipitation(db: psycopg.Connection, cfg: Settings, *, client: httpx.Client | None = None) -> int:
+    """Refresh the ``precipitation`` layer (issue #226 Part 2): for each active region cell not
+    refreshed in the last ``_PRECIP_LAYER_TTL_HOURS``, pull the trailing ~30 days from
+    Open-Meteo's forecast API and store the 7 / 14 / 30 d totals ending today. Also caches the
+    daily values (forecast source) in ``precip_daily``.
+
+    Returns region rows written. Best-effort per cell: a cell's HTTP failure is logged and
+    skipped. Rows are flushed to ``precipitation`` in batches, so an interrupted run (there can
+    be thousands of cells, and Open-Meteo throttles) still leaves partial data visible and the
+    next run resumes from the unrefreshed cells."""
+    region_ids = stale_precip_region_ids(db, _PRECIP_LAYER_TTL_HOURS)
     if not region_ids:
-        logger.info("precip: no regions materialized yet - skipping layer refresh")
+        logger.info("precip: recent-rain layer already fresh (or no regions) - nothing to do")
         return 0
     today = dt.date.today()
-    rows: list[tuple[str, float | None, float | None, float | None]] = []
+    batch: list[tuple[str, float | None, float | None, float | None]] = []
+    written = 0
+
+    def flush() -> None:
+        nonlocal written, batch
+        written += upsert_region_precip(db, batch)
+        batch = []
+
     for region_id in region_ids:
         center_lat, center_lng = grid_cell_center(region_id, cfg.cell_deg)
         try:
@@ -351,7 +397,7 @@ def refresh_precipitation(db: psycopg.Connection, cfg: Settings, *, client: http
             logger.warning("precip: region %s recent-rain fetch failed (%s) - skipping", region_id, error)
             continue
         upsert_precip_days(db, region_id, series, precip.FORECAST_SOURCE)
-        rows.append(
+        batch.append(
             (
                 region_id,
                 precip.window_sum(series, today, 7),
@@ -359,8 +405,10 @@ def refresh_precipitation(db: psycopg.Connection, cfg: Settings, *, client: http
                 precip.window_sum(series, today, 30),
             )
         )
-    written = upsert_region_precip(db, rows)
-    logger.info("precip: refreshed recent rainfall for %d/%d regions", written, len(region_ids))
+        if len(batch) >= _PRECIP_LAYER_BATCH:
+            flush()
+    flush()
+    logger.info("precip: refreshed recent rainfall for %d/%d stale regions", written, len(region_ids))
     return written
 
 

@@ -125,6 +125,20 @@ ingest: db
 genera-refresh: db
     docker compose run --rm app foray genera-refresh
 
+# Drain the per-observation antecedent-rainfall backlog (issue #226, Open-Meteo ERA5 archive).
+# Ingest enriches new rows inline; this catches up the rest.
+[doc('Drain the per-observation antecedent-rainfall backlog (issue #226)')]
+[group('data')]
+backfill-precip: db
+    docker compose run --rm app foray backfill-precip
+
+# Refresh the recent-rain-per-destination layer (issue #226, Open-Meteo forecast API). Skips
+# region cells refreshed in the last ~20h, so a re-run resumes rather than starting over.
+[doc('Refresh the recent-rain-per-destination layer (issue #226)')]
+[group('data')]
+refresh-precip: db
+    docker compose run --rm app foray refresh-precip
+
 # Re-checks cached observations under genera whose cache count has drifted from iNat's live
 # count (see ingest.revalidate) - purges/reassigns rows misidentified into a homonymous
 # non-fungal genus (e.g. fungal Olla vs. the ladybug genus Olla). Meant to run on a recurring

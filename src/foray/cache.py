@@ -963,7 +963,11 @@ def observations_missing_precip(
 
     ``precip_7d_mm IS NULL OR precip_30d_mm IS NULL`` is the pending sentinel: a row whose 7 d
     sum lands but whose 30 d sum still touches an ERA5-null day is written partially (7 d only)
-    and reappears here next pass so the 30 d column gets retried too."""
+    and reappears here next pass so the 30 d column gets retried too.
+
+    Observations dated before ERA5's coverage (1940) are excluded - Open-Meteo's archive has no
+    data for them and, left in, one such row 400s the archive request for its whole grid cell
+    and wedges the backfill (same reasoning as the lat/lng-range filter)."""
     box_sql: LiteralString = ""
     params: list[Any] = []
     order_sql: LiteralString = "ORDER BY observed_on"
@@ -977,7 +981,7 @@ def observations_missing_precip(
         """
         SELECT id, lat, lng, observed_on FROM observations
         WHERE (precip_7d_mm IS NULL OR precip_30d_mm IS NULL)
-              AND observed_on IS NOT NULL
+              AND observed_on >= DATE '1940-02-01'
               AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180
               AND quality_grade = 'research'
               AND NOT COALESCE(obscured, false)
@@ -1003,15 +1007,25 @@ def set_observation_precip(con: psycopg.Connection, rows: Sequence[tuple[int, fl
     return len(rows)
 
 
-def active_region_ids(con: psycopg.Connection) -> list[str]:
-    """Every ``region_id`` present in the materialized ``regions`` table - the bounded set of
-    grid cells the per-destination precip refresh (issue #226 Part 2) needs to fetch. Empty
-    when ``regions`` doesn't exist yet (no ``build_phenology`` has run)."""
+def stale_precip_region_ids(con: psycopg.Connection, older_than_hours: float) -> list[str]:
+    """Active region cells whose ``precipitation`` row is missing or older than
+    ``older_than_hours`` (issue #226 Part 2). Lets the layer refresh skip cells done recently, so
+    a re-run - or one resumed after the scheduler restarted mid-pass - continues instead of
+    starting from scratch. Empty when ``regions`` doesn't exist yet."""
     try:
-        return [region_id for (region_id,) in con.execute("SELECT region_id FROM regions").fetchall()]
+        rows = con.execute(
+            """
+            SELECT r.region_id
+            FROM regions r
+            LEFT JOIN precipitation p ON p.region_id = r.region_id
+            WHERE p.region_id IS NULL OR p.updated_at < now() - make_interval(hours => %s)
+            """,
+            [older_than_hours],
+        ).fetchall()
     except psycopg.errors.UndefinedTable:
         con.rollback()
         return []
+    return [region_id for (region_id,) in rows]
 
 
 def region_precip(con: psycopg.Connection, region_ids: Collection[str]) -> dict[str, dict[str, float | None]]:

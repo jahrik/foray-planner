@@ -306,9 +306,12 @@ just frontend
   `precip_7d_mm` / `precip_30d_mm` (issue #226) are filled the same way from Open-Meteo's ERA5
   archive (`ingest.backfill_precip` / `foray backfill-precip`), snapping to the region grid and
   caching daily values in `precip_daily`; a window still inside ERA5's ~5-7 day lag stays NULL
-  and is retried. The `precipitation` layer table holds recent rain per region cell
-  (`ingest.refresh_precipitation` / `foray refresh-precip`, forecast API). Informational only,
-  no scoring - same posture as elevation.
+  and is retried. Observations dated before ERA5 (1940) are excluded from the pending set - the
+  archive 400s on them and one wedges the whole grid cell; per-cell fetches are span-capped and
+  a per-cell 4xx skips that cell rather than stopping. The `precipitation` layer table holds
+  recent rain per region cell (`ingest.refresh_precipitation` / `foray refresh-precip`, forecast
+  API) - flushed in batches and skips cells refreshed in the last ~20h so a long / restarted run
+  resumes. Informational only, no scoring - same posture as elevation.
 - Target genera aren't configured in code - `foray genera-refresh` keeps the full catalog
   synced, `foray ingest` pulls every Fungi observation and resolves each one's own genus from
   its taxon ancestry, and users pick their targets in the search UI (per-device, `app_genera`).
