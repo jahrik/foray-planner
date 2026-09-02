@@ -5,9 +5,9 @@ from __future__ import annotations
 import psycopg
 
 from foray.geo import haversine_km
-from foray.models import CampSite, RegionScore, Stop, Trail, TripPlan
-from foray.queries import camps_near, trails_near
-from foray.ranking import rank_destinations, rank_destinations_corridor
+from foray.scoring.models import CampSite, RegionScore, Stop, Trail, TripPlan
+from foray.scoring.queries import camps_near, trails_near
+from foray.scoring.ranking import rank_destinations, rank_destinations_corridor
 
 
 def plan_route(

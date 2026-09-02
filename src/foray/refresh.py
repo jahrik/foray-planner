@@ -25,9 +25,10 @@ from collections.abc import Callable, Collection
 import httpx
 import psycopg
 
-from foray import camps, dispersed, land, scoring, trails
+from foray import scoring
 from foray.config import Settings
-from foray.ingest import ingest
+from foray.sources import camps, dispersed, land, trails
+from foray.sources.ingest import ingest
 
 # The layers a refresh can warm, in ingest order. The API additionally accepts the
 # pseudo-target ``"all"`` (every layer); the CLI expresses "everything" as an empty ``--with``.

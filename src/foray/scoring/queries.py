@@ -14,7 +14,8 @@ from typing import Any, LiteralString, cast
 
 import psycopg
 
-from foray._scoring_sql import (
+from foray.geo import bbox_around, haversine_km
+from foray.scoring._sql import (
     BINNED,
     CENTER_LAT,
     CENTER_LNG,
@@ -22,8 +23,7 @@ from foray._scoring_sql import (
     sql_in,
     taxon_filter,
 )
-from foray.geo import bbox_around, haversine_km
-from foray.models import CampSite, LandUnit, Trail
+from foray.scoring.models import CampSite, LandUnit, Trail
 
 _CALENDAR_SPECIES_PER_MONTH = 15
 

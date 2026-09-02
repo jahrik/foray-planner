@@ -37,10 +37,10 @@ def calls(monkeypatch):
     # each ingest against its own module, so patch there rather than on foray.cli.
     for target, name in (
         ("foray.refresh", "ingest"),
-        ("foray.camps", "ingest_campgrounds"),
-        ("foray.land", "ingest_public_land"),
-        ("foray.dispersed", "ingest_dispersed"),
-        ("foray.trails", "ingest_trails"),
+        ("foray.sources.camps", "ingest_campgrounds"),
+        ("foray.sources.land", "ingest_public_land"),
+        ("foray.sources.dispersed", "ingest_dispersed"),
+        ("foray.sources.trails", "ingest_trails"),
     ):
         monkeypatch.setattr(f"{target}.{name}", lambda *args, label=name, **kwargs: seen.append(label))
 

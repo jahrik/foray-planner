@@ -12,7 +12,7 @@ from typing import Any
 
 import httpx
 
-from foray.http import USER_AGENT, Throttle, retry_after_seconds
+from foray.sources.http import USER_AGENT, Throttle, retry_after_seconds
 
 URL = "https://overpass-api.de/api/interpreter"
 

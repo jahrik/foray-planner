@@ -12,7 +12,7 @@ Reads data/inat_us_observations.jsonl (produced by inat_dwca_filter.py) and:
      is research-grade at the source - needed for issue #108's scoring filter to count them.
      `obscured` isn't a field the DwC-A dump carries at all (unlike the live API), so it's set
      via the coordinate_uncertainty_m fingerprint heuristic (see
-     foray.inat.OBSCURED_ACCURACY_LOW/HIGH) rather than left NULL - a past run of this script is
+     foray.sources.inat.OBSCURED_ACCURACY_LOW/HIGH) rather than left NULL - a past run of this script is
      exactly how ~1.9M rows ended up with a NULL `obscured` in the first place (fixed via the
      now-deleted one-time scripts/backfill_obscured.py), so a future run of this script should
      not reintroduce the same gap.
@@ -46,7 +46,7 @@ from typing import Any
 from tqdm import tqdm
 
 from foray.cache import connect, record_ingest, upsert_observations
-from foray.inat import OBSCURED_ACCURACY_HIGH, OBSCURED_ACCURACY_LOW
+from foray.sources.inat import OBSCURED_ACCURACY_HIGH, OBSCURED_ACCURACY_LOW
 
 INPUT_PATH = Path(__file__).parent.parent / "data" / "inat_us_observations.jsonl"
 PLACE_ID_US = 1  # matches defaults.COUNTRIES's "United States" entry

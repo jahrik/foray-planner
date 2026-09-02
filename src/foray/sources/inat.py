@@ -18,7 +18,7 @@ from pyinaturalist import (
 )
 from pyrate_limiter.exceptions import BucketFullException
 
-from foray.http import USER_AGENT
+from foray.sources.http import USER_AGENT
 
 # Photo license codes iNat's API returns that are safe to redisplay (with attribution) under
 # their terms; cc-by-nd/cc-by-nc-nd forbid derivatives (thumbnailing counts) and a null license

@@ -11,7 +11,8 @@ import, so patching one patches the other.
 
 from __future__ import annotations
 
-from foray import geocode, inat, scoring
+from foray import scoring
 from foray.api.app import create_app
+from foray.sources import geocode, inat
 
 __all__ = ["create_app", "geocode", "inat", "scoring"]

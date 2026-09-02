@@ -15,7 +15,7 @@ from collections.abc import Sequence
 
 import httpx
 
-from foray.http import Throttle, retry_after_seconds
+from foray.sources.http import Throttle, retry_after_seconds
 
 OPEN_METEO_ELEVATION = "https://api.open-meteo.com/v1/elevation"
 MAX_BATCH = 100

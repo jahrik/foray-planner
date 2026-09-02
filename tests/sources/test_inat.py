@@ -1,4 +1,4 @@
-"""foray.inat pagination tests - no network, get_taxa mocked (see test_ingest_region.py)."""
+"""foray.sources.inat pagination tests - no network, get_taxa mocked (see test_ingest_region.py)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import pytest
 import requests.exceptions
 from pyrate_limiter.exceptions import BucketFullException
 
-from foray.inat import (
+from foray.sources.inat import (
     _RATE_LIMIT_ATTEMPTS,
     FUNGI_TAXON_ID,
     InatQuotaExceeded,
@@ -27,7 +27,7 @@ def _obs_page(ids: list[int]) -> dict:
 
 
 def test_iter_fungi_genera_walks_id_above_pages() -> None:
-    with patch("foray.inat.get_taxa") as mock_get_taxa, patch("foray.inat._PAGE_SIZE", 2):
+    with patch("foray.sources.inat.get_taxa") as mock_get_taxa, patch("foray.sources.inat._PAGE_SIZE", 2):
         mock_get_taxa.side_effect = [
             _page([1, 2]),
             _page([3]),
@@ -45,7 +45,7 @@ def test_iter_fungi_genera_walks_id_above_pages() -> None:
 
 
 def test_iter_fungi_genera_empty_result_stops_immediately() -> None:
-    with patch("foray.inat.get_taxa") as mock_get_taxa:
+    with patch("foray.sources.inat.get_taxa") as mock_get_taxa:
         mock_get_taxa.return_value = {"results": []}
         results = list(iter_fungi_genera())
 
@@ -54,7 +54,10 @@ def test_iter_fungi_genera_empty_result_stops_immediately() -> None:
 
 
 def test_iter_observations_walks_id_above_pages_by_point_radius() -> None:
-    with patch("foray.inat.get_observations") as mock_get_observations, patch("foray.inat._PAGE_SIZE", 2):
+    with (
+        patch("foray.sources.inat.get_observations") as mock_get_observations,
+        patch("foray.sources.inat._PAGE_SIZE", 2),
+    ):
         mock_get_observations.side_effect = [
             _obs_page([1, 2]),
             _obs_page([3]),
@@ -77,7 +80,10 @@ def test_iter_observations_walks_id_above_pages_by_point_radius() -> None:
 
 
 def test_iter_observations_stops_on_a_short_page_without_a_further_request() -> None:
-    with patch("foray.inat.get_observations") as mock_get_observations, patch("foray.inat._PAGE_SIZE", 5):
+    with (
+        patch("foray.sources.inat.get_observations") as mock_get_observations,
+        patch("foray.sources.inat._PAGE_SIZE", 5),
+    ):
         mock_get_observations.return_value = _obs_page([1, 2])  # shorter than _PAGE_SIZE
 
         results = list(
@@ -89,7 +95,10 @@ def test_iter_observations_stops_on_a_short_page_without_a_further_request() -> 
 
 
 def test_iter_observations_walks_id_above_pages_by_place_id() -> None:
-    with patch("foray.inat.get_observations") as mock_get_observations, patch("foray.inat._PAGE_SIZE", 2):
+    with (
+        patch("foray.sources.inat.get_observations") as mock_get_observations,
+        patch("foray.sources.inat._PAGE_SIZE", 2),
+    ):
         mock_get_observations.side_effect = [_obs_page([1, 2]), _obs_page([3])]
 
         results = list(iter_observations(taxon_id=111, place_id=46, d1="2015-01-01", d2="2026-01-01"))
@@ -118,8 +127,11 @@ def test_iter_observations_retries_transient_error_then_succeeds(monkeypatch: py
     """A transient failure mid-ingest shouldn't abort the walk - `_with_retries` (already
     covered below) should retry it and `iter_observations` should still yield the results
     once the underlying call succeeds."""
-    monkeypatch.setattr("foray.inat.time.sleep", Mock())
-    with patch("foray.inat.get_observations") as mock_get_observations, patch("foray.inat._PAGE_SIZE", 2):
+    monkeypatch.setattr("foray.sources.inat.time.sleep", Mock())
+    with (
+        patch("foray.sources.inat.get_observations") as mock_get_observations,
+        patch("foray.sources.inat._PAGE_SIZE", 2),
+    ):
         mock_get_observations.side_effect = [
             requests.exceptions.ConnectionError("blip"),
             _obs_page([1, 2]),
@@ -151,7 +163,7 @@ def _http_error(status: int, retry_after: str | None = None) -> requests.excepti
 
 def test_with_retries_retries_429_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     sleeps: list[float] = []
-    monkeypatch.setattr("foray.inat.time.sleep", sleeps.append)
+    monkeypatch.setattr("foray.sources.inat.time.sleep", sleeps.append)
     fn = Mock(side_effect=[_http_error(429), "ok"])
 
     result = _with_retries(fn, attempts=3, base_delay=1.0)
@@ -163,7 +175,7 @@ def test_with_retries_retries_429_then_succeeds(monkeypatch: pytest.MonkeyPatch)
 
 def test_with_retries_honors_retry_after_header(monkeypatch: pytest.MonkeyPatch) -> None:
     sleeps: list[float] = []
-    monkeypatch.setattr("foray.inat.time.sleep", sleeps.append)
+    monkeypatch.setattr("foray.sources.inat.time.sleep", sleeps.append)
     fn = Mock(side_effect=[_http_error(429, retry_after="7"), "ok"])
 
     result = _with_retries(fn, attempts=3, base_delay=1.0)
@@ -176,7 +188,7 @@ def test_with_retries_429_gets_its_own_larger_attempt_budget(monkeypatch: pytest
     """A 429 always eventually clears, so it isn't bound by the generic ``attempts`` budget -
     it gets ``_RATE_LIMIT_ATTEMPTS`` tries regardless (this is what a sustained iNat throttle
     window needs; the old shared 5-attempt budget crashed a real multi-hour resync run twice)."""
-    monkeypatch.setattr("foray.inat.time.sleep", Mock())
+    monkeypatch.setattr("foray.sources.inat.time.sleep", Mock())
     fn = Mock(side_effect=_http_error(429))
 
     with pytest.raises(requests.exceptions.HTTPError):
@@ -187,7 +199,7 @@ def test_with_retries_429_gets_its_own_larger_attempt_budget(monkeypatch: pytest
 
 def test_with_retries_caps_backoff_delay(monkeypatch: pytest.MonkeyPatch) -> None:
     sleeps: list[float] = []
-    monkeypatch.setattr("foray.inat.time.sleep", sleeps.append)
+    monkeypatch.setattr("foray.sources.inat.time.sleep", sleeps.append)
     fn = Mock(side_effect=[_http_error(429)] * 6 + ["ok"])
 
     result = _with_retries(fn, attempts=3, base_delay=1.0)
@@ -197,7 +209,7 @@ def test_with_retries_caps_backoff_delay(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_with_retries_reraises_5xx_after_exhausting_generic_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("foray.inat.time.sleep", Mock())
+    monkeypatch.setattr("foray.sources.inat.time.sleep", Mock())
     fn = Mock(side_effect=_http_error(503))
 
     with pytest.raises(requests.exceptions.HTTPError):
@@ -221,7 +233,7 @@ def _bucket_full(remaining_time: float) -> BucketFullException:
 
 def test_with_retries_waits_out_a_short_quota_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     sleeps: list[float] = []
-    monkeypatch.setattr("foray.inat.time.sleep", sleeps.append)
+    monkeypatch.setattr("foray.sources.inat.time.sleep", sleeps.append)
     fn = Mock(side_effect=[_bucket_full(5.0), "ok"])
 
     result = _with_retries(fn, attempts=3, base_delay=1.0)
@@ -241,7 +253,7 @@ def test_with_retries_raises_quota_exceeded_for_a_long_wait() -> None:
 
 
 def test_with_retries_raises_quota_exceeded_after_exhausting_short_waits(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("foray.inat.time.sleep", Mock())
+    monkeypatch.setattr("foray.sources.inat.time.sleep", Mock())
     fn = Mock(side_effect=_bucket_full(5.0))
 
     with pytest.raises(InatQuotaExceeded):

@@ -244,8 +244,8 @@ make frontend      # frontend type-check + bundle (after frontend or API changes
 Focused test runs:
 
 ```bash
-uv run pytest tests/test_scoring.py
-uv run pytest tests/test_scoring.py::test_april_ranks_morel_region_first
+uv run pytest tests/scoring/test_scoring.py
+uv run pytest tests/scoring/test_scoring.py::test_april_ranks_morel_region_first
 uv run pytest -k haversine
 ```
 

@@ -1,6 +1,6 @@
-"""Pydantic response models for the JSON API (src/foray/api.py).
+"""Pydantic response models for the JSON API (src/foray/api/).
 
-These formalize the shapes already produced by ``foray.models``'s stdlib dataclasses and a
+These formalize the shapes already produced by ``foray.scoring.models``'s stdlib dataclasses and a
 few endpoint-only envelopes, so FastAPI's generated OpenAPI schema carries real field types
 for *responses*, not just request bodies/params. Field names mirror the dataclasses exactly
 (``models.SpeciesHit``, ``RegionScore``, ``CampSite``, ``LandUnit``, ``Trail``, ``Stop``,
@@ -16,11 +16,11 @@ from pydantic import BaseModel, ConfigDict
 
 from foray.config import Home
 
-# Several models below mirror the stdlib dataclasses in foray.models (SpeciesHit, RegionScore,
+# Several models below mirror the stdlib dataclasses in foray.scoring.models (SpeciesHit, RegionScore,
 # CampSite, LandUnit, Trail, Stop, TripPlan). Routes return those dataclass instances directly
-# (see api.py), so those models need `from_attributes=True` to validate them; it's harmless for
+# (see api/routes/), so those models need `from_attributes=True` to validate them; it's harmless for
 # the dict-shaped inputs the other models validate (alerts/observations/calendar all build plain
-# dicts in foray.queries).
+# dicts in foray.scoring.queries).
 _FROM_DATACLASS = ConfigDict(from_attributes=True)
 
 

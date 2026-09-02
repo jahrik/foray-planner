@@ -24,11 +24,11 @@ from typing import Any
 import httpx
 import psycopg
 
-from foray import overpass
 from foray.cache import upsert_campsites
 from foray.config import Settings
-from foray.http import SOURCE_ERRORS
-from foray.ingest_base import run_area_ingest
+from foray.sources import overpass
+from foray.sources.http import SOURCE_ERRORS
+from foray.sources.ingest_base import run_area_ingest
 
 logger = logging.getLogger(__name__)
 

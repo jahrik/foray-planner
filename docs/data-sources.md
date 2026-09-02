@@ -13,7 +13,7 @@ scoring.
 - **Client:** [pyinaturalist](https://pyinaturalist.readthedocs.io/) (unofficial Python wrapper)
 - **Throttle:** ~1 request/second; descriptive `User-Agent` header sent on every request
 - **Pagination:** Deep-paginated via `id_above` to avoid the 10,000-result API cap
-- **Retries:** `_with_retries` in `inat.py` backs off on transient network errors
+- **Retries:** `_with_retries` in `sources/inat.py` backs off on transient network errors
 - **Filter:** `quality_grade=research` only - verifier-confirmed observations with mapped
   coordinates. `needs_id` and `casual` are excluded from all scoring.
 - **Terms:** [iNaturalist API reference](https://www.inaturalist.org/pages/api+reference) -
@@ -95,5 +95,5 @@ spots" value without the license problem. Do not add iOverlander or The Dyrt.
 - **Policy:** [Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/)
   - max 1 request/second, descriptive `User-Agent` required, no bulk geocoding
 - **Attribution:** "© OpenStreetMap contributors"
-- **Fallback:** Raw `lat,lng` input bypasses geocoding entirely (parsed directly in `geocode.py`)
+- **Fallback:** Raw `lat,lng` input bypasses geocoding entirely (parsed directly in `sources/geocode.py`)
 - **Tests:** Network-mocked with `httpx.MockTransport` - geocoding tests never hit the real API

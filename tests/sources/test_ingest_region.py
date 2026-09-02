@@ -13,8 +13,8 @@ from click.testing import CliRunner
 from foray.cache import upsert_fungi_genera
 from foray.cli import cli
 from foray.config import CoverageRegion, Settings
-from foray.inat import iter_observations
-from foray.ingest import ingest_region
+from foray.sources.inat import iter_observations
+from foray.sources.ingest import ingest_region
 
 MOREL = 111
 
@@ -36,7 +36,7 @@ def env_with_coverage(con: psycopg.Connection, monkeypatch):
     upsert_fungi_genera(con, [{"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels"}])
 
 
-FUNGI_ICONIC_TAXON_ID = 47170  # foray.inat.FUNGI_TAXON_ID doubles as Fungi's iconic_taxon_id
+FUNGI_ICONIC_TAXON_ID = 47170  # foray.sources.inat.FUNGI_TAXON_ID doubles as Fungi's iconic_taxon_id
 
 
 def _fake_obs(
@@ -48,7 +48,7 @@ def _fake_obs(
     iconic_taxon_id: int = FUNGI_ICONIC_TAXON_ID,
 ) -> dict:
     """A fake iNat observation - ``taxon`` carries the ancestry ingest.py's genus resolver
-    reads (see foray.ingest._resolve_genus_taxon_id): rank=="genus" uses taxon.id directly,
+    reads (see foray.sources.ingest._resolve_genus_taxon_id): rank=="genus" uses taxon.id directly,
     otherwise the resolver looks for a known genus id in ancestor_ids."""
     return {
         "id": obs_id,
@@ -69,7 +69,7 @@ def test_ingest_region_uses_place_id(con: psycopg.Connection, env_with_coverage)
     cfg = Settings()
     region = CoverageRegion(name="Washington", place_id=46)
 
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter([_fake_obs(1, MOREL), _fake_obs(2, MOREL)])
         counts = ingest_region(cfg, con, region)
 
@@ -97,7 +97,7 @@ def test_ingest_region_skips_observations_with_no_known_genus_ancestor(
     cfg = Settings()
     region = CoverageRegion(name="Washington", place_id=46)
 
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter(
             [_fake_obs(1, MOREL), _fake_obs(2, 999999, rank="family", ancestor_ids=[47170, 999999])]
         )
@@ -123,7 +123,7 @@ def test_ingest_region_cancelled_run_keeps_rows_but_skips_record_ingest(
         abort_event.set()
         yield _fake_obs(2, MOREL)  # never reached
 
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = obs_stream()
         counts = ingest_region(cfg, con, region, abort_event=abort_event)
 
@@ -144,7 +144,7 @@ def test_ingest_region_incremental(con: psycopg.Connection, env_with_coverage) -
     cfg = Settings()
     region = CoverageRegion(name="Washington", place_id=46)
 
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter([])
         ingest_region(cfg, con, region)
 
@@ -154,7 +154,7 @@ def test_ingest_region_incremental(con: psycopg.Connection, env_with_coverage) -
 
 def test_cli_ingest_region(env_with_coverage, monkeypatch) -> None:
     runner = CliRunner()
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter([_fake_obs(10, MOREL)])
         result = runner.invoke(cli, ["ingest", "--region", "Washington"])
 
@@ -165,7 +165,7 @@ def test_cli_ingest_region(env_with_coverage, monkeypatch) -> None:
 
 def test_cli_ingest_all_regions(env_with_coverage, monkeypatch) -> None:
     runner = CliRunner()
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter([_fake_obs(20, MOREL)])
         result = runner.invoke(cli, ["ingest", "--all-regions"])
 

@@ -7,14 +7,14 @@ import psycopg
 import pytest
 
 from foray.cache import upsert_campsites
-from foray.camps import (
+from foray.scoring import camps_near
+from foray.sources.camps import (
     _clean_text,
     _free_from_fee,
     _parse_facility,
     _query_centers,
     fetch_campsites,
 )
-from foray.scoring import camps_near
 
 HOME_LAT, HOME_LNG = 47.6, -122.3
 
@@ -82,8 +82,8 @@ def test_query_centers_cover_the_disk() -> None:
 
 
 def test_query_centers_caps_request_count_for_huge_radius() -> None:
-    from foray.camps import _MAX_QUERY_CENTERS
     from foray.geo import haversine_km
+    from foray.sources.camps import _MAX_QUERY_CENTERS
 
     # An uncapped grid at this radius would need tens of thousands of query circles.
     centers = _query_centers(HOME_LAT, HOME_LNG, radius_km=10000.0, query_radius_km=80.0)
@@ -129,7 +129,7 @@ def test_fetch_campsites_dedupes_and_clips_to_radius() -> None:
 
 
 def test_fetch_campsites_retries_on_429(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("foray.camps.time.sleep", lambda _seconds: None)  # no real backoff wait
+    monkeypatch.setattr("foray.sources.camps.time.sleep", lambda _seconds: None)  # no real backoff wait
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:

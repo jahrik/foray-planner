@@ -18,7 +18,6 @@ from typing import Any
 import httpx
 import psycopg
 
-from foray import elevation
 from foray.cache import (
     delete_observations,
     known_genus_taxon_ids,
@@ -35,7 +34,8 @@ from foray.cache import (
     upsert_observations,
 )
 from foray.config import CoverageRegion, Settings
-from foray.inat import FUNGI_TAXON_ID, fetch_observations, iter_observations
+from foray.sources import elevation
+from foray.sources.inat import FUNGI_TAXON_ID, fetch_observations, iter_observations
 
 logger = logging.getLogger(__name__)
 

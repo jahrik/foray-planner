@@ -1,4 +1,4 @@
-"""Unit tests for the shared HTTP helpers (foray.http) - all offline."""
+"""Unit tests for the shared HTTP helpers (foray.sources.http) - all offline."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from email.utils import format_datetime
 
 import httpx
 
-from foray.http import SOURCE_ERRORS, Throttle, retry_after_seconds
+from foray.sources.http import SOURCE_ERRORS, Throttle, retry_after_seconds
 
 
 def _resp(retry_after: str | None) -> httpx.Response:
