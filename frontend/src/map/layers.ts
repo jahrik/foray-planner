@@ -39,7 +39,7 @@ export const tribalOn = (): boolean => qs<HTMLInputElement>("#show-land-tribal")
 const LAND_TOGGLES: Record<string, () => boolean> = { BLM: blmOn, USFS: usfsOn, Tribal: tribalOn };
 const landOn = (): boolean => blmOn() || usfsOn() || tribalOn();
 
-// OSM dispersed-camping layer: sites tagged campable in Overpass (kind='reported').
+// OSM dispersed-camping layer: sites tagged campable in OpenStreetMap (kind='reported').
 const isDispersed = (site: CampSite): boolean => site.kind === "reported";
 
 // Fetch + plot camping near the focused region. `/api/camps` returns developed campgrounds and
