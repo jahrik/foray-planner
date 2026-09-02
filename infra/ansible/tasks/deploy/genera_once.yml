@@ -13,7 +13,7 @@
 - name: Fail fast if this droplet has never been deployed to
   ansible.builtin.fail:
     msg: >-
-      /opt/foray-planner/foray.env not found - run `make ansible-deploy` at least once on
+      /opt/foray-planner/foray.env not found - run `just ansible deploy` at least once on
       this droplet first (foray:genera-once depends on the env file it renders).
   when: not foray_genera_once_env_stat.stat.exists
 

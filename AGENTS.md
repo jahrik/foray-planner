@@ -136,7 +136,7 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   what the scheduler runs. `backfill-elevation` fills `observations.elevation_m` for the backlog
   (ingest enriches new rows inline via Open-Meteo); destination cards show the region's mean.
   `resync --until-done` loops batch after batch until the whole cache is caught up
-  (`make resync ARGS="--until-done --batch-size 20000"`) - a deliberate one-off catch-up run,
+  (`just resync "--until-done --batch-size 20000"`) - a deliberate one-off catch-up run,
   not the small-batch/hourly default the scheduler uses.
 - `scripts/scheduler.sh` - shell loop running observation ingest (all regions), layer refresh,
   observation revalidation (`foray revalidate`, see `ingest.py`), the whole-table resync
@@ -169,7 +169,7 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   actual API. Every API call goes through `client.ts` - no raw `fetch` (place-search
   autocomplete is `GET /api/location/search`, proxied server-side, issue #145).
   Vitest covers the pure helpers (`*.test.ts` beside the source); `npm test` runs in
-  `make frontend`. `GET /api/coverage` exists on the backend (coverage regions + their
+  `just frontend`. `GET /api/coverage` exists on the backend (coverage regions + their
   last-ingest freshness) but has no frontend consumer yet. Builds into `../src/foray/web/dist`. A
   **light/dark theme toggle** is `data-theme`-driven with a `localStorage` preference (default
   **dark**); the basemap follows it (CARTO dark / OSM light).
@@ -186,34 +186,36 @@ without scoping `allow_origins` to the real domain.
 
 ## Commands
 
-All common operations are centralized in the **Makefile**. It exports PG* env vars and
-prepends the nvm Node path automatically.
+All common operations are centralized in the **justfile** (`uv tool install rust-just`). It
+exports PG* env vars and prepends the nvm Node path automatically. `just` with no arguments
+lists every recipe grouped by area; deploy recipes live in the `ansible` module (`just ansible`).
 
 ### Quick start
 
 ```bash
-make install            # uv sync + frontend npm ci
-make db                 # start Postgres
-make ingest             # one-shot all-regions ingest + phenology rebuild
-make start              # http://localhost:8000 (app + postgres)
-make scheduler          # optional: start the background ingest/refresh loop
+just install            # uv sync + frontend npm ci
+just db                 # start Postgres
+just ingest             # one-shot all-regions ingest + phenology rebuild
+just start              # http://localhost:8000 (app + postgres)
+just scheduler          # optional: start the background ingest/refresh loop
 ```
 
-### Makefile targets
+### just recipes
 
-| Target | What it does |
+| Recipe | What it does |
 |---|---|
-| `make db` | Start Postgres (docker compose), wait for ready |
-| `make install` | `uv sync` + `cd frontend && npm ci` |
-| `make lint` | `ruff format` + `ruff check` + `ty check` |
-| `make test` | Start Postgres if needed, then `pytest` |
-| `make check` | `lint` + `test` (the full local CI gate) |
-| `make frontend` | Build the Vite/TypeScript client bundle |
-| `make start` | Build + start app + postgres |
-| `make scheduler` | Start the background scheduler (observation + layer refresh loops) |
-| `make stop` | Stop all containers (including scheduler if running) |
-| `make ingest` | One-shot all-regions ingest |
-| `make clean` | Tear down containers + volumes |
+| `just db` | Start Postgres (docker compose), wait for ready |
+| `just install` | `uv sync` + `cd frontend && npm ci` |
+| `just lint` | `ruff format --check` + `ruff check` + `ty check` + `vulture` |
+| `just test` | Start Postgres if needed, then `pytest` |
+| `just check` | `lint` + `test` (the full local CI gate) |
+| `just frontend` | Build the Vite/TypeScript client bundle |
+| `just start` | Build + start app + postgres |
+| `just scheduler` | Start the background scheduler (observation + layer refresh loops) |
+| `just stop` | Stop all containers (including scheduler if running) |
+| `just ingest` | One-shot all-regions ingest |
+| `just clean` | Tear down containers + volumes |
+| `just ansible deploy` | Deploy to the droplet (see `just ansible` for the rest) |
 
 ### Backend CLI
 
@@ -227,7 +229,7 @@ uv run foray serve --host 0.0.0.0 --port 8000
 
 ```bash
 # Terminal 1 - backend
-make db && uv run foray serve
+just db && uv run foray serve
 
 # Terminal 2 - frontend (Vite on :5173, proxies /api/* to uvicorn on :8000)
 cd frontend && npm run dev
@@ -248,13 +250,13 @@ uv run pytest -k haversine
 ### Gate before finishing
 
 ```bash
-make check
+just check
 ```
 
 When touching `frontend/`, also run:
 
 ```bash
-make frontend
+just frontend
 ```
 
 ## Data model notes

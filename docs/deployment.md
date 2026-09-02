@@ -53,7 +53,7 @@ The health check polls `GET /api/config` every 30 seconds.
 
 ## docker-compose stack (local dev)
 
-`make start` brings up two services:
+`just start` brings up two services:
 
 | Service | Role |
 |---|---|
@@ -63,7 +63,7 @@ The health check polls `GET /api/config` every 30 seconds.
 The **scheduler** is behind a docker-compose profile and only starts on demand:
 
 ```bash
-make scheduler          # starts the background ingest/refresh loop
+just scheduler          # starts the background ingest/refresh loop
 ```
 
 | Service | Role |
@@ -106,7 +106,7 @@ DEM; each run enriches as many rows as the free tier allows before it rate-limit
 
 Open-Meteo's free tier caps at ~10k points/day, so a fresh multi-million-row backlog would
 take ~200 days to clear at that pace. To clear it in one pass instead, run
-`make ansible-backfill-elevation-dem-once` (tag `foray:backfill-elevation-dem-once`): it
+`just ansible backfill-elevation-dem-once` (tag `foray:backfill-elevation-dem-once`): it
 downloads ~5 GB of Copernicus GLO-90 tiles onto the droplet, samples the same DEM locally for
 every outstanding row, then removes the tiles. Writes go through a `COPY` into a TEMP table
 plus one `UPDATE ... FROM` per batch (`--batch-size`), with `--sleep` pacing, a short
@@ -122,7 +122,7 @@ the live `/api/destinations` query, so run it inside a **maintenance window**:
 ```sh
 ssh root@<droplet> 'touch /opt/foray-planner/www/maintenance.on'   # Caddy now serves the 503 page
 ssh root@<droplet> 'docker stop foray-planner'                     # free the DB of the app's queries
-FORAY_DROPLET_IP=<droplet> make ansible-backfill-elevation-dem-once
+FORAY_DROPLET_IP=<droplet> just ansible backfill-elevation-dem-once
 ssh root@<droplet> 'docker start foray-planner'
 ssh root@<droplet> 'rm /opt/foray-planner/www/maintenance.on'
 ```
@@ -208,18 +208,18 @@ version on an OS/package update.
 export DO_API_TOKEN=dop_v1_...
 export FORAY_SSH_KEY_NAME=my-key
 export FORAY_SSH_ALLOWED_IPS=203.0.113.0/24
-make ansible-install
-make ansible-provision
+just ansible install
+just ansible provision
 # Note the droplet IP from provision output, then deploy:
 export FORAY_DROPLET_IP=<droplet-ip>
-make ansible-deploy
+just ansible deploy
 ```
 
 ### Subsequent deploys (app update only)
 
 ```bash
 export FORAY_DROPLET_IP=<droplet-ip>
-make ansible-deploy
+just ansible deploy
 ```
 
 ### Tags
@@ -230,8 +230,8 @@ make ansible-deploy
 | `foray:provision` | DO resources (Droplet, database, firewall) |
 | `foray:deploy` | Pull image, restart container |
 | `foray:cron` | Update cron schedules |
-| `foray:ingest-once` | Manual/opt-in full data ingest (`make ansible-ingest-once`) - not part of `foray:deploy` or the `foray` umbrella; the daily `foray-ingest` cron job already keeps data fresh, so this only exists for warming a fresh droplet's data immediately instead of waiting for the next cron run. **Run this only after the first `foray:deploy`** - it depends on the env file that deploy renders (`/opt/foray-planner/foray.env`) and fails fast with a clear message if that hasn't happened yet. |
-| `foray:backfill-elevation-dem-once` | Manual/opt-in one-pass elevation backfill (`make ansible-backfill-elevation-dem-once`) - samples local Copernicus GLO-90 tiles on the droplet to clear the whole elevation backlog at once, instead of the hourly `foray-backfill-elevation` cron trickling through Open-Meteo's ~10k/day free tier. Downloads ~5 GB of tiles, then removes them. Set-based `COPY` + `UPDATE ... FROM` writes with `--sleep` pacing and a short `lock_timeout` so the live site keeps serving; `--no-rebuild` (daily ingest rematerializes phenology). Safe to re-run to finish a partial pass. Same env-file dependency and fail-fast as `foray:ingest-once`, plus a free-disk precheck. |
+| `foray:ingest-once` | Manual/opt-in full data ingest (`just ansible ingest-once`) - not part of `foray:deploy` or the `foray` umbrella; the daily `foray-ingest` cron job already keeps data fresh, so this only exists for warming a fresh droplet's data immediately instead of waiting for the next cron run. **Run this only after the first `foray:deploy`** - it depends on the env file that deploy renders (`/opt/foray-planner/foray.env`) and fails fast with a clear message if that hasn't happened yet. |
+| `foray:backfill-elevation-dem-once` | Manual/opt-in one-pass elevation backfill (`just ansible backfill-elevation-dem-once`) - samples local Copernicus GLO-90 tiles on the droplet to clear the whole elevation backlog at once, instead of the hourly `foray-backfill-elevation` cron trickling through Open-Meteo's ~10k/day free tier. Downloads ~5 GB of tiles, then removes them. Set-based `COPY` + `UPDATE ... FROM` writes with `--sleep` pacing and a short `lock_timeout` so the live site keeps serving; `--no-rebuild` (daily ingest rematerializes phenology). Safe to re-run to finish a partial pass. Same env-file dependency and fail-fast as `foray:ingest-once`, plus a free-disk precheck. |
 | `foray:firewall-allow-runner` / `foray:firewall-revoke-runner` | CI-internal only - adds/removes the GitHub Actions runner's own IP from the live SSH firewall rule around an automated `foray:deploy` run (see below). Not something an operator runs directly. |
 
 ---
@@ -239,7 +239,7 @@ make ansible-deploy
 ## CI/CD deploy (automated)
 
 `.github/workflows/cd.yml`'s `deploy` job runs `foray:deploy` against prod automatically
-after every image publish on `main`, replacing the need to manually run `make ansible-deploy`
+after every image publish on `main`, replacing the need to manually run `just ansible deploy`
 for routine app updates. `foray:provision` and the one-off tags stay manual/local - only the
 app-update path (`foray:deploy`) is automated.
 
@@ -267,7 +267,7 @@ trip that limit and make the *real* deploy connection a few seconds later fail w
 misleading `Connection timed out` (this cost real debugging time - see PRs #148-150). Instead,
 the `Deploy` step sets `ANSIBLE_HOST_KEY_CHECKING=false` and skips host-key TOFU entirely for
 this one ephemeral connection - the SSH private key is already the real trust boundary here.
-Local operator deploys via `make ansible-deploy` are unaffected; `ansible.cfg`'s default
+Local operator deploys via `just ansible deploy` are unaffected; `ansible.cfg`'s default
 host-key-checking behavior only changes for the CI job.
 
 **Image pinning.** The `deploy` job passes `foray_app_image` as the exact digest the `publish`
@@ -311,7 +311,7 @@ These are GitHub UI / DigitalOcean steps that can't be made by a code change:
    | Secret | Value |
    |---|---|
    | `FORAY_DEPLOY_SSH_KEY` | Private half of the keypair from step 1 |
-   | `DO_API_TOKEN` | Same DigitalOcean API token used for `make ansible-provision` |
+   | `DO_API_TOKEN` | Same DigitalOcean API token used for `just ansible provision` |
    | `FORAY_DROPLET_IP` | The droplet's public IP |
    | `FORAY_TLS_CERT` / `FORAY_TLS_KEY` | Contents (not paths) of the Cloudflare Origin CA cert/key - the CI equivalent of the local `FORAY_TLS_CERT_PATH`/`FORAY_TLS_KEY_PATH` files |
    | `RIDB_API_KEY` | Optional, same as the local `.env` value |

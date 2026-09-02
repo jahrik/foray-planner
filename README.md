@@ -115,14 +115,15 @@ maps, and community notes.
 ## Quick start
 
 ```bash
-make install && make db
-make ingest             # pull iNat observations for all coverage regions
-make start              # http://localhost:8000 (app + postgres)
-make scheduler          # optional: background ingest/refresh loop
+uv tool install rust-just    # one-time: the `just` command runner
+just install && just db
+just ingest             # pull iNat observations for all coverage regions
+just start              # http://localhost:8000 (app + postgres)
+just scheduler          # optional: background ingest/refresh loop
 ```
 
-Run `make check` before pushing (lint + type-check + tests). See the
-[development guide](docs/development.md) for full details and all Makefile targets.
+Run `just check` before pushing (lint + type-check + tests). See the
+[development guide](docs/development.md) for full details and all `just` recipes.
 
 ---
 
