@@ -19,10 +19,12 @@ describe("clearLayerList", () => {
     expect(layers).toHaveLength(0);
   });
 
-  it("keeps the same array reference", () => {
+  it("is a no-op on an already-empty list", () => {
+    const map = stubMap();
     const layers: L.Layer[] = [];
-    clearLayerList(stubMap(), layers);
-    expect(layers).toBeInstanceOf(Array);
+    clearLayerList(map, layers);
+    expect(map.removeLayer).not.toHaveBeenCalled();
+    expect(layers).toHaveLength(0);
   });
 });
 
