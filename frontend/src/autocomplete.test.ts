@@ -117,6 +117,25 @@ describe("initAutocomplete", () => {
     expect(onPick).not.toHaveBeenCalled();
   });
 
+  it("a fetch that resolves after the list is closed does not re-open it", async () => {
+    const resolvers: Array<(rows: Row[]) => void> = [];
+    const fetchSuggestions = vi.fn(() => new Promise<Row[]>((resolve) => resolvers.push(resolve)));
+    const { input, list } = setup({ fetchSuggestions });
+
+    type(input, "xx");
+    await vi.advanceTimersByTimeAsync(300);
+    resolvers[0]?.(ROWS);
+    for (let flush = 0; flush < 5; flush += 1) await Promise.resolve();
+    expect(list.classList.contains("open")).toBe(true); // first fetch rendered
+
+    type(input, "xxy"); // schedules a second fetch
+    await vi.advanceTimersByTimeAsync(300);
+    keydown(input, "Escape"); // list is open, so close() runs and bumps the generation
+    resolvers[1]?.(ROWS);
+    for (let flush = 0; flush < 5; flush += 1) await Promise.resolve();
+    expect(list.classList.contains("open")).toBe(false);
+  });
+
   it("mousedown on a suggestion picks it", async () => {
     const { input, list, onPick } = setup();
     type(input, "xx");

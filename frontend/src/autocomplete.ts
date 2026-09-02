@@ -40,10 +40,18 @@ export function initAutocomplete<T>(config: AutocompleteConfig<T>): void {
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let activeIndex = -1;
   let results: T[] = [];
+  // Bumped whenever the list is closed or a new query is dispatched, so a debounced callback or
+  // a fetch that resolves after the fact is dropped instead of re-opening a dismissed list.
+  let generation = 0;
 
   function close(): void {
     list.classList.remove("open");
     activeIndex = -1;
+    generation += 1;
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
   }
 
   function render(): void {
@@ -76,9 +84,10 @@ export function initAutocomplete<T>(config: AutocompleteConfig<T>): void {
       close();
       return;
     }
+    const dispatch = (generation += 1);
     debounceTimer = setTimeout(async () => {
       const fetched = await fetchSuggestions(query);
-      if (fetched === null) return; // superseded by a newer request
+      if (fetched === null || dispatch !== generation) return; // superseded or list closed
       results = fetched;
       render();
     }, debounceMs);
