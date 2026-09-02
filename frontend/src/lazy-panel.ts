@@ -7,7 +7,7 @@
 /**
  * Wraps a `() => Promise<boolean>` loader (true = loaded, false = failed/retryable) so it runs
  * at most once on success. `open()` is safe to call on every tab click: it no-ops while a load
- * is in flight or already done, and re-arms itself if the load reported failure.
+ * is in flight or already done, and re-arms itself if the load reported failure or threw.
  */
 export function createLazyLoader(load: () => Promise<boolean>): { open: () => void } {
   let status: "idle" | "loading" | "loaded" = "idle";
@@ -15,9 +15,13 @@ export function createLazyLoader(load: () => Promise<boolean>): { open: () => vo
     open() {
       if (status !== "idle") return;
       status = "loading";
-      void load().then((succeeded) => {
-        status = succeeded ? "loaded" : "idle";
-      });
+      void (async () => {
+        try {
+          status = (await load()) ? "loaded" : "idle";
+        } catch {
+          status = "idle"; // a thrown/rejected load re-arms the tab rather than wedging it
+        }
+      })();
     },
   };
 }

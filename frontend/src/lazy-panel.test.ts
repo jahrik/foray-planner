@@ -27,6 +27,18 @@ describe("createLazyLoader", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
+  it("re-arms after a rejected load so the next open retries", async () => {
+    const load = vi.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce(true);
+    const loader = createLazyLoader(load);
+
+    loader.open();
+    await Promise.resolve();
+    await Promise.resolve();
+    loader.open();
+
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
   it("re-arms after a failed load so the next open retries", async () => {
     const load = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     const loader = createLazyLoader(load);
