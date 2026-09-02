@@ -62,16 +62,16 @@ apply to the map regardless of which tab you're on.
 | Toggle | What it shows | Marker |
 |---|---|---|
 | **Campgrounds** | Named campgrounds from Recreation.gov | Gold = free, Amber = fee/unknown |
-| **Dispersed** | OSM-tagged free campsites + likely dispersed zones | Teal solid = reported site, Teal dashed ring = proxy |
+| **Dispersed** | Backcountry / dispersed campsites tagged in OpenStreetMap | Teal dot = reported site |
 | **Free only** | Filters both camping layers to free/no-fee options only | - |
 | **Public land** | Land ownership polygons shaded by agency (BLM/USFS) | Ochre = BLM, Violet = USFS |
 | **Trails** | Hiking paths, named routes & trailheads near the hotspot | Red lines = trails, Red dots = trailheads |
 
-**A note on dispersed camping:** the dashed-ring markers are a *best-guess proxy* -
-drivable forest roads that fall on BLM or USFS land, where dispersed camping is
-generally allowed. They are not a guarantee of legality. Always check with the local
-BLM or Forest Service district office before camping somewhere unfamiliar. The
-ownership polygons show who manages the land; they are informational only.
+**A note on dispersed camping:** the Dispersed layer shows only sites that someone
+has explicitly tagged as campable in OpenStreetMap. A tag is not a guarantee of
+legality or current access. Always check with the local BLM or Forest Service
+district office before camping somewhere unfamiliar. The ownership polygons show who
+manages the land; they are informational only.
 
 ---
 

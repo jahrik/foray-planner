@@ -15,7 +15,7 @@ export const HOME_FILL = "#ffffff"; // white "you are here" dot
 export const HOME_RING = "#0c0d09";
 export const CAMP_FREE = "#ffe14d"; // neon gold - free / no-fee campground
 export const CAMP_PAID = "#ff9e2e"; // bright amber - fee or unknown-cost campground
-export const CAMP_OSM = "#1fe6d0"; // neon teal - OSM dispersed layer (solid = reported, dashed = proxy)
+export const CAMP_OSM = "#1fe6d0"; // neon teal - OSM dispersed-camping layer (reported sites)
 // Public-land ownership fill - non-green so it reads over the terrain, one hue per agency.
 export const LAND_COLORS: Record<string, string> = {
   BLM: "#e8974a", // bright ochre
