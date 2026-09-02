@@ -1,12 +1,10 @@
+import { initAutocomplete } from "./autocomplete";
 import { withLoading } from "./loading";
 import { setLocation } from "./refresh";
 import { qs } from "./state";
 
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
-const DEBOUNCE_MS = 300;
 
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-let activeIndex = -1;
 let activeAbort: AbortController | null = null;
 
 interface NominatimResult {
@@ -15,7 +13,7 @@ interface NominatimResult {
   lon: string;
 }
 
-// Returns null (rather than []) on abort so the caller can tell "superseded" apart from "no
+// Returns null (rather than []) on abort so the widget can tell "superseded" apart from "no
 // matches" and skip re-rendering.
 async function fetchSuggestions(query: string): Promise<NominatimResult[] | null> {
   const controller = new AbortController();
@@ -31,43 +29,10 @@ async function fetchSuggestions(query: string): Promise<NominatimResult[] | null
   }
 }
 
-function renderSuggestions(
-  results: NominatimResult[],
-  list: HTMLUListElement,
-  onSelect: (query: string) => void,
-): void {
-  list.innerHTML = "";
-  activeIndex = -1;
-  if (!results.length) {
-    list.classList.remove("open");
-    return;
-  }
-  results.forEach((result, i) => {
-    const li = document.createElement("li");
-    li.textContent = result.display_name;
-    li.dataset.index = String(i);
-    li.onmousedown = (e) => {
-      e.preventDefault();
-      selectResult(result, list, onSelect);
-    };
-    list.appendChild(li);
-  });
-  list.classList.add("open");
-}
-
-function selectResult(
-  result: NominatimResult,
-  list: HTMLUListElement,
-  onSelect: (query: string) => void,
-): void {
-  list.classList.remove("open");
-  onSelect(`${result.lat}, ${result.lon}`);
-}
-
 /** Wire a Nominatim-backed place-search input + suggestion list. ``onSelect`` receives either a
- * resolved "lat, lng" string (suggestion picked) or the raw typed text (form submitted directly),
- * leaving what to do with it (persist as home, stash for a trip-planning field, etc.) to the
- * caller. */
+ * resolved "lat, lng" string (suggestion picked) or the raw typed text (form submitted
+ * directly), leaving what to do with it (persist as home, stash for a trip-planning field, etc.)
+ * to the caller. */
 export function initPlaceAutocomplete(
   input: HTMLInputElement,
   list: HTMLUListElement,
@@ -76,68 +41,23 @@ export function initPlaceAutocomplete(
   options: { clearInputOnSelect?: boolean } = {},
 ): void {
   const clearInputOnSelect = options.clearInputOnSelect ?? true;
-  let results: NominatimResult[] = [];
-
-  input.addEventListener("input", () => {
-    const query = input.value.trim();
-    if (debounceTimer) clearTimeout(debounceTimer);
-    // Abort immediately, not just when a new fetch actually starts below - otherwise a request
-    // already in flight when the debounce clock is still running (e.g. the user deletes back
-    // below 2 chars, or types again before the previous fetch resolves) survives untouched and
-    // can still resolve later, re-opening the list with stale results (issue #99 follow-up).
-    activeAbort?.abort();
-    if (query.length < 2) {
-      list.classList.remove("open");
-      return;
-    }
-    debounceTimer = setTimeout(async () => {
-      const fetched = await fetchSuggestions(query);
-      if (fetched === null) return; // superseded by a newer request
-      results = fetched;
-      renderSuggestions(results, list, (resolved) => {
-        if (clearInputOnSelect) input.value = "";
-        onSelect(resolved);
-      });
-    }, DEBOUNCE_MS);
-  });
-
-  input.addEventListener("keydown", (e) => {
-    const items = list.querySelectorAll("li");
-    if (!items.length || !list.classList.contains("open")) return;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      activeIndex = Math.min(activeIndex + 1, items.length - 1);
-      items.forEach((li, i) => li.classList.toggle("active", i === activeIndex));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      activeIndex = Math.max(activeIndex - 1, 0);
-      items.forEach((li, i) => li.classList.toggle("active", i === activeIndex));
-    } else if (e.key === "Enter" && activeIndex >= 0) {
-      e.preventDefault();
-      const result = results[activeIndex];
-      if (result) {
-        selectResult(result, list, (resolved) => {
-          if (clearInputOnSelect) input.value = "";
-          onSelect(resolved);
-        });
-      }
-    } else if (e.key === "Escape") {
-      list.classList.remove("open");
-    }
-  });
-
-  input.addEventListener("blur", () => {
-    setTimeout(() => list.classList.remove("open"), 150);
-  });
-
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const query = input.value.trim();
-    if (query) {
-      list.classList.remove("open");
-      if (clearInputOnSelect) input.value = "";
-      onSelect(query);
-    }
+  const emit = (query: string): void => {
+    if (clearInputOnSelect) input.value = "";
+    onSelect(query);
+  };
+  initAutocomplete<NominatimResult>({
+    input,
+    list,
+    form,
+    fetchSuggestions,
+    label: (result) => result.display_name,
+    // Abort immediately on every keystroke, not just when a new fetch starts - otherwise a
+    // request already in flight when the debounce clock is still running (the user deletes
+    // back below 2 chars, or types again before the previous fetch resolves) survives and can
+    // still resolve later, re-opening the list with stale results (issue #99 follow-up).
+    onInput: () => activeAbort?.abort(),
+    onPick: (result) => emit(`${result.lat}, ${result.lon}`),
+    onSubmitText: emit,
   });
 }
 
