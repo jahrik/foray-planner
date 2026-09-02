@@ -2,6 +2,7 @@ import L from "leaflet";
 import "leaflet.markercluster";
 
 import type { CampSite, Home } from "./api/types";
+import { clearLayer, clearLayerList } from "./layer-lifecycle";
 import { circleStyle } from "./markers";
 import { dist, qs, state } from "./state";
 
@@ -238,8 +239,7 @@ export function deselectSize(marker: L.Circle, weight: number): void {
 }
 
 export function clearMarkers(): void {
-  state.markers.forEach((marker) => map.removeLayer(marker));
-  state.markers = [];
+  clearLayerList(map, state.markers);
   clearCamps();
   clearLand();
   clearTrailheadMarkers();
@@ -262,8 +262,7 @@ export function addPreciseMarker(marker: L.CircleMarker): void {
 }
 
 export function clearCamps(): void {
-  state.campMarkers.forEach((marker) => map.removeLayer(marker));
-  state.campMarkers = [];
+  clearLayerList(map, state.campMarkers);
 }
 
 export function addCampMarker(marker: L.CircleMarker): void {
@@ -271,10 +270,7 @@ export function addCampMarker(marker: L.CircleMarker): void {
 }
 
 export function clearLand(): void {
-  if (state.landLayer) {
-    map.removeLayer(state.landLayer);
-    state.landLayer = null;
-  }
+  state.landLayer = clearLayer(map, state.landLayer);
 }
 
 export function setLandLayer(layer: L.GeoJSON): void {
@@ -296,8 +292,7 @@ function trailheadIcon(active: boolean): L.DivIcon {
 }
 
 export function clearTrailheadMarkers(): void {
-  state.trailheadMarkers.forEach((marker) => map.removeLayer(marker));
-  state.trailheadMarkers = [];
+  clearLayerList(map, state.trailheadMarkers);
 }
 
 export function plotTrailhead(lat: number, lng: number, name: string, onSelect: () => void): L.Marker {
@@ -329,8 +324,7 @@ function cardCampStyle(site: CampSite, active: boolean): L.CircleMarkerOptions {
 }
 
 export function clearCardCampMarkers(): void {
-  state.cardCampMarkers.forEach((marker) => map.removeLayer(marker));
-  state.cardCampMarkers = [];
+  clearLayerList(map, state.cardCampMarkers);
 }
 
 export function plotCardCamp(site: CampSite, onSelect: () => void): L.CircleMarker {
@@ -351,10 +345,7 @@ export function setCardCampActive(marker: L.CircleMarker, site: CampSite, active
 // Clears whichever trail is currently drawn from a destination card's Trails tab selection
 // (layers.ts's selectTrailhead) - at most one at a time, see state.selectedTrailLayer.
 export function clearSelectedTrail(): void {
-  if (state.selectedTrailLayer) {
-    map.removeLayer(state.selectedTrailLayer);
-    state.selectedTrailLayer = null;
-  }
+  state.selectedTrailLayer = clearLayer(map, state.selectedTrailLayer);
 }
 
 export function setSelectedTrail(layer: L.Polyline): void {
@@ -362,10 +353,7 @@ export function setSelectedTrail(layer: L.Polyline): void {
 }
 
 export function clearPlanRoute(): void {
-  if (state.planRouteLayer) {
-    map.removeLayer(state.planRouteLayer);
-    state.planRouteLayer = null;
-  }
+  state.planRouteLayer = clearLayer(map, state.planRouteLayer);
 }
 
 export function setPlanRoute(layer: L.Polyline): void {
