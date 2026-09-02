@@ -4,7 +4,8 @@
 
 - **Python 3.13+** and **[uv](https://docs.astral.sh/uv/)** - uv manages the venv and lockfile
 - **[just](https://github.com/casey/just)** - the command runner (`uv tool install rust-just`)
-- **Node 22+** via [nvm](https://github.com/nvm-sh/nvm) - not on `PATH` by default, see below
+- **Node 24+** via [nvm](https://github.com/nvm-sh/nvm) - not on `PATH` by default, see below
+  (`frontend/.nvmrc` pins the exact major)
 - **Docker / Podman** - runs the local Postgres instance (`docker-compose.yml`); also
   used for the container workflow
 - **RIDB_API_KEY** *(optional)* - free key from [Recreation.gov](https://ridb.recreation.gov/landing)
