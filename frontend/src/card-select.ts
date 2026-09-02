@@ -3,7 +3,7 @@
 import type L from "leaflet";
 
 import { deselectSize, selectSize } from "./map";
-import { state } from "./state";
+import { state, type View } from "./state";
 
 /**
  * Stale-response guard for an async render that can be re-entered while a previous run of
@@ -13,7 +13,7 @@ import { state } from "./state";
  * once the user has switched away from that view. See views.ts runDestinations/runAlerts and
  * layers.ts animateTrail.
  */
-export function createRunGuard(view?: string): { begin: () => () => boolean } {
+export function createRunGuard(view?: View): { begin: () => () => boolean } {
   let latest = 0;
   return {
     begin() {
