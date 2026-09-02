@@ -2,6 +2,7 @@ import L from "leaflet";
 import "leaflet.markercluster";
 
 import type { CampSite, Home } from "./api/types";
+import { circleStyle } from "./markers";
 import { dist, qs, state } from "./state";
 
 // Marker palette - bright/neon so it pops on the dark basemap (the default), while still
@@ -26,6 +27,16 @@ export const LAND_DEFAULT = "#b5b5b5"; // any other agency
 export const TRAIL = "#ff5555";
 export const PLAN_STOP = "#ffd060"; // neon gold - planned-route stops and connecting line
 export const PRECISE = "#c792ea"; // bright lavender - known-precise (non-obscured) observation pin
+
+// The persistent "you are here" dot: a white fill with a dark ring. Shared by the base-map home
+// marker (initMap) and the plan-route start marker (plan.ts runPlan) so the two stay identical.
+export const HOME_DOT_STYLE = circleStyle({
+  radius: 7,
+  fill: HOME_FILL,
+  stroke: HOME_RING,
+  weight: 3,
+  fillOpacity: 1,
+});
 
 // A single standard OSM tile source for both themes - dark mode inverts it via CSS
 // (`invert() hue-rotate()` in style.css) instead of swapping in a separate dark tileset.
@@ -121,14 +132,7 @@ export function initMap(home: Home): void {
     spiderfyOnMaxZoom: true,
   }).addTo(map);
   renderLegend();
-  homeMarker = L.circleMarker([home.lat, home.lng], {
-    radius: 7,
-    color: HOME_RING,
-    weight: 3,
-    fillColor: HOME_FILL,
-    fillOpacity: 1,
-    bubblingMouseEvents: false,
-  })
+  homeMarker = L.circleMarker([home.lat, home.lng], HOME_DOT_STYLE)
     .addTo(map)
     .bindPopup("Location: " + home.name);
 
@@ -315,14 +319,13 @@ export function setTrailheadActive(marker: L.Marker, active: boolean): void {
 // with the global #show-camps/#show-dispersed toggle's own marker set (loadCamps in layers.ts).
 // Styled the same free/paid gold-vs-amber as that toggle's markers for visual consistency.
 function cardCampStyle(site: CampSite, active: boolean): L.CircleMarkerOptions {
-  return {
+  return circleStyle({
     radius: active ? 8 : 6,
-    color: HOME_RING,
+    fill: site.free === true ? CAMP_FREE : CAMP_PAID,
+    stroke: HOME_RING,
     weight: active ? 2 : 1,
-    fillColor: site.free === true ? CAMP_FREE : CAMP_PAID,
     fillOpacity: 0.9,
-    bubblingMouseEvents: false,
-  };
+  });
 }
 
 export function clearCardCampMarkers(): void {
