@@ -3,9 +3,9 @@
 // in-flight ingest for that layer and re-plots without it. Split out of main.ts (issue #242
 // Part 2d).
 
-import { loadCamps, loadLand } from "./layers";
-import { cancelRefresh, startRefresh } from "./refresh";
-import { qs } from "./state";
+import { loadCamps, loadLand } from "../map/layers";
+import { cancelRefresh, startRefresh } from "../refresh";
+import { qs } from "../state";
 
 export function initLayerToggles(): void {
   let currentRefreshTarget: string | null = null;

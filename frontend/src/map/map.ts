@@ -1,10 +1,10 @@
 import L from "leaflet";
 import "leaflet.markercluster";
 
-import type { CampSite, Home } from "./api/types";
+import type { CampSite, Home } from "../api/types";
 import { clearLayer, clearLayerList } from "./layer-lifecycle";
 import { circleStyle } from "./markers";
-import { dist, qs, state } from "./state";
+import { dist, qs, state } from "../state";
 
 // Marker palette - bright/neon so it pops on the dark basemap (the default), while still
 // reading over the lighter OSM terrain in light mode. Deliberately non-green vs the terrain.

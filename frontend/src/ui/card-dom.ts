@@ -3,8 +3,8 @@
 // buttons, so this makes them keyboard-operable and keeps nested links clickable without also
 // activating the card.
 
-import { escapeHtml } from "./format";
-import { displayName, inatUrl } from "./state";
+import { escapeHtml } from "../format";
+import { displayName, inatUrl } from "../state";
 
 // Cards act as buttons (selecting a region) but are plain <div>s for layout flexibility, so make
 // them keyboard-operable: focusable, and Enter/Space activates - but only when the key event's

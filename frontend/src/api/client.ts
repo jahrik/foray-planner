@@ -1,7 +1,7 @@
 import createClient from "openapi-fetch";
 import type { FilterKeys, PathsWithMethod, RequiredKeysOf } from "openapi-typescript-helpers";
 
-import { withLoading } from "../loading";
+import { withLoading } from "../ui/loading";
 import type { paths } from "./schema";
 import type { ApiError, RefreshEvent } from "./types";
 

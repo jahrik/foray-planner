@@ -1,6 +1,6 @@
 import L from "leaflet";
 
-import { getJson } from "./api/client";
+import { getJson } from "../api/client";
 import type {
   Calendar,
   CampSite,
@@ -8,8 +8,8 @@ import type {
   RecentObservationsPage,
   RegionScore,
   Trail,
-} from "./api/types";
-import { selectTrailhead } from "./layers";
+} from "../api/types";
+import { selectTrailhead } from "../map/layers";
 import {
   clearCardCampMarkers,
   clearTrailheadMarkers,
@@ -19,9 +19,9 @@ import {
   regionRadiusKm,
   setCardCampActive,
   setTrailheadActive,
-} from "./map";
-import { escapeHtml, feeLabel } from "./format";
-import { dist, displayName, errorDetail, monthsParam, MONTHS, setStatus } from "./state";
+} from "../map/map";
+import { escapeHtml, feeLabel } from "../format";
+import { dist, displayName, errorDetail, monthsParam, MONTHS, setStatus } from "../state";
 
 // The four detail-tab bodies behind each destination card (Calendar / Photos / Trails /
 // Campgrounds). Each function fetches once per card (the caller's createLazyLoader owns the

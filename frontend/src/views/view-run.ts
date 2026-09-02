@@ -1,6 +1,6 @@
 import { runAlerts } from "./alerts-view";
 import { runPlan } from "./plan";
-import { state } from "./state";
+import { state } from "../state";
 import { runDestinations } from "./views";
 
 // The single "re-run whatever panel is currently open" entry point (issue #242 Part 2e). Used

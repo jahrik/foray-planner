@@ -1,12 +1,12 @@
-import { createCardSelection, createRunGuard } from "./card-select";
-import { makeActivatable, speciesChip, stopLinkPropagation } from "./card-dom";
-import { escapeHtml } from "./format";
-import { focusRegion } from "./layers";
-import { clearMarkers, map, plot } from "./map";
-import { focusOnMap, sheetEnabled, snapTo } from "./sheet";
-import type { AlertRegion } from "./api/types";
-import { getJson } from "./api/client";
-import { dist, displayName, errorDetail, qs, setStatus } from "./state";
+import { createCardSelection, createRunGuard } from "../ui/card-select";
+import { makeActivatable, speciesChip, stopLinkPropagation } from "../ui/card-dom";
+import { escapeHtml } from "../format";
+import { focusRegion } from "../map/layers";
+import { clearMarkers, map, plot } from "../map/map";
+import { focusOnMap, sheetEnabled, snapTo } from "../map/sheet";
+import type { AlertRegion } from "../api/types";
+import { getJson } from "../api/client";
+import { dist, displayName, errorDetail, qs, setStatus } from "../state";
 
 // Same overlapping-call guard as runDestinations (views.ts) - runAlerts() can also be triggered
 // more than once in flight (tab switches, refreshCurrentView() calls). createRunGuard("alerts")

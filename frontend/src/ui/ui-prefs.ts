@@ -2,9 +2,9 @@
 // Each reads its stored value through prefs.ts, applies it to the DOM / app state, and writes
 // the new value back on click. Split out of main.ts (issue #242 Part 2d).
 
-import { currentTheme, setTiles, updateHome } from "./map";
-import { getLargeText, setLargeText, setTheme, setUnits } from "./prefs";
-import { qs, state, type Units } from "./state";
+import { currentTheme, setTiles, updateHome } from "../map/map";
+import { getLargeText, setLargeText, setTheme, setUnits } from "../prefs";
+import { qs, state, type Units } from "../state";
 
 export function initTheme(): void {
   const toggle = qs<HTMLButtonElement>("#theme-toggle");

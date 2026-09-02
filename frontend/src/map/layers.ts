@@ -1,9 +1,9 @@
 import L from "leaflet";
 
-import { getJson } from "./api/client";
-import type { CampSite, LandUnit, PreciseObservation, Trail, TrailPath } from "./api/types";
-import { createRunGuard } from "./card-select";
-import { feeLabel } from "./format";
+import { getJson } from "../api/client";
+import type { CampSite, LandUnit, PreciseObservation, Trail, TrailPath } from "../api/types";
+import { createRunGuard } from "../ui/card-select";
+import { feeLabel } from "../format";
 import { circleStyle } from "./markers";
 import { buildPopup } from "./popup";
 import {
@@ -28,7 +28,7 @@ import {
   setSelectedTrail,
   TRAIL,
 } from "./map";
-import { dist, displayName, errorDetail, monthsParam, qs, setStatus, state } from "./state";
+import { dist, displayName, errorDetail, monthsParam, qs, setStatus, state } from "../state";
 
 export const campsOn = (): boolean => qs<HTMLInputElement>("#show-camps").checked;
 export const dispersedOn = (): boolean => qs<HTMLInputElement>("#show-dispersed").checked;
