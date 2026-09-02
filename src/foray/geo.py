@@ -53,6 +53,33 @@ def bbox_around(lat: float, lng: float, radius_km: float) -> BBox:
     return BBox(lat - dlat, lng - dlng, lat + dlat, lng + dlng)
 
 
+class GridCell(NamedTuple):
+    """A grid cell on the same ``floor(coord / cell_deg)`` lattice ``scoring._sql.BINNED``
+    derives ``region_id`` from. ``cell_id`` matches that ``region_id`` exactly."""
+
+    cell_id: str
+    center_lat: float
+    center_lng: float
+
+
+def grid_cell(lat: float, lng: float, cell_deg: float) -> GridCell:
+    """Snap ``(lat, lng)`` to its grid cell - the same ``"{ilat}_{ilng}"`` key
+    ``regions``/``phenology`` compute in SQL, plus the cell's center point.
+
+    Used by the precip cache (issue #226) to reuse the region grid as the weather geography
+    instead of hitting Open-Meteo per raw observation coordinate.
+    """
+    ilat = math.floor(lat / cell_deg)
+    ilng = math.floor(lng / cell_deg)
+    return GridCell(f"{ilat}_{ilng}", (ilat + 0.5) * cell_deg, (ilng + 0.5) * cell_deg)
+
+
+def grid_cell_center(cell_id: str, cell_deg: float) -> tuple[float, float]:
+    """Inverse of :func:`grid_cell` for the center point: ``"{ilat}_{ilng}"`` -> ``(lat, lng)``."""
+    ilat_str, ilng_str = cell_id.split("_")
+    return (int(ilat_str) + 0.5) * cell_deg, (int(ilng_str) + 0.5) * cell_deg
+
+
 def project_to_plane(ref_lat: float, ref_lng: float, lat: float, lng: float) -> tuple[float, float]:
     """Local tangent-plane projection (x=east km, y=north km) centered on ``ref_lat``/``ref_lng``.
 

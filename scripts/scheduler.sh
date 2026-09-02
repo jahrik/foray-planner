@@ -7,6 +7,8 @@ REVALIDATE_INTERVAL="${FORAY_REVALIDATE_INTERVAL_HOURS:-168}"
 RESYNC_INTERVAL="${FORAY_RESYNC_INTERVAL_HOURS:-1}"
 RESYNC_BATCH_SIZE="${FORAY_RESYNC_BATCH_SIZE:-2000}"
 ELEVATION_INTERVAL="${FORAY_ELEVATION_INTERVAL_HOURS:-1}"
+# Rain changes far faster than the 168h camps/land/trails layers, so it gets its own knob.
+PRECIP_INTERVAL="${FORAY_PRECIP_INTERVAL_HOURS:-24}"
 # High cap on purpose - each pass drains until Open-Meteo's free tier 429s it (lookup_batch
 # backs off on Retry-After, then gives up), so this is really just an upper safety bound.
 ELEVATION_LIMIT="${FORAY_ELEVATION_LIMIT:-20000}"
@@ -16,6 +18,7 @@ layers_last=0
 revalidate_last=0
 resync_last=0
 elevation_last=0
+precip_last=0
 
 while true; do
   now=$(date +%s)
@@ -59,6 +62,19 @@ while true; do
   if [ $((now - elevation_last)) -ge $((ELEVATION_INTERVAL * 3600)) ]; then
     echo "[scheduler] $(date -Iseconds) Starting elevation backfill (limit $ELEVATION_LIMIT)…"
     foray backfill-elevation --limit "$ELEVATION_LIMIT" && elevation_last=$(date +%s) || echo "[scheduler] elevation backfill failed"
+  fi
+
+  # Rainfall (issue #226): drain the per-observation antecedent-rain backlog (ERA5 archive,
+  # rebuilds phenology when it enriches anything) and refresh the recent-rain-per-destination
+  # layer (forecast API). Both hit Open-Meteo's free tier, which 429s a burst - each pass does
+  # what it can and the next tick resumes.
+  if [ $((now - precip_last)) -ge $((PRECIP_INTERVAL * 3600)) ]; then
+    echo "[scheduler] $(date -Iseconds) Starting rainfall backfill + recent-rain layer refresh…"
+    if foray backfill-precip && foray refresh-precip; then
+      precip_last=$(date +%s)
+    else
+      echo "[scheduler] rainfall refresh failed"
+    fi
   fi
 
   sleep 300

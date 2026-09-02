@@ -145,3 +145,24 @@ def test_backfill_elevation_rebuild_flag(con: psycopg.Connection, env_config, mo
 
     assert runner.invoke(cli, ["backfill-elevation"]).exit_code == 0
     assert rebuilds == ["rebuild"]
+
+
+def test_backfill_precip_rebuild_flag(con: psycopg.Connection, env_config, monkeypatch) -> None:
+    monkeypatch.setattr(cli_module, "connect", lambda: _CloseTrackingConnection(con))
+    monkeypatch.setattr(cli_module, "backfill_precip", lambda con, *, cell_deg, max_cells=None: 3)
+    rebuilds: list[str] = []
+    monkeypatch.setattr(cli_module, "build_phenology", lambda con, cell_deg: rebuilds.append("rebuild"))
+    runner = CliRunner()
+
+    assert runner.invoke(cli, ["backfill-precip", "--no-rebuild"]).exit_code == 0
+    assert rebuilds == []
+    assert runner.invoke(cli, ["backfill-precip"]).exit_code == 0
+    assert rebuilds == ["rebuild"]
+
+
+def test_refresh_precip_cmd_reports_count(con: psycopg.Connection, env_config, monkeypatch) -> None:
+    monkeypatch.setattr(cli_module, "connect", lambda: _CloseTrackingConnection(con))
+    monkeypatch.setattr(cli_module, "refresh_precipitation", lambda con, cfg: 7)
+    result = CliRunner().invoke(cli, ["refresh-precip"])
+    assert result.exit_code == 0
+    assert "7 regions" in result.output

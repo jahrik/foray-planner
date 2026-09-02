@@ -14,6 +14,7 @@ from typing import Any, LiteralString, cast
 
 import psycopg
 
+from foray.cache import region_precip
 from foray.geo import bbox_around, haversine_km
 from foray.scoring._sql import (
     BINNED,
@@ -433,6 +434,12 @@ def alerts(
                 "obscured": obscured or False,
             }
         )
+    recent_rain = region_precip(con, by_region.keys())
+    for region_id, entry in by_region.items():
+        rain = recent_rain.get(region_id, {})
+        entry["precip_recent_7d_mm"] = rain.get("precip_7d_mm")
+        entry["precip_recent_14d_mm"] = rain.get("precip_14d_mm")
+        entry["precip_recent_30d_mm"] = rain.get("precip_30d_mm")
     results = list(by_region.values())
     results.sort(key=lambda region: region["total"], reverse=True)
     return results

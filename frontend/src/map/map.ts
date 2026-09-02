@@ -47,7 +47,8 @@ export const HOME_DOT_STYLE = circleStyle({
 // dark-on-light labels turns them into equally high-contrast light-on-dark, so everything from
 // city names down to trail/forest labels stays legible.
 const TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-const TILE_ATTRIBUTION = "© OpenStreetMap · observations © iNaturalist";
+const TILE_ATTRIBUTION =
+  "© OpenStreetMap · observations © iNaturalist · elevation &amp; weather © Open-Meteo";
 let tileLayer: L.TileLayer | null = null;
 
 export let map: L.Map;

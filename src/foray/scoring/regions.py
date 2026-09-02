@@ -21,6 +21,18 @@ from foray.scoring._sql import BINNED, CENTER_LAT, CENTER_LNG, taxon_filter
 # been elevation-enriched yet (see ingest.backfill_elevations).
 _ELEVATION = "ROUND(COALESCE(AVG(elevation_m) FILTER (WHERE NOT COALESCE(obscured, false)), AVG(elevation_m)))::int"
 
+# Mean antecedent rainfall over the region's enriched observations (issue #226), decoy-excluded
+# the same way as _ELEVATION. NULL until at least one observation in the region has been
+# precip-enriched (see ingest.backfill_precip). Rounded to 0.1 mm.
+_PRECIP_OBS_7D = (
+    "ROUND(COALESCE(AVG(precip_7d_mm) FILTER (WHERE NOT COALESCE(obscured, false)),"
+    " AVG(precip_7d_mm))::numeric, 1)::double precision"
+)
+_PRECIP_OBS_30D = (
+    "ROUND(COALESCE(AVG(precip_30d_mm) FILTER (WHERE NOT COALESCE(obscured, false)),"
+    " AVG(precip_30d_mm))::numeric, 1)::double precision"
+)
+
 
 def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
     """(Re)materialize the ``regions`` and ``phenology`` tables from ``observations``.
@@ -56,6 +68,8 @@ def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
                        {CENTER_LAT} AS center_lat,
                        {CENTER_LNG} AS center_lng,
                        {_ELEVATION} AS elevation_m,
+                       {_PRECIP_OBS_7D} AS precip_obs_7d_mm,
+                       {_PRECIP_OBS_30D} AS precip_obs_30d_mm,
                        count(*) AS n_obs,
                        count(DISTINCT taxon_id) AS n_taxa
                 FROM ({binned})
@@ -94,6 +108,26 @@ def region_elevations(con: psycopg.Connection, region_ids: Collection[str]) -> d
         con.rollback()
         return {}
     return dict(rows)
+
+
+def region_precip_obs(con: psycopg.Connection, region_ids: Collection[str]) -> dict[str, dict[str, float | None]]:
+    """``region_id -> {"precip_obs_7d_mm", "precip_obs_30d_mm"}``: the decoy-excluded mean
+    antecedent rainfall over each region's enriched observations (issue #226), from the
+    materialized ``regions`` table. Empty / all-NULL until ``backfill_precip`` has run."""
+    if not region_ids:
+        return {}
+    try:
+        rows = con.execute(
+            "SELECT region_id, precip_obs_7d_mm, precip_obs_30d_mm FROM regions WHERE region_id = ANY(%s)",
+            [list(region_ids)],
+        ).fetchall()
+    except psycopg.errors.UndefinedColumn:
+        # `regions` is materialized by build_phenology, not cache.SCHEMA - a deploy that adds
+        # these columns lands before the next rebuild. Degrade to "no rain readout" rather than
+        # 500 the ranking; the next refresh fills it in. (Mirrors region_elevations.)
+        con.rollback()
+        return {}
+    return {region_id: {"precip_obs_7d_mm": mm7, "precip_obs_30d_mm": mm30} for region_id, mm7, mm30 in rows}
 
 
 def recent_counts(con: psycopg.Connection, cell_deg: float, taxon_ids: list[int], weeks: int) -> dict[str, int]:

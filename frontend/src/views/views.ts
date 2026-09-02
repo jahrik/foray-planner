@@ -12,7 +12,17 @@ import { focusRegion } from "../map/layers";
 import { createLazyLoader } from "../ui/lazy-panel";
 import { focusOnMap, sheetEnabled, snapTo } from "../map/sheet";
 import { clearMarkers, map, plot } from "../map/map";
-import { dist, elevationLabel, errorDetail, monthsParam, MONTHS, qs, setStatus, state } from "../state";
+import {
+  dist,
+  elevationLabel,
+  errorDetail,
+  monthsParam,
+  MONTHS,
+  qs,
+  rainMeta,
+  setStatus,
+  state,
+} from "../state";
 
 export function initMonths(): void {
   const box = qs("#months");
@@ -103,7 +113,7 @@ export async function runDestinations(): Promise<void> {
     card.innerHTML = `
       <h3><span class="num">#${rank + 1} · ${dist(region.distance_km)}</span></h3>
       <div class="bar"><span style="width:${(region.score_norm * 100).toFixed(0)}%"></span></div>
-      <div class="meta">score <span class="num">${region.score_norm.toFixed(2)}</span> · <span class="num">${region.n_species}</span> spp · ${region.recent_count ? `<span class="num">${region.recent_count}</span> recent` : "no recent obs"}${region.elevation_m != null ? ` · elev <span class="num">${elevationLabel(region.elevation_m)}</span>` : ""}</div>
+      <div class="meta">score <span class="num">${region.score_norm.toFixed(2)}</span> · <span class="num">${region.n_species}</span> spp · ${region.recent_count ? `<span class="num">${region.recent_count}</span> recent` : "no recent obs"}${region.elevation_m != null ? ` · elev <span class="num">${elevationLabel(region.elevation_m)}</span>` : ""}${rainMeta(region)}</div>
       <div class="rank-tabs">
         <button type="button" class="rank-tab active" data-tab="species">Species</button>
         <button type="button" class="rank-tab" data-tab="calendar">Calendar</button>

@@ -34,6 +34,14 @@ class RegionScore:
     recent_count: int
     species: list[SpeciesHit]
     elevation_m: int | None = None
+    # Antecedent-rainfall means over the region's enriched observations (issue #226), mm.
+    precip_obs_7d_mm: float | None = None
+    precip_obs_30d_mm: float | None = None
+    # Recent rainfall at the region cell right now, from the precipitation layer (issue #226
+    # Part 2), mm over the trailing 7 / 14 / 30 days. None until the layer has been refreshed.
+    precip_recent_7d_mm: float | None = None
+    precip_recent_14d_mm: float | None = None
+    precip_recent_30d_mm: float | None = None
 
 
 @dataclass

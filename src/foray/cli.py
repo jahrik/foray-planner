@@ -15,7 +15,15 @@ from foray.sources import geocode
 from foray.sources.camps import ingest_campgrounds
 from foray.sources.dispersed import ingest_dispersed
 from foray.sources.inat import InatQuotaExceeded, iter_fungi_genera
-from foray.sources.ingest import backfill_elevations, ingest, ingest_region, resync, revalidate
+from foray.sources.ingest import (
+    backfill_elevations,
+    backfill_precip,
+    ingest,
+    ingest_region,
+    refresh_precipitation,
+    resync,
+    revalidate,
+)
 from foray.sources.land import ingest_public_land, ingest_public_land_coverage
 from foray.sources.trails import ingest_trails, ingest_trails_region
 
@@ -212,6 +220,46 @@ def backfill_elevation_cmd(ctx: click.Context, limit: int | None, rebuild: bool)
         if updated and rebuild:
             click.echo("Rebuilding phenology…")
             build_phenology(con, cfg.cell_deg)
+    finally:
+        con.close()
+
+
+@cli.command("backfill-precip")
+@click.option("--limit", type=int, default=None, help="Cap grid cells enriched this run (default: all pending).")
+@click.option(
+    "--rebuild/--no-rebuild",
+    default=True,
+    help="Rebuild phenology afterward so cards pick up the new region rain means (default).",
+)
+@click.pass_context
+def backfill_precip_cmd(ctx: click.Context, limit: int | None, rebuild: bool) -> None:
+    """Fill in `precip_7d_mm` / `precip_30d_mm` for cached observations that don't have them yet
+    (issue #226), from Open-Meteo's ERA5 archive. Ingest does this automatically for new rows;
+    run this to drain the backlog. A window still inside ERA5's ~5-7 day lag stays NULL and is
+    retried next run."""
+    cfg = ctx.obj["cfg"]
+    con = connect()
+    try:
+        updated = backfill_precip(con, cell_deg=cfg.cell_deg, max_cells=limit)
+        click.echo(f"Enriched {updated} observations with antecedent rainfall.")
+        if updated and rebuild:
+            click.echo("Rebuilding phenology…")
+            build_phenology(con, cfg.cell_deg)
+    finally:
+        con.close()
+
+
+@cli.command("refresh-precip")
+@click.pass_context
+def refresh_precip_cmd(ctx: click.Context) -> None:
+    """Refresh the recent-rainfall-per-destination layer (issue #226 Part 2): pull the trailing
+    ~30 days from Open-Meteo's forecast API for every active region cell. Runs on its own
+    scheduler cadence (FORAY_PRECIP_INTERVAL_HOURS)."""
+    cfg = ctx.obj["cfg"]
+    con = connect()
+    try:
+        written = refresh_precipitation(con, cfg)
+        click.echo(f"Refreshed recent rainfall for {written} regions.")
     finally:
         con.close()
 

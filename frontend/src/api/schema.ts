@@ -460,6 +460,12 @@ export interface components {
             total: number;
             /** Species */
             species: components["schemas"]["AlertHit"][];
+            /** Precip Recent 7D Mm */
+            precip_recent_7d_mm?: number | null;
+            /** Precip Recent 14D Mm */
+            precip_recent_14d_mm?: number | null;
+            /** Precip Recent 30D Mm */
+            precip_recent_30d_mm?: number | null;
         };
         /** CalendarBucket */
         CalendarBucket: {
@@ -692,6 +698,16 @@ export interface components {
             species: components["schemas"]["SpeciesHit"][];
             /** Elevation M */
             elevation_m?: number | null;
+            /** Precip Obs 7D Mm */
+            precip_obs_7d_mm?: number | null;
+            /** Precip Obs 30D Mm */
+            precip_obs_30d_mm?: number | null;
+            /** Precip Recent 7D Mm */
+            precip_recent_7d_mm?: number | null;
+            /** Precip Recent 14D Mm */
+            precip_recent_14d_mm?: number | null;
+            /** Precip Recent 30D Mm */
+            precip_recent_30d_mm?: number | null;
         };
         /**
          * SpeciesHit

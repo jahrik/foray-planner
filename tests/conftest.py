@@ -35,6 +35,8 @@ _TABLES = (
     "fungi_genera",
     "app_genera",
     "region_places",
+    "precip_daily",
+    "precipitation",
 )
 
 _TEST_DB_NAME = "foray_test"
@@ -87,3 +89,18 @@ def _no_elevation_network(monkeypatch: pytest.MonkeyPatch) -> None:
         raise httpx.ConnectError("network disabled in tests")
 
     monkeypatch.setattr(elevation, "lookup_batch", blocked)
+
+
+@pytest.fixture(autouse=True)
+def _no_precip_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`ingest.backfill_precip` (issue #226) also runs at the end of every ingest and hits
+    Open-Meteo. Block it by default; the precip-specific tests override this locally."""
+    import httpx
+
+    from foray.sources import precip
+
+    def blocked(*_args: object, **_kwargs: object) -> dict[object, object]:
+        raise httpx.ConnectError("network disabled in tests")
+
+    monkeypatch.setattr(precip, "fetch_archive_precip", blocked)
+    monkeypatch.setattr(precip, "fetch_recent_precip", blocked)

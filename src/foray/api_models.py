@@ -83,6 +83,15 @@ class RegionScore(BaseModel):
     # Mean ground elevation of the region's observations, metres (issue #36). None until at
     # least one observation in the region has been elevation-enriched.
     elevation_m: int | None = None
+    # Antecedent rainfall (issue #226): decoy-excluded mean over the region's precip-enriched
+    # observations (mm over the 7 / 30 days before each was observed). None until enriched.
+    precip_obs_7d_mm: float | None = None
+    precip_obs_30d_mm: float | None = None
+    # Recent rainfall at the region cell now (issue #226 Part 2), mm over the trailing 7 / 14 /
+    # 30 days. None until the precipitation layer has been refreshed.
+    precip_recent_7d_mm: float | None = None
+    precip_recent_14d_mm: float | None = None
+    precip_recent_30d_mm: float | None = None
 
 
 class RegionPlace(BaseModel):
@@ -149,6 +158,11 @@ class AlertRegion(BaseModel):
     distance_km: float
     total: int
     species: list[AlertHit]
+    # Recent rainfall at the region cell (issue #226 Part 2), mm over the trailing 7 / 14 / 30
+    # days - the road-trip "go now" signal. None until the precipitation layer has refreshed.
+    precip_recent_7d_mm: float | None = None
+    precip_recent_14d_mm: float | None = None
+    precip_recent_30d_mm: float | None = None
 
 
 class CampSite(BaseModel):

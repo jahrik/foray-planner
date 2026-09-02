@@ -6,7 +6,7 @@ import { clearMarkers, map, plot } from "../map/map";
 import { focusOnMap, sheetEnabled, snapTo } from "../map/sheet";
 import type { AlertRegion } from "../api/types";
 import { getJson } from "../api/client";
-import { dist, displayName, errorDetail, qs, setStatus } from "../state";
+import { dist, displayName, errorDetail, qs, rainMeta, setStatus } from "../state";
 
 // Same overlapping-call guard as runDestinations (views.ts) - runAlerts() can also be triggered
 // more than once in flight (tab switches, refreshCurrentView() calls). createRunGuard("alerts")
@@ -42,7 +42,9 @@ export async function runAlerts(): Promise<void> {
     card.className = "rank";
 
     const placeText = region.species[0]?.place_guess ? ` · ${escapeHtml(region.species[0].place_guess)}` : "";
+    const rain = rainMeta(region);
     card.innerHTML = `<h3><span><span class="num">${dist(region.distance_km)}</span>${placeText}</span><span class="num">${region.total} recent</span></h3>
+      ${rain ? `<div class="meta">${rain.replace(/^ · /, "")}</div>` : ""}
       <div class="chips">${region.species
         .map((hit) => {
           const label = hit.count + " · " + hit.last_seen + (hit.obscured ? " ⚠ fuzzy" : "");
