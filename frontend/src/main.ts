@@ -164,8 +164,8 @@ async function main(): Promise<void> {
     if (home) {
       geoApplied = true;
       updateHome(home);
+      refreshCurrentView(); // before loadLand() - see refresh.ts setLocation
       loadLand();
-      refreshCurrentView();
     }
     return home;
   });
@@ -249,8 +249,8 @@ function initRadiusPresets(): void {
           return;
         }
         updateHome(response.home);
+        refreshCurrentView(); // before loadLand() - see refresh.ts setLocation
         loadLand();
-        refreshCurrentView();
       };
     });
 }

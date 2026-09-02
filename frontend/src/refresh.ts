@@ -133,8 +133,11 @@ export async function setLocation(query: string): Promise<void> {
     return;
   }
   updateHome(response.home);
-  loadLand();
+  // refreshCurrentView() -> a view runner -> clearMarkers(), which also clears the land layer.
+  // Run it before loadLand() so the land fetch isn't wiped out a tick later (matters on the
+  // Alerts/Plan views, which don't redraw land themselves).
   refreshCurrentView();
+  loadLand();
 }
 
 // Map clicks (e.g. on a city label on the base tiles) carry only coordinates; the backend
@@ -151,6 +154,6 @@ export async function setLocationLatLng(lat: number, lng: number): Promise<void>
     return;
   }
   updateHome(response.home);
+  refreshCurrentView(); // before loadLand() - see setLocation
   loadLand();
-  refreshCurrentView();
 }

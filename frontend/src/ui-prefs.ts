@@ -11,7 +11,9 @@ export function initTheme(): void {
   const apply = (theme: "dark" | "light"): void => {
     document.documentElement.dataset.theme = theme;
     toggle.textContent = theme === "dark" ? "🌙" : "☀️";
-    toggle.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+    const hint = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+    toggle.title = hint;
+    toggle.setAttribute("aria-label", hint); // the visible label is only an emoji
     toggle.setAttribute("aria-pressed", String(theme === "dark"));
     setTiles(); // no-op until the map exists; initMap lays the first tiles
   };
@@ -30,7 +32,9 @@ export function initTextSize(): void {
   const apply = (large: boolean): void => {
     document.documentElement.dataset.textSize = large ? "large" : "normal";
     toggle.setAttribute("aria-pressed", String(large));
-    toggle.title = large ? "Switch to normal text size" : "Switch to larger text";
+    const hint = large ? "Switch to normal text size" : "Switch to larger text";
+    toggle.title = hint;
+    toggle.setAttribute("aria-label", hint); // the visible label is only an icon
   };
   apply(getLargeText());
   toggle.onclick = () => {
