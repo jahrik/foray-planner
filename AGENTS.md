@@ -25,6 +25,11 @@ Guiding principles - keep these in mind for any feature work:
 
 ## Layout
 
+`src/foray/` is grouped into subpackages (issue #242): `sources/` (every external-data client
+plus the ingest layer built on them), `scoring/` (region ranking, the read repository, the trip
+planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, `defaults`,
+`cache`, `geo`, `api_models`, `logging_config`, `refresh`, `cli`.
+
 - `src/foray/config.py` - pydantic-settings (`Settings(BaseSettings)`) with `Home`, `Ingest`,
   `CoverageRegion` models. All config comes from env vars (prefix `FORAY_`, nested
   delimiter `__`) or `.env` file. The runtime location override lives in Postgres
@@ -34,27 +39,27 @@ Guiding principles - keep these in mind for any feature work:
   `app_genera`.
 - `src/foray/defaults.py` - built-in home location and coverage regions (WA/OR/ID).
   Overridden via `FORAY_COVERAGE` env var.
-- `src/foray/inat.py` - throttled pyinaturalist wrapper (observations, fungi-genera
+- `src/foray/sources/inat.py` - throttled pyinaturalist wrapper (observations, fungi-genera
   catalog, photos). Descriptive User-Agent; deep-paginates via `id_above`; `_with_retries`
   backs off on transient network errors so one blip doesn't abort a long ingest.
-- `src/foray/geocode.py` - resolve a place name (OpenStreetMap Nominatim) or raw `lat,lng`
+- `src/foray/sources/geocode.py` - resolve a place name (OpenStreetMap Nominatim) or raw `lat,lng`
   to coordinates: `resolve` (one hit), `suggest` (typeahead list, backs
   `GET /api/location/search`), `reverse` / `notable_place_name`. Network-mocked in tests.
 - `src/foray/geo.py` - pure lat/lng math shared by scoring + the ingest layer: `haversine_km`
   (canonical distance), `bbox_around` (the flat-degree disk bbox every `*_near` query
   prefilters with), `KM_PER_DEG_LAT`, and the corridor tangent-plane projection helpers.
-- `src/foray/http.py` - shared HTTP plumbing for the external-data modules: `USER_AGENT`,
+- `src/foray/sources/http.py` - shared HTTP plumbing for the external-data modules: `USER_AGENT`,
   `Throttle` (process-wide request pacer), `retry_after_seconds` (`Retry-After` parsing +
   capped backoff), and `SOURCE_ERRORS` (the "log + degrade to empty" exception tuple).
-- `src/foray/overpass.py` - shared OSM Overpass client (endpoint, `around()`/`bbox()` filter
-  fragments, `post()` with 429/504 backoff) used by `dispersed.py` and `trails.py`.
+- `src/foray/sources/overpass.py` - shared OSM Overpass client (endpoint, `around()`/`bbox()` filter
+  fragments, `post()` with 429/504 backoff) used by `sources/dispersed.py` and `sources/trails.py`.
 - `src/foray/cache.py` - Postgres schema (tables created eagerly on every `connect()`) +
   idempotent upserts (`ON CONFLICT`), ingest log. `connect()` takes no DSN by default - reads
   the standard `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` env vars.
-- `src/foray/ingest_base.py` - `run_area_ingest(...)`: the shared skeleton (skip-if-covered ->
+- `src/foray/sources/ingest_base.py` - `run_area_ingest(...)`: the shared skeleton (skip-if-covered ->
   fetch -> upsert -> record) behind the four home-radius area ingests (campgrounds, dispersed,
   land, trails). A new area source is a fetch function + an upsert function.
-- `src/foray/ingest.py` - pulls per seed taxon within the home radius or by coverage region
+- `src/foray/sources/ingest.py` - pulls per seed taxon within the home radius or by coverage region
   (`place_id`). Tags each obs with the **seed** taxon_id (not leaf species) so phenology is
   per foraging target. `ingest` / `ingest_region` share `_consume_observations` (scan ->
   resolve genus -> chunked upsert, 5000 rows, with progress + abort) for bounded memory.
@@ -71,24 +76,24 @@ Guiding principles - keep these in mind for any feature work:
   every row, including `obscured` (never set by the bulk historical import) and
   misidentifications too rare within their genus for `revalidate`'s ratio to flag. Both share
   the actual re-check/purge/reassign logic (`_recheck_ids`).
-- `src/foray/camps.py` - developed-campground ingest from the Recreation.gov **RIDB API**
+- `src/foray/sources/camps.py` - developed-campground ingest from the Recreation.gov **RIDB API**
   (httpx, key from env `RIDB_API_KEY`). Tiles the home radius into <=50-mi query circles,
   dedupes facilities, clips to the true radius with `haversine_km`. Skipped (no-op) when the
   key is unset, so the iNat refresh still works. `free` is only asserted on an explicit
   no-fee signal - never guessed.
-- `src/foray/dispersed.py` - dispersed-camping layer from OSM **Overpass** (httpx, no key).
+- `src/foray/sources/dispersed.py` - dispersed-camping layer from OSM **Overpass** (httpx, no key).
   One ODbL signal, cached as `campsites` (`kind='reported'` - `tourism=camp_site`/`camp_pitch`,
   `backcountry=yes`). `free=TRUE` only on an explicit no-fee tag, never guessed; the *legality*
   caveat rides on `kind`+UI label, never asserted. (A `public_land`-proxy signal - unmapped roads
   within public land, inferred as likely dispersed sites - was scoped but never implemented; see
   issue #110.)
-- `src/foray/trails.py` - trail layer from OSM **Overpass** (httpx, no key). One ODbL query pulls
+- `src/foray/sources/trails.py` - trail layer from OSM **Overpass** (httpx, no key). One ODbL query pulls
   backcountry paths (`highway=path` -> `kind='path'`, LineString; `footway` is **excluded** - it's
   mostly urban sidewalks), named hiking routes (`route=hiking` relations -> `kind='route'`,
   MultiLineString), and trailheads (`highway=trailhead` nodes -> `kind='trailhead'`, Point).
   Geometry is cached as GeoJSON *text* + bbox + a representative center in `trails`.
-- `src/foray/` scoring package (was one `scoring.py`; `scoring.py` is now a back-compat
-  re-export shim, to be removed):
+- `src/foray/scoring/` package (was one `scoring.py`; its `__init__.py` re-exports the public
+  surface so `from foray.scoring import ...` and `foray.scoring.<name>` keep working):
   - `models.py` - the result dataclasses (`SpeciesHit`, `RegionScore`, `CampSite`, `LandUnit`,
     `Trail`, `TrailPath`, `Stop`, `TripPlan`); mirrored by `api_models.py`.
   - `regions.py` - `build_phenology` (materializes `regions` + `phenology`) plus the
@@ -101,7 +106,7 @@ Guiding principles - keep these in mind for any feature work:
   - `planner.py` - `plan_route` (start -> destination corridor trip: stops along the
     straight-line buffer, each annotated with a nearby camp *and* trail, ordered by progress;
     auto-picks a destination when the caller doesn't - see "no real road routing yet" below).
-  - `_scoring_sql.py` - the SQL fragments shared by the three query modules (grid binning
+  - `_sql.py` - the SQL fragments shared by the three query modules (grid binning
     `BINNED`, the decoy-aware center expressions, the `taxon_id` / `IN (...)` helpers,
     `genus_name_map`).
 - `src/foray/api/` - FastAPI package (was one `api.py`; issue #242 Part 1e). `/api/{config,

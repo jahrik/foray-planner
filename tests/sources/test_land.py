@@ -10,7 +10,8 @@ import pytest
 
 from foray.cache import is_ingested, upsert_public_land
 from foray.config import CoverageRegion, Settings
-from foray.land import (
+from foray.scoring import land_near
+from foray.sources.land import (
     LandSource,
     _bounds,
     _coverage_envelope,
@@ -20,7 +21,6 @@ from foray.land import (
     fetch_public_land,
     ingest_public_land_coverage,
 )
-from foray.scoring import land_near
 
 HOME_LAT, HOME_LNG = 47.6, -122.3
 

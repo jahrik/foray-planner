@@ -31,8 +31,8 @@ import psycopg
 from foray.cache import upsert_campsites
 from foray.config import Settings
 from foray.geo import KM_PER_DEG_LAT, haversine_km
-from foray.http import SOURCE_ERRORS, USER_AGENT, Throttle, retry_after_seconds
-from foray.ingest_base import run_area_ingest
+from foray.sources.http import SOURCE_ERRORS, USER_AGENT, Throttle, retry_after_seconds
+from foray.sources.ingest_base import run_area_ingest
 
 logger = logging.getLogger(__name__)
 

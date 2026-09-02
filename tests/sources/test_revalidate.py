@@ -11,7 +11,7 @@ import pytest
 
 from foray.cache import upsert_fungi_genera, upsert_observations
 from foray.config import Settings
-from foray.ingest import resync, revalidate
+from foray.sources.ingest import resync, revalidate
 
 OLLA_FUNGUS = 111  # fungal genus taxon_id, homonymous with the ladybug genus below
 CANTHARELLUS = 222
@@ -77,7 +77,7 @@ def _live_obs(obs_id: int, *, iconic_taxon_id: int, taxon_id: int, rank: str = "
 def test_revalidate_purges_observations_no_longer_fungi(con: psycopg.Connection, cfg_with_home: Settings) -> None:
     upsert_observations(con, [_cached_row(1), _cached_row(2), _cached_row(3)])
 
-    with patch("foray.ingest.fetch_observations") as mock_fetch:
+    with patch("foray.sources.ingest.fetch_observations") as mock_fetch:
         # iNat now says obs 1 and 2 are a ladybug (Insecta), obs 3 is still genuinely fungal.
         mock_fetch.return_value = [
             _live_obs(1, iconic_taxon_id=47158, taxon_id=999001),  # Insecta
@@ -98,7 +98,7 @@ def test_revalidate_reassigns_genus_when_species_moved_to_a_different_fungal_gen
 ) -> None:
     upsert_observations(con, [_cached_row(1)])
 
-    with patch("foray.ingest.fetch_observations") as mock_fetch:
+    with patch("foray.sources.ingest.fetch_observations") as mock_fetch:
         mock_fetch.return_value = [
             _live_obs(
                 1,
@@ -119,7 +119,7 @@ def test_revalidate_reassigns_genus_when_species_moved_to_a_different_fungal_gen
 def test_revalidate_purges_ids_inat_no_longer_returns(con: psycopg.Connection, cfg_with_home: Settings) -> None:
     upsert_observations(con, [_cached_row(1), _cached_row(2)])
 
-    with patch("foray.ingest.fetch_observations") as mock_fetch:
+    with patch("foray.sources.ingest.fetch_observations") as mock_fetch:
         # obs 2 is gone (deleted / made private) - only 1 comes back.
         mock_fetch.return_value = [_live_obs(1, iconic_taxon_id=47170, taxon_id=OLLA_FUNGUS)]
         stats = revalidate(cfg_with_home, con)
@@ -132,7 +132,7 @@ def test_revalidate_purges_ids_inat_no_longer_returns(con: psycopg.Connection, c
 def test_revalidate_skips_genera_that_are_not_suspect(con: psycopg.Connection, cfg_with_home: Settings) -> None:
     upsert_observations(con, [_cached_row(1, taxon_id=CANTHARELLUS)])
 
-    with patch("foray.ingest.fetch_observations") as mock_fetch:
+    with patch("foray.sources.ingest.fetch_observations") as mock_fetch:
         stats = revalidate(cfg_with_home, con)
 
     mock_fetch.assert_not_called()
@@ -144,7 +144,7 @@ def test_revalidate_marks_surviving_rows_revalidated(con: psycopg.Connection, cf
     resync's slow grind doesn't redundantly recheck what revalidate already handled this run."""
     upsert_observations(con, [_cached_row(1)])
 
-    with patch("foray.ingest.fetch_observations") as mock_fetch:
+    with patch("foray.sources.ingest.fetch_observations") as mock_fetch:
         mock_fetch.return_value = [_live_obs(1, iconic_taxon_id=47170, taxon_id=OLLA_FUNGUS)]
         revalidate(cfg_with_home, con)
 
@@ -159,7 +159,7 @@ def test_resync_checks_a_batch_regardless_of_suspect_status(con: psycopg.Connect
     minority of misidentified rows within an otherwise-legitimate genus, or a stale `obscured`)."""
     upsert_observations(con, [_cached_row(1, taxon_id=CANTHARELLUS), _cached_row(2, taxon_id=CANTHARELLUS)])
 
-    with patch("foray.ingest.fetch_observations") as mock_fetch:
+    with patch("foray.sources.ingest.fetch_observations") as mock_fetch:
         mock_fetch.return_value = [
             _live_obs(1, iconic_taxon_id=47170, taxon_id=CANTHARELLUS),
             _live_obs(2, iconic_taxon_id=47170, taxon_id=CANTHARELLUS),
@@ -179,7 +179,7 @@ def test_resync_reassigns_across_a_mixed_genus_batch(con: psycopg.Connection, cf
         [_cached_row(1, taxon_id=OLLA_FUNGUS), _cached_row(2, taxon_id=CANTHARELLUS)],
     )
 
-    with patch("foray.ingest.fetch_observations") as mock_fetch:
+    with patch("foray.sources.ingest.fetch_observations") as mock_fetch:
         mock_fetch.return_value = [
             # obs 1 moved from Olla to Cantharellus - a genuine reassignment.
             _live_obs(1, iconic_taxon_id=47170, taxon_id=CANTHARELLUS),
@@ -197,7 +197,7 @@ def test_resync_reassigns_across_a_mixed_genus_batch(con: psycopg.Connection, cf
 def test_resync_purges_and_marks_survivors_revalidated(con: psycopg.Connection, cfg_with_home: Settings) -> None:
     upsert_observations(con, [_cached_row(1, taxon_id=CANTHARELLUS), _cached_row(2, taxon_id=CANTHARELLUS)])
 
-    with patch("foray.ingest.fetch_observations") as mock_fetch:
+    with patch("foray.sources.ingest.fetch_observations") as mock_fetch:
         mock_fetch.return_value = [
             _live_obs(1, iconic_taxon_id=47158, taxon_id=999001),  # now Insecta - purge
             _live_obs(2, iconic_taxon_id=47170, taxon_id=CANTHARELLUS),  # still fungal - survives
@@ -216,7 +216,7 @@ def test_resync_purges_and_marks_survivors_revalidated(con: psycopg.Connection, 
 def test_resync_respects_batch_size(con: psycopg.Connection, cfg_with_home: Settings) -> None:
     upsert_observations(con, [_cached_row(i, taxon_id=CANTHARELLUS) for i in range(1, 6)])
 
-    with patch("foray.ingest.fetch_observations") as mock_fetch:
+    with patch("foray.sources.ingest.fetch_observations") as mock_fetch:
         mock_fetch.return_value = [_live_obs(i, iconic_taxon_id=47170, taxon_id=CANTHARELLUS) for i in range(1, 3)]
         result = resync(cfg_with_home, con, batch_size=2)
 
@@ -226,7 +226,7 @@ def test_resync_respects_batch_size(con: psycopg.Connection, cfg_with_home: Sett
 
 
 def test_resync_returns_zero_when_cache_empty(con: psycopg.Connection, cfg_with_home: Settings) -> None:
-    with patch("foray.ingest.fetch_observations") as mock_fetch:
+    with patch("foray.sources.ingest.fetch_observations") as mock_fetch:
         result = resync(cfg_with_home, con, batch_size=10)
 
     mock_fetch.assert_not_called()
@@ -245,7 +245,7 @@ def test_resync_cancels_mid_batch_and_only_touches_seen_rows(con: psycopg.Connec
         abort_event.set()
         yield _live_obs(2, iconic_taxon_id=47170, taxon_id=CANTHARELLUS)  # never reached
 
-    with patch("foray.ingest.fetch_observations") as mock_fetch:
+    with patch("foray.sources.ingest.fetch_observations") as mock_fetch:
         mock_fetch.return_value = obs_stream()
         result = resync(cfg_with_home, con, batch_size=10, abort_event=abort_event)
 
@@ -269,7 +269,7 @@ def test_revalidate_cancels_mid_genus_and_only_touches_seen_rows(
         abort_event.set()
         yield _live_obs(2, iconic_taxon_id=47170, taxon_id=OLLA_FUNGUS)  # never reached
 
-    with patch("foray.ingest.fetch_observations") as mock_fetch:
+    with patch("foray.sources.ingest.fetch_observations") as mock_fetch:
         mock_fetch.return_value = obs_stream()
         stats = revalidate(cfg_with_home, con, abort_event=abort_event)
 

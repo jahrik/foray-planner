@@ -40,11 +40,12 @@ from typing import Any
 import httpx
 import psycopg
 
-from foray import overpass, scoring
+from foray import scoring
 from foray.cache import connection, is_ingested, record_ingest, upsert_trails
 from foray.config import CoverageRegion, Settings
-from foray.http import SOURCE_ERRORS
-from foray.ingest_base import run_area_ingest
+from foray.sources import overpass
+from foray.sources.http import SOURCE_ERRORS
+from foray.sources.ingest_base import run_area_ingest
 
 logger = logging.getLogger(__name__)
 

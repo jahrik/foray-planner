@@ -8,12 +8,13 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg_pool import ConnectionPool
 
-from foray import geocode, scoring, trails
+from foray import scoring
 from foray.api.deps import get_pool, get_state, region_center, require_idle
 from foray.api.state import AppState
 from foray.api_models import CampSite, LandUnit, RegionPlace, Trail, TrailPath
 from foray.cache import load_region_place as db_load_region_place
 from foray.cache import save_region_place as db_save_region_place
+from foray.sources import geocode, trails
 
 logger = logging.getLogger(__name__)
 

@@ -18,10 +18,10 @@ from typing import Any, LiteralString, cast
 
 import psycopg
 
-from foray._scoring_sql import genus_name_map, sql_in, taxon_filter
 from foray.geo import haversine_km, project_to_plane, segment_progress_and_offset
-from foray.models import RegionScore, SpeciesHit
-from foray.regions import recent_counts, region_elevations
+from foray.scoring._sql import genus_name_map, sql_in, taxon_filter
+from foray.scoring.models import RegionScore, SpeciesHit
+from foray.scoring.regions import recent_counts, region_elevations
 
 
 def _rank_candidates(

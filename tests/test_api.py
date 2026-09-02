@@ -16,7 +16,7 @@ from foray.api import create_app
 from foray.cache import upsert_campsites, upsert_fungi_genera, upsert_trails
 from foray.config import Home, Settings
 from foray.scoring import TripPlan, build_phenology
-from foray.trails import _parse_element
+from foray.sources.trails import _parse_element
 
 CELL = 0.5
 MOREL = 111
@@ -88,7 +88,7 @@ def _no_trail_network_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_network(node_id: int, *, client: object = None) -> None:
         return None
 
-    monkeypatch.setattr("foray.trails.trailhead_network", fake_network)
+    monkeypatch.setattr("foray.sources.trails.trailhead_network", fake_network)
 
 
 @pytest.fixture(autouse=True)
@@ -530,7 +530,7 @@ def test_plan_route(client: TestClient) -> None:
 
 
 def test_plan_route_explicit_start_and_destination(client: TestClient) -> None:
-    # "lat,lng" strings resolve without a network call (foray.geocode.resolve short-circuits
+    # "lat,lng" strings resolve without a network call (foray.sources.geocode.resolve short-circuits
     # on a raw coordinate pair), so this covers the new params without mocking Nominatim.
     dest_lat, dest_lng = HOME_LAT + 1.0, HOME_LNG
     response = client.get(
@@ -624,7 +624,7 @@ def test_set_location_requires_query_or_latlng(client: TestClient) -> None:
 def test_set_location_latlng_reverse_geocodes_when_name_omitted(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from foray.geocode import Location
+    from foray.sources.geocode import Location
 
     def fake_reverse(lat: float, lng: float, *, client: object = None) -> Location:
         return Location(name="Boulder, Colorado, USA", lat=lat, lng=lng)
@@ -656,7 +656,7 @@ def test_set_location_latlng_client_name_skips_reverse_geocode(
 
 
 def test_location_search_returns_suggestions(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    from foray.geocode import Location
+    from foray.sources.geocode import Location
 
     def fake_suggest(query: str, *, limit: int = 5, client: object = None) -> list[Location]:
         assert query == "Bend"

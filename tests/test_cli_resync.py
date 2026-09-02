@@ -8,7 +8,7 @@ import psycopg
 from click.testing import CliRunner
 
 from foray.cli import cli
-from foray.inat import InatQuotaExceeded
+from foray.sources.inat import InatQuotaExceeded
 
 
 def _env(monkeypatch) -> None:

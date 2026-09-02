@@ -1,4 +1,4 @@
-"""Tests for the shared area-ingest skeleton (foray.ingest_base.run_area_ingest)."""
+"""Tests for the shared area-ingest skeleton (foray.sources.ingest_base.run_area_ingest)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import psycopg
 
 from foray.cache import record_ingest, upsert_campsites
 from foray.config import Home, Settings
-from foray.ingest_base import run_area_ingest
+from foray.sources.ingest_base import run_area_ingest
 
 _CFG = Settings(home=Home(name="Home", lat=47.6, lng=-122.3, radius_km=50.0))
 

@@ -9,13 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
-from foray import geocode
 from foray.api.deps import get_pool, get_state, resolve_device_id, resolve_home, set_device_cookie
 from foray.api.state import AppState
 from foray.api_models import LocationResponse, PlaceSuggestion, StatusResponse
 from foray.cache import delete_location as db_delete_location
 from foray.cache import save_location as db_save_location
 from foray.config import Home
+from foray.sources import geocode
 
 logger = logging.getLogger(__name__)
 

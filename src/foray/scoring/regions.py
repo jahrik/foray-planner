@@ -13,7 +13,7 @@ from typing import LiteralString, cast
 
 import psycopg
 
-from foray._scoring_sql import BINNED, CENTER_LAT, CENTER_LNG, taxon_filter
+from foray.scoring._sql import BINNED, CENTER_LAT, CENTER_LNG, taxon_filter
 
 # Mean ground elevation for a region (issue #36), over the observations that have one - obscured
 # rows are excluded (their point is iNat's decoy, so its elevation is meaningless) unless every

@@ -22,10 +22,10 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     seen: list[str] = []
     for dotted, label in (
         ("foray.refresh.ingest", "mushrooms"),
-        ("foray.camps.ingest_campgrounds", "camps"),
-        ("foray.land.ingest_public_land", "land"),
-        ("foray.dispersed.ingest_dispersed", "dispersed"),
-        ("foray.trails.ingest_trails", "trails"),
+        ("foray.sources.camps.ingest_campgrounds", "camps"),
+        ("foray.sources.land.ingest_public_land", "land"),
+        ("foray.sources.dispersed.ingest_dispersed", "dispersed"),
+        ("foray.sources.trails.ingest_trails", "trails"),
         ("foray.scoring.build_phenology", "phenology"),
     ):
         monkeypatch.setattr(dotted, lambda *args, _label=label, **kwargs: seen.append(_label))
@@ -64,6 +64,6 @@ def test_abort_event_stops_before_the_next_phase(
         recorder.append("camps")
         abort.set()
 
-    monkeypatch.setattr("foray.camps.ingest_campgrounds", abort_during_camps)
+    monkeypatch.setattr("foray.sources.camps.ingest_campgrounds", abort_during_camps)
     run_home_refresh(_CFG, con, REFRESH_LAYERS, abort_event=abort)
     assert recorder == ["mushrooms", "camps"]

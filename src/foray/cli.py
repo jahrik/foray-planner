@@ -6,18 +6,18 @@ import datetime as dt
 
 import click
 
-from foray import geocode
 from foray.cache import connect, observation_count, upsert_fungi_genera
-from foray.camps import ingest_campgrounds
 from foray.config import Settings
-from foray.dispersed import ingest_dispersed
-from foray.inat import InatQuotaExceeded, iter_fungi_genera
-from foray.ingest import backfill_elevations, ingest, ingest_region, resync, revalidate
-from foray.land import ingest_public_land, ingest_public_land_coverage
 from foray.logging_config import setup_logging
 from foray.refresh import REFRESH_LAYERS, parse_month_list, run_home_refresh
 from foray.scoring import build_phenology, plan_route
-from foray.trails import ingest_trails, ingest_trails_region
+from foray.sources import geocode
+from foray.sources.camps import ingest_campgrounds
+from foray.sources.dispersed import ingest_dispersed
+from foray.sources.inat import InatQuotaExceeded, iter_fungi_genera
+from foray.sources.ingest import backfill_elevations, ingest, ingest_region, resync, revalidate
+from foray.sources.land import ingest_public_land, ingest_public_land_coverage
+from foray.sources.trails import ingest_trails, ingest_trails_region
 
 
 @click.group()

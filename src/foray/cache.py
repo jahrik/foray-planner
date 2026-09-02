@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS app_location (
 );
 
 -- Full genus catalog (issue #79): every Fungi genus on iNat, refreshed weekly by
--- `foray genera-refresh` (see foray.inat.iter_fungi_genera). Replaces the old hardcoded
+-- `foray genera-refresh` (see foray.sources.inat.iter_fungi_genera). Replaces the old hardcoded
 -- 21-genus seed list - `common_name` is NULL for most rows (only well-known genera have an
 -- English common name on iNat), so callers must treat `name` (scientific) as the primary
 -- label, not an optional fallback.

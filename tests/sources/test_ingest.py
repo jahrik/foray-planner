@@ -12,7 +12,7 @@ import pytest
 
 from foray.cache import upsert_fungi_genera
 from foray.config import Settings
-from foray.ingest import backfill_elevations, ingest
+from foray.sources.ingest import backfill_elevations, ingest
 
 MOREL = 111
 CHANTERELLE = 222
@@ -36,7 +36,7 @@ def cfg_with_home(con: psycopg.Connection, monkeypatch) -> Settings:
     return Settings()
 
 
-FUNGI_ICONIC_TAXON_ID = 47170  # foray.inat.FUNGI_TAXON_ID doubles as Fungi's iconic_taxon_id
+FUNGI_ICONIC_TAXON_ID = 47170  # foray.sources.inat.FUNGI_TAXON_ID doubles as Fungi's iconic_taxon_id
 
 
 def _fake_obs(
@@ -64,14 +64,14 @@ def _fake_obs(
 
 def test_ingest_queries_whole_fungi_kingdom(con: psycopg.Connection, cfg_with_home: Settings) -> None:
     """A single taxon_id=FUNGI_TAXON_ID query, not one call per genus."""
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter([_fake_obs(1, MOREL), _fake_obs(2, CHANTERELLE)])
         counts = ingest(cfg_with_home, con)
 
     assert counts == {MOREL: 1, CHANTERELLE: 1}
     mock_iter.assert_called_once()
     call_kwargs = mock_iter.call_args.kwargs
-    assert call_kwargs["taxon_id"] == 47170  # foray.inat.FUNGI_TAXON_ID
+    assert call_kwargs["taxon_id"] == 47170  # foray.sources.inat.FUNGI_TAXON_ID
     assert call_kwargs["lat"] == 47.6
     assert call_kwargs["radius_km"] == 200
 
@@ -83,7 +83,7 @@ def test_ingest_queries_whole_fungi_kingdom(con: psycopg.Connection, cfg_with_ho
 def test_ingest_backfills_elevation_for_new_observations(
     con: psycopg.Connection, cfg_with_home: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from foray import elevation
+    from foray.sources import elevation
 
     seen: list[list[tuple[float, float]]] = []
 
@@ -93,7 +93,7 @@ def test_ingest_backfills_elevation_for_new_observations(
 
     monkeypatch.setattr(elevation, "lookup_batch", fake_batch)
 
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter([_fake_obs(1, MOREL), _fake_obs(2, CHANTERELLE)])
         ingest(cfg_with_home, con)
 
@@ -105,7 +105,7 @@ def test_ingest_backfills_elevation_for_new_observations(
 def test_ingest_survives_elevation_backfill_network_failure(con: psycopg.Connection, cfg_with_home: Settings) -> None:
     # The autouse `_no_elevation_network` fixture makes lookup_batch raise; ingest must still
     # complete and leave elevation_m NULL for a later backfill.
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter([_fake_obs(1, MOREL)])
         counts = ingest(cfg_with_home, con)
 
@@ -125,7 +125,7 @@ def _seed_unenriched(con: psycopg.Connection, count: int) -> None:
 
 
 def test_backfill_elevations_respects_max_points(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
-    from foray import elevation
+    from foray.sources import elevation
 
     _seed_unenriched(con, 250)
     monkeypatch.setattr(elevation, "lookup_batch", lambda coords, **_kw: [500] * len(coords))
@@ -138,7 +138,7 @@ def test_backfill_elevations_respects_max_points(con: psycopg.Connection, monkey
 def test_backfill_elevations_stops_cleanly_on_rate_limit(
     con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from foray import elevation
+    from foray.sources import elevation
 
     _seed_unenriched(con, 250)
     calls = {"n": 0}
@@ -160,7 +160,7 @@ def test_backfill_elevations_stops_cleanly_on_rate_limit(
 def test_ingest_resolves_genus_from_species_rank_ancestry(con: psycopg.Connection, cfg_with_home: Settings) -> None:
     """A species-rank observation gets tagged with its genus ancestor's taxon_id, not its own."""
     species_taxon_id = 555555  # e.g. Morchella esculenta, not in the catalog itself
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter(
             [_fake_obs(1, species_taxon_id, rank="species", ancestor_ids=[47170, MOREL, species_taxon_id])]
         )
@@ -175,7 +175,7 @@ def test_ingest_resolves_genus_from_species_rank_ancestry(con: psycopg.Connectio
 def test_ingest_skips_observations_with_no_known_genus_ancestor(
     con: psycopg.Connection, cfg_with_home: Settings
 ) -> None:
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter(
             [_fake_obs(1, MOREL), _fake_obs(2, 999999, rank="family", ancestor_ids=[47170, 999999])]
         )
@@ -193,7 +193,7 @@ def test_ingest_skips_observations_whose_iconic_taxon_is_not_fungi(
     """Ancestor-membership alone isn't sufficient: a handful of fungal genus names are homonyms
     of established animal genera (fungal Olla vs. the ladybug genus, etc) - a genus taxon_id
     match must not admit an observation whose iconic_taxon_id isn't actually Fungi."""
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter(
             [
                 _fake_obs(1, MOREL),
@@ -209,7 +209,7 @@ def test_ingest_skips_observations_whose_iconic_taxon_is_not_fungi(
 
 
 def test_ingest_records_a_single_ingest_log_entry(con: psycopg.Connection, cfg_with_home: Settings) -> None:
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter([_fake_obs(1, MOREL)])
         ingest(cfg_with_home, con)
 
@@ -222,7 +222,7 @@ def test_ingest_incremental_overlaps_by_a_week(con: psycopg.Connection, cfg_with
         "INSERT INTO ingest_log (key, fetched_at, row_count, lat, lng, radius_km) "
         "VALUES ('obs:fungi:47.6:-122.3:200.0:2015-01-01:2024-06-01', now(), 5, 47.6, -122.3, 200)"
     )
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter([])
         ingest(cfg_with_home, con)
 
@@ -248,7 +248,7 @@ def test_ingest_ignores_place_scoped_coverage_with_multiple_countries(
         "INSERT INTO ingest_log (key, fetched_at, row_count) VALUES (%s, now(), 5)",
         ["obs:fungi:place:999:2015-01-01:2024-06-01"],
     )
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter([])
         ingest(cfg, con)
 
@@ -267,7 +267,7 @@ def test_ingest_incremental_overlaps_with_country_scoped_coverage(
         "INSERT INTO ingest_log (key, fetched_at, row_count) VALUES (%s, now(), 5)",
         [f"obs:fungi:place:{place_id}:2015-01-01:2024-06-01"],
     )
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter([])
         ingest(cfg_with_home, con)
 
@@ -300,7 +300,7 @@ def test_ingest_cancelled_run_keeps_rows_but_skips_record_ingest(
         abort_event.set()  # cancelled after the first observation is queued for upsert
         yield _fake_obs(2, CHANTERELLE)  # never reached - loop checks abort_event first
 
-    with patch("foray.ingest.iter_observations") as mock_iter:
+    with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = obs_stream()
         counts = ingest(cfg_with_home, con, abort_event=abort_event)
 

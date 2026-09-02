@@ -5,8 +5,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from foray import geocode
-from foray.geocode import notable_place_name, resolve, reverse, suggest
+from foray.sources import geocode
+from foray.sources.geocode import notable_place_name, resolve, reverse, suggest
 
 
 @pytest.fixture(autouse=True)

@@ -67,9 +67,9 @@ def con(_pg_session: psycopg.Connection) -> psycopg.Connection:
 
 @pytest.fixture(autouse=True)
 def _no_overpass_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The shared Overpass ~1 req/s pace (foray.overpass._throttle) is real in production but
+    """The shared Overpass ~1 req/s pace (foray.sources.overpass._throttle) is real in production but
     only burns wall-clock against the tests' MockTransport."""
-    from foray import overpass
+    from foray.sources import overpass
 
     monkeypatch.setattr(overpass._throttle, "min_interval", 0.0)
 
@@ -81,7 +81,7 @@ def _no_elevation_network(monkeypatch: pytest.MonkeyPatch) -> None:
     override this locally."""
     import httpx
 
-    from foray import elevation
+    from foray.sources import elevation
 
     def blocked(*_args: object, **_kwargs: object) -> list[int | None]:
         raise httpx.ConnectError("network disabled in tests")

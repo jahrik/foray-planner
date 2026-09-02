@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from foray.http import USER_AGENT, Throttle
+from foray.sources.http import USER_AGENT, Throttle
 
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_REVERSE = "https://nominatim.openstreetmap.org/reverse"
@@ -23,7 +23,7 @@ _COORDS = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$")
 # `set_location`'s reverse lookup) fires rarely enough that this never mattered - but issue
 # #206's destination-card place titles can trigger one `notable_place_name()` call per uncached
 # region on a single ranking refresh, all from concurrent FastAPI requests. A process-wide lock
-# + minimum interval (foray.http.Throttle) serializes calls to either function (they share this
+# + minimum interval (foray.sources.http.Throttle) serializes calls to either function (they share this
 # throttle), so a burst of cold cards degrades to "one card populates per second" instead of
 # hammering the API. Callers cache results (see
 # cache.region_places) precisely so this only bites once per

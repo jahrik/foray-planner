@@ -5,8 +5,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from foray import elevation
-from foray.elevation import lookup_batch
+from foray.sources import elevation
+from foray.sources.elevation import lookup_batch
 
 
 @pytest.fixture(autouse=True)
@@ -78,7 +78,7 @@ def test_retry_after_honours_http_date_form() -> None:
     from datetime import UTC, datetime
     from email.utils import format_datetime
 
-    from foray.http import retry_after_seconds
+    from foray.sources.http import retry_after_seconds
 
     resp = httpx.Response(429, headers={"Retry-After": format_datetime(datetime.now(UTC))})
     # An HTTP-date at (or before) "now" means retry immediately, not fall back to backoff.

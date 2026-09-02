@@ -9,7 +9,7 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from psycopg_pool import ConnectionPool
 
-from foray import geocode, scoring
+from foray import scoring
 from foray.api.deps import (
     get_pool,
     get_state,
@@ -22,6 +22,7 @@ from foray.api.deps import (
 )
 from foray.api.state import AppState
 from foray.api_models import TripPlan
+from foray.sources import geocode
 
 logger = logging.getLogger(__name__)
 

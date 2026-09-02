@@ -4,7 +4,7 @@
 The hourly `foray-backfill-elevation` cron drains the backlog through Open-Meteo's free
 elevation API, but that tier caps at ~10k points/day - against a multi-million-row backlog
 that is ~200 days of trickle. This script samples the *same* DEM (Copernicus GLO-90, ~90 m,
-nearest-cell - so values stay consistent with rows already enriched via `foray.elevation`)
+nearest-cell - so values stay consistent with rows already enriched via `foray.sources.elevation`)
 from 1x1 degree Cloud-Optimized GeoTIFF tiles instead, pulled once from the public AWS Open
 Data mirror (`s3://copernicus-dem-90m`, no credentials) into a local cache. The whole backlog
 then clears in one pass: minutes of CPU once the tiles are down.

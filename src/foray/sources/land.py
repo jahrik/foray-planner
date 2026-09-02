@@ -38,8 +38,8 @@ import psycopg
 from foray.cache import connection, is_ingested, record_ingest, upsert_public_land
 from foray.config import CoverageRegion, Settings
 from foray.geo import bbox_around
-from foray.http import USER_AGENT
-from foray.ingest_base import run_area_ingest
+from foray.sources.http import USER_AGENT
+from foray.sources.ingest_base import run_area_ingest
 
 logger = logging.getLogger(__name__)
 
