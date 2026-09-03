@@ -14,8 +14,9 @@ Two angles, one table (``cache.fire_perimeters``):
   layer works without it (``fire_year`` + acreage carry the recent scars).
 
 Cloned from ``land.py``'s ArcGIS pattern end to end: envelope query, server-side geometry
-generalization, GeoJSON stored as text, bbox + representative center cached, one source
-unreachable is skipped rather than aborting the refresh. Informational only - links the
+generalization, GeoJSON stored as text, a representative center cached (the `geom` GIST index
+serves "fire near here"), one source unreachable is skipped rather than aborting the refresh.
+Informational only - links the
 official incident page, never asserts a road/forest closure (see AGENTS.md).
 
 No API key. Endpoints are the public NIFC / MTBS ArcGIS services; if one moves, only the
@@ -164,6 +165,8 @@ def _feature_row(
     bounds = _bounds(geometry["coordinates"])
     if bounds is None:
         return None
+    # The bbox itself is no longer persisted (issue #268 PR 5 - the `geom` GIST index serves
+    # "fire near here"); its centroid is still the representative `center_lat`/`center_lng`.
     min_lng, min_lat, max_lng, max_lat = bounds
     name = _get(props, "poly_IncidentName", "IncidentName", "FIRE_NAME", "attr_IncidentName") or "Unnamed fire"
     fire_year = _get(props, "attr_FireDiscoveryDateTime", "FIRE_YEAR", "FIRE_YEAR_INT")
@@ -186,10 +189,6 @@ def _feature_row(
         _to_float(_get(props, "poly_GISAcres", "GISAcres", "GIS_ACRES", "attr_IncidentSize")),
         _incident_url(props),
         is_point,
-        min_lat,
-        min_lng,
-        max_lat,
-        max_lng,
         (min_lat + max_lat) / 2,
         (min_lng + max_lng) / 2,
         json.dumps(geometry, separators=(",", ":")),

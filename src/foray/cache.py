@@ -69,40 +69,33 @@ CREATE TABLE IF NOT EXISTS campsites (
 
 -- Public-land ownership polygons (BLM Surface Management Agency + USFS admin forest
 -- boundaries, via ArcGIS REST). Keyed by "{source}:{source_id}" so re-ingesting the same
--- area is a no-op. Geometry is stored as GeoJSON *text* and the bounding box as plain
--- columns, so the read/map path needs no PostGIS geometry types - a cheap bbox filter
--- serves the "land near here" query. Informational only: this shows ownership and links the
--- official source; it never asserts camping legality (see AGENTS.md).
+-- area is a no-op. Geometry is stored as GeoJSON *text*; the `geom geography` column
+-- (PostGIS Phase 0, migration 18) and its GIST index serve the "land near here" query. The
+-- geom BEFORE trigger derives geom from geojson. Informational only: this shows ownership
+-- and links the official source; it never asserts camping legality (see AGENTS.md).
 CREATE TABLE IF NOT EXISTS public_land (
     id          TEXT PRIMARY KEY,    -- "{source}:{source_id}", e.g. "usfs:1234"
     agency      TEXT,                -- "BLM", "USFS"
     unit        TEXT,                -- unit / forest name when the source provides one
     source      TEXT,                -- "blm", "usfs"
     url         TEXT,                -- official source (the ArcGIS service)
-    min_lat     DOUBLE PRECISION,    -- geometry bounding box, for radius filtering
-    min_lng     DOUBLE PRECISION,
-    max_lat     DOUBLE PRECISION,
-    max_lng     DOUBLE PRECISION,
     geojson     TEXT                 -- polygon geometry as GeoJSON text
 );
 
 -- Trails (OSM Overpass): hiking paths, named hiking routes, and trailheads. Keyed by
 -- "{source}:{osm_type}/{osm_id}" so re-ingesting the same area is a no-op. Geometry is stored as
--- GeoJSON *text* (LineString/MultiLineString for paths/routes, Point for trailheads) with a
--- bounding box + a representative center point, so the read/map path needs no PostGIS geometry
--- types: a cheap bbox filter serves "trails near here", and haversine on the center ranks by
--- distance. Informational only: links the OSM source; makes no legal-access claim (see AGENTS.md).
+-- GeoJSON *text* (LineString/MultiLineString for paths/routes, Point for trailheads); the
+-- `geom geography` column (PostGIS Phase 0, migration 17) + its GIST index serve "trails near
+-- here" and the exact point-to-trail distance. `center_lat`/`center_lng` stay as a cheap
+-- representative point for callers that want one without parsing the geometry. Informational
+-- only: links the OSM source; makes no legal-access claim (see AGENTS.md).
 CREATE TABLE IF NOT EXISTS trails (
     id          TEXT PRIMARY KEY,    -- "{source}:{osm_type}/{osm_id}", e.g. "osm:way/42"
     name        TEXT,
     kind        TEXT,                -- "path" (way) | "route" (relation) | "trailhead" (node)
     source      TEXT,                -- "osm"
     url         TEXT,                -- official source (the OSM element page)
-    min_lat     DOUBLE PRECISION,    -- geometry bounding box, for radius filtering
-    min_lng     DOUBLE PRECISION,
-    max_lat     DOUBLE PRECISION,
-    max_lng     DOUBLE PRECISION,
-    center_lat  DOUBLE PRECISION,    -- representative point on the trail, for distance ranking
+    center_lat  DOUBLE PRECISION,    -- representative point on the trail
     center_lng  DOUBLE PRECISION,
     geojson     TEXT                 -- GeoJSON text (LineString / MultiLineString / Point)
 );
@@ -114,10 +107,11 @@ CREATE TABLE IF NOT EXISTS trails (
 --                                              the source each refresh are deleted, not kept)
 --   'perimeter_history' status='historical'  - slow cadence, plain upsert; last 3 completed
 --                                              fire years + current (the morel productivity curve)
--- Geometry is GeoJSON *text* + bbox + representative center, same as public_land/trails - the
--- read/map path needs no PostGIS. Informational only: links the official incident page, never
--- asserts a road/forest closure (see AGENTS.md). MTBS severity columns stay NULL until MTBS
--- publishes (~1.5-2 yr after the season); the layer works without them.
+-- Geometry is GeoJSON *text* + a representative center, same as public_land/trails; the
+-- `geom geography` column (PostGIS Phase 0, migration 19) + its GIST index serve "fire near
+-- here". Informational only: links the official incident page, never asserts a road/forest
+-- closure (see AGENTS.md). MTBS severity columns stay NULL until MTBS publishes (~1.5-2 yr
+-- after the season); the layer works without them.
 CREATE TABLE IF NOT EXISTS fire_perimeters (
     id                       TEXT PRIMARY KEY,   -- "{source_key}:{feature_id}"
     source_key               TEXT,               -- 'wfigs_active' | 'wfigs_points' | 'perimeter_history'
@@ -137,17 +131,12 @@ CREATE TABLE IF NOT EXISTS fire_perimeters (
     dominant_severity        TEXT,               -- 'low' | 'moderate' | 'high' | NULL
     mtbs_fire_id             TEXT,
     is_point                 BOOLEAN,            -- true for a WFIGS location with no perimeter yet
-    min_lat                  DOUBLE PRECISION,
-    min_lng                  DOUBLE PRECISION,
-    max_lat                  DOUBLE PRECISION,
-    max_lng                  DOUBLE PRECISION,
     center_lat               DOUBLE PRECISION,
     center_lng               DOUBLE PRECISION,
     geojson                  TEXT,
     fetched_at               TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS ix_fire_perimeters_bbox ON fire_perimeters (min_lat, max_lat, min_lng, max_lng);
 CREATE INDEX IF NOT EXISTS ix_fire_perimeters_lane ON fire_perimeters (source_key);
 
 -- One-time migration: app_location used to be a single global row shared by every visitor
@@ -240,11 +229,9 @@ CREATE TABLE IF NOT EXISTS app_genera (
 
 CREATE INDEX IF NOT EXISTS ix_observations_lat_lng ON observations (lat, lng);
 
--- trails_near's/camps_near's bbox prefilter (`min_lat <= ? AND max_lat >= ? AND ...`) was a full
--- sequential scan without these - fine for the map's one-off "trails near a click", but
--- plan_route calls trails_near/camps_near per candidate stop, and trails alone had 1M+ rows in
--- production - measured ~350ms/call unindexed vs ~50ms with this index.
-CREATE INDEX IF NOT EXISTS ix_trails_bbox ON trails (min_lat, max_lat, min_lng, max_lng);
+-- trails_near / camps_near now filter on the PostGIS `geom` GIST index (ix_trails_geom /
+-- ix_campsites_geom, built in apply_schema's CONCURRENTLY block); the old bbox btree
+-- (ix_trails_bbox) and its four columns were dropped by migrations 23-27.
 CREATE INDEX IF NOT EXISTS ix_campsites_lat_lng ON campsites (lat, lng);
 
 -- Scoring's shared BINNED fragment (_sql.py) filters on quality_grade = 'research' then
@@ -273,7 +260,7 @@ CREATE TABLE IF NOT EXISTS meta (
 # Bump whenever the SCHEMA string above OR the CONCURRENTLY index set in apply_schema changes,
 # so a running instance re-executes them once on its next apply_schema. (New _MIGRATIONS
 # entries are tracked separately by version and don't need a bump.)
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Fixed advisory-lock key so two processes starting together (API + scheduler) serialize on
 # the full apply_schema path instead of racing CREATE INDEX CONCURRENTLY.
@@ -431,6 +418,28 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         CREATE OR REPLACE TRIGGER trg_fire_perimeters_geom BEFORE INSERT OR UPDATE ON fire_perimeters
             FOR EACH ROW EXECUTE FUNCTION foray_geom_from_geojson();
         """,
+    ),
+    # --- PostGIS cleanup (issue #268 PR 5) -------------------------------------------------
+    # PostGIS Phase 1 switched every "near" read to the `geom` GIST index, so the bbox btree
+    # and the four min/max columns feeding it are dead. `geojson` stays (the geom trigger's
+    # raw input). Irreversible - snapshot prod before this ships. Rolling-deploy safe: by the
+    # time this lands every instance is on the PR-3+ code that selects neither column.
+    (23, "DROP INDEX IF EXISTS ix_trails_bbox"),
+    (24, "DROP INDEX IF EXISTS ix_fire_perimeters_bbox"),
+    (
+        25,
+        "ALTER TABLE trails DROP COLUMN IF EXISTS min_lat, DROP COLUMN IF EXISTS min_lng, "
+        "DROP COLUMN IF EXISTS max_lat, DROP COLUMN IF EXISTS max_lng",
+    ),
+    (
+        26,
+        "ALTER TABLE public_land DROP COLUMN IF EXISTS min_lat, DROP COLUMN IF EXISTS min_lng, "
+        "DROP COLUMN IF EXISTS max_lat, DROP COLUMN IF EXISTS max_lng",
+    ),
+    (
+        27,
+        "ALTER TABLE fire_perimeters DROP COLUMN IF EXISTS min_lat, DROP COLUMN IF EXISTS min_lng, "
+        "DROP COLUMN IF EXISTS max_lat, DROP COLUMN IF EXISTS max_lng",
     ),
 ]
 
@@ -834,29 +843,16 @@ def upsert_campsites(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -
 def upsert_public_land(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
     """Upsert public-land polygons, refreshing existing rows in place. Returns rows attempted.
 
-    Each tuple is (id, agency, unit, source, url, min_lat, min_lng, max_lat, max_lng, geojson).
+    Each tuple is (id, agency, unit, source, url, geojson).
     """
-    columns: tuple[LiteralString, ...] = (
-        "id",
-        "agency",
-        "unit",
-        "source",
-        "url",
-        "min_lat",
-        "min_lng",
-        "max_lat",
-        "max_lng",
-        "geojson",
-    )
+    columns: tuple[LiteralString, ...] = ("id", "agency", "unit", "source", "url", "geojson")
     return upsert_rows(con, "public_land", columns, rows)
 
 
 def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
     """Upsert trail tuples, refreshing existing rows in place. Returns rows attempted.
 
-    Each tuple is
-    (id, name, kind, source, url, min_lat, min_lng, max_lat, max_lng, center_lat, center_lng,
-    geojson).
+    Each tuple is (id, name, kind, source, url, center_lat, center_lng, geojson).
     """
     columns: tuple[LiteralString, ...] = (
         "id",
@@ -864,10 +860,6 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
         "kind",
         "source",
         "url",
-        "min_lat",
-        "min_lng",
-        "max_lat",
-        "max_lng",
         "center_lat",
         "center_lng",
         "geojson",
@@ -888,10 +880,6 @@ _FIRE_COLUMNS: tuple[LiteralString, ...] = (
     "gis_acres",
     "incident_url",
     "is_point",
-    "min_lat",
-    "min_lng",
-    "max_lat",
-    "max_lng",
     "center_lat",
     "center_lng",
     "geojson",

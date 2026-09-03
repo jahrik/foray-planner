@@ -547,6 +547,30 @@ def test_apply_schema_backfills_a_migration_column_on_a_preexisting_table(con: p
     assert observations_missing_elevation(con, 10) == []
 
 
+def test_apply_schema_drops_the_bbox_columns_on_a_preexisting_table(con: psycopg.Connection) -> None:
+    # Prod's layer tables predate PR 5 (issue #268) and carry the four bbox columns + the
+    # ix_trails_bbox / ix_fire_perimeters_bbox btrees; migrations 23-27 remove them. Re-add and
+    # replay to prove the drop lands (and is idempotent - the migration statements say IF EXISTS).
+    con.execute(
+        "ALTER TABLE trails ADD COLUMN min_lat double precision, ADD COLUMN min_lng double precision, "
+        "ADD COLUMN max_lat double precision, ADD COLUMN max_lng double precision"
+    )
+    con.execute("CREATE INDEX ix_trails_bbox ON trails (min_lat, max_lat, min_lng, max_lng)")
+    con.execute("DELETE FROM schema_migrations WHERE version = ANY(%s)", [[23, 24, 25, 26, 27]])
+
+    apply_schema(con)
+
+    for table in ("trails", "public_land", "fire_perimeters"):
+        cols = {
+            row[0]
+            for row in con.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = %s", [table]
+            ).fetchall()
+        }
+        assert not ({"min_lat", "min_lng", "max_lat", "max_lng"} & cols), table
+    assert con.execute("SELECT to_regclass('ix_trails_bbox')").fetchone() == (None,)
+
+
 def test_schema_is_current_on_a_freshly_bootstrapped_db(con: psycopg.Connection) -> None:
     # The session fixture's `cache.connect()` already ran the full apply_schema - the fast-path
     # guard should now report everything current so later connect()s / cron ticks skip it.

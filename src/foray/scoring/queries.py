@@ -199,7 +199,6 @@ def trails_near(
     lat: float,
     lng: float,
     radius_km: float,
-    with_camp_distance: bool = True,
     kind: str | None = None,
     limit: int | None = None,
 ) -> list[Trail]:
@@ -208,15 +207,12 @@ def trails_near(
     Index-backed ``ST_DWithin`` on ``geom`` for the radius cut; ``ST_Distance`` gives the exact
     point-to-trail distance (issue #268 - previously a bbox prefilter then a ``haversine_km``
     cut on each trail's stored center). Each trail is annotated with the distance to the nearest
-    cached campsite so the UI can
-    show the "park → hike → fungi" chain - unless ``with_camp_distance`` is False, which skips that
-    O(trails-in-bbox * all-campsites) scan (measured ~13s against a 1M-row/17k-camp production
-    cache). ``plan_route`` sets it False: each stop already carries its own selected camp, so a
-    second "nearest camp to this trail" figure would be redundant there, and it calls this per stop
-    (up to ``max_stops`` times) where the full-catalog scan's cost multiplies fast. ``kind``
-    restricts to one element class (e.g. ``"trailhead"`` for the destination-card trail list,
-    issue #115 follow-up); ``limit`` caps the ranked result after sorting. No rows ingested yet
-    yields an empty list, mirroring ``camps_near`` / ``land_near``.
+    cached campsite (``camp_distance_km``) so the UI can show the "park -> hike -> fungi" chain -
+    a ``LATERAL`` KNN join off ``ix_campsites_geom`` (issue #268 PR 5 - previously an
+    O(trails-in-radius * all-campsites) Python loop, ~13s on a 1M-trail / 17k-camp prod cache).
+    ``kind`` restricts to one element class (e.g. ``"trailhead"`` for the destination-card trail
+    list, issue #115 follow-up); ``limit`` caps the ranked result after sorting. No rows ingested
+    yet yields an empty list, mirroring ``camps_near`` / ``land_near``.
     """
     params: list[Any] = [lng, lat, radius_km * 1000.0]
     kind_filter: LiteralString = ""
@@ -226,24 +222,22 @@ def trails_near(
     sql: LiteralString = f"""
         WITH pt AS (SELECT {GEOG_POINT} AS g)
         SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
-               ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km
+               ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km,
+               camp.d / 1000.0 AS camp_km
         FROM trails t, pt
+        LEFT JOIN LATERAL (
+            SELECT ST_Distance(c.geom, t.geom) AS d
+            FROM campsites c
+            WHERE c.geom IS NOT NULL
+            ORDER BY c.geom <-> t.geom
+            LIMIT 1
+        ) camp ON true
         WHERE t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s) {kind_filter}
         """
     rows = con.execute(sql, params).fetchall()
-    # Nearest-campsite distance is a per-trail annotation; fetch the camp points once and reuse.
-    camps = con.execute("SELECT lat, lng FROM campsites").fetchall() if with_camp_distance else []
 
     scored: list[tuple[float, Trail]] = []
-    for trail_id, name, kind, source, url, clat, clng, geojson, dist in rows:
-        camp_dist = (
-            min(
-                (haversine_km(clat, clng, camp_lat, camp_lng) for camp_lat, camp_lng in camps),
-                default=None,
-            )
-            if with_camp_distance
-            else None
-        )
+    for trail_id, name, kind, source, url, clat, clng, geojson, dist, camp_dist in rows:
         scored.append(
             (
                 dist,

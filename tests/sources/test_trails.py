@@ -37,14 +37,14 @@ def test_parse_element_reads_a_path_way() -> None:
     }
     row = _parse_element(element)
     assert row is not None
-    # (id, name, kind, source, url, min_lat, min_lng, max_lat, max_lng, center_lat, center_lng, geo)
+    # (id, name, kind, source, url, center_lat, center_lng, geojson)
     assert row[0] == "osm:way/100"
     assert row[1] == "Ridge Trail"
     assert row[2] == "path"
     assert row[3] == "osm"
     assert row[4] == "https://www.openstreetmap.org/way/100"
-    assert row[5] == pytest.approx(47.6) and row[7] == pytest.approx(47.62)
-    geometry = json.loads(row[11])
+    assert row[5] == pytest.approx(47.62) and row[6] == pytest.approx(-122.28)  # center = flat[len//2]
+    geometry = json.loads(row[7])
     assert geometry["type"] == "LineString"
     assert geometry["coordinates"][0] == [-122.3, 47.6]  # GeoJSON is [lng, lat]
 
@@ -76,7 +76,7 @@ def test_parse_element_reads_a_trailhead_node() -> None:
     assert row[0] == "osm:node/9"
     assert row[1] == "Trailhead (OSM)"  # unnamed → fallback
     assert row[2] == "trailhead"
-    assert json.loads(row[11])["type"] == "Point"
+    assert json.loads(row[7])["type"] == "Point"
 
 
 def test_parse_element_stitches_a_hiking_route_relation() -> None:
@@ -105,7 +105,7 @@ def test_parse_element_stitches_a_hiking_route_relation() -> None:
     assert row is not None
     assert row[0] == "osm:relation/7"
     assert row[2] == "route"
-    geometry = json.loads(row[11])
+    geometry = json.loads(row[7])
     assert geometry["type"] == "MultiLineString"
     assert len(geometry["coordinates"]) == 2  # two way members stitched, node member dropped
 

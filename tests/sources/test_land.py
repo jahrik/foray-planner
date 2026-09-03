@@ -97,9 +97,8 @@ def test_parse_feature_builds_row_and_falls_back_on_missing_name() -> None:
     assert row[2] == "BLM land"  # name absent → fallback
     assert row[3] == "blm"
     assert row[4] == "https://example.test/blm"  # /query stripped
-    # bbox: (id, agency, unit, source, url, min_lat, min_lng, max_lat, max_lng, geojson)
-    assert row[5] == pytest.approx(47.6) and row[7] == pytest.approx(47.8)
-    assert json.loads(row[9])["type"] == "Polygon"
+    # (id, agency, unit, source, url, geojson)
+    assert json.loads(row[5])["type"] == "Polygon"
 
 
 def test_parse_feature_skips_missing_geometry_or_id() -> None:

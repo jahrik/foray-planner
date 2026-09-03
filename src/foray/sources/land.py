@@ -16,8 +16,9 @@ Three authoritative ArcGIS layers, queried with an envelope around home:
   a federal land-management agency, but the same "who manages the ground" question applies).
 
 Geometry is generalized server-side (``maxAllowableOffset``) so the cached polygons stay light
-enough for the field map, and stored as GeoJSON text (see ``cache.public_land``) - the read
-path never needs PostGIS geometry types. This is **ownership only**: it never asserts
+enough for the field map, and stored as GeoJSON text (see ``cache.public_land``); the ``geom``
+GIST index (PostGIS Phase 1, issue #268) serves "land near here". This is **ownership only**:
+it never asserts
 that camping is legal, just shows the land and links the official source (see AGENTS.md).
 
 No API key is needed. Like the campground ingest, a single source being unreachable is skipped
@@ -149,10 +150,11 @@ def _parse_feature(source: LandSource, feature: dict[str, Any]) -> tuple[Any, ..
     feature_id = _get(props, source.id_field)
     if feature_id in (None, ""):
         return None
-    bounds = _bounds(geometry["coordinates"])
-    if bounds is None:
+    # A geometry whose coords contain no numeric pair is junk - drop it here rather than let
+    # the geom trigger silently store NULL. (The bbox itself is no longer persisted - issue
+    # #268 PR 5; the `geom` GIST index serves "land near here".)
+    if _bounds(geometry["coordinates"]) is None:
         return None
-    min_lng, min_lat, max_lng, max_lat = bounds
     name = _get(props, source.name_field)
     unit = str(name).strip() if name not in (None, "") else source.fallback_name
     return (
@@ -161,10 +163,6 @@ def _parse_feature(source: LandSource, feature: dict[str, Any]) -> tuple[Any, ..
         unit,
         source.key,
         source.source_url,
-        min_lat,
-        min_lng,
-        max_lat,
-        max_lng,
         json.dumps(geometry, separators=(",", ":")),
     )
 
