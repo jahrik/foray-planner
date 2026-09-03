@@ -415,7 +415,8 @@ def test_copy_upsert_dedups_a_repeated_conflict_key_within_one_batch(con: psycop
     # "ON CONFLICT DO UPDATE command cannot affect row a second time".
     cols = ("id", "name")
     assert copy_upsert(con, "campsites", cols, [("x:1", "First"), ("x:1", "Second")]) == 2
-    assert con.execute("SELECT count(*) FROM campsites WHERE id = 'x:1'").fetchone() == (1,)
+    # One row, and the last occurrence in the batch wins - matches executemany's row-by-row order.
+    assert con.execute("SELECT name FROM campsites WHERE id = 'x:1'").fetchall() == [("Second",)]
 
 
 def test_copy_upsert_fires_the_geom_trigger_on_the_insert_select(con: psycopg.Connection) -> None:
