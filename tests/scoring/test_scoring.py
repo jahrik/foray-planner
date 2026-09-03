@@ -502,3 +502,32 @@ def test_haversine_known_distance() -> None:
     # Seattle -> Portland is ~233 km.
     distance = haversine_km(47.6062, -122.3321, 45.5152, -122.6784)
     assert 220 < distance < 245
+
+
+def test_build_phenology_ends_with_canonical_table_and_index_names(con: psycopg.Connection) -> None:
+    # Build-and-swap uses `*_new` staging names; the end state must be byte-for-byte the old
+    # layout so callers/queries that name `phenology` / `ix_phenology_region` keep working.
+    build_phenology(con, CELL)
+
+    staging = con.execute(
+        "SELECT count(*) FROM pg_tables WHERE tablename IN ('phenology_new', 'regions_new')"
+    ).fetchone()
+    assert staging == (0,)
+    indexes = {
+        r[0]
+        for r in con.execute("SELECT indexname FROM pg_indexes WHERE tablename IN ('phenology', 'regions')").fetchall()
+    }
+    assert indexes == {"ix_phenology_taxon_region", "ix_phenology_region", "ix_regions_region"}
+
+
+def test_build_phenology_recovers_from_a_stray_staging_table(con: psycopg.Connection) -> None:
+    # A crash between CREATE TABLE phenology_new and the cutover leaves staging tables behind;
+    # the next run must drop them rather than fail on CREATE TABLE ... already exists.
+    con.execute("CREATE TABLE phenology_new (x int)")
+    con.execute("CREATE TABLE regions_new (x int)")
+
+    build_phenology(con, CELL)  # must not raise
+
+    assert rank_destinations(
+        con, months=[4], taxon_ids=[MOREL], home_lat=APR_LAT, home_lng=APR_LNG, radius_km=50, cell_deg=CELL
+    )

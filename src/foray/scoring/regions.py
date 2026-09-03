@@ -37,58 +37,74 @@ _PRECIP_OBS_30D = (
 def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
     """(Re)materialize the ``regions`` and ``phenology`` tables from ``observations``.
 
-    Wrapped in one transaction (the connection otherwise runs autocommit) so a concurrent
-    reader never sees a mid-rebuild state where the tables are dropped but not yet
-    recreated.
+    Build-and-swap: the scan + aggregate + index builds + ``ANALYZE`` (the slow part, and the
+    heaviest single op in the app on the 1-vCPU box) run against ``*_new`` staging tables
+    *outside* any transaction, so the live ``regions`` / ``phenology`` keep serving reads the
+    whole time. Only the cutover - drop the old tables, rename the new ones into place - runs
+    in a transaction, and readers block just for that millisecond-scale window.
+
+    End state is byte-for-byte the previous layout: tables ``regions`` / ``phenology`` with
+    their normal index names. ``*_new`` is a transient staging name; a crash mid-rebuild
+    leaves a stray ``phenology_new`` (dropped at the top of the next run) rather than a lock
+    held for the whole rebuild or half-built live tables.
     """
     binned = BINNED.format(cell=cell_deg)
+    # A previous crash between the CREATE and the cutover can leave staging tables behind.
+    con.execute("DROP TABLE IF EXISTS phenology_new, regions_new")
+    con.execute(
+        cast(
+            LiteralString,
+            f"""
+            CREATE TABLE phenology_new AS
+            SELECT region_id,
+                   {CENTER_LAT} AS center_lat,
+                   {CENTER_LNG} AS center_lng,
+                   taxon_id, month, count(*) AS cnt
+            FROM ({binned})
+            GROUP BY region_id, taxon_id, month
+            """,
+        )
+    )
+    con.execute(
+        cast(
+            LiteralString,
+            f"""
+            CREATE TABLE regions_new AS
+            SELECT region_id,
+                   {CENTER_LAT} AS center_lat,
+                   {CENTER_LNG} AS center_lng,
+                   {_ELEVATION} AS elevation_m,
+                   {_PRECIP_OBS_7D} AS precip_obs_7d_mm,
+                   {_PRECIP_OBS_30D} AS precip_obs_30d_mm,
+                   count(*) AS n_obs,
+                   count(DISTINCT taxon_id) AS n_taxa
+            FROM ({binned})
+            GROUP BY region_id
+            """,
+        )
+    )
+    # `_new`-suffixed so they don't collide with the live indexes while both tables exist;
+    # renamed to their normal names in the cutover. rank_destinations filters/groups by
+    # (taxon_id, region_id); place_calendar filters by region_id + taxon_id IN (...) - both
+    # scan the whole table without these, and `phenology` scales with taxon x region x month.
+    con.execute("CREATE INDEX ix_phenology_taxon_region_new ON phenology_new (taxon_id, region_id)")
+    con.execute("CREATE INDEX ix_phenology_region_new ON phenology_new (region_id)")
+    # _rank_candidates joins `regions` back by region_id to attach each card's mean elevation.
+    con.execute("CREATE INDEX ix_regions_region_new ON regions_new (region_id)")
+    # Fresh tables have no planner statistics until autovacuum gets to them - without this,
+    # requests right after the swap could still get seq-scan plans despite the indexes above.
+    # ANALYZE now so the fresh stats ride along with the rename.
+    con.execute("ANALYZE phenology_new")
+    con.execute("ANALYZE regions_new")
+    # Cutover: readers block only here. DROP ... IF EXISTS covers the first-ever build.
     with con.transaction():
         con.execute("DROP TABLE IF EXISTS phenology")
         con.execute("DROP TABLE IF EXISTS regions")
-        con.execute(
-            cast(
-                LiteralString,
-                f"""
-                CREATE TABLE phenology AS
-                SELECT region_id,
-                       {CENTER_LAT} AS center_lat,
-                       {CENTER_LNG} AS center_lng,
-                       taxon_id, month, count(*) AS cnt
-                FROM ({binned})
-                GROUP BY region_id, taxon_id, month
-                """,
-            )
-        )
-        con.execute(
-            cast(
-                LiteralString,
-                f"""
-                CREATE TABLE regions AS
-                SELECT region_id,
-                       {CENTER_LAT} AS center_lat,
-                       {CENTER_LNG} AS center_lng,
-                       {_ELEVATION} AS elevation_m,
-                       {_PRECIP_OBS_7D} AS precip_obs_7d_mm,
-                       {_PRECIP_OBS_30D} AS precip_obs_30d_mm,
-                       count(*) AS n_obs,
-                       count(DISTINCT taxon_id) AS n_taxa
-                FROM ({binned})
-                GROUP BY region_id
-                """,
-            )
-        )
-        # rank_destinations filters/groups by (taxon_id, region_id); place_calendar filters by
-        # region_id + taxon_id IN (...) - both scan the whole table without these, and
-        # `phenology` scales with taxon x region x month so that gets expensive as
-        # observations grow.
-        con.execute("CREATE INDEX ix_phenology_taxon_region ON phenology (taxon_id, region_id)")
-        con.execute("CREATE INDEX ix_phenology_region ON phenology (region_id)")
-        # _rank_candidates joins `regions` back by region_id to attach each card's mean elevation.
-        con.execute("CREATE INDEX ix_regions_region ON regions (region_id)")
-        # Fresh tables have no planner statistics until autovacuum gets to them - without this,
-        # requests right after a refresh could still get seq-scan plans despite the indexes above.
-        con.execute("ANALYZE phenology")
-        con.execute("ANALYZE regions")
+        con.execute("ALTER TABLE phenology_new RENAME TO phenology")
+        con.execute("ALTER TABLE regions_new RENAME TO regions")
+        con.execute("ALTER INDEX ix_phenology_taxon_region_new RENAME TO ix_phenology_taxon_region")
+        con.execute("ALTER INDEX ix_phenology_region_new RENAME TO ix_phenology_region")
+        con.execute("ALTER INDEX ix_regions_region_new RENAME TO ix_regions_region")
 
 
 def region_elevations(con: psycopg.Connection, region_ids: Collection[str]) -> dict[str, int | None]:
