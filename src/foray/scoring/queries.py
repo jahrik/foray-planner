@@ -240,6 +240,9 @@ def trails_near(
         camp_join = ""
     order_limit: LiteralString = ""
     if limit is not None:
+        # geography `<->` is true spherical distance in PostGIS >= 2.2 (same as ST_Distance,
+        # not a centroid approximation), so the KNN pre-limit picks the genuine nearest N -
+        # the Python re-sort below just orders them. Same pattern as `nearest_trail`.
         order_limit = "ORDER BY t.geom <-> pt.g LIMIT %s"
         params.append(limit)
     sql: LiteralString = f"""
