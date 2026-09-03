@@ -22,7 +22,11 @@ x-depends-postgres: &depends-postgres
 
 services:
   postgres:
-    image: docker.io/library/postgres:16
+    # PostGIS-enabled build of postgres:16 (issue #268). The image runs `CREATE EXTENSION
+    # postgis` in template1 + $POSTGRES_DB at init; the schema migration also does
+    # `CREATE EXTENSION IF NOT EXISTS postgis` so a pre-existing volume / the separate
+    # foray_test DB pick it up too. Production uses DO managed Postgres, which ships PostGIS.
+    image: docker.io/postgis/postgis:16-3.5
     environment:
       POSTGRES_USER: foray
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-foray}

@@ -1,0 +1,46 @@
+---
+# Manual/opt-in only - not part of foray:deploy. Runs scripts/backfill_geom.py once to
+# populate `<table>.geom` for rows that predate the PostGIS Phase 0 migration (#268). The
+# BEFORE INSERT/UPDATE triggers keep new rows current; this fills the existing backlog. Must
+# reach 100% before the read paths are switched to `geom` (PostGIS Phase 1).
+#
+# observations (~1.9M) and trails (~1M) are the load-bearing tables - run this behind the
+# maintenance-page flag (`touch www/maintenance.on`, #241) or accept the --sleep pacing and
+# an off-peak window. Idempotent + resumable: a re-run only retries what's still NULL.
+- name: Check for the deploy-rendered env file
+  ansible.builtin.stat:
+    path: /opt/foray-planner/foray.env
+  register: foray_geom_once_env_stat
+
+- name: Fail fast if this droplet has never been deployed to
+  ansible.builtin.fail:
+    msg: >-
+      /opt/foray-planner/foray.env not found - run `just ansible deploy` at least once on
+      this droplet first (foray:backfill-geom-once depends on the env file it renders).
+  when: not foray_geom_once_env_stat.stat.exists
+
+# foray_app_image defaults to :latest, but CD deploys by digest and never moves the droplet's
+# :latest tag - without this the one-off runs whatever stale :latest happens to be on the box.
+- name: Pull the current app image
+  community.docker.docker_image_pull:
+    name: "{{ foray_app_image }}"
+    pull: always
+
+- name: Run one-off geom backfill
+  community.docker.docker_container:
+    name: foray-backfill-geom-once
+    image: "{{ foray_app_image }}"
+    state: started
+    detach: false
+    cleanup: true
+    env_file: /opt/foray-planner/foray.env
+    command: "python scripts/backfill_geom.py --sleep {{ foray_geom_once_sleep }}"
+  register: foray_geom_once_run
+
+# docker_container with detach:false does not fail the task on a non-zero container exit; the
+# script exits 1 while any row still has a NULL geom (a stalled batch) - the rest are written,
+# re-run to finish.
+- name: Fail if the backfill container exited non-zero
+  ansible.builtin.fail:
+    msg: "backfill_geom.py exited {{ foray_geom_once_run.container.State.ExitCode }} - see the container output above; re-run to finish the remaining rows."
+  when: foray_geom_once_run.container.State.ExitCode | int != 0

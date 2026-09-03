@@ -539,6 +539,51 @@ def test_schema_is_current_false_when_the_schema_version_is_behind(con: psycopg.
         con.execute("UPDATE meta SET value = %s WHERE key = 'schema_version'", [str(SCHEMA_VERSION)])
 
 
+def test_point_geom_populated_from_latlng_on_insert(con: psycopg.Connection) -> None:
+    _insert(con, _obs_row(1, lat=47.6, lng=-122.3))
+
+    row = con.execute("SELECT ST_Y(geom::geometry), ST_X(geom::geometry) FROM observations WHERE id = 1").fetchone()
+    assert row is not None
+    assert row == pytest.approx((47.6, -122.3))
+
+
+def test_point_geom_null_when_coordinates_missing(con: psycopg.Connection) -> None:
+    con.execute("INSERT INTO observations (id, taxon_id, quality_grade) VALUES (1, 111, 'research')")
+
+    assert con.execute("SELECT geom FROM observations WHERE id = 1").fetchone() == (None,)
+
+
+def test_point_geom_refreshed_when_coordinates_change(con: psycopg.Connection) -> None:
+    _insert(con, _obs_row(1, lat=40.0, lng=-100.0))
+    _insert(con, (*_obs_row(1)[:2], 41.0, -101.0, *_obs_row(1)[4:]))
+
+    row = con.execute("SELECT ST_Y(geom::geometry), ST_X(geom::geometry) FROM observations WHERE id = 1").fetchone()
+    assert row == pytest.approx((41.0, -101.0))
+
+
+def test_layer_geom_populated_from_geojson(con: psycopg.Connection) -> None:
+    con.execute(
+        "INSERT INTO trails (id, name, geojson) VALUES ('osm:way/1', 'T', %s)",
+        ['{"type": "LineString", "coordinates": [[-120.0, 45.0], [-120.1, 45.1]]}'],
+    )
+
+    got = con.execute("SELECT ST_GeometryType(geom::geometry) FROM trails WHERE id = 'osm:way/1'").fetchone()
+    assert got == ("ST_LineString",)
+
+
+def test_layer_geom_null_and_no_error_on_malformed_geojson(con: psycopg.Connection) -> None:
+    # One bad feature must not abort the batch - it lands with geom NULL (Phase 1 queries skip it).
+    con.execute("INSERT INTO trails (id, name, geojson) VALUES ('osm:way/bad', 'B', %s)", ['{"type": "Nope"}'])
+
+    assert con.execute("SELECT geom FROM trails WHERE id = 'osm:way/bad'").fetchone() == (None,)
+
+
+def test_layer_geom_null_when_geojson_absent(con: psycopg.Connection) -> None:
+    con.execute("INSERT INTO trails (id, name) VALUES ('osm:way/n', 'N')")
+
+    assert con.execute("SELECT geom FROM trails WHERE id = 'osm:way/n'").fetchone() == (None,)
+
+
 def test_apply_schema_full_path_heals_a_cleared_middle_migration(con: psycopg.Connection) -> None:
     # A deliberately-cleared middle version leaves max(version) unchanged, so the guard counts
     # applied rows instead - and apply_schema then re-runs the whole chain to heal it.

@@ -78,6 +78,14 @@ bulk-load-once: (_playbook "bulk-load-once")
 [group('deploy-once')]
 backfill-elevation-dem-once: (_playbook "backfill-elevation-dem-once")
 
+# One-time: populate <table>.geom for rows predating the PostGIS Phase 0 migration (#268). The
+# write triggers keep new rows current; this fills the backlog. Must hit 100% before the read
+# paths switch to geom. Idempotent + resumable; run behind the maintenance page for the big
+# tables (observations, trails) or accept the --sleep pacing off-peak.
+[doc('One-off backfill of <table>.geom for pre-PostGIS rows')]
+[group('deploy-once')]
+backfill-geom-once: (_playbook "backfill-geom-once")
+
 # One-time, slow (~3h against prod's current table size) full resync catch-up (see TODO.md) -
 # the real live-recheck fix, not just the heuristic. Run it and don't block on it.
 [doc('One-time full resync catch-up on the droplet (~3h, run detached)')]

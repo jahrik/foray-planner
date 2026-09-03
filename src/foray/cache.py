@@ -273,7 +273,7 @@ CREATE TABLE IF NOT EXISTS meta (
 # Bump whenever the SCHEMA string above OR the CONCURRENTLY index set in apply_schema changes,
 # so a running instance re-executes them once on its next apply_schema. (New _MIGRATIONS
 # entries are tracked separately by version and don't need a bump.)
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Fixed advisory-lock key so two processes starting together (API + scheduler) serialize on
 # the full apply_schema path instead of racing CREATE INDEX CONCURRENTLY.
@@ -301,6 +301,14 @@ _CONCURRENT_INDEXES: list[LiteralString] = [
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_precip_missing ON observations (observed_on) "
     "WHERE (precip_7d_mm IS NULL OR precip_30d_mm IS NULL) "
     "AND quality_grade = 'research' AND NOT COALESCE(obscured, false)",
+    # PostGIS Phase 0 GIST indexes - one per geom column. On the 1-vCPU box the observations
+    # (~1.9M points) and trails (~1M lines) builds are slow even CONCURRENTLY; schedule those
+    # into a maintenance window or accept a slow first post-deploy apply_schema.
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_campsites_geom ON campsites USING GIST (geom)",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_geom ON observations USING GIST (geom)",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_trails_geom ON trails USING GIST (geom)",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_public_land_geom ON public_land USING GIST (geom)",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_fire_perimeters_geom ON fire_perimeters USING GIST (geom)",
 ]
 
 # Schema changes past the initial CREATE TABLE/INDEX IF NOT EXISTS baseline above, applied in
@@ -341,6 +349,88 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # (a partial sum is never recorded).
     (12, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS precip_7d_mm DOUBLE PRECISION"),
     (13, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS precip_30d_mm DOUBLE PRECISION"),
+    # --- PostGIS Phase 0 (additive; no read-path change yet) -------------------------------
+    # A real spatial column + GIST index per table replaces the "bbox columns then haversine
+    # in a Python loop" pattern the hot read paths use. `geography(*, 4326)` is sphere-based
+    # metres - the same model as `foray.geo.haversine_km`, so results don't shift. Order
+    # matters: the extension must exist before any column of its type.
+    (14, "CREATE EXTENSION IF NOT EXISTS postgis"),
+    # Point tables. `geom` is nullable and populated by the BEFORE trigger below (migration
+    # 17), not GENERATED ALWAYS AS ... STORED - a stored generated column's ADD COLUMN forces
+    # a full table rewrite under ACCESS EXCLUSIVE, unacceptable on observations' ~1.9M rows.
+    (15, "ALTER TABLE campsites ADD COLUMN IF NOT EXISTS geom geography(Point, 4326)"),
+    (16, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS geom geography(Point, 4326)"),
+    # Line/polygon tables (geometry type varies: LineString / MultiLineString / Polygon / Point).
+    (17, "ALTER TABLE trails ADD COLUMN IF NOT EXISTS geom geography(Geometry, 4326)"),
+    (18, "ALTER TABLE public_land ADD COLUMN IF NOT EXISTS geom geography(Geometry, 4326)"),
+    (19, "ALTER TABLE fire_perimeters ADD COLUMN IF NOT EXISTS geom geography(Geometry, 4326)"),
+    # Point-table trigger: derive geom from lat/lng. Skips the recompute when an UPDATE leaves
+    # both coordinates untouched (e.g. mark_revalidated stamping revalidated_at) so bulk
+    # resync passes don't pay for it. NULL coords -> NULL geom.
+    (
+        20,
+        """
+        CREATE OR REPLACE FUNCTION foray_geom_from_latlng() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            IF TG_OP = 'UPDATE'
+               AND NEW.lat IS NOT DISTINCT FROM OLD.lat
+               AND NEW.lng IS NOT DISTINCT FROM OLD.lng THEN
+                RETURN NEW;
+            END IF;
+            IF NEW.lat IS NOT NULL AND NEW.lng IS NOT NULL THEN
+                NEW.geom := ST_SetSRID(ST_MakePoint(NEW.lng, NEW.lat), 4326)::geography;
+            ELSE
+                NEW.geom := NULL;
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+        """,
+    ),
+    # Layer-table trigger: derive geom from the GeoJSON text. ST_MakeValid is geometry-only,
+    # so validate then cast. A malformed / empty feature leaves geom NULL and logs a WARNING
+    # rather than aborting the whole upsert batch.
+    (
+        21,
+        """
+        CREATE OR REPLACE FUNCTION foray_geom_from_geojson() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            IF TG_OP = 'UPDATE' AND NEW.geojson IS NOT DISTINCT FROM OLD.geojson THEN
+                RETURN NEW;
+            END IF;
+            IF NEW.geojson IS NULL THEN
+                NEW.geom := NULL;
+                RETURN NEW;
+            END IF;
+            BEGIN
+                NEW.geom := ST_MakeValid(ST_GeomFromGeoJSON(NEW.geojson))::geography;
+            EXCEPTION WHEN others THEN
+                NEW.geom := NULL;
+                RAISE WARNING 'foray_geom_from_geojson: bad geometry for %.%: %',
+                    TG_TABLE_NAME, NEW.id, SQLERRM;
+            END;
+            RETURN NEW;
+        END;
+        $$;
+        """,
+    ),
+    (
+        22,
+        """
+        CREATE OR REPLACE TRIGGER trg_campsites_geom BEFORE INSERT OR UPDATE ON campsites
+            FOR EACH ROW EXECUTE FUNCTION foray_geom_from_latlng();
+        CREATE OR REPLACE TRIGGER trg_observations_geom BEFORE INSERT OR UPDATE ON observations
+            FOR EACH ROW EXECUTE FUNCTION foray_geom_from_latlng();
+        CREATE OR REPLACE TRIGGER trg_trails_geom BEFORE INSERT OR UPDATE ON trails
+            FOR EACH ROW EXECUTE FUNCTION foray_geom_from_geojson();
+        CREATE OR REPLACE TRIGGER trg_public_land_geom BEFORE INSERT OR UPDATE ON public_land
+            FOR EACH ROW EXECUTE FUNCTION foray_geom_from_geojson();
+        CREATE OR REPLACE TRIGGER trg_fire_perimeters_geom BEFORE INSERT OR UPDATE ON fire_perimeters
+            FOR EACH ROW EXECUTE FUNCTION foray_geom_from_geojson();
+        """,
+    ),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]
