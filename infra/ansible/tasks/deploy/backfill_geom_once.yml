@@ -37,10 +37,11 @@
     command: "python scripts/backfill_geom.py --sleep {{ foray_geom_once_sleep }}"
   register: foray_geom_once_run
 
-# docker_container with detach:false does not fail the task on a non-zero container exit; the
-# script exits 1 while any row still has a NULL geom (a stalled batch) - the rest are written,
-# re-run to finish.
+# docker_container with detach:false does not fail the task on a non-zero container exit. The
+# script exits 1 only for a *stalled* run (a batch that couldn't get its lock) - those rows a
+# re-run can finish. Unparseable-GeoJSON rows are exit 0 with a printed WARNING instead, since
+# a re-run can't fix them.
 - name: Fail if the backfill container exited non-zero
   ansible.builtin.fail:
-    msg: "backfill_geom.py exited {{ foray_geom_once_run.container.State.ExitCode }} - see the container output above; re-run to finish the remaining rows."
+    msg: "backfill_geom.py exited {{ foray_geom_once_run.container.State.ExitCode }} - a batch stalled on a lock; re-run to finish the remaining rows (check the output for '! ... bad geometry' lines too)."
   when: foray_geom_once_run.container.State.ExitCode | int != 0
