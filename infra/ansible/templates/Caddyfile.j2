@@ -6,6 +6,12 @@ http://{{ foray_domain }} {
 https://{{ foray_domain }} {
 	tls /etc/caddy/tls/origin.pem /etc/caddy/tls/origin.key
 
+	# The app already gzips its JSON via GZipMiddleware and Caddy passes that straight
+	# through (encode skips responses that already carry a Content-Encoding). This adds
+	# zstd for clients that prefer it and compresses the few responses the app sends
+	# uncompressed - the maintenance page's static assets, small error bodies.
+	encode zstd gzip
+
 	# Static assets for the maintenance page live here (mounted read-only, see
 	# tasks/deploy/caddy.yml). Only the maintenance / error paths ever serve from it.
 	root * /srv
