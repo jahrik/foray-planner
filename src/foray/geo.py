@@ -92,6 +92,25 @@ def grid_cell(lat: float, lng: float, cell_deg: float) -> GridCell:
     return GridCell(f"{ilat}_{ilng}", (ilat + 0.5) * cell_deg, (ilng + 0.5) * cell_deg)
 
 
+def bbox_center_radius(bbox: BBox) -> tuple[float, float, float]:
+    """Centre point and circumscribed-circle radius (km) of ``bbox``.
+
+    The tightest circle that still contains the whole box - used to turn a candidate-area
+    bounding box into the ``(centre, radius)`` an index-backed ``ST_DWithin`` needs, without
+    over-fetching the way a start-anchored radius would.
+    """
+    center_lat = (bbox.min_lat + bbox.max_lat) / 2
+    center_lng = (bbox.min_lng + bbox.max_lng) / 2
+    # Lines of longitude converge, so the box isn't symmetric under great-circle distance -
+    # the farthest corner is one of the two low-latitude ones, not simply (max_lat, max_lng).
+    radius_km = max(
+        haversine_km(center_lat, center_lng, corner_lat, corner_lng)
+        for corner_lat in (bbox.min_lat, bbox.max_lat)
+        for corner_lng in (bbox.min_lng, bbox.max_lng)
+    )
+    return center_lat, center_lng, radius_km
+
+
 def grid_cells_in_bbox(bbox: BBox, cell_deg: float) -> list[str]:
     """Every ``"{ilat}_{ilng}"`` cell id whose cell intersects ``bbox``.
 

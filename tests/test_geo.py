@@ -7,6 +7,7 @@ import pytest
 from foray.geo import (
     bbox_around,
     bbox_around_segment,
+    bbox_center_radius,
     grid_cell,
     grid_cells_in_bbox,
     haversine_km,
@@ -44,6 +45,14 @@ def test_bbox_around_segment_contains_both_endpoints_and_the_pad() -> None:
     assert box.min_lng < -122.0 and box.max_lng > -121.0
     # ~25 km of latitude pad on each side (111 km/deg).
     assert box.min_lat == pytest.approx(44.0 - 25.0 / 111.0, abs=1e-6)
+
+
+def test_bbox_center_radius_circle_contains_the_box() -> None:
+    box = bbox_around_segment(44.0, -121.0, 45.6, -122.4, 40.0)
+    clat, clng, radius_km = bbox_center_radius(box)
+    for corner_lat in (box.min_lat, box.max_lat):
+        for corner_lng in (box.min_lng, box.max_lng):
+            assert haversine_km(clat, clng, corner_lat, corner_lng) <= radius_km + 1e-6
 
 
 def test_grid_cells_in_bbox_along_corridor_includes_the_line() -> None:
