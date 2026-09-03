@@ -113,9 +113,13 @@ def main() -> int:
     args = parser.parse_args()
 
     con = connect()
+    # A deliberately long-running batch job (run behind the maintenance page or paced with
+    # --sleep), so the app's short statement_timeout must not apply - the `count(*)` probe on
+    # trails / observations alone runs for minutes on the 1-vCPU box. The --sleep pacing and the
+    # 5s lock_timeout are what keep it from starving the live server, not a statement-time cap.
+    con.execute("SET statement_timeout = 0")
     if not args.dry_run:
         con.execute("SET lock_timeout = '5s'")
-        con.execute("SET statement_timeout = '120s'")
 
     tables: list[LiteralString] = [t for t in TABLES if not args.table or t in args.table]
     total_skipped = any_stalled = 0
