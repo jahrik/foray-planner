@@ -16,9 +16,15 @@ import psycopg
 # than trusted from the iNat API query param it started as (inat.py) - any row that lands in
 # `observations` some other way (a future bulk loader, a manual insert) still can't leak into
 # scoring.
+# Explicit column list rather than `o.*`: the binned subquery feeds the big `GROUP BY`s in
+# `regions` / `ranking` / `queries`, and `SELECT o.*` drags every observation column (incl.
+# `positional_accuracy`, `revalidated_at`, and the future PostGIS `geom`) through each one. This
+# is every column the aggregates actually read - keep it in sync when a query starts consuming a
+# new one.
 BINNED = """
 SELECT
-    o.*,
+    o.id, o.taxon_id, o.lat, o.lng, o.observed_on, o.month, o.quality_grade,
+    o.obscured, o.place_guess, o.uri, o.elevation_m, o.precip_7d_mm, o.precip_30d_mm,
     CAST(floor(o.lat / {cell}) AS INTEGER) AS ilat,
     CAST(floor(o.lng / {cell}) AS INTEGER) AS ilng,
     (CAST(floor(o.lat / {cell}) AS INTEGER))::text || '_' ||

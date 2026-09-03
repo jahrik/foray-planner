@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
+from anyio import to_thread
 from fastapi import FastAPI
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -58,12 +59,33 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
     # Pool connections carry PG* env vars by default (see cache.connect's docstring) - no
     # DSN-building code needed. `open=False` defers the actual connections until the
     # lifespan's `pool.open()`, matching psycopg_pool's recommended startup pattern.
-    pool = ConnectionPool(conninfo="", min_size=1, max_size=5, open=False, kwargs={"autocommit": True})
+    #
+    # Sizing (see TODO.md finding 1): the managed PG plan caps *all* backends at 22, shared
+    # with the six cron jobs and any one-off script, so `max_size` stays at 10. `check` runs a
+    # cheap liveness probe on checkout so a connection dropped by a failover / idle reap /
+    # server-side `max_lifetime` is transparently replaced instead of 500-ing the first query.
+    # `timeout=10` turns pool exhaustion into a fast 503 rather than a 30s stall.
+    pool = ConnectionPool(
+        conninfo="",
+        min_size=2,
+        max_size=10,
+        timeout=10,
+        max_idle=300,
+        max_lifetime=1800,
+        check=ConnectionPool.check_connection,
+        open=False,
+        kwargs={"autocommit": True},
+    )
     state = AppState(cfg=cfg)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         pool.open()
+        # Route handlers are sync `def`, so Starlette runs them in AnyIO's thread pool, whose
+        # default capacity is 40 - four times the connection pool's `max_size`. Cap it just
+        # above `max_size` so surplus requests queue briefly and then fail fast via the pool's
+        # `timeout` instead of 40 threads dogpiling 10 connections.
+        to_thread.current_default_thread_limiter().total_tokens = 12
         with pool.connection() as conn:
             # Full schema + migration chain, not just the CREATE TABLE baseline - the server
             # never calls cache.connect(), so this is the only place migrations get applied

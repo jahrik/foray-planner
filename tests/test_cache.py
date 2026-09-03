@@ -8,6 +8,8 @@ import psycopg
 import pytest
 
 from foray.cache import (
+    SCHEMA_VERSION,
+    _schema_is_current,
     add_genus,
     apply_schema,
     connection,
@@ -521,3 +523,28 @@ def test_apply_schema_backfills_a_migration_column_on_a_preexisting_table(con: p
     }
     assert "elevation_m" in cols
     assert observations_missing_elevation(con, 10) == []
+
+
+def test_schema_is_current_on_a_freshly_bootstrapped_db(con: psycopg.Connection) -> None:
+    # The session fixture's `cache.connect()` already ran the full apply_schema - the fast-path
+    # guard should now report everything current so later connect()s / cron ticks skip it.
+    assert _schema_is_current(con) is True
+
+
+def test_schema_is_current_false_when_the_schema_version_is_behind(con: psycopg.Connection) -> None:
+    con.execute("UPDATE meta SET value = %s WHERE key = 'schema_version'", [str(SCHEMA_VERSION - 1)])
+    try:
+        assert _schema_is_current(con) is False
+    finally:
+        con.execute("UPDATE meta SET value = %s WHERE key = 'schema_version'", [str(SCHEMA_VERSION)])
+
+
+def test_apply_schema_full_path_heals_a_cleared_middle_migration(con: psycopg.Connection) -> None:
+    # A deliberately-cleared middle version leaves max(version) unchanged, so the guard counts
+    # applied rows instead - and apply_schema then re-runs the whole chain to heal it.
+    con.execute("DELETE FROM schema_migrations WHERE version = 9")
+    assert _schema_is_current(con) is False
+
+    apply_schema(con)
+
+    assert _schema_is_current(con) is True
