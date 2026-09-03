@@ -247,12 +247,11 @@ CREATE INDEX IF NOT EXISTS ix_observations_lat_lng ON observations (lat, lng);
 CREATE INDEX IF NOT EXISTS ix_trails_bbox ON trails (min_lat, max_lat, min_lng, max_lng);
 CREATE INDEX IF NOT EXISTS ix_campsites_lat_lng ON campsites (lat, lng);
 
--- Scoring's shared _BINNED fragment (scoring.py) filters on taxon_id + observed_on
--- (_recent_counts, recent_observations, alerts) on every live request - without this, each
--- one is a sequential scan over `observations`. (build_phenology's GROUP BY region_id,
--- taxon_id, month is a full aggregate over _BINNED's output regardless, so a plain index on
--- `month` alone wouldn't speed that up - not added.)
-CREATE INDEX IF NOT EXISTS ix_observations_taxon_observed ON observations (taxon_id, observed_on);
+-- Scoring's shared BINNED fragment (_sql.py) filters on quality_grade = 'research' then
+-- taxon_id + observed_on (recent_counts, recent_observations, alerts) on every live request.
+-- The partial index keyed to that filter lives in apply_schema's CONCURRENTLY block (built
+-- without a write lock, and it supersedes the old non-partial ix_observations_taxon_observed,
+-- which that block drops).
 
 -- Every ingest_log coverage check (is_area_covered, latest_obs_date, latest_obs_date_by_place)
 -- is a `key LIKE 'prefix%'` scan (issue #112). Postgres can only use a plain btree index for a
@@ -261,7 +260,46 @@ CREATE INDEX IF NOT EXISTS ix_observations_taxon_observed ON observations (taxon
 -- builds a pattern-matching index regardless of collation, so the prefix scan stays an index
 -- scan as ingest_log grows (one row per taxon/region/window per scheduler cycle).
 CREATE INDEX IF NOT EXISTS ix_ingest_log_key_pattern ON ingest_log (key text_pattern_ops);
+
+-- apply_schema's fast-path sentinel (see SCHEMA_VERSION): stores the SCHEMA revision last
+-- fully applied so a connect() with everything current skips re-executing this whole string
+-- (and the CONCURRENTLY probe) on every CLI call and cron tick.
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
+
+# Bump whenever the SCHEMA string above OR the CONCURRENTLY index set in apply_schema changes,
+# so a running instance re-executes them once on its next apply_schema. (New _MIGRATIONS
+# entries are tracked separately by version and don't need a bump.)
+SCHEMA_VERSION = 1
+
+# Fixed advisory-lock key so two processes starting together (API + scheduler) serialize on
+# the full apply_schema path instead of racing CREATE INDEX CONCURRENTLY.
+_SCHEMA_LOCK_KEY = 4915623
+
+# CONCURRENTLY-built indexes, applied outside any transaction (autocommit) so they never hold a
+# write lock on the ~1.9M-row observations table during a rolling deploy. Each is attempted
+# independently and a failure is logged, not raised: IF NOT EXISTS / IF EXISTS makes them
+# idempotent, but two instances starting together can still race (one loses), and none of these
+# is a correctness dependency - only a query-speed optimization.
+_CONCURRENT_INDEXES: list[LiteralString] = [
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_revalidated_at ON observations (revalidated_at)",
+    # Supersedes the old non-partial ix_observations_taxon_observed: BINNED always filters
+    # quality_grade = 'research' first, so the partial index is smaller and better matched.
+    "DROP INDEX CONCURRENTLY IF EXISTS ix_observations_taxon_observed",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_taxon_observed_research "
+    "ON observations (taxon_id, observed_on) WHERE quality_grade = 'research'",
+    # Backfill-queue scans (observations_missing_elevation / observations_missing_precip): the
+    # partial predicate matches the WHERE clause so the queue is an index scan over just the
+    # pending rows, not a seq scan of the whole table. Keyed on the queue's ORDER BY column.
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_elevation_missing ON observations (id) "
+    "WHERE elevation_m IS NULL AND quality_grade = 'research' AND NOT COALESCE(obscured, false)",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_precip_missing ON observations (observed_on) "
+    "WHERE (precip_7d_mm IS NULL OR precip_30d_mm IS NULL) "
+    "AND quality_grade = 'research' AND NOT COALESCE(obscured, false)",
+]
 
 # Schema changes past the initial CREATE TABLE/INDEX IF NOT EXISTS baseline above, applied in
 # order and recorded in `schema_migrations` (issue #117) so a connect() with everything already
@@ -302,6 +340,8 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     (12, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS precip_7d_mm DOUBLE PRECISION"),
     (13, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS precip_30d_mm DOUBLE PRECISION"),
 ]
+
+_MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]
 
 
 def connect(conninfo: str = "") -> psycopg.Connection:
@@ -374,6 +414,24 @@ def upsert_rows(
     return len(rows)
 
 
+def _schema_is_current(con: psycopg.Connection) -> bool:
+    """True when ``SCHEMA`` at ``SCHEMA_VERSION`` and every ``_MIGRATIONS`` entry are already
+    applied on ``con`` - the fast-path guard that lets ``apply_schema`` skip re-executing the
+    whole ``SCHEMA`` string (and the CONCURRENTLY probe) on every CLI call and cron tick."""
+    reg = con.execute("SELECT to_regclass('meta'), to_regclass('schema_migrations')").fetchone()
+    if reg is None or reg[0] is None or reg[1] is None:
+        return False
+    row = con.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    if row is None or row[0] != str(SCHEMA_VERSION):
+        return False
+    # Count rather than max(version): a deliberately-cleared middle version (a repair, or the
+    # apply_schema test) leaves max() unchanged but must still trigger the full path.
+    applied = con.execute(
+        "SELECT count(*) FROM schema_migrations WHERE version = ANY(%s)", [_MIGRATION_VERSIONS]
+    ).fetchone()
+    return applied is not None and applied[0] == len(_MIGRATIONS)
+
+
 def apply_schema(con: psycopg.Connection) -> None:
     """Ensure the baseline schema, the ``_MIGRATIONS`` chain, and the CONCURRENTLY-built
     indexes are all present on ``con``.
@@ -383,46 +441,62 @@ def apply_schema(con: psycopg.Connection) -> None:
     later migration (e.g. ``observations.elevation_m``, migration 9) never landed on a
     pre-existing prod table until an out-of-process CLI/cron run happened to call ``connect()``.
     The server lifespan now calls this instead. ``con`` must be autocommit (CREATE INDEX
-    CONCURRENTLY cannot run in a transaction block)."""
-    con.execute(SCHEMA)
-    con.execute(
-        "CREATE TABLE IF NOT EXISTS schema_migrations "
-        "(version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
-    )
-    applied = {row[0] for row in con.execute("SELECT version FROM schema_migrations").fetchall()}
-    for version, statement in _MIGRATIONS:
-        if version in applied:
-            continue
-        con.execute(statement)
-        # ON CONFLICT DO NOTHING: two processes can both see `version` as unapplied and race to
-        # run it (e.g. API + scheduler starting together). The migration statements themselves
-        # are idempotent (IF NOT EXISTS / IF EXISTS), so that's harmless - but a plain INSERT
-        # would then raise a primary-key violation and abort startup for the loser.
-        con.execute(
-            "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING",
-            [version],
-        )
-    # CONCURRENTLY: this runs on every connect() (app startup included), and a plain CREATE
-    # INDEX on prod's 2M+-row observations table would hold a write lock for the build's
-    # duration - real downtime on a rolling deploy. Safe outside an explicit transaction block
-    # since connect() uses autocommit=True (each statement is its own implicit transaction).
-    # IF NOT EXISTS doesn't fully protect against two processes racing on a first deploy/rolling
-    # restart (both can see it missing and one loses the race) - caught and logged rather than
-    # failing startup; the index is a query-speed optimization for stale_observation_ids, not
-    # something anything else depends on existing.
+    CONCURRENTLY cannot run in a transaction block).
+
+    Fast-path: when :func:`_schema_is_current` says everything is already applied, this is two
+    cheap SELECTs and returns - it used to re-run the entire ``SCHEMA`` string plus a
+    ``CREATE INDEX CONCURRENTLY`` probe on every connect (6+/day from cron alone)."""
+    if _schema_is_current(con):
+        return
+    # Serialize the full path: two instances starting together (API + scheduler) would
+    # otherwise race CREATE INDEX CONCURRENTLY. Session-level lock (autocommit -> no xact to
+    # scope it to); released in the finally.
+    con.execute("SELECT pg_advisory_lock(%s)", [_SCHEMA_LOCK_KEY])
     try:
+        if _schema_is_current(con):
+            return
+        con.execute(SCHEMA)
         con.execute(
-            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_revalidated_at ON observations (revalidated_at)"
+            "CREATE TABLE IF NOT EXISTS schema_migrations "
+            "(version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
         )
-    except psycopg.Error:
-        logger.warning(
-            "cache: could not create ix_observations_revalidated_at (likely a concurrent "
-            "CREATE INDEX race with another starting instance) - resync will still work, just "
-            "without the index speeding up its stale-row lookup until a later connect() retries it."
+        applied = {row[0] for row in con.execute("SELECT version FROM schema_migrations").fetchall()}
+        for version, statement in _MIGRATIONS:
+            if version in applied:
+                continue
+            con.execute(statement)
+            # ON CONFLICT DO NOTHING: two processes can both see `version` as unapplied and
+            # race to run it. The migration statements are idempotent (IF NOT EXISTS /
+            # IF EXISTS), so that's harmless - but a plain INSERT would raise a primary-key
+            # violation and abort startup for the loser.
+            con.execute(
+                "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING",
+                [version],
+            )
+        # CONCURRENTLY (see _CONCURRENT_INDEXES): a plain CREATE INDEX on prod's ~1.9M-row
+        # observations table would hold a write lock for the build's duration. Safe outside an
+        # explicit transaction block since `con` is autocommit. A race with another starting
+        # instance is caught and logged, not raised - none of these is a correctness dependency.
+        for statement in _CONCURRENT_INDEXES:
+            try:
+                con.execute(statement)
+            except psycopg.Error:
+                logger.warning(
+                    "cache: could not apply %r (likely a concurrent CREATE/DROP INDEX race with "
+                    "another starting instance) - queries still work, just without this index "
+                    "until a later apply_schema retries it.",
+                    statement,
+                )
+        con.execute(
+            "INSERT INTO meta (key, value) VALUES ('schema_version', %s) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            [str(SCHEMA_VERSION)],
         )
-    # `taxa` and `app_location_legacy_singleton` (both retired) are dropped by migrations 10
-    # and 11 above, not here - a bare DROP on every connect() would be a disruptive side
-    # effect, whereas the migration chain runs each statement exactly once and records it.
+        # `taxa` and `app_location_legacy_singleton` (both retired) are dropped by migrations 10
+        # and 11 above, not here - a bare DROP on every connect() would be a disruptive side
+        # effect, whereas the migration chain runs each statement exactly once and records it.
+    finally:
+        con.execute("SELECT pg_advisory_unlock(%s)", [_SCHEMA_LOCK_KEY])
 
 
 def upsert_fungi_genera(con: psycopg.Connection, rows: Iterable[dict[str, Any]]) -> None:

@@ -11,6 +11,9 @@ dependencies = [
     "pyinaturalist>=0.19,<1.0",
     "psycopg[binary,pool]>=3.3.4,<4.0",
     "fastapi>=0.141.1,<1.0",
+    # Pulled in transitively by starlette; declared explicitly because api/app.py imports it
+    # directly to cap the sync-handler thread pool to the DB pool size.
+    "anyio>=4.0,<5.0",
     "uvicorn[standard]>=0.52.4,<1.0",
     "pydantic-settings>=2.15.0,<3.0",
     "click>=8.1,<9.0",
