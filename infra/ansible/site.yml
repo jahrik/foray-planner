@@ -192,6 +192,17 @@
         - "foray:resync-once"
         - never
 
+    - name: Include one-off geom backfill task
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/backfill_geom_once.yml
+        apply:
+          tags:
+            - "foray:backfill-geom-once"
+            - never
+      tags:
+        - "foray:backfill-geom-once"
+        - never
+
   handlers:
     - name: Include handlers
       ansible.builtin.import_tasks:

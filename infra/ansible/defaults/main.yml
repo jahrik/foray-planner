@@ -98,6 +98,11 @@ foray_dem_once_keep_cache: false
 # caught up. Overrideable per droplet size/table growth (Copilot review, PR #185).
 foray_resync_once_batch_size: "20000"
 
+# One-time foray:backfill-geom-once (populate <table>.geom for rows predating PostGIS Phase 0,
+# #268). Seconds to pause between UPDATE batches - keep non-zero when running against the live
+# managed Postgres without the maintenance page up, 0 for a maintenance window.
+foray_geom_once_sleep: "0.2"
+
 # Firewall rules — restrict SSH to your IP/VPN CIDR (required, no default)
 foray_do_firewall_name: foray-planner-fw
 foray_ssh_allowed_ips: []
