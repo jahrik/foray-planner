@@ -54,8 +54,20 @@ def _add_fire(con: psycopg.Connection, **kw: object) -> None:
         **kw,
     }
     # The geom trigger derives `fire_perimeters.geom` from `geojson` (as the real ingest does);
-    # fire_near's ST_DWithin needs it. Point on the fire's center is enough for these tests.
-    cols.setdefault("geojson", json.dumps({"type": "Point", "coordinates": [cols["center_lng"], cols["center_lat"]]}))
+    # fire_near's ST_DWithin needs it. Default to a perimeter polygon over the row's bbox so the
+    # seeded geometry matches `is_point=False`; an `is_point=True` caller gets a center point.
+    if "geojson" not in cols:
+        if cols["is_point"]:
+            cols["geojson"] = json.dumps({"type": "Point", "coordinates": [cols["center_lng"], cols["center_lat"]]})
+        else:
+            west, east = cols["min_lng"], cols["max_lng"]
+            south, north = cols["min_lat"], cols["max_lat"]
+            cols["geojson"] = json.dumps(
+                {
+                    "type": "Polygon",
+                    "coordinates": [[[west, south], [east, south], [east, north], [west, north], [west, south]]],
+                }
+            )
     query = cast(
         LiteralString,
         f"INSERT INTO fire_perimeters ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))})",

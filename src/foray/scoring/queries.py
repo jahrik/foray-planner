@@ -49,16 +49,16 @@ def camps_near(
     mirroring the other modes. ``limit`` caps the ranked result after sorting, mirroring
     ``trails_near``.
     """
-    rows = con.execute(
-        f"""
+    # Only constant fragments (GEOG_POINT) are interpolated; the annotation keeps that explicit
+    # and preserves the module's SQL-injection discipline. Same pattern in the other near-* reads.
+    sql: LiteralString = f"""
         WITH pt AS (SELECT {GEOG_POINT} AS g)
         SELECT id, name, kind, fee, free, lat, lng, source, url,
                ST_Distance(c.geom, pt.g) / 1000.0 AS dist_km
         FROM campsites c, pt
         WHERE c.geom IS NOT NULL AND ST_DWithin(c.geom, pt.g, %s)
-        """,
-        [lng, lat, radius_km * 1000.0],
-    ).fetchall()
+        """
+    rows = con.execute(sql, [lng, lat, radius_km * 1000.0]).fetchall()
 
     # Keep the unrounded distance alongside each site so ranking is exact; distance_km is
     # only rounded for display and must not be the sort key (near-equal sites would tie).
@@ -173,15 +173,13 @@ def land_near(con: psycopg.Connection, *, lat: float, lng: float, radius_km: flo
     overlap); still coarse on purpose - the map just shades approximate ownership. No rows
     ingested yet yields an empty list, mirroring ``camps_near``.
     """
-    rows = con.execute(
-        f"""
+    sql: LiteralString = f"""
         WITH pt AS (SELECT {GEOG_POINT} AS g)
         SELECT p.id, p.agency, p.unit, p.source, p.url, p.geojson
         FROM public_land p, pt
         WHERE p.geom IS NOT NULL AND ST_DWithin(p.geom, pt.g, %s)
-        """,
-        [lng, lat, radius_km * 1000.0],
-    ).fetchall()
+        """
+    rows = con.execute(sql, [lng, lat, radius_km * 1000.0]).fetchall()
     return [
         LandUnit(
             id=land_id,
@@ -225,16 +223,14 @@ def trails_near(
     if kind is not None:
         kind_filter = "AND t.kind = %s"
         params.append(kind)
-    rows = con.execute(
-        f"""
+    sql: LiteralString = f"""
         WITH pt AS (SELECT {GEOG_POINT} AS g)
         SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
                ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km
         FROM trails t, pt
         WHERE t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s) {kind_filter}
-        """,
-        params,
-    ).fetchall()
+        """
+    rows = con.execute(sql, params).fetchall()
     # Nearest-campsite distance is a per-trail annotation; fetch the camp points once and reuse.
     camps = con.execute("SELECT lat, lng FROM campsites").fetchall() if with_camp_distance else []
 
@@ -304,8 +300,7 @@ def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: fl
     ``geom <-> pt`` KNN sort give true point-to-line distance off the GIST index (issue #268 -
     previously a point-to-vertex haversine over the thinned geometry).
     """
-    row = con.execute(
-        f"""
+    sql: LiteralString = f"""
         WITH pt AS (SELECT {GEOG_POINT} AS g)
         SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
                ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km
@@ -314,9 +309,8 @@ def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: fl
           AND t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s)
         ORDER BY t.geom <-> pt.g
         LIMIT 1
-        """,
-        [lng, lat, max_km * 1000.0],
-    ).fetchone()
+        """
+    row = con.execute(sql, [lng, lat, max_km * 1000.0]).fetchone()
     if row is None:
         return None
     trail_id, name, kind, source, url, clat, clng, geojson, dist = row
