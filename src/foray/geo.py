@@ -104,7 +104,9 @@ def grid_cells_in_bbox(bbox: BBox, cell_deg: float) -> list[str]:
     ilat_hi = math.floor(bbox.max_lat / cell_deg)
     ilng_lo = math.floor(bbox.min_lng / cell_deg)
     ilng_hi = math.floor(bbox.max_lng / cell_deg)
-    return [f"{ilat}_{ilng}" for ilat in range(ilat_lo, ilat_hi + 1) for ilng in range(ilng_lo, ilng_hi + 1)]
+    lat_range = range(ilat_lo, ilat_hi + 1)
+    lng_range = range(ilng_lo, ilng_hi + 1)
+    return [f"{ilat}_{ilng}" for ilat in lat_range for ilng in lng_range]
 
 
 def grid_cell_center(cell_id: str, cell_deg: float) -> tuple[float, float]:
