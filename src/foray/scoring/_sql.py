@@ -33,8 +33,8 @@ WHERE o.quality_grade = 'research'
 """
 
 # A geoprivacy-obscured observation's cached point is iNat's randomized decoy coordinate, not
-# the true find location (see TODO.md's obscured-coordinate investigation) - averaging it in
-# alongside precise points pulls a region's displayed center off target. Excludes obscured rows
+# the true find location - averaging it in alongside precise points pulls a region's displayed
+# center off target. Excludes obscured rows
 # from the average when at least one precise point exists in the group; falls back to including
 # them only when every row in the group is obscured, so the average is never NULL.
 CENTER_LAT = "COALESCE(AVG(lat) FILTER (WHERE NOT COALESCE(obscured, false)), AVG(lat))::double precision"

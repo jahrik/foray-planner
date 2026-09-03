@@ -1,6 +1,6 @@
 """Trail layer from OpenStreetMap (Overpass API).
 
-Epic 3's question is "shortest walk from where I can park to where they're fruiting", so this
+The planner's question is "shortest walk from where I can park to where they're fruiting", so this
 module pulls the walkable network near home from OSM and caches it as ``trails`` rows the map and
 scoring read directly. One ODbL-licensed Overpass query gathers three element classes:
 

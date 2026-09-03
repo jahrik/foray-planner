@@ -312,7 +312,7 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     (5, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS uri TEXT"),
     (6, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS obscured BOOLEAN"),
     (7, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS revalidated_at TIMESTAMPTZ"),
-    # issue #117 finding 13: `year` was write-only (populated at ingest, upserted at resync,
+    # issue #117: `year` was write-only (populated at ingest, upserted at resync,
     # never read by any query) - a stored duplicate of `EXTRACT(YEAR FROM observed_on)` that
     # cost a write on every ingested row for a value nothing consumed. Fully recoverable from
     # observed_on if a future feature ever needs year-based filtering.
