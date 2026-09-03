@@ -21,7 +21,14 @@ from typing import Any, LiteralString, cast
 import psycopg
 
 from foray.cache import region_precip
-from foray.geo import haversine_km, project_to_plane, segment_progress_and_offset
+from foray.geo import (
+    bbox_around,
+    bbox_around_segment,
+    grid_cells_in_bbox,
+    haversine_km,
+    project_to_plane,
+    segment_progress_and_offset,
+)
 from foray.scoring._sql import genus_name_map, sql_in, taxon_filter
 from foray.scoring.models import FireNear, RegionScore, SpeciesHit
 from foray.scoring.queries import fire_near
@@ -47,16 +54,23 @@ def _rank_candidates(
     taxon_ids: list[int],
     cell_deg: float,
     recent_weeks: int,
+    region_ids: list[str],
     keep: Callable[[float, float], tuple[bool, float]],
 ) -> list[RegionScore]:
     """Shared fetch/score core for ``rank_destinations``/``rank_destinations_corridor``.
 
-    ``keep(center_lat, center_lng)`` decides whether a region survives and supplies the
-    value that lands in ``RegionScore.distance_km`` - home-distance for the radial caller,
-    progress-along-line for the corridor caller. Everything else (the SQL fetch, genus
-    lookup, recency, and score formula) is identical between the two modes.
+    ``region_ids`` is the candidate grid-cell allowlist (a bounding box over the home
+    radius / corridor, from :func:`grid_cells_in_bbox`); the phenology scan is restricted
+    to it via ``ix_phenology_region`` instead of aggregating every ingested cell globally.
+    ``keep(center_lat, center_lng)`` then does the exact radius / corridor-offset test on
+    that already-small set and supplies the value that lands in ``RegionScore.distance_km``
+    - home-distance for the radial caller, progress-along-line for the corridor caller.
+    Everything else (genus lookup, recency, and score formula) is identical between modes.
     """
-    # Per (region, taxon): observations in the target months vs. all months.
+    if not region_ids:
+        return []
+    # Per (region, taxon): observations in the target months vs. all months, scoped to the
+    # candidate cells so the double GROUP BY runs over ~hundreds of rows, not the whole table.
     rows = con.execute(
         cast(
             LiteralString,
@@ -67,13 +81,14 @@ def _rank_candidates(
                        (sum(center_lng * cnt) / sum(cnt))::double precision AS center_lng,
                        sum(cnt)::bigint AS total_cnt
                 FROM phenology
-                WHERE {taxon_filter(taxon_ids)}
+                WHERE {taxon_filter(taxon_ids)} AND region_id = ANY(%s)
                 GROUP BY region_id, taxon_id
             ),
             win AS (
                 SELECT region_id, taxon_id, sum(cnt)::bigint AS month_cnt
                 FROM phenology
-                WHERE {taxon_filter(taxon_ids)} AND month IN ({sql_in(months)})
+                WHERE {taxon_filter(taxon_ids)} AND region_id = ANY(%s)
+                      AND month IN ({sql_in(months)})
                 GROUP BY region_id, taxon_id
             )
             SELECT tot.region_id, tot.center_lat, tot.center_lng, tot.taxon_id,
@@ -82,7 +97,7 @@ def _rank_candidates(
             WHERE COALESCE(win.month_cnt, 0) > 0
             """,
         ),
-        [*taxon_ids, *taxon_ids, *months],
+        [*taxon_ids, region_ids, *taxon_ids, region_ids, *months],
     ).fetchall()
 
     genera = genus_name_map(con, {row[3] for row in rows})
@@ -231,8 +246,15 @@ def rank_destinations(
         dist = haversine_km(home_lat, home_lng, clat, clng)
         return dist <= radius_km, dist
 
+    region_ids = grid_cells_in_bbox(bbox_around(home_lat, home_lng, radius_km), cell_deg)
     results = _rank_candidates(
-        con, months=months, taxon_ids=taxon_ids, cell_deg=cell_deg, recent_weeks=recent_weeks, keep=keep
+        con,
+        months=months,
+        taxon_ids=taxon_ids,
+        cell_deg=cell_deg,
+        recent_weeks=recent_weeks,
+        region_ids=region_ids,
+        keep=keep,
     )
     _apply_fire(con, results, taxon_ids=taxon_ids)
     return results
@@ -271,8 +293,17 @@ def rank_destinations_corridor(
         progress_km = offset_km if total_km == 0 else t * total_km
         return offset_km <= corridor_km, progress_km
 
+    region_ids = grid_cells_in_bbox(
+        bbox_around_segment(start_lat, start_lng, dest_lat, dest_lng, corridor_km), cell_deg
+    )
     results = _rank_candidates(
-        con, months=months, taxon_ids=taxon_ids, cell_deg=cell_deg, recent_weeks=recent_weeks, keep=keep
+        con,
+        months=months,
+        taxon_ids=taxon_ids,
+        cell_deg=cell_deg,
+        recent_weeks=recent_weeks,
+        region_ids=region_ids,
+        keep=keep,
     )
     _apply_fire(con, results, taxon_ids=taxon_ids)
     return results
