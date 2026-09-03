@@ -54,6 +54,23 @@ def bbox_around(lat: float, lng: float, radius_km: float) -> BBox:
     return BBox(lat - dlat, lng - dlng, lat + dlat, lng + dlng)
 
 
+def bbox_around_segment(lat1: float, lng1: float, lat2: float, lng2: float, radius_km: float) -> BBox:
+    """Flat-degree bounding box covering ``radius_km`` around the segment ``1 -> 2``.
+
+    The corridor analogue of :func:`bbox_around`: a superset of every point within
+    ``radius_km`` of the straight line between the two endpoints, used to turn a plan
+    corridor into a ``region_id`` allowlist for the phenology ranking query.
+    """
+    dlat = radius_km / KM_PER_DEG_LAT
+    dlng = radius_km / _lng_km_per_deg(max(abs(lat1), abs(lat2)))
+    return BBox(
+        min(lat1, lat2) - dlat,
+        min(lng1, lng2) - dlng,
+        max(lat1, lat2) + dlat,
+        max(lng1, lng2) + dlng,
+    )
+
+
 class GridCell(NamedTuple):
     """A grid cell on the same ``floor(coord / cell_deg)`` lattice ``scoring._sql.BINNED``
     derives ``region_id`` from. ``cell_id`` matches that ``region_id`` exactly."""
@@ -73,6 +90,21 @@ def grid_cell(lat: float, lng: float, cell_deg: float) -> GridCell:
     ilat = math.floor(lat / cell_deg)
     ilng = math.floor(lng / cell_deg)
     return GridCell(f"{ilat}_{ilng}", (ilat + 0.5) * cell_deg, (ilng + 0.5) * cell_deg)
+
+
+def grid_cells_in_bbox(bbox: BBox, cell_deg: float) -> list[str]:
+    """Every ``"{ilat}_{ilng}"`` cell id whose cell intersects ``bbox``.
+
+    Same ``floor(coord / cell_deg)`` lattice as :func:`grid_cell`. Lets the ranking path
+    turn a home-radius / corridor envelope into an explicit ``region_id`` allowlist so the
+    phenology query hits ``ix_phenology_region`` instead of aggregating every ingested cell
+    on the planet and discarding the out-of-range ones in Python.
+    """
+    ilat_lo = math.floor(bbox.min_lat / cell_deg)
+    ilat_hi = math.floor(bbox.max_lat / cell_deg)
+    ilng_lo = math.floor(bbox.min_lng / cell_deg)
+    ilng_hi = math.floor(bbox.max_lng / cell_deg)
+    return [f"{ilat}_{ilng}" for ilat in range(ilat_lo, ilat_hi + 1) for ilng in range(ilng_lo, ilng_hi + 1)]
 
 
 def grid_cell_center(cell_id: str, cell_deg: float) -> tuple[float, float]:
