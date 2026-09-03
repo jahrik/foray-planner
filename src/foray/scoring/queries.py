@@ -16,11 +16,12 @@ from typing import Any, LiteralString, cast
 import psycopg
 
 from foray.cache import region_precip
-from foray.geo import bbox_around, haversine_km
+from foray.geo import haversine_km
 from foray.scoring._sql import (
     BINNED,
     CENTER_LAT,
     CENTER_LNG,
+    GEOG_POINT,
     genus_name_map,
     sql_in,
     taxon_filter,
@@ -42,30 +43,28 @@ def camps_near(
     """Campsites within ``radius_km`` of a point, ranked free-first then by distance.
 
     ``free`` is only TRUE where the source explicitly said so; ``free_only`` therefore
-    keeps just those (it never guesses that an unpriced site is free). A cheap bbox
-    prefilter in SQL (same technique as ``land_near``/``trails_near``) narrows candidates
-    before the exact ``haversine_km`` cut in Python - `campsites` has no bbox columns of its
-    own (it's points, not polygons), so the filter is directly against `lat`/`lng`. No rows
-    ingested yet yields an empty list, mirroring the other modes. ``limit`` caps the ranked
-    result after sorting, mirroring ``trails_near``.
+    keeps just those (it never guesses that an unpriced site is free). The radius cut is an
+    index-backed ``ST_DWithin`` on the ``geom`` column (issue #268); ``ST_Distance`` returns
+    the exact sphere distance in the same query. No rows ingested yet yields an empty list,
+    mirroring the other modes. ``limit`` caps the ranked result after sorting, mirroring
+    ``trails_near``.
     """
-    bbox = bbox_around(lat, lng, radius_km)
     rows = con.execute(
-        """
-        SELECT id, name, kind, fee, free, lat, lng, source, url FROM campsites
-        WHERE lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s
+        f"""
+        WITH pt AS (SELECT {GEOG_POINT} AS g)
+        SELECT id, name, kind, fee, free, lat, lng, source, url,
+               ST_Distance(c.geom, pt.g) / 1000.0 AS dist_km
+        FROM campsites c, pt
+        WHERE c.geom IS NOT NULL AND ST_DWithin(c.geom, pt.g, %s)
         """,
-        [bbox.min_lat, bbox.max_lat, bbox.min_lng, bbox.max_lng],
+        [lng, lat, radius_km * 1000.0],
     ).fetchall()
 
     # Keep the unrounded distance alongside each site so ranking is exact; distance_km is
     # only rounded for display and must not be the sort key (near-equal sites would tie).
     scored: list[tuple[bool, float, CampSite]] = []
-    for site_id, name, kind, fee, free, site_lat, site_lng, source, url in rows:
+    for site_id, name, kind, fee, free, site_lat, site_lng, source, url, dist in rows:
         if free_only and not free:
-            continue
-        dist = haversine_km(lat, lng, site_lat, site_lng)
-        if dist > radius_km:
             continue
         site = CampSite(
             id=site_id,
@@ -96,26 +95,28 @@ def fire_near(
     include_geometry: bool = False,
     limit: int | None = None,
 ) -> list[FireNear]:
-    """Active fires and recent burn scars whose bounding box is near ``(lat, lng)`` (issue #227).
+    """Active fires and recent burn scars within ``radius_km`` of ``(lat, lng)`` (issue #227).
 
-    Bbox prefilter in SQL then an exact ``haversine_km`` cut on the representative center, same
-    technique as ``camps_near`` / ``land_near``. ``status`` filters to ``'active'`` or
-    ``'historical'`` (both by default). ``include_geometry`` parses the GeoJSON for the map
-    layer; the card / scoring paths leave it off. Empty when nothing is ingested yet."""
+    Index-backed ``ST_DWithin`` on ``geom``; ``ST_Distance`` gives the exact point-to-perimeter
+    distance in the same query (issue #268 - previously a bbox prefilter then a ``haversine_km``
+    cut on the representative center). ``status`` filters to ``'active'`` or ``'historical'``
+    (both by default). ``include_geometry`` parses the GeoJSON for the map layer; the card /
+    scoring paths leave it off. Empty when nothing is ingested yet."""
     try:
-        bbox = bbox_around(lat, lng, radius_km)
         where_status: LiteralString = " AND status = %s" if status else ""
-        params: list[Any] = [bbox.max_lat, bbox.min_lat, bbox.max_lng, bbox.min_lng]
+        params: list[Any] = [lng, lat, radius_km * 1000.0]
         if status:
             params.append(status)
         rows = con.execute(
             cast(
                 LiteralString,
-                """
-                SELECT id, name, status, fire_year, percent_contained, gis_acres,
-                       dominant_severity, is_point, incident_url, center_lat, center_lng, geojson
-                FROM fire_perimeters
-                WHERE min_lat <= %s AND max_lat >= %s AND min_lng <= %s AND max_lng >= %s
+                f"""
+                WITH pt AS (SELECT {GEOG_POINT} AS g)
+                SELECT f.id, f.name, f.status, f.fire_year, f.percent_contained, f.gis_acres,
+                       f.dominant_severity, f.is_point, f.incident_url, f.center_lat, f.center_lng,
+                       f.geojson, ST_Distance(f.geom, pt.g) / 1000.0 AS dist_km
+                FROM fire_perimeters f, pt
+                WHERE f.geom IS NOT NULL AND ST_DWithin(f.geom, pt.g, %s)
                 """
                 + where_status,
             ),
@@ -138,10 +139,8 @@ def fire_near(
         center_lat,
         center_lng,
         geojson,
+        dist,
     ) in rows:
-        dist = haversine_km(lat, lng, center_lat, center_lng)
-        if dist > radius_km:
-            continue
         scored.append(
             (
                 dist,
@@ -168,19 +167,20 @@ def fire_near(
 
 
 def land_near(con: psycopg.Connection, *, lat: float, lng: float, radius_km: float) -> list[LandUnit]:
-    """Public-land ownership polygons whose bounding box overlaps the home disk.
+    """Public-land ownership polygons within ``radius_km`` of the home point.
 
-    Filtering is a cheap bbox-vs-envelope overlap in SQL (the stored geometry needs no spatial
-    types); it's coarse on purpose - the map just shades approximate ownership. No rows
+    Index-backed ``ST_DWithin`` on ``geom`` (issue #268 - previously a bbox-vs-envelope
+    overlap); still coarse on purpose - the map just shades approximate ownership. No rows
     ingested yet yields an empty list, mirroring ``camps_near``.
     """
-    bbox = bbox_around(lat, lng, radius_km)
     rows = con.execute(
-        """
-        SELECT id, agency, unit, source, url, geojson FROM public_land
-        WHERE min_lat <= %s AND max_lat >= %s AND min_lng <= %s AND max_lng >= %s
+        f"""
+        WITH pt AS (SELECT {GEOG_POINT} AS g)
+        SELECT p.id, p.agency, p.unit, p.source, p.url, p.geojson
+        FROM public_land p, pt
+        WHERE p.geom IS NOT NULL AND ST_DWithin(p.geom, pt.g, %s)
         """,
-        [bbox.max_lat, bbox.min_lat, bbox.max_lng, bbox.min_lng],
+        [lng, lat, radius_km * 1000.0],
     ).fetchall()
     return [
         LandUnit(
@@ -205,11 +205,12 @@ def trails_near(
     kind: str | None = None,
     limit: int | None = None,
 ) -> list[Trail]:
-    """Trails whose representative point is within ``radius_km`` of a hotspot, nearest first.
+    """Trails within ``radius_km`` of a hotspot, nearest first.
 
-    A cheap bbox-vs-envelope prefilter in SQL (the stored geometry needs no spatial types)
-    narrows candidates; the exact cut and ordering use ``haversine_km`` on each trail's stored
-    center. Each trail is annotated with the distance to the nearest cached campsite so the UI can
+    Index-backed ``ST_DWithin`` on ``geom`` for the radius cut; ``ST_Distance`` gives the exact
+    point-to-trail distance (issue #268 - previously a bbox prefilter then a ``haversine_km``
+    cut on each trail's stored center). Each trail is annotated with the distance to the nearest
+    cached campsite so the UI can
     show the "park → hike → fungi" chain - unless ``with_camp_distance`` is False, which skips that
     O(trails-in-bbox * all-campsites) scan (measured ~13s against a 1M-row/17k-camp production
     cache). ``plan_route`` sets it False: each stop already carries its own selected camp, so a
@@ -219,16 +220,18 @@ def trails_near(
     issue #115 follow-up); ``limit`` caps the ranked result after sorting. No rows ingested yet
     yields an empty list, mirroring ``camps_near`` / ``land_near``.
     """
-    bbox = bbox_around(lat, lng, radius_km)
-    params: list[Any] = [bbox.max_lat, bbox.min_lat, bbox.max_lng, bbox.min_lng]
-    kind_filter = ""
+    params: list[Any] = [lng, lat, radius_km * 1000.0]
+    kind_filter: LiteralString = ""
     if kind is not None:
-        kind_filter = "AND kind = %s"
+        kind_filter = "AND t.kind = %s"
         params.append(kind)
     rows = con.execute(
         f"""
-        SELECT id, name, kind, source, url, center_lat, center_lng, geojson FROM trails
-        WHERE min_lat <= %s AND max_lat >= %s AND min_lng <= %s AND max_lng >= %s {kind_filter}
+        WITH pt AS (SELECT {GEOG_POINT} AS g)
+        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
+               ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km
+        FROM trails t, pt
+        WHERE t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s) {kind_filter}
         """,
         params,
     ).fetchall()
@@ -236,10 +239,7 @@ def trails_near(
     camps = con.execute("SELECT lat, lng FROM campsites").fetchall() if with_camp_distance else []
 
     scored: list[tuple[float, Trail]] = []
-    for trail_id, name, kind, source, url, clat, clng, geojson in rows:
-        dist = haversine_km(lat, lng, clat, clng)
-        if dist > radius_km:
-            continue
+    for trail_id, name, kind, source, url, clat, clng, geojson, dist in rows:
         camp_dist = (
             min(
                 (haversine_km(clat, clng, camp_lat, camp_lng) for camp_lat, camp_lng in camps),
@@ -300,46 +300,38 @@ def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: fl
 
     Fallback for ``trails.resolve_trail_network`` (issue: "draw the real trail on trailhead
     selection") when OSM has no topological link between a trailhead node and any way/relation -
-    a heuristic, not an authoritative link, so callers should label it as such. Distance is
-    point-to-vertex haversine over each candidate's already-thinned geometry (<=60 points per
-    line, see ``trails.py``'s ``_MAX_POINTS_PER_LINE``) rather than true point-to-segment distance
-    - close enough given the thinning, and avoids a geometry library dependency for one heuristic.
+    a heuristic, not an authoritative link, so callers should label it as such. ``ST_DWithin`` +
+    ``geom <-> pt`` KNN sort give true point-to-line distance off the GIST index (issue #268 -
+    previously a point-to-vertex haversine over the thinned geometry).
     """
-    bbox = bbox_around(lat, lng, max_km)
-    rows = con.execute(
-        """
-        SELECT id, name, kind, source, url, center_lat, center_lng, geojson FROM trails
-        WHERE kind IN ('path', 'route')
-          AND min_lat <= %s AND max_lat >= %s AND min_lng <= %s AND max_lng >= %s
+    row = con.execute(
+        f"""
+        WITH pt AS (SELECT {GEOG_POINT} AS g)
+        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
+               ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km
+        FROM trails t, pt
+        WHERE t.kind IN ('path', 'route')
+          AND t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s)
+        ORDER BY t.geom <-> pt.g
+        LIMIT 1
         """,
-        [bbox.max_lat, bbox.min_lat, bbox.max_lng, bbox.min_lng],
-    ).fetchall()
-
-    best: tuple[float, Trail] | None = None
-    for trail_id, name, kind, source, url, clat, clng, geojson in rows:
-        geometry = json.loads(geojson)
-        coords = geometry["coordinates"]
-        lines = coords if geometry["type"] == "MultiLineString" else [coords]
-        vertex_dist = min(haversine_km(lat, lng, vlat, vlng) for line in lines for vlng, vlat in line)
-        if vertex_dist > max_km:
-            continue
-        if best is None or vertex_dist < best[0]:
-            best = (
-                vertex_dist,
-                Trail(
-                    id=trail_id,
-                    name=name,
-                    kind=kind,
-                    source=source,
-                    url=url,
-                    center_lat=clat,
-                    center_lng=clng,
-                    distance_km=round(vertex_dist, 1),
-                    camp_distance_km=None,
-                    geometry=geometry,
-                ),
-            )
-    return best[1] if best is not None else None
+        [lng, lat, max_km * 1000.0],
+    ).fetchone()
+    if row is None:
+        return None
+    trail_id, name, kind, source, url, clat, clng, geojson, dist = row
+    return Trail(
+        id=trail_id,
+        name=name,
+        kind=kind,
+        source=source,
+        url=url,
+        center_lat=clat,
+        center_lng=clng,
+        distance_km=round(dist, 1),
+        camp_distance_km=None,
+        geometry=json.loads(geojson),
+    )
 
 
 def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[int]) -> dict[int, dict[str, Any]]:
@@ -552,7 +544,7 @@ def precise_observations(
     query never widens what a caller already sees, since ``obscured = false`` is exactly the
     subset iNat itself already publishes as an exact point.
 
-    Same bbox-prefilter-then-haversine-cut technique as ``camps_near``/``trails_near``, and
+    Index-backed ``ST_DWithin`` on ``geom`` for the radius cut (issue #268), and
     (unlike the original version) called with a *destination's* coordinates rather than home's -
     the frontend scopes this to whichever region is currently focused (see map.ts's
     ``regionRadiusKm``), not the whole search radius. No row cap, matching the ``camps_near``/
@@ -560,28 +552,25 @@ def precise_observations(
     version's 3000-row cap existed to bound a fetch that could span the entire map at once; a
     single destination's own footprint can't realistically produce that.
     """
-    bbox = bbox_around(lat, lng, radius_km)
     rows = con.execute(
         cast(
             LiteralString,
             f"""
+            WITH pt AS (SELECT {GEOG_POINT} AS g)
             SELECT o.id, o.taxon_id, o.lat, o.lng, o.observed_on, o.uri
-            FROM observations o
+            FROM observations o, pt
             WHERE o.quality_grade = 'research' AND o.obscured = FALSE
-              AND o.lat BETWEEN %s AND %s AND o.lng BETWEEN %s AND %s
+              AND o.geom IS NOT NULL AND ST_DWithin(o.geom, pt.g, %s)
               AND {taxon_filter(taxon_ids)} AND o.month IN ({sql_in(months)})
             ORDER BY o.observed_on DESC
             """,
         ),
-        [bbox.min_lat, bbox.max_lat, bbox.min_lng, bbox.max_lng, *taxon_ids, *months],
+        [lng, lat, radius_km * 1000.0, *taxon_ids, *months],
     ).fetchall()
     genera = genus_name_map(con, {row[1] for row in rows})
 
     results = []
     for obs_id, taxon_id, obs_lat, obs_lng, observed_on, uri in rows:
-        dist = haversine_km(lat, lng, obs_lat, obs_lng)
-        if dist > radius_km:
-            continue
         name, common_name = genera.get(taxon_id, (str(taxon_id), None))
         results.append(
             {
