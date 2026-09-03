@@ -122,7 +122,17 @@ def plan_route(
         camp_is_free = camp is not None and camp.free is True
         if require_free_camp and not camp_is_free:
             continue
-        nearby_trails = trails_near(con, lat=region.center_lat, lng=region.center_lng, radius_km=camp_radius_km)
+        # Only the single nearest trail's geometry is needed here, and the plan does its own
+        # camps_near - so skip trails_near's per-trail nearest-camp LATERAL (seconds per call
+        # in trail-dense terrain) and let the query fetch just the one closest trail.
+        nearby_trails = trails_near(
+            con,
+            lat=region.center_lat,
+            lng=region.center_lng,
+            radius_km=camp_radius_km,
+            limit=1,
+            with_camp_distance=False,
+        )
         trail = nearby_trails[0] if nearby_trails else None
         candidates.append((region, camp, camp_is_free, trail))
         if len(candidates) >= max_stops:

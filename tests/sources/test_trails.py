@@ -215,6 +215,39 @@ def test_trails_near_annotates_nearest_campsite(con: psycopg.Connection) -> None
     assert trails[0].camp_distance_km < 5.0  # the campsite sits right on the trail's center
 
 
+def test_trails_near_limit_returns_only_the_nearest(con: psycopg.Connection) -> None:
+    elements = [
+        _parse_element(
+            {
+                "type": "way",
+                "id": i,
+                "tags": {"highway": "path", "name": f"T{i}"},
+                "geometry": [{"lat": 47.6 + i * 0.02, "lon": -122.3}, {"lat": 47.61 + i * 0.02, "lon": -122.29}],
+            }
+        )
+        for i in range(1, 4)
+    ]
+    upsert_trails(con, [e for e in elements if e is not None])
+    trails = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, limit=1)
+    assert [trail.name for trail in trails] == ["T1"]
+
+
+def test_trails_near_skips_camp_distance_when_disabled(con: psycopg.Connection) -> None:
+    trail = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "path", "name": "Ridge"},
+            "geometry": [{"lat": 47.6, "lon": -122.3}, {"lat": 47.61, "lon": -122.29}],
+        }
+    )
+    assert trail is not None
+    upsert_trails(con, [trail])
+    upsert_campsites(con, [("ridb:1", "Camp", "campground", None, True, 47.6, -122.3, "ridb", "http://x")])
+    trails = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=30.0, with_camp_distance=False)
+    assert trails[0].camp_distance_km is None  # LATERAL skipped even though a camp is in range
+
+
 def test_trails_near_no_rows_ingested_returns_empty(con: psycopg.Connection) -> None:
     assert trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0) == []
 

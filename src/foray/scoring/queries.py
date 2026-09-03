@@ -201,6 +201,7 @@ def trails_near(
     radius_km: float,
     kind: str | None = None,
     limit: int | None = None,
+    with_camp_distance: bool = True,
 ) -> list[Trail]:
     """Trails within ``radius_km`` of a hotspot, nearest first.
 
@@ -210,29 +211,45 @@ def trails_near(
     cached campsite (``camp_distance_km``) so the UI can show the "park -> hike -> fungi" chain -
     a ``LATERAL`` KNN join off ``ix_campsites_geom`` (issue #268 PR 5 - previously an
     O(trails-in-radius * all-campsites) Python loop, ~13s on a 1M-trail / 17k-camp prod cache).
+
     ``kind`` restricts to one element class (e.g. ``"trailhead"`` for the destination-card trail
-    list, issue #115 follow-up); ``limit`` caps the ranked result after sorting. No rows ingested
-    yet yields an empty list, mirroring ``camps_near`` / ``land_near``.
+    list, issue #115 follow-up). ``limit`` caps the result - and when set, is pushed into the
+    query as ``ORDER BY <-> LIMIT`` so only that many trails are fetched (and camp-joined),
+    rather than every trail in the radius then trimmed. ``with_camp_distance=False`` drops the
+    per-trail nearest-camp LATERAL entirely - the trip planner only wants the single nearest
+    trail's geometry and does its own ``camps_near``, and that join still costs seconds per
+    call in trail-dense terrain. No rows ingested yet yields an empty list.
     """
     params: list[Any] = [lng, lat, radius_km * 1000.0]
     kind_filter: LiteralString = ""
     if kind is not None:
         kind_filter = "AND t.kind = %s"
         params.append(kind)
-    sql: LiteralString = f"""
-        WITH pt AS (SELECT {GEOG_POINT} AS g)
-        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
-               ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km,
-               camp.d / 1000.0 AS camp_km
-        FROM trails t, pt
+    if with_camp_distance:
+        camp_select: LiteralString = "camp.d / 1000.0 AS camp_km"
+        camp_join: LiteralString = """
         LEFT JOIN LATERAL (
             SELECT ST_Distance(c.geom, t.geom) AS d
             FROM campsites c
             WHERE c.geom IS NOT NULL
             ORDER BY c.geom <-> t.geom
             LIMIT 1
-        ) camp ON true
+        ) camp ON true"""
+    else:
+        camp_select = "NULL::double precision AS camp_km"
+        camp_join = ""
+    order_limit: LiteralString = ""
+    if limit is not None:
+        order_limit = "ORDER BY t.geom <-> pt.g LIMIT %s"
+        params.append(limit)
+    sql: LiteralString = f"""
+        WITH pt AS (SELECT {GEOG_POINT} AS g)
+        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
+               ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km,
+               {camp_select}
+        FROM trails t, pt{camp_join}
         WHERE t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s) {kind_filter}
+        {order_limit}
         """
     rows = con.execute(sql, params).fetchall()
 
