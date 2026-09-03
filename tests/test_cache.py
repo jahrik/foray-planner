@@ -13,6 +13,7 @@ from foray.cache import (
     add_genus,
     apply_schema,
     connection,
+    copy_upsert,
     delete_observations,
     genus_taxon_ids,
     is_ingested,
@@ -403,6 +404,26 @@ def test_upsert_rows_coalesce_preserves_a_healed_value_against_a_null(con: psyco
     upsert_rows(con, "campsites", cols, [("x:2", "Named")])
     upsert_rows(con, "campsites", cols, [("x:2", None)], coalesce={"name"})
     assert con.execute("SELECT name FROM campsites WHERE id = 'x:2'").fetchone() == ("Named",)
+
+
+def test_copy_upsert_empty_is_a_noop(con: psycopg.Connection) -> None:
+    assert copy_upsert(con, "campsites", ("id", "name"), []) == 0
+
+
+def test_copy_upsert_dedups_a_repeated_conflict_key_within_one_batch(con: psycopg.Connection) -> None:
+    # A paginated source that straddles the same id twice must not trip
+    # "ON CONFLICT DO UPDATE command cannot affect row a second time".
+    cols = ("id", "name")
+    assert copy_upsert(con, "campsites", cols, [("x:1", "First"), ("x:1", "Second")]) == 2
+    assert con.execute("SELECT count(*) FROM campsites WHERE id = 'x:1'").fetchone() == (1,)
+
+
+def test_copy_upsert_fires_the_geom_trigger_on_the_insert_select(con: psycopg.Connection) -> None:
+    # The COPY lands in a staging table with no trigger; the INSERT ... SELECT into the real
+    # observations table is what fires the BEFORE INSERT trigger that derives geom.
+    _insert(con, _ROW)
+    row = con.execute("SELECT ST_Y(geom::geometry), ST_X(geom::geometry) FROM observations WHERE id = 1").fetchone()
+    assert row == (47.6, -122.3)
 
 
 def test_connection_passes_through_a_caller_owned_connection(con: psycopg.Connection) -> None:
