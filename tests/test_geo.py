@@ -50,9 +50,13 @@ def test_bbox_around_segment_contains_both_endpoints_and_the_pad() -> None:
 def test_bbox_center_radius_circle_contains_the_box() -> None:
     box = bbox_around_segment(44.0, -121.0, 45.6, -122.4, 40.0)
     clat, clng, radius_km = bbox_center_radius(box)
-    for corner_lat in (box.min_lat, box.max_lat):
-        for corner_lng in (box.min_lng, box.max_lng):
-            assert haversine_km(clat, clng, corner_lat, corner_lng) <= radius_km + 1e-6
+    # Sample the whole boundary (corners + edge points), not just the corners, so the test
+    # pins "the circle contains the box" rather than a weaker four-point claim.
+    lat_samples = [box.min_lat + (box.max_lat - box.min_lat) * f for f in (0.0, 0.25, 0.5, 0.75, 1.0)]
+    lng_samples = [box.min_lng + (box.max_lng - box.min_lng) * f for f in (0.0, 0.25, 0.5, 0.75, 1.0)]
+    for lat in lat_samples:
+        for lng in lng_samples:
+            assert haversine_km(clat, clng, lat, lng) <= radius_km + 1e-6
 
 
 def test_grid_cells_in_bbox_along_corridor_includes_the_line() -> None:

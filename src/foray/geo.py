@@ -93,11 +93,13 @@ def grid_cell(lat: float, lng: float, cell_deg: float) -> GridCell:
 
 
 def bbox_center_radius(bbox: BBox) -> tuple[float, float, float]:
-    """Centre point and circumscribed-circle radius (km) of ``bbox``.
+    """A circle that contains ``bbox``: its midpoint as the centre, and the great-circle
+    distance to the farthest corner as the radius.
 
-    The tightest circle that still contains the whole box - used to turn a candidate-area
-    bounding box into the ``(centre, radius)`` an index-backed ``ST_DWithin`` needs, without
-    over-fetching the way a start-anchored radius would.
+    Not the global minimum enclosing circle, just a compact one - enough to turn a
+    candidate-area bounding box into the ``(centre, radius)`` an index-backed ``ST_DWithin``
+    needs without over-fetching the way a start-anchored radius would. The box's corners are
+    its farthest points from the midpoint, so covering them covers the whole box.
     """
     center_lat = (bbox.min_lat + bbox.max_lat) / 2
     center_lng = (bbox.min_lng + bbox.max_lng) / 2
