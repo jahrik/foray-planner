@@ -151,8 +151,8 @@ def _parse_feature(source: LandSource, feature: dict[str, Any]) -> tuple[Any, ..
     if feature_id in (None, ""):
         return None
     # A geometry whose coords contain no numeric pair is junk - drop it here rather than let
-    # the geom trigger silently store NULL. (The bbox itself is no longer persisted - issue
-    # #268 PR 5; the `geom` GIST index serves "land near here".)
+    # the geom trigger silently store NULL. (The bbox is no longer persisted since issue #268
+    # PR 5; the `geom` GIST index serves "land near here".)
     if _bounds(geometry["coordinates"]) is None:
         return None
     name = _get(props, source.name_field)
