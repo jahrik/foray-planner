@@ -139,6 +139,11 @@ backfill-precip: db
 refresh-precip: db
     docker compose run --rm app foray refresh-precip
 
+# Refresh wildfire perimeters + burn scars + MTBS severity (issue #227, NIFC/MTBS ArcGIS).
+[group('data')]
+fire: db
+    docker compose run --rm app foray fire
+
 # Re-checks cached observations under genera whose cache count has drifted from iNat's live
 # count (see ingest.revalidate) - purges/reassigns rows misidentified into a homonymous
 # non-fungal genus (e.g. fungal Olla vs. the ladybug genus Olla). Meant to run on a recurring
