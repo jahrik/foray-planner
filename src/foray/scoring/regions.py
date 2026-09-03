@@ -13,7 +13,7 @@ from typing import LiteralString, cast
 
 import psycopg
 
-from foray.scoring._sql import BINNED, CENTER_LAT, CENTER_LNG, taxon_filter
+from foray.scoring._sql import BINNED, CENTER_LAT, CENTER_LNG, GEOG_POINT, taxon_filter
 
 # Mean ground elevation for a region (issue #36), over the observations that have one - obscured
 # rows are excluded (their point is iNat's decoy, so its elevation is meaningless) unless every
@@ -146,21 +146,46 @@ def region_precip_obs(con: psycopg.Connection, region_ids: Collection[str]) -> d
     return {region_id: {"precip_obs_7d_mm": mm7, "precip_obs_30d_mm": mm30} for region_id, mm7, mm30 in rows}
 
 
-def recent_counts(con: psycopg.Connection, cell_deg: float, taxon_ids: list[int], weeks: int) -> dict[str, int]:
+def recent_counts(
+    con: psycopg.Connection,
+    *,
+    lat: float,
+    lng: float,
+    radius_km: float,
+    cell_deg: float,
+    taxon_ids: list[int],
+    weeks: int,
+) -> dict[str, int]:
+    """``region_id -> count`` of research-grade target-taxon observations in the trailing
+    ``weeks``, within ``radius_km`` of ``(lat, lng)``.
+
+    The radius cut is an index-backed ``ST_DWithin`` on ``observations.geom`` (issue #268) so
+    this doesn't seq-scan the whole table on every ranking call - the caller only ever reads
+    the counts for regions that already survived its spatial filter, so a superset of that
+    area is all that's needed. ``region_id`` is the same ``floor(coord / cell_deg)`` grid key
+    ``BINNED`` derives.
+    """
     cutoff = (dt.date.today() - dt.timedelta(weeks=weeks)).isoformat()
-    binned = BINNED.format(cell=cell_deg)
-    # cast: the query is built from a fixed template + `sql_in()`'s placeholder-count text
-    # (never user data), but psycopg's LiteralString typing can't verify that statically.
+    region_id = (
+        f"(CAST(floor(o.lat / {cell_deg}) AS INTEGER))::text || '_' || "
+        f"(CAST(floor(o.lng / {cell_deg}) AS INTEGER))::text"
+    )
+    # cast: the query is a fixed template + `taxon_filter()`'s placeholder-count text and
+    # `cell_deg` (a config float, never user data); psycopg's LiteralString typing can't
+    # verify that statically.
     rows = con.execute(
         cast(
             LiteralString,
             f"""
-            SELECT region_id, count(*) AS cnt
-            FROM ({binned})
-            WHERE observed_on >= %s AND {taxon_filter(taxon_ids)}
-            GROUP BY region_id
+            WITH pt AS (SELECT {GEOG_POINT} AS g)
+            SELECT {region_id} AS region_id, count(*) AS cnt
+            FROM observations o, pt
+            WHERE o.quality_grade = 'research'
+              AND o.geom IS NOT NULL AND ST_DWithin(o.geom, pt.g, %s)
+              AND o.observed_on >= %s AND {taxon_filter(taxon_ids, "o.taxon_id")}
+            GROUP BY 1
             """,
         ),
-        [cutoff, *taxon_ids],
+        [lng, lat, radius_km * 1000.0, cutoff, *taxon_ids],
     ).fetchall()
     return dict(rows)

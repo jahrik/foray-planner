@@ -55,6 +55,8 @@ def _rank_candidates(
     cell_deg: float,
     recent_weeks: int,
     region_ids: list[str],
+    recent_center: tuple[float, float],
+    recent_radius_km: float,
     keep: Callable[[float, float], tuple[bool, float]],
 ) -> list[RegionScore]:
     """Shared fetch/score core for ``rank_destinations``/``rank_destinations_corridor``.
@@ -62,10 +64,12 @@ def _rank_candidates(
     ``region_ids`` is the candidate grid-cell allowlist (a bounding box over the home
     radius / corridor, from :func:`grid_cells_in_bbox`); the phenology scan is restricted
     to it via ``ix_phenology_region`` instead of aggregating every ingested cell globally.
-    ``keep(center_lat, center_lng)`` then does the exact radius / corridor-offset test on
-    that already-small set and supplies the value that lands in ``RegionScore.distance_km``
-    - home-distance for the radial caller, progress-along-line for the corridor caller.
-    Everything else (genus lookup, recency, and score formula) is identical between modes.
+    ``recent_center`` / ``recent_radius_km`` bound the ``recent_counts`` observation scan the
+    same way (a circle enclosing the candidate area). ``keep(center_lat, center_lng)`` then
+    does the exact radius / corridor-offset test on that already-small set and supplies the
+    value that lands in ``RegionScore.distance_km`` - home-distance for the radial caller,
+    progress-along-line for the corridor caller. Everything else (genus lookup, recency, and
+    score formula) is identical between modes.
     """
     if not region_ids:
         return []
@@ -101,7 +105,15 @@ def _rank_candidates(
     ).fetchall()
 
     genera = genus_name_map(con, {row[3] for row in rows})
-    recent = recent_counts(con, cell_deg, taxon_ids, recent_weeks)
+    recent = recent_counts(
+        con,
+        lat=recent_center[0],
+        lng=recent_center[1],
+        radius_km=recent_radius_km,
+        cell_deg=cell_deg,
+        taxon_ids=taxon_ids,
+        weeks=recent_weeks,
+    )
 
     # Group per region, applying the caller's filter and the score formula.
     regions: dict[str, dict[str, Any]] = {}
@@ -254,6 +266,8 @@ def rank_destinations(
         cell_deg=cell_deg,
         recent_weeks=recent_weeks,
         region_ids=region_ids,
+        recent_center=(home_lat, home_lng),
+        recent_radius_km=radius_km,
         keep=keep,
     )
     _apply_fire(con, results, taxon_ids=taxon_ids)
@@ -296,6 +310,9 @@ def rank_destinations_corridor(
     region_ids = grid_cells_in_bbox(
         bbox_around_segment(start_lat, start_lng, dest_lat, dest_lng, corridor_km), cell_deg
     )
+    # A circle enclosing the whole corridor: midpoint of the chord, half its length plus the
+    # corridor half-width. Only needs to be a superset of the candidate area (see _rank_candidates).
+    mid_lat, mid_lng = (start_lat + dest_lat) / 2, (start_lng + dest_lng) / 2
     results = _rank_candidates(
         con,
         months=months,
@@ -303,6 +320,8 @@ def rank_destinations_corridor(
         cell_deg=cell_deg,
         recent_weeks=recent_weeks,
         region_ids=region_ids,
+        recent_center=(mid_lat, mid_lng),
+        recent_radius_km=total_km / 2 + corridor_km,
         keep=keep,
     )
     _apply_fire(con, results, taxon_ids=taxon_ids)
