@@ -429,8 +429,8 @@ def refresh(ctx: click.Context, with_: str, all_coverage: bool) -> None:
     try:
         # No more global location override to load here - home/radius overrides are now per-device
         # (anonymous cookie, see api.py), which this CLI path has no way to resolve. Cron-driven
-        # refresh uses `cfg.home` (the env-configured default) unchanged - see TODO.md Epic 9's
-        # "Background layer refresh" section for the planned redesign of this gap.
+        # refresh uses `cfg.home` (the env-configured default) unchanged; a redesign to close this
+        # gap for background layer refresh is tracked separately.
         if all_coverage:
             if "mushrooms" in targets:
                 for country in cfg.countries:

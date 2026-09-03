@@ -11,7 +11,7 @@ is covered by *tiling*: query circles laid on a grid dense enough to cover the w
 then facilities are deduped by id and clipped to the true home radius with ``haversine_km``.
 
 Dispersed (free, undeveloped) camping has no authoritative dataset and is a separate,
-proxy-based layer (Epic 2, follow-up) - this module only handles developed campgrounds.
+proxy-based layer (tracked separately) - this module only handles developed campgrounds.
 """
 
 from __future__ import annotations

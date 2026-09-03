@@ -1,8 +1,8 @@
 ---
 # Manual/opt-in only - not part of foray:deploy. The hourly foray-resync cron job
 # (tasks/deploy/cron.yml) already keeps the cache accurate on a schedule at a small batch size,
-# but a droplet's first full pass at that pace takes weeks (see TODO.md's obscured-coordinate/
-# genus-drift investigation) - this runs a one-time `--until-done` grind instead, so prod
+# but a droplet's first full pass at that pace takes weeks (re-resolving obscured coordinates and
+# genus drift across the whole table) - this runs a one-time `--until-done` grind instead, so prod
 # catches up promptly rather than trickling in over the recurring cron's normal pace.
 - name: Check for the deploy-rendered env file
   ansible.builtin.stat:

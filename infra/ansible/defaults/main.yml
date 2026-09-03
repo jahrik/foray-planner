@@ -93,8 +93,8 @@ foray_dem_once_cache_dir: /opt/foray-planner/dem-cache
 foray_dem_once_min_free_gb: "6"
 foray_dem_once_keep_cache: false
 
-# One-time foray:resync-once catch-up (see TODO.md's rollout plan) - much larger than the
-# recurring cron's batch size since this runs once, synchronously, until the whole table is
+# One-time foray:resync-once catch-up - much larger than the recurring cron's batch size since
+# this runs once, synchronously, until the whole table is
 # caught up. Overrideable per droplet size/table growth (Copilot review, PR #185).
 foray_resync_once_batch_size: "20000"
 
