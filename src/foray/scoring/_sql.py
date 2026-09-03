@@ -18,9 +18,8 @@ import psycopg
 # scoring.
 # Explicit column list rather than `o.*`: the binned subquery feeds the big `GROUP BY`s in
 # `regions` / `ranking` / `queries`, and `SELECT o.*` drags every observation column (incl.
-# `positional_accuracy`, `revalidated_at`, and the future PostGIS `geom`) through each one. This
-# is every column the aggregates actually read - keep it in sync when a query starts consuming a
-# new one.
+# `positional_accuracy`, `revalidated_at`) through each one. This is every column the aggregates
+# actually read - keep it in sync when a query starts consuming a new one.
 BINNED = """
 SELECT
     o.id, o.taxon_id, o.lat, o.lng, o.observed_on, o.month, o.quality_grade,
