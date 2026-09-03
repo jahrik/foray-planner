@@ -60,9 +60,12 @@ _INGEST_PRECIP_CELLS = 25
 _PRECIP_SCAN_LIMIT = 5000
 # Antecedent windows (days before observed_on) recorded per observation.
 _PRECIP_WINDOWS = (7, 30)
-# Open-Meteo's archive (ERA5) only serves 1940 onward; a request that starts earlier 400s and,
-# unguarded, wedges the whole backfill. Keep a margin for the 30 d window reach-back.
-_ERA5_MIN_DATE = dt.date(1940, 2, 1)
+# Open-Meteo's ERA5 archive begins 1940-01-01; a request that starts earlier 400s and,
+# unguarded, wedges the whole backfill. `_ERA5_ARCHIVE_START` floors the fetch range;
+# `_PRECIP_MIN_OBSERVED_ON` (a month later, so even the 30 d window stays inside ERA5) is the
+# cutoff for which observations enter the pending set at all - see observations_missing_precip.
+_ERA5_ARCHIVE_START = dt.date(1940, 1, 1)
+_PRECIP_MIN_OBSERVED_ON = dt.date(1940, 2, 1)
 # Cap the archive span fetched per cell in one pass. A cell whose observations span decades
 # would otherwise pull a single ~15k-day series; the remaining older observations stay pending
 # and are picked up on the next pass (oldest first).
@@ -314,14 +317,17 @@ def backfill_precip(
     updated = 0
     for cell_id, members in list(by_cell.items())[: max_cells or len(by_cell)]:
         members.sort(key=lambda item: item[1])
-        # Bound the fetch: only the oldest chunk within _MAX_ARCHIVE_SPAN_DAYS this pass, and
-        # never earlier than ERA5's coverage. Anything older stays pending for the next pass.
-        chunk_start = max(members[0][1], _ERA5_MIN_DATE)
+        # Bound the fetch: only the oldest chunk within _MAX_ARCHIVE_SPAN_DAYS this pass; anything
+        # older stays pending for the next pass. observations_missing_precip already excludes
+        # dates before _PRECIP_MIN_OBSERVED_ON, so members[0] is safely inside ERA5.
+        chunk_start = members[0][1]
         chunk_end = min(members[-1][1], chunk_start + dt.timedelta(days=_MAX_ARCHIVE_SPAN_DAYS))
         members = [(obs_id, day) for obs_id, day in members if chunk_start <= day <= chunk_end]
         if not members:
             continue
-        earliest = max(chunk_start - dt.timedelta(days=widest), _ERA5_MIN_DATE)
+        # Floor the request at ERA5's actual start so an early-1940 observation still gets its
+        # required January days (the observed_on cutoff is a month stricter than this).
+        earliest = max(chunk_start - dt.timedelta(days=widest), _ERA5_ARCHIVE_START)
         latest = chunk_end - dt.timedelta(days=1)
         series = cached_precip(db, cell_id, earliest, latest, source=precip.ARCHIVE_SOURCE)
         if not _span_covered(series, earliest, latest):

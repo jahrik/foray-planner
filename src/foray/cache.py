@@ -1018,7 +1018,9 @@ def stale_precip_region_ids(con: psycopg.Connection, older_than_hours: float) ->
             SELECT r.region_id
             FROM regions r
             LEFT JOIN precipitation p ON p.region_id = r.region_id
-            WHERE p.region_id IS NULL OR p.updated_at < now() - make_interval(hours => %s)
+            WHERE p.region_id IS NULL
+               OR p.updated_at IS NULL
+               OR p.updated_at < now() - make_interval(hours => %s)
             """,
             [older_than_hours],
         ).fetchall()
