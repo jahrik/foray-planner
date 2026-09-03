@@ -310,9 +310,10 @@ def rank_destinations_corridor(
 
     corridor_bbox = bbox_around_segment(start_lat, start_lng, dest_lat, dest_lng, corridor_km)
     region_ids = grid_cells_in_bbox(corridor_bbox, cell_deg)
-    # recent_counts only needs a superset of the candidate area (see _rank_candidates); the
-    # circumscribed circle of the same bounding box is the tightest such circle, and keeps the
-    # ST_DWithin scan from ballooning on a long corridor the way a start-anchored radius would.
+    # recent_counts only needs a superset of the candidate area (see _rank_candidates); a
+    # circle around the same bounding box (midpoint + farthest-corner radius) is a compact one,
+    # and keeps the ST_DWithin scan from ballooning on a long corridor the way a start-anchored
+    # radius would.
     recent_lat, recent_lng, recent_radius_km = bbox_center_radius(corridor_bbox)
     results = _rank_candidates(
         con,
