@@ -126,6 +126,9 @@
         - foray
         - "foray:deploy"
 
+    # Tagged foray:deploy as well as foray:cron so CD (which runs --tags foray:deploy)
+    # re-renders the cron scripts on every deploy - otherwise a change to a cron template
+    # only reaches the droplet on a manual `just ansible cron` run.
     - name: Include cron tasks
       ansible.builtin.include_tasks:
         file: tasks/deploy/cron.yml
@@ -133,9 +136,11 @@
           tags:
             - foray
             - "foray:cron"
+            - "foray:deploy"
       tags:
         - foray
         - "foray:cron"
+        - "foray:deploy"
 
     - name: Include one-off genus catalog refresh task
       ansible.builtin.include_tasks:
