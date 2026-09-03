@@ -4,7 +4,8 @@
 # enriches as many rows as the free tier allows before it 429s, then exits; the hourly schedule
 # keeps chipping away. --no-rebuild: the daily ingest cron rebuilds phenology, so card elevation
 # means refresh once a day rather than every hour on the managed Postgres.
+# --pull always: refresh the local :latest each tick so a stale image can't fail apply_schema (#277).
 exec flock -n /tmp/foray-backfill-elevation.lock \
-  docker run --rm --env-file /opt/foray-planner/foray.env \
+  docker run --rm --pull always --env-file /opt/foray-planner/foray.env \
     {{ foray_app_image }} \
     foray backfill-elevation --limit {{ foray_elevation_backfill_limit }} --no-rebuild

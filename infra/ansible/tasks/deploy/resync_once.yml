@@ -16,6 +16,13 @@
       this droplet first (foray:resync-once depends on the env file it renders).
   when: not foray_resync_once_env_stat.stat.exists
 
+# foray_app_image defaults to :latest, but CD deploys by digest and never moves the droplet's
+# :latest tag - without this the one-off runs whatever stale :latest happens to be on the box (#277).
+- name: Pull the current app image
+  community.docker.docker_image_pull:
+    name: "{{ foray_app_image }}"
+    pull: always
+
 - name: Run one-off observation resync catch-up
   community.docker.docker_container:
     name: foray-resync-once
