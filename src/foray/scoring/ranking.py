@@ -24,6 +24,7 @@ from foray.cache import region_precip
 from foray.geo import (
     bbox_around,
     bbox_around_segment,
+    bbox_center_radius,
     grid_cells_in_bbox,
     haversine_km,
     project_to_plane,
@@ -307,14 +308,12 @@ def rank_destinations_corridor(
         progress_km = offset_km if total_km == 0 else t * total_km
         return offset_km <= corridor_km, progress_km
 
-    region_ids = grid_cells_in_bbox(
-        bbox_around_segment(start_lat, start_lng, dest_lat, dest_lng, corridor_km), cell_deg
-    )
-    # A circle enclosing the whole corridor, centred on `start`: every corridor point is within
-    # `total_km` of start along the line, plus at most `corridor_km` of perpendicular offset.
-    # Deliberately generous - it only has to be a superset of the candidate area, and the
-    # recent_counts fetch is an index scan (see _rank_candidates). Centring on an endpoint
-    # sidesteps any midpoint / antimeridian / great-circle subtlety.
+    corridor_bbox = bbox_around_segment(start_lat, start_lng, dest_lat, dest_lng, corridor_km)
+    region_ids = grid_cells_in_bbox(corridor_bbox, cell_deg)
+    # recent_counts only needs a superset of the candidate area (see _rank_candidates); the
+    # circumscribed circle of the same bounding box is the tightest such circle, and keeps the
+    # ST_DWithin scan from ballooning on a long corridor the way a start-anchored radius would.
+    recent_lat, recent_lng, recent_radius_km = bbox_center_radius(corridor_bbox)
     results = _rank_candidates(
         con,
         months=months,
@@ -322,8 +321,8 @@ def rank_destinations_corridor(
         cell_deg=cell_deg,
         recent_weeks=recent_weeks,
         region_ids=region_ids,
-        recent_center=(start_lat, start_lng),
-        recent_radius_km=total_km + corridor_km,
+        recent_center=(recent_lat, recent_lng),
+        recent_radius_km=recent_radius_km,
         keep=keep,
     )
     _apply_fire(con, results, taxon_ids=taxon_ids)
