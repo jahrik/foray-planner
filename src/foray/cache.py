@@ -522,15 +522,19 @@ def copy_upsert(
     (5k observation tuples at a time) that beats ``executemany``'s per-row round-trips
     handily - the same win the DEM elevation backfill measured (#238).
 
-    ``DISTINCT ON (<conflict>)`` collapses a duplicate conflict key within a single batch, so
-    the ``INSERT`` can't hit "ON CONFLICT DO UPDATE command cannot affect row a second time" if
-    a paginated source ever straddles the same id twice.
+    A conflict key repeated within one batch is collapsed to its *last* occurrence before the
+    COPY - matching ``executemany``'s row-by-row "last write wins", and keeping the
+    ``INSERT ... SELECT`` from hitting "ON CONFLICT DO UPDATE command cannot affect row a
+    second time" if a paginated source ever straddles the same id twice. ``conflict`` must be a
+    single column (it always is here); the dedupe keys on that column's position.
 
     ``table``/``columns``/``conflict`` are ``LiteralString`` from this module's own call sites;
     the row values ride through ``COPY`` as data. Returns the number of rows attempted.
     """
     if not rows:
         return 0
+    key_idx = list(columns).index(conflict)
+    deduped = list({row[key_idx]: row for row in rows}.values())  # dict keeps last per key, in order
     collist = ", ".join(columns)
     assignments = ", ".join(
         f"{col} = COALESCE(EXCLUDED.{col}, {table}.{col})" if col in coalesce else f"{col} = EXCLUDED.{col}"
@@ -542,14 +546,13 @@ def copy_upsert(
     )
     copy_in: LiteralString = f"COPY _copy_stg ({collist}) FROM STDIN"
     insert_select: LiteralString = (
-        f"INSERT INTO {table} ({collist}) "
-        f"SELECT DISTINCT ON ({conflict}) {collist} FROM _copy_stg "
+        f"INSERT INTO {table} ({collist}) SELECT {collist} FROM _copy_stg "
         f"ON CONFLICT ({conflict}) DO UPDATE SET {assignments}"
     )
     with con.transaction(), con.cursor() as cur:
         cur.execute(create_stg)
         with cur.copy(copy_in) as copy:
-            for row in rows:
+            for row in deduped:
                 copy.write_row(row)
         cur.execute(insert_select)
     return len(rows)
