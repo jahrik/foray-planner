@@ -242,6 +242,31 @@ def test_alerts_only_recent(con: psycopg.Connection) -> None:
     assert active == []
 
 
+def test_recent_counts_is_scoped_to_the_radius(con: psycopg.Connection) -> None:
+    # issue #268 follow-up: recent_counts must not seq-scan / count the whole table - a fresh
+    # observation far outside the query circle should not show up in the result.
+    from foray.scoring.regions import recent_counts
+
+    today = dt.date.today()
+    near_lat, near_lng = 44.0, -121.0
+    far_lat, far_lng = 30.0, -95.0  # ~2500 km away
+    with con.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            [
+                (40001, MOREL, near_lat, near_lng, today, today.month, "research", 10),
+                (40002, MOREL, far_lat, far_lng, today, today.month, "research", 10),
+            ],
+        )
+
+    counts = recent_counts(con, lat=near_lat, lng=near_lng, radius_km=100, cell_deg=CELL, taxon_ids=[MOREL], weeks=4)
+    near_id = f"{int(near_lat // CELL)}_{int(near_lng // CELL)}"
+    far_id = f"{int(far_lat // CELL)}_{int(far_lng // CELL)}"
+    assert counts.get(near_id) == 1
+    assert far_id not in counts
+
+
 def test_regions_center_excludes_obscured_decoy(con: psycopg.Connection) -> None:
     # A geoprivacy-obscured observation's cached point is iNat's randomized decoy coordinate,
     # not the true find location - it shouldn't pull a region's displayed center off target.
