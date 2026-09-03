@@ -288,9 +288,11 @@ _CONCURRENT_INDEXES: list[LiteralString] = [
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_revalidated_at ON observations (revalidated_at)",
     # Supersedes the old non-partial ix_observations_taxon_observed: BINNED always filters
     # quality_grade = 'research' first, so the partial index is smaller and better matched.
-    "DROP INDEX CONCURRENTLY IF EXISTS ix_observations_taxon_observed",
+    # Create the replacement first, drop the old one only after - a failed/cancelled build must
+    # not leave the table with neither index.
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_taxon_observed_research "
     "ON observations (taxon_id, observed_on) WHERE quality_grade = 'research'",
+    "DROP INDEX CONCURRENTLY IF EXISTS ix_observations_taxon_observed",
     # Backfill-queue scans (observations_missing_elevation / observations_missing_precip): the
     # partial predicate matches the WHERE clause so the queue is an index scan over just the
     # pending rows, not a seq scan of the whole table. Keyed on the queue's ORDER BY column.
@@ -477,21 +479,29 @@ def apply_schema(con: psycopg.Connection) -> None:
         # observations table would hold a write lock for the build's duration. Safe outside an
         # explicit transaction block since `con` is autocommit. A race with another starting
         # instance is caught and logged, not raised - none of these is a correctness dependency.
+        indexes_ok = True
         for statement in _CONCURRENT_INDEXES:
             try:
                 con.execute(statement)
             except psycopg.Error:
+                indexes_ok = False
                 logger.warning(
                     "cache: could not apply %r (likely a concurrent CREATE/DROP INDEX race with "
                     "another starting instance) - queries still work, just without this index "
                     "until a later apply_schema retries it.",
                     statement,
                 )
-        con.execute(
-            "INSERT INTO meta (key, value) VALUES ('schema_version', %s) "
-            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-            [str(SCHEMA_VERSION)],
-        )
+        # Only stamp the fast-path sentinel once every CONCURRENTLY statement landed - otherwise
+        # _schema_is_current() would short-circuit the next connect() and the failed index would
+        # never be retried, contradicting the warning above. A failure leaves the sentinel behind
+        # (or absent) so the next apply_schema takes the full path again; the SCHEMA re-exec and
+        # migration loop are idempotent, so the retry is cheap and safe.
+        if indexes_ok:
+            con.execute(
+                "INSERT INTO meta (key, value) VALUES ('schema_version', %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                [str(SCHEMA_VERSION)],
+            )
         # `taxa` and `app_location_legacy_singleton` (both retired) are dropped by migrations 10
         # and 11 above, not here - a bare DROP on every connect() would be a disruptive side
         # effect, whereas the migration chain runs each statement exactly once and records it.
