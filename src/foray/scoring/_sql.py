@@ -40,6 +40,14 @@ WHERE o.quality_grade = 'research'
 CENTER_LAT = "COALESCE(AVG(lat) FILTER (WHERE NOT COALESCE(obscured, false)), AVG(lat))::double precision"
 CENTER_LNG = "COALESCE(AVG(lng) FILTER (WHERE NOT COALESCE(obscured, false)), AVG(lng))::double precision"
 
+# A WGS84 point as `geography`, for the PostGIS radius reads in `queries.py` (issue #268). The
+# two params are (lng, lat) in that order - ST_MakePoint is X, Y - and it pairs with the
+# GIST-indexed `geom` column via `ST_DWithin(geom, GEOG_POINT, <metres>)` (index filter) and
+# `ORDER BY geom <-> GEOG_POINT` (index-assisted KNN sort). Distance back to km is
+# `ST_Distance(geom, GEOG_POINT) / 1000.0` - true point-to-geometry metres on the sphere, the
+# same model as `foray.geo.haversine_km`.
+GEOG_POINT = "ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography"
+
 
 def sql_in(ids: list[int]) -> str:
     """SQL fragment for ``IN (...)``. An empty list becomes the literal ``NULL`` (matches

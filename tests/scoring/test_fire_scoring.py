@@ -4,6 +4,7 @@ and the Morchella-scoped burn-scar boost."""
 from __future__ import annotations
 
 import datetime as dt
+import json
 from typing import LiteralString, cast
 
 import psycopg
@@ -52,6 +53,9 @@ def _add_fire(con: psycopg.Connection, **kw: object) -> None:
         "max_lng": LNG + 0.2,
         **kw,
     }
+    # The geom trigger derives `fire_perimeters.geom` from `geojson` (as the real ingest does);
+    # fire_near's ST_DWithin needs it. Point on the fire's center is enough for these tests.
+    cols.setdefault("geojson", json.dumps({"type": "Point", "coordinates": [cols["center_lng"], cols["center_lat"]]}))
     query = cast(
         LiteralString,
         f"INSERT INTO fire_perimeters ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))})",
