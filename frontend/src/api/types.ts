@@ -48,9 +48,13 @@ export type FireNear = Omit<components["schemas"]["FireNear"], "geometry"> & {
   geometry: GeoJSON.Geometry | null;
 };
 
-/** A trail near a hotspot (`GET /api/trails`). `geometry` is raw GeoJSON (line or point). */
+/**
+ * A trail near a hotspot (`GET /api/trails`). `geometry` is raw GeoJSON (line or point) when
+ * present, but the `/api/trails` list omits it (`null`) - selecting a row fetches the real
+ * geometry from `/api/trails/network`. `get_trail`/`nearest_trail` paths still populate it.
+ */
 export type Trail = Omit<components["schemas"]["Trail"], "geometry"> & {
-  geometry: GeoJSON.Geometry;
+  geometry: GeoJSON.Geometry | null;
 };
 
 /** The real trail for a selected trailhead (`GET /api/trails/network`), see selectTrailhead. */

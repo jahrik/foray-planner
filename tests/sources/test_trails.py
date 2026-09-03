@@ -253,6 +253,24 @@ def test_trails_near_skips_camp_distance_when_disabled(con: psycopg.Connection) 
     assert trails[0].camp_distance_km is None  # LATERAL skipped even though a camp is in range
 
 
+def test_trails_near_omits_geometry_when_disabled(con: psycopg.Connection) -> None:
+    trail = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "path", "name": "Ridge"},
+            "geometry": [{"lat": 47.6, "lon": -122.3}, {"lat": 47.61, "lon": -122.29}],
+        }
+    )
+    assert trail is not None
+    upsert_trails(con, [trail])
+    with_geom = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=30.0)
+    assert with_geom[0].geometry is not None and with_geom[0].geometry["type"] == "LineString"
+    without_geom = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=30.0, with_geometry=False)
+    assert without_geom[0].geometry is None
+    assert without_geom[0].name == "Ridge"  # the rest of the row is intact
+
+
 def test_trails_near_no_rows_ingested_returns_empty(con: psycopg.Connection) -> None:
     assert trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0) == []
 

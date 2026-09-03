@@ -294,6 +294,10 @@ export interface paths {
          *
          *     ``kind``/``limit`` scope this to e.g. just the nearest 20 trailheads for a destination
          *     card's Trails tab, instead of every path/route/trailhead in the radius.
+         *
+         *     Geometry is omitted (``with_geometry=False``): this feeds a name + distance row list, and
+         *     selecting a row draws the real trail by fetching ``/api/trails/network`` for that one id.
+         *     Returning every trail's full LineString here was megabytes of payload nothing rendered.
          */
         get: operations["get_trails_api_trails_get"];
         put?: never;
@@ -859,9 +863,9 @@ export interface components {
             /** Camp Distance Km */
             camp_distance_km: number | null;
             /** Geometry */
-            geometry: {
+            geometry?: {
                 [key: string]: unknown;
-            };
+            } | null;
         };
         /** TrailPath */
         TrailPath: {

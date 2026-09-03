@@ -303,6 +303,9 @@ export async function selectTrailhead(trail: Trail): Promise<void> {
     setStatus(errorDetail(error));
     return;
   }
+  // /api/trails/network always resolves a geometry (live OSM topology or the nearest cached
+  // trail); the null case only exists for the geometry-less /api/trails list rows.
+  if (!path.trail.geometry) return;
   const parts = trailParts(path.trail.geometry);
   if (!parts.length) return;
   const layer = L.polyline([], {

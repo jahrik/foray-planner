@@ -202,6 +202,7 @@ def trails_near(
     kind: str | None = None,
     limit: int | None = None,
     with_camp_distance: bool = True,
+    with_geometry: bool = True,
 ) -> list[Trail]:
     """Trails within ``radius_km`` of a hotspot, nearest first.
 
@@ -219,8 +220,13 @@ def trails_near(
     per-trail nearest-camp LATERAL entirely - the trip planner only wants the single nearest
     trail's geometry and does its own ``camps_near``, and that join still costs seconds per
     call in trail-dense terrain. No rows ingested yet yields an empty list.
+
+    ``with_geometry=False`` drops each trail's GeoJSON from the result (``geometry`` is ``None``).
+    The ``/api/trails`` list only shows names + distances and fetches real geometry per row via
+    ``/api/trails/network``, so shipping every LineString there is megabytes of unused payload.
     """
     params: list[Any] = [lng, lat, radius_km * 1000.0]
+    geojson_select: LiteralString = "t.geojson" if with_geometry else "NULL::text"
     kind_filter: LiteralString = ""
     if kind is not None:
         kind_filter = "AND t.kind = %s"
@@ -247,7 +253,7 @@ def trails_near(
         params.append(limit)
     sql: LiteralString = f"""
         WITH pt AS (SELECT {GEOG_POINT} AS g)
-        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
+        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, {geojson_select} AS geojson,
                ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km,
                {camp_select}
         FROM trails t, pt{camp_join}
@@ -271,7 +277,7 @@ def trails_near(
                     center_lng=clng,
                     distance_km=round(dist, 1),
                     camp_distance_km=round(camp_dist, 1) if camp_dist is not None else None,
-                    geometry=json.loads(geojson),
+                    geometry=json.loads(geojson) if geojson else None,
                 ),
             )
         )

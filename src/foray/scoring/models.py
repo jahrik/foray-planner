@@ -101,7 +101,10 @@ class Trail:
     center_lng: float
     distance_km: float  # from the hotspot to the trail's representative point
     camp_distance_km: float | None  # nearest cached campsite to the trail ("park → hike → fungi")
-    geometry: dict[str, Any]  # parsed GeoJSON geometry, ready for Leaflet
+    # Parsed GeoJSON geometry, ready for Leaflet. ``None`` when the caller asked for the trail
+    # list without geometry (``trails_near(with_geometry=False)``) - the destination-card list
+    # only needs names + distances and fetches real geometry per row via ``/api/trails/network``.
+    geometry: dict[str, Any] | None = None
 
 
 @dataclass

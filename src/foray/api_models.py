@@ -228,7 +228,10 @@ class Trail(BaseModel):
     center_lng: float
     distance_km: float
     camp_distance_km: float | None
-    geometry: dict[str, Any]  # raw GeoJSON geometry, same as LandUnit.geometry
+    # Raw GeoJSON geometry, same as LandUnit.geometry. ``None`` on the ``/api/trails`` list
+    # response - that feeds a name/distance row list whose selection fetches the real geometry
+    # from ``/api/trails/network``; see ``scoring.trails_near(with_geometry=False)``.
+    geometry: dict[str, Any] | None = None
 
 
 class TrailPath(BaseModel):
