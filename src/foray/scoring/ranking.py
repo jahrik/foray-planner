@@ -310,9 +310,11 @@ def rank_destinations_corridor(
     region_ids = grid_cells_in_bbox(
         bbox_around_segment(start_lat, start_lng, dest_lat, dest_lng, corridor_km), cell_deg
     )
-    # A circle enclosing the whole corridor: midpoint of the chord, half its length plus the
-    # corridor half-width. Only needs to be a superset of the candidate area (see _rank_candidates).
-    mid_lat, mid_lng = (start_lat + dest_lat) / 2, (start_lng + dest_lng) / 2
+    # A circle enclosing the whole corridor, centred on `start`: every corridor point is within
+    # `total_km` of start along the line, plus at most `corridor_km` of perpendicular offset.
+    # Deliberately generous - it only has to be a superset of the candidate area, and the
+    # recent_counts fetch is an index scan (see _rank_candidates). Centring on an endpoint
+    # sidesteps any midpoint / antimeridian / great-circle subtlety.
     results = _rank_candidates(
         con,
         months=months,
@@ -320,8 +322,8 @@ def rank_destinations_corridor(
         cell_deg=cell_deg,
         recent_weeks=recent_weeks,
         region_ids=region_ids,
-        recent_center=(mid_lat, mid_lng),
-        recent_radius_km=total_km / 2 + corridor_km,
+        recent_center=(start_lat, start_lng),
+        recent_radius_km=total_km + corridor_km,
         keep=keep,
     )
     _apply_fire(con, results, taxon_ids=taxon_ids)
