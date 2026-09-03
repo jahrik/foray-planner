@@ -432,7 +432,10 @@ def test_trails_kind_and_limit_scope_the_results(client: TestClient, con: psycop
 
     response = client.get("/api/trails", params={"lat": HOME_LAT, "lng": HOME_LNG, "limit": 1})
     assert response.status_code == 200
-    assert len(response.json()) == 1
+    body = response.json()
+    assert len(body) == 1
+    # The list omits geometry - selecting a row fetches it from /api/trails/network.
+    assert body[0]["geometry"] is None
 
 
 def test_trail_network_404s_for_an_unknown_trailhead(client: TestClient) -> None:

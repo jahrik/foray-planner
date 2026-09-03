@@ -152,6 +152,10 @@ def get_trails(
 
     ``kind``/``limit`` scope this to e.g. just the nearest 20 trailheads for a destination
     card's Trails tab, instead of every path/route/trailhead in the radius.
+
+    Geometry is omitted (``with_geometry=False``): this feeds a name + distance row list, and
+    selecting a row draws the real trail by fetching ``/api/trails/network`` for that one id.
+    Returning every trail's full LineString here was megabytes of payload nothing rendered.
     """
     require_idle(state)
     if region_id is not None:
@@ -161,7 +165,15 @@ def get_trails(
     else:
         raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
     with pool.connection() as conn:
-        found = scoring.trails_near(conn, lat=center_lat, lng=center_lng, radius_km=radius_km, kind=kind, limit=limit)
+        found = scoring.trails_near(
+            conn,
+            lat=center_lat,
+            lng=center_lng,
+            radius_km=radius_km,
+            kind=kind,
+            limit=limit,
+            with_geometry=False,
+        )
     return [Trail.model_validate(trail) for trail in found]
 
 
