@@ -1,6 +1,7 @@
 #!/bin/sh
 # Managed by the foray-planner ansible role
+# --pull always: refresh the local :latest each tick so a stale image can't fail apply_schema (#277).
 exec flock -n /tmp/foray-ingest.lock \
-  docker run --rm --env-file /opt/foray-planner/foray.env \
+  docker run --rm --pull always --env-file /opt/foray-planner/foray.env \
     {{ foray_app_image }} \
     foray ingest --countries
