@@ -59,10 +59,13 @@ def _fill(
     batch_size: int,
     sleep_s: float,
     dry_run: bool,
-) -> tuple[int, int]:
-    """Fill `geom` for one table, batch by batch. Returns `(filled, skipped_bad_geometry)`."""
+) -> tuple[int, int, bool]:
+    """Fill `geom` for one table, batch by batch. Returns
+    `(filled, skipped_bad_geometry, stalled_on_lock)` - `stalled` means a batch couldn't get
+    its lock and rows are left for a re-run; `skipped` rows are unparseable and a re-run won't
+    help, so only `stalled` should fail the caller."""
     if dry_run:
-        return _pending(con, table, predicate), 0
+        return _pending(con, table, predicate), 0, False
     filled = skipped = 0
     bad_ids: list[object] = []  # rows a row-by-row retry proved unparseable - don't re-select them
     # id is the primary key on every table here (bigint for observations, text elsewhere).
@@ -79,7 +82,7 @@ def _fill(
                 filled += cur.rowcount or 0
         except psycopg.OperationalError as exc:  # lock_timeout / transient - leave for a re-run
             print(f"  ! {table}: batch stalled on a lock, left for re-run: {exc}")
-            break
+            return filled, skipped, True
         except psycopg.Error:
             # A malformed GeoJSON feature somewhere in the batch aborted it - retry row by row
             # so the one bad row is skipped (left with geom NULL) and the rest still land.
@@ -91,14 +94,14 @@ def _fill(
                         filled += cur.rowcount or 0
                 except psycopg.OperationalError as exc:
                     print(f"  ! {table}: batch stalled on a lock, left for re-run: {exc}")
-                    return filled, skipped
+                    return filled, skipped, True
                 except psycopg.Error:
                     skipped += 1
                     bad_ids.append(one)
                     print(f"  ! {table} id={one!r}: bad geometry, left NULL")
         if sleep_s:
             time.sleep(sleep_s)
-    return filled, skipped
+    return filled, skipped, False
 
 
 def main() -> int:
@@ -115,7 +118,7 @@ def main() -> int:
         con.execute("SET statement_timeout = '120s'")
 
     tables: list[LiteralString] = [t for t in TABLES if not args.table or t in args.table]
-    total_skipped = 0
+    total_skipped = any_stalled = 0
     for table in tables:
         expr, predicate = TABLES[table]
         pending = _pending(con, table, predicate)
@@ -123,10 +126,11 @@ def main() -> int:
         if not pending:
             continue
         started = time.monotonic()
-        filled, skipped = _fill(
+        filled, skipped, stalled = _fill(
             con, table, expr, predicate, batch_size=args.batch_size, sleep_s=args.sleep, dry_run=args.dry_run
         )
         total_skipped += skipped
+        any_stalled += stalled
         remaining = _pending(con, table, predicate)
         print(
             f"{table}: {'would fill' if args.dry_run else 'filled'} {filled:,}"
@@ -134,10 +138,14 @@ def main() -> int:
             f" in {time.monotonic() - started:.0f}s; {remaining:,} still NULL"
         )
 
-    # Non-zero exit if any table still has pending rows (a stalled batch) so the Ansible task
-    # and an operator see the run as incomplete - a re-run only retries what's left.
-    incomplete = any(_pending(con, t, TABLES[t][1]) for t in tables)
-    return 1 if incomplete and not args.dry_run else (1 if total_skipped else 0)
+    if total_skipped:
+        print(
+            f"\n{total_skipped:,} row(s) left NULL - unparseable GeoJSON, a re-run will not fix "
+            "these. Inspect the '! ... bad geometry' lines above and repair the source rows."
+        )
+    # Exit non-zero only for a stalled run (rows a re-run *can* finish) - not for unparseable
+    # rows, which would make the Ansible task fail forever.
+    return 1 if any_stalled and not args.dry_run else 0
 
 
 if __name__ == "__main__":

@@ -355,9 +355,10 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # metres - the same model as `foray.geo.haversine_km`, so results don't shift. Order
     # matters: the extension must exist before any column of its type.
     (14, "CREATE EXTENSION IF NOT EXISTS postgis"),
-    # Point tables. `geom` is nullable and populated by the BEFORE trigger below (migration
-    # 17), not GENERATED ALWAYS AS ... STORED - a stored generated column's ADD COLUMN forces
-    # a full table rewrite under ACCESS EXCLUSIVE, unacceptable on observations' ~1.9M rows.
+    # Point tables. `geom` is nullable and populated by the BEFORE trigger below (functions in
+    # migrations 20/21, triggers wired in 22), not GENERATED ALWAYS AS ... STORED - a stored
+    # generated column's ADD COLUMN forces a full table rewrite under ACCESS EXCLUSIVE,
+    # unacceptable on observations' ~1.9M rows.
     (15, "ALTER TABLE campsites ADD COLUMN IF NOT EXISTS geom geography(Point, 4326)"),
     (16, "ALTER TABLE observations ADD COLUMN IF NOT EXISTS geom geography(Point, 4326)"),
     # Line/polygon tables (geometry type varies: LineString / MultiLineString / Polygon / Point).

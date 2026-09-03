@@ -35,9 +35,9 @@ def test_fills_null_point_geom(con: psycopg.Connection) -> None:
     _null_the_geom(con, "observations")
     expr, predicate = TABLES["observations"]
 
-    filled, skipped = fill(con, "observations", expr, predicate, batch_size=100, sleep_s=0.0, dry_run=False)
+    filled, skipped, stalled = fill(con, "observations", expr, predicate, batch_size=100, sleep_s=0.0, dry_run=False)
 
-    assert (filled, skipped) == (1, 0)
+    assert (filled, skipped, stalled) == (1, 0, False)
     row = con.execute("SELECT ST_Y(geom::geometry), ST_X(geom::geometry) FROM observations WHERE id = 1").fetchone()
     assert row == (44.0, -121.0)
 
@@ -50,12 +50,11 @@ def test_skips_malformed_geojson_row_without_wedging(con: psycopg.Connection) ->
     _null_the_geom(con, "trails")
     expr, predicate = TABLES["trails"]
 
-    filled, skipped = fill(con, "trails", expr, predicate, batch_size=1, sleep_s=0.0, dry_run=False)
+    filled, skipped, stalled = fill(con, "trails", expr, predicate, batch_size=1, sleep_s=0.0, dry_run=False)
 
-    assert filled == 1
-    assert skipped == 1
+    assert (filled, skipped, stalled) == (1, 1, False)
     geoms = dict(con.execute("SELECT id, geom IS NULL FROM trails").fetchall())
     assert geoms == {"ok": False, "bad": True}
     # A re-run fills nothing new and re-flags the one bad row (then stops - `id <> ALL(bad_ids)`
     # keeps it from looping); the good row is not touched again.
-    assert fill(con, "trails", expr, predicate, batch_size=1, sleep_s=0.0, dry_run=False) == (0, 1)
+    assert fill(con, "trails", expr, predicate, batch_size=1, sleep_s=0.0, dry_run=False) == (0, 1, False)
