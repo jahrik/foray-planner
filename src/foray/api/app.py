@@ -60,8 +60,8 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
     # DSN-building code needed. `open=False` defers the actual connections until the
     # lifespan's `pool.open()`, matching psycopg_pool's recommended startup pattern.
     #
-    # Sizing (see TODO.md finding 1): the managed PG plan caps *all* backends at 22, shared
-    # with the six cron jobs and any one-off script, so `max_size` stays at 10. `check` runs a
+    # Sizing: the managed PG plan caps *all* backends at 22, shared with the six cron jobs and
+    # any one-off script, so `max_size` stays at 10. `check` runs a
     # cheap liveness probe on checkout so a connection dropped by a failover / idle reap /
     # server-side `max_lifetime` is transparently replaced instead of 500-ing the first query.
     # `timeout=10` turns pool exhaustion into a fast 503 rather than a 30s stall.
