@@ -14,10 +14,10 @@ scoring read directly. One ODbL-licensed Overpass query gathers three element cl
 * **Trailheads** (``kind='trailhead'``) - where you actually start walking (``highway=trailhead``
   nodes), cached as a ``Point``.
 
-Geometry is stored as GeoJSON *text* with a bounding box + a representative center point (see
-``cache.trails``), so the read path never needs PostGIS geometry types - a cheap bbox filter +
-haversine on the center serves "trails near here". Each way's vertices are thinned to keep the
-cached polylines light enough for a phone map.
+Geometry is stored as GeoJSON *text* plus a representative center point (see ``cache.trails``);
+the ``geom`` GIST index (PostGIS Phase 1, issue #268) serves "trails near here" and the exact
+point-to-trail distance. Each way's vertices are thinned to keep the cached polylines light
+enough for a phone map.
 
 Like the campground, land, and dispersed ingests, this is best-effort: a failing Overpass request
 is logged and skipped rather than aborting the whole refresh. It is informational only - it links
@@ -26,7 +26,7 @@ the OSM source and makes no legal-access claim (see AGENTS.md, "No claims").
 Scale note: even ``highway=path`` alone grows with radius (~7.4k ways at 200 km around Coos Bay,
 ~15k at the full 400 km), but stays inside Overpass's server budget as a single query. If a future
 radius pushes past that, tile the home disk into sub-queries the way ``camps.py`` does - the read
-path (bbox + haversine to the hotspot) is unaffected either way.
+path (the ``geom`` GIST index) is unaffected either way.
 """
 
 from __future__ import annotations
@@ -149,13 +149,6 @@ def _sample(coords: Sequence[tuple[float, float]], count: int) -> list[tuple[flo
     return [coords[round(index * step)] for index in range(count)]
 
 
-def _bbox(points: Sequence[tuple[float, float]]) -> tuple[float, float, float, float]:
-    """(min_lat, min_lng, max_lat, max_lng) of a non-empty (lat, lng) point list."""
-    lats = [lat for lat, _ in points]
-    lngs = [lng for _, lng in points]
-    return min(lats), min(lngs), max(lats), max(lngs)
-
-
 def _to_lnglat(coords: Sequence[tuple[float, float]]) -> list[list[float]]:
     """(lat, lng) tuples -> GeoJSON [lng, lat] pairs (GeoJSON is x=lng, y=lat)."""
     return [[lng, lat] for lat, lng in coords]
@@ -192,7 +185,6 @@ def _row(
             "type": "MultiLineString",
             "coordinates": [_to_lnglat(line) for line in thinned],
         }
-    min_lat, min_lng, max_lat, max_lng = _bbox(flat)
     center_lat, center_lng = flat[len(flat) // 2]
     return (
         f"osm:{etype}/{eid}",
@@ -200,10 +192,6 @@ def _row(
         kind,
         "osm",
         _trail_url(etype, eid),
-        min_lat,
-        min_lng,
-        max_lat,
-        max_lng,
         center_lat,
         center_lng,
         json.dumps(geometry, separators=(",", ":")),

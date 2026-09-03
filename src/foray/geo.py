@@ -1,9 +1,10 @@
 """Geo primitives shared across scoring, the read repository, and the ingest layer.
 
 Everything here is pure math on lat/lng - no I/O, no DB. ``haversine_km`` is the canonical
-great-circle distance used everywhere an exact distance matters; ``bbox_around`` builds the
-cheap flat-degree bounding box every ``*_near`` query uses to prefilter candidates in SQL
-before the exact haversine cut in Python.
+great-circle distance used everywhere an exact distance matters (region math, corridor
+planning, alerts). ``bbox_around`` builds a cheap flat-degree bounding box - since PostGIS
+Phase 1 (issue #268) the ``*_near`` reads filter on the ``geom`` GIST index, so its only
+callers now are the ingest sources building an ArcGIS/Overpass fetch envelope.
 """
 
 from __future__ import annotations
@@ -44,9 +45,9 @@ def _lng_km_per_deg(lat: float) -> float:
 def bbox_around(lat: float, lng: float, radius_km: float) -> BBox:
     """Flat-degree bounding box of the disk of ``radius_km`` around ``(lat, lng)``.
 
-    The same ``radius_km / 111`` / ``radius_km / (111 * cos lat)`` block that every ``*_near``
-    query hand-rolled for its SQL bbox prefilter. Coarse on purpose - it only has to be a
-    superset of the true disk so the exact ``haversine_km`` cut downstream stays correct.
+    ``radius_km / 111`` / ``radius_km / (111 * cos lat)``. Coarse on purpose - the ingest
+    sources only need a superset of the true disk to hand an ArcGIS / Overpass query as its
+    spatial envelope.
     """
     dlat = radius_km / KM_PER_DEG_LAT
     dlng = radius_km / _lng_km_per_deg(lat)

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from typing import LiteralString, cast
+from typing import Any, LiteralString, cast
 
 import psycopg
 import pytest
@@ -34,7 +34,13 @@ def _seed(con: psycopg.Connection) -> None:
     build_phenology(con, CELL)
 
 
-def _add_fire(con: psycopg.Connection, **kw: object) -> None:
+def _add_fire(con: psycopg.Connection, **kw: Any) -> None:
+    # The bbox columns are gone (issue #268 PR 5); callers still pass min/max lat-lng to shape
+    # the seeded polygon's extent, so pop them out here and use them only for the geometry.
+    south = float(kw.pop("min_lat", LAT - 0.2))
+    north = float(kw.pop("max_lat", LAT + 0.2))
+    west = float(kw.pop("min_lng", LNG - 0.2))
+    east = float(kw.pop("max_lng", LNG + 0.2))
     cols = {
         "id": "f1",
         "source_key": "wfigs_active",
@@ -47,21 +53,15 @@ def _add_fire(con: psycopg.Connection, **kw: object) -> None:
         "percent_contained": 0.0,
         "center_lat": LAT,
         "center_lng": LNG,
-        "min_lat": LAT - 0.2,
-        "max_lat": LAT + 0.2,
-        "min_lng": LNG - 0.2,
-        "max_lng": LNG + 0.2,
         **kw,
     }
     # The geom trigger derives `fire_perimeters.geom` from `geojson` (as the real ingest does);
-    # fire_near's ST_DWithin needs it. Default to a perimeter polygon over the row's bbox so the
-    # seeded geometry matches `is_point=False`; an `is_point=True` caller gets a center point.
+    # fire_near's ST_DWithin needs it. Default to a perimeter polygon matching `is_point=False`;
+    # an `is_point=True` caller gets a center point.
     if "geojson" not in cols:
         if cols["is_point"]:
             cols["geojson"] = json.dumps({"type": "Point", "coordinates": [cols["center_lng"], cols["center_lat"]]})
         else:
-            west, east = cols["min_lng"], cols["max_lng"]
-            south, north = cols["min_lat"], cols["max_lat"]
             cols["geojson"] = json.dumps(
                 {
                     "type": "Polygon",
