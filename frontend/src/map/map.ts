@@ -28,6 +28,8 @@ export const LAND_DEFAULT = "#b5b5b5"; // any other agency
 export const TRAIL = "#ff5555";
 export const PLAN_STOP = "#ffd060"; // neon gold - planned-route stops and connecting line
 export const PRECISE = "#c792ea"; // bright lavender - known-precise (non-obscured) observation pin
+export const FIRE_ACTIVE = "#ff3b1f"; // hot red - active wildfire perimeter/point (issue #227)
+export const FIRE_SCAR = "#ff8c42"; // burnt orange - recent burn scar (dimmer for older years)
 
 // The persistent "you are here" dot: a white fill with a dark ring. Shared by the base-map home
 // marker (initMap) and the plan-route start marker (plan.ts runPlan) so the two stay identical.
@@ -99,6 +101,9 @@ export function renderLegend(): void {
     entries.push([CAMP_FREE, "Free campground"], [CAMP_PAID, "Paid / unknown campground"]);
   }
   if (dispersed) entries.push([CAMP_OSM, "Reported campsite (OSM)"]);
+  if ((document.getElementById("show-fire") as HTMLInputElement | null)?.checked) {
+    entries.push([FIRE_ACTIVE, "Active wildfire"], [FIRE_SCAR, "Recent burn scar"]);
+  }
   if (blm) entries.push([LAND_COLORS.BLM ?? LAND_DEFAULT, "BLM land"]);
   if (usfs) entries.push([LAND_COLORS.USFS ?? LAND_DEFAULT, "USFS land"]);
   if (tribal) entries.push([LAND_COLORS.Tribal ?? LAND_DEFAULT, "Tribal land"]);
@@ -243,6 +248,7 @@ export function clearMarkers(): void {
   clearLayerList(map, state.markers);
   clearCamps();
   clearLand();
+  clearFire();
   clearTrailheadMarkers();
   clearCardCampMarkers();
   clearSelectedTrail();
@@ -276,6 +282,14 @@ export function clearLand(): void {
 
 export function setLandLayer(layer: L.GeoJSON): void {
   state.landLayer = layer;
+}
+
+export function clearFire(): void {
+  state.fireLayer = clearLayer(map, state.fireLayer);
+}
+
+export function setFireLayer(layer: L.GeoJSON): void {
+  state.fireLayer = layer;
 }
 
 // Hiking-boot marker for a destination card's Trails tab trailhead list (views.ts) - only the

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from foray.scoring.models import (
     CampSite,
+    FireNear,
     LandUnit,
     RegionScore,
     SpeciesHit,
@@ -31,6 +32,7 @@ from foray.scoring.planner import plan_route
 from foray.scoring.queries import (
     alerts,
     camps_near,
+    fire_near,
     get_trail,
     land_near,
     nearest_trail,
@@ -44,6 +46,7 @@ from foray.scoring.regions import build_phenology
 
 __all__ = [
     "CampSite",
+    "FireNear",
     "LandUnit",
     "RegionScore",
     "SpeciesHit",
@@ -54,6 +57,7 @@ __all__ = [
     "alerts",
     "build_phenology",
     "camps_near",
+    "fire_near",
     "get_trail",
     "land_near",
     "nearest_trail",

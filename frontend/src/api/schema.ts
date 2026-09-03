@@ -231,6 +231,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/fire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Fire
+         * @description Active fire perimeters/points and recent burn scars near a region (by id) or an explicit
+         *     lat/lng (issue #227). ``status=active|historical`` filters; both by default. Geometry is
+         *     included for the map overlay. Informational only - links the official incident page.
+         */
+        get: operations["get_fire_api_fire_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/destinations/{region_id}/place": {
         parameters: {
             query?: never;
@@ -466,6 +488,11 @@ export interface components {
             precip_recent_14d_mm?: number | null;
             /** Precip Recent 30D Mm */
             precip_recent_30d_mm?: number | null;
+            /**
+             * Fire Nearby
+             * @default []
+             */
+            fire_nearby: components["schemas"]["FireNear"][];
         };
         /** CalendarBucket */
         CalendarBucket: {
@@ -521,6 +548,41 @@ export interface components {
             last_ingest: string | null;
             /** Observations Ingested */
             observations_ingested: number;
+        };
+        /**
+         * FireNear
+         * @description An active wildfire or recent burn scar near a point (issue #227). ``geometry`` is only
+         *     populated for the map layer (`GET /api/fire`).
+         */
+        FireNear: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+            /** Fire Year */
+            fire_year: number | null;
+            /** Center Lat */
+            center_lat: number;
+            /** Center Lng */
+            center_lng: number;
+            /** Distance Km */
+            distance_km: number;
+            /** Percent Contained */
+            percent_contained: number | null;
+            /** Gis Acres */
+            gis_acres: number | null;
+            /** Dominant Severity */
+            dominant_severity: string | null;
+            /** Is Point */
+            is_point: boolean;
+            /** Incident Url */
+            incident_url: string | null;
+            /** Geometry */
+            geometry?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * GenusResult
@@ -708,6 +770,11 @@ export interface components {
             precip_recent_14d_mm?: number | null;
             /** Precip Recent 30D Mm */
             precip_recent_30d_mm?: number | null;
+            /**
+             * Fire Nearby
+             * @default []
+             */
+            fire_nearby: components["schemas"]["FireNear"][];
         };
         /**
          * SpeciesHit
@@ -765,6 +832,11 @@ export interface components {
             trail: components["schemas"]["Trail"] | null;
             /** Trail Distance Km */
             trail_distance_km: number | null;
+            /**
+             * Fire Nearby
+             * @default []
+             */
+            fire_nearby: components["schemas"]["FireNear"][];
         };
         /** Trail */
         Trail: {
@@ -1225,6 +1297,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LandUnit"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_fire_api_fire_get: {
+        parameters: {
+            query?: {
+                region_id?: string | null;
+                lat?: number | null;
+                lng?: number | null;
+                radius_km?: number;
+                status?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FireNear"][];
                 };
             };
             /** @description Validation Error */

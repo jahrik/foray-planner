@@ -11,7 +11,7 @@ from foray.config import Settings
 from foray.logging_config import setup_logging
 from foray.refresh import REFRESH_LAYERS, parse_month_list, run_home_refresh
 from foray.scoring import build_phenology, plan_route
-from foray.sources import geocode
+from foray.sources import fire, geocode
 from foray.sources.camps import ingest_campgrounds
 from foray.sources.dispersed import ingest_dispersed
 from foray.sources.inat import InatQuotaExceeded, iter_fungi_genera
@@ -260,6 +260,24 @@ def refresh_precip_cmd(ctx: click.Context) -> None:
     try:
         written = refresh_precipitation(con, cfg)
         click.echo(f"Refreshed recent rainfall for {written} regions.")
+    finally:
+        con.close()
+
+
+@cli.command("fire")
+@click.pass_context
+def fire_cmd(ctx: click.Context) -> None:
+    """Refresh wildfire perimeters + recent burn scars (issue #227) from the NIFC / MTBS ArcGIS
+    services: active fires (replace semantics), the last 3+current fire years of history, and
+    MTBS burn severity. Runs on its own scheduler cadence (FORAY_FIRE_INTERVAL_HOURS)."""
+    cfg = ctx.obj["cfg"]
+    con = connect()
+    try:
+        counts = fire.refresh_fire(con, cfg)
+        click.echo(
+            f"Fire: {counts['active']} active + {counts['points']} points, "
+            f"{counts['history']} historical, MTBS severity on {counts['severity']}."
+        )
     finally:
         con.close()
 

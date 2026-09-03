@@ -3,7 +3,7 @@
 // in-flight ingest for that layer and re-plots without it. Split out of main.ts (issue #242
 // Part 2d).
 
-import { loadCamps, loadLand } from "../map/layers";
+import { loadCamps, loadFire, loadLand } from "../map/layers";
 import { cancelRefresh, startRefresh } from "../refresh";
 import { qs } from "../state";
 
@@ -47,4 +47,7 @@ export function initLayerToggles(): void {
   wireLayerToggle("#show-land-blm", "land", "Fetching public land…", loadLand);
   wireLayerToggle("#show-land-usfs", "land", "Fetching public land…", loadLand);
   wireLayerToggle("#show-land-tribal", "land", "Fetching public land…", loadLand);
+  // Fire data is refreshed server-side on its own cadence (issue #227), not on-demand per
+  // toggle - so this just fetches + plots what's cached, no startRefresh round-trip.
+  qs("#show-fire").onchange = () => loadFire();
 }

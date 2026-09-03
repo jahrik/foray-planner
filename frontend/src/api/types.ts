@@ -41,6 +41,13 @@ export type LandUnit = Omit<components["schemas"]["LandUnit"], "geometry"> & {
   geometry: GeoJSON.Geometry;
 };
 
+/** An active fire or recent burn scar near a region / point (`GET /api/fire`, and the
+ * `fire_nearby` annotation on destination/alert cards + plan stops, issue #227). `geometry`
+ * is raw GeoJSON on the map layer, null on the card annotations. */
+export type FireNear = Omit<components["schemas"]["FireNear"], "geometry"> & {
+  geometry: GeoJSON.Geometry | null;
+};
+
 /** A trail near a hotspot (`GET /api/trails`). `geometry` is raw GeoJSON (line or point). */
 export type Trail = Omit<components["schemas"]["Trail"], "geometry"> & {
   geometry: GeoJSON.Geometry;

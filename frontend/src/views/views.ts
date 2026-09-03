@@ -16,6 +16,7 @@ import {
   dist,
   elevationLabel,
   errorDetail,
+  fireBadges,
   monthsParam,
   MONTHS,
   qs,
@@ -114,6 +115,8 @@ export async function runDestinations(): Promise<void> {
       <h3><span class="num">#${rank + 1} · ${dist(region.distance_km)}</span></h3>
       <div class="bar"><span style="width:${(region.score_norm * 100).toFixed(0)}%"></span></div>
       <div class="meta">score <span class="num">${region.score_norm.toFixed(2)}</span> · <span class="num">${region.n_species}</span> spp · ${region.recent_count ? `<span class="num">${region.recent_count}</span> recent` : "no recent obs"}${region.elevation_m != null ? ` · elev <span class="num">${elevationLabel(region.elevation_m)}</span>` : ""}${rainMeta(region)}</div>
+      ${fireBadges(region.fire_nearby)}
+
       <div class="rank-tabs">
         <button type="button" class="rank-tab active" data-tab="species">Species</button>
         <button type="button" class="rank-tab" data-tab="calendar">Calendar</button>

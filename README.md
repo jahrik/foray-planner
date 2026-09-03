@@ -66,6 +66,7 @@ apply to the map regardless of which tab you're on.
 | **Free only** | Filters both camping layers to free/no-fee options only | - |
 | **Public land** | Land ownership polygons shaded by agency (BLM/USFS) | Ochre = BLM, Violet = USFS |
 | **Trails** | Hiking paths, named routes & trailheads near the hotspot | Red lines = trails, Red dots = trailheads |
+| **Fire** | Active wildfire perimeters/points + recent burn scars (NIFC/MTBS) | Red = active fire, Burnt orange = burn scar (dimmer with age) |
 
 **A note on dispersed camping:** the Dispersed layer shows only sites that someone
 has explicitly tagged as campable in OpenStreetMap. A tag is not a guarantee of

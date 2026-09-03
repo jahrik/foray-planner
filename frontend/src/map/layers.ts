@@ -1,7 +1,7 @@
 import L from "leaflet";
 
 import { getJson } from "../api/client";
-import type { CampSite, LandUnit, PreciseObservation, Trail, TrailPath } from "../api/types";
+import type { CampSite, FireNear, LandUnit, PreciseObservation, Trail, TrailPath } from "../api/types";
 import { createRunGuard } from "../ui/card-select";
 import { feeLabel } from "../format";
 import { circleStyle } from "./markers";
@@ -13,9 +13,12 @@ import {
   CAMP_OSM,
   CAMP_PAID,
   clearCamps,
+  clearFire,
   clearLand,
   clearPrecise,
   clearSelectedTrail,
+  FIRE_ACTIVE,
+  FIRE_SCAR,
   HOME_RING,
   LAND_COLORS,
   LAND_DEFAULT,
@@ -23,6 +26,7 @@ import {
   PRECISE,
   regionRadiusKm,
   renderLegend,
+  setFireLayer,
   setFocused,
   setLandLayer,
   setSelectedTrail,
@@ -134,6 +138,87 @@ export async function loadLand(): Promise<void> {
   layer.addTo(map);
   layer.bringToBack(); // keep observation + campground markers clickable on top
   setLandLayer(layer);
+}
+
+export const fireOn = (): boolean => qs<HTMLInputElement>("#show-fire").checked;
+
+// Wildfire overlay (issue #227): active perimeters/points red, recent burn scars burnt-orange
+// and dimmed for older years. Fetched around home (like public land, not per-focused-region).
+// Informational only - the popup links the official incident page, asserts no closure.
+export async function loadFire(): Promise<void> {
+  clearFire();
+  renderLegend();
+  if (!fireOn() || !state.home) return;
+  const { lat, lng, radius_km } = state.home;
+  let fires: FireNear[];
+  try {
+    fires = (await getJson("/api/fire", { query: { lat, lng, radius_km } })) as unknown as FireNear[];
+  } catch (error) {
+    setStatus(errorDetail(error));
+    return;
+  }
+  const scarOpacity = (year: number | null): number => {
+    const age = year ? new Date().getFullYear() - year : 3;
+    return age <= 1 ? 0.35 : age === 2 ? 0.22 : 0.12;
+  };
+  const layer = L.geoJSON(undefined, {
+    style: (feature) => {
+      const fire = feature?.properties as FireNear | undefined;
+      if (fire?.status === "active") {
+        return {
+          color: FIRE_ACTIVE,
+          weight: 2,
+          fillColor: FIRE_ACTIVE,
+          fillOpacity: 0.25,
+          bubblingMouseEvents: false,
+        };
+      }
+      return {
+        color: FIRE_SCAR,
+        weight: 1,
+        fillColor: FIRE_SCAR,
+        fillOpacity: scarOpacity((fire?.fire_year as number | null) ?? null),
+        bubblingMouseEvents: false,
+      };
+    },
+    pointToLayer: (feature, latlng) =>
+      L.circleMarker(
+        latlng,
+        circleStyle({
+          radius: 6,
+          fill: (feature.properties as FireNear).status === "active" ? FIRE_ACTIVE : FIRE_SCAR,
+          fillOpacity: 0.9,
+        }),
+      ),
+    onEachFeature: (feature, lyr) => lyr.bindPopup(firePopup(feature.properties as FireNear)),
+  });
+  fires.forEach((fire) => {
+    if (!fire.geometry) return;
+    const feature: GeoJSON.Feature = { type: "Feature", properties: fire, geometry: fire.geometry };
+    layer.addData(feature);
+  });
+  layer.addTo(map);
+  layer.bringToBack();
+  setFireLayer(layer);
+}
+
+// `fire.name` comes from an external service (buildPopup sets it via textContent); the incident
+// url is server-constructed (InciWeb / NIFC).
+function firePopup(fire: FireNear): HTMLElement {
+  const bits: string[] = [];
+  if (fire.status === "active") {
+    bits.push("Active fire");
+    if (fire.percent_contained != null) bits.push(`${Math.round(fire.percent_contained)}% contained`);
+  } else {
+    bits.push(fire.fire_year ? `${fire.fire_year} burn scar` : "Burn scar");
+    if (fire.dominant_severity) bits.push(`${fire.dominant_severity} severity`);
+  }
+  if (fire.gis_acres != null) bits.push(`${Math.round(fire.gis_acres).toLocaleString()} ac`);
+  return buildPopup({
+    title: fire.name,
+    lines: [bits.join(" · "), "Informational only - check official sources before travel"],
+    ...(fire.incident_url ? { link: { href: fire.incident_url, text: "Incident info ↗" } } : {}),
+  });
 }
 
 // agency/unit come from an external service (buildPopup sets them via textContent); the source

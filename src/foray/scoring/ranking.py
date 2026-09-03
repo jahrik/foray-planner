@@ -12,8 +12,10 @@ Fix the month axis -> rank regions (``rank_destinations`` / ``rank_destinations_
 
 from __future__ import annotations
 
+import datetime as dt
 import math
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any, LiteralString, cast
 
 import psycopg
@@ -21,8 +23,21 @@ import psycopg
 from foray.cache import region_precip
 from foray.geo import haversine_km, project_to_plane, segment_progress_and_offset
 from foray.scoring._sql import genus_name_map, sql_in, taxon_filter
-from foray.scoring.models import RegionScore, SpeciesHit
+from foray.scoring.models import FireNear, RegionScore, SpeciesHit
+from foray.scoring.queries import fire_near
 from foray.scoring.regions import recent_counts, region_elevations, region_precip_obs
+
+# --- Fire scoring inputs (issue #227) -------------------------------------------------------
+# Conservative starting weights - the plan is to eyeball real fire numbers on the map for a few
+# weeks before tuning, same approach as elevation #36 / rain #226. All multiplicative on a
+# region's raw score, applied after the phenology ranking.
+FIRE_PENALTY_RADIUS_KM = 25.0  # an active perimeter within this of a region center -> penalty
+FIRE_PENALTY_FACTOR = 0.35  # raw score is multiplied by this (safety/access: you can't forage there)
+BURN_SCAR_BOOST_RADIUS_KM = 30.0  # a qualifying burn scar within this -> Morchella boost
+BURN_SCAR_BOOST_YEAR1 = 1.6  # year-1 scar (heaviest burn-morel flush)
+BURN_SCAR_BOOST_YEAR2 = 1.25  # year-2 scar (still good)
+# High-severity scars are poor morel producers - low/moderate/unknown severity only.
+_BOOSTABLE_SEVERITY = {None, "low", "moderate"}
 
 
 def _rank_candidates(
@@ -126,6 +141,76 @@ def _rank_candidates(
     return results
 
 
+def _morchella_targeted(con: psycopg.Connection, taxon_ids: list[int]) -> bool:
+    """True when the device has explicitly selected genus *Morchella* (issue #227's burn-scar
+    boost is opt-in - mirrors how `/api/trees` scopes to selected ECM genera). An empty
+    ``taxon_ids`` ("everything nearby") is not an explicit selection, so it does not qualify."""
+    if not taxon_ids:
+        return False
+    row = con.execute("SELECT taxon_id FROM fungi_genera WHERE lower(name) = 'morchella'").fetchone()
+    return row is not None and row[0] in taxon_ids
+
+
+def _apply_fire(con: psycopg.Connection, results: list[RegionScore], *, taxon_ids: list[int]) -> None:
+    """Fold the fire signals (issue #227) into an already-ranked region list, in place:
+
+    * a **penalty** on any region with an active perimeter within ``FIRE_PENALTY_RADIUS_KM``
+      (safety/access - you can't forage in an active fire area);
+    * a **boost** on any region near a low/moderate/unknown-severity year-1 or year-2 burn
+      scar, but only when the device targets *Morchella*.
+
+    Also attaches the nearby fires/scars to ``region.fire_nearby`` for the card annotation.
+    Re-normalizes ``score_norm`` and re-sorts. A no-op when nothing is ingested / in range."""
+    if not results:
+        return
+    lats = [region.center_lat for region in results]
+    lngs = [region.center_lng for region in results]
+    mid_lat, mid_lng = sum(lats) / len(lats), sum(lngs) / len(lngs)
+    span_km = haversine_km(min(lats), min(lngs), max(lats), max(lngs))
+    fires = fire_near(
+        con,
+        lat=mid_lat,
+        lng=mid_lng,
+        radius_km=span_km / 2 + BURN_SCAR_BOOST_RADIUS_KM + FIRE_PENALTY_RADIUS_KM,
+    )
+    if not fires:
+        return
+    boost_ok = _morchella_targeted(con, taxon_ids)
+    for region in results:
+        nearby: list[FireNear] = []
+        penalty = False
+        boost = 1.0
+        for fire in fires:
+            gap = haversine_km(region.center_lat, region.center_lng, fire.center_lat, fire.center_lng)
+            # `fires` carries distance_km relative to the fetch centroid - copy each hit with
+            # the distance to *this* region so cards/plan-stop warnings show the right number.
+            local = replace(fire, distance_km=round(gap, 1))
+            if fire.status == "active" and gap <= FIRE_PENALTY_RADIUS_KM:
+                penalty = True
+                nearby.append(local)
+            elif (
+                fire.status == "historical"
+                and gap <= BURN_SCAR_BOOST_RADIUS_KM
+                and fire.dominant_severity in _BOOSTABLE_SEVERITY
+                and fire.fire_year is not None
+            ):
+                nearby.append(local)
+                if boost_ok:
+                    age = dt.date.today().year - fire.fire_year
+                    boost = max(
+                        boost, BURN_SCAR_BOOST_YEAR1 if age <= 1 else BURN_SCAR_BOOST_YEAR2 if age == 2 else 1.0
+                    )
+        if penalty:
+            region.score *= FIRE_PENALTY_FACTOR
+        region.score *= boost
+        region.fire_nearby = sorted(nearby, key=lambda item: item.distance_km)[:5]
+
+    top_score = max((region.score for region in results), default=0.0)
+    for region in results:
+        region.score_norm = round(region.score / top_score, 4) if top_score else 0.0
+    results.sort(key=lambda region: region.score, reverse=True)
+
+
 def rank_destinations(
     con: psycopg.Connection,
     *,
@@ -146,9 +231,11 @@ def rank_destinations(
         dist = haversine_km(home_lat, home_lng, clat, clng)
         return dist <= radius_km, dist
 
-    return _rank_candidates(
+    results = _rank_candidates(
         con, months=months, taxon_ids=taxon_ids, cell_deg=cell_deg, recent_weeks=recent_weeks, keep=keep
     )
+    _apply_fire(con, results, taxon_ids=taxon_ids)
+    return results
 
 
 def rank_destinations_corridor(
@@ -184,6 +271,8 @@ def rank_destinations_corridor(
         progress_km = offset_km if total_km == 0 else t * total_km
         return offset_km <= corridor_km, progress_km
 
-    return _rank_candidates(
+    results = _rank_candidates(
         con, months=months, taxon_ids=taxon_ids, cell_deg=cell_deg, recent_weeks=recent_weeks, keep=keep
     )
+    _apply_fire(con, results, taxon_ids=taxon_ids)
+    return results

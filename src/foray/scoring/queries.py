@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from dataclasses import replace
 from typing import Any, LiteralString, cast
 
 import psycopg
@@ -24,7 +25,7 @@ from foray.scoring._sql import (
     sql_in,
     taxon_filter,
 )
-from foray.scoring.models import CampSite, LandUnit, Trail
+from foray.scoring.models import CampSite, FireNear, LandUnit, Trail
 
 _CALENDAR_SPECIES_PER_MONTH = 15
 
@@ -83,6 +84,87 @@ def camps_near(
     scored.sort(key=lambda item: (item[0], item[1]))
     sites = [site for _, _, site in scored]
     return sites[:limit] if limit is not None else sites
+
+
+def fire_near(
+    con: psycopg.Connection,
+    *,
+    lat: float,
+    lng: float,
+    radius_km: float,
+    status: str | None = None,
+    include_geometry: bool = False,
+    limit: int | None = None,
+) -> list[FireNear]:
+    """Active fires and recent burn scars whose bounding box is near ``(lat, lng)`` (issue #227).
+
+    Bbox prefilter in SQL then an exact ``haversine_km`` cut on the representative center, same
+    technique as ``camps_near`` / ``land_near``. ``status`` filters to ``'active'`` or
+    ``'historical'`` (both by default). ``include_geometry`` parses the GeoJSON for the map
+    layer; the card / scoring paths leave it off. Empty when nothing is ingested yet."""
+    try:
+        bbox = bbox_around(lat, lng, radius_km)
+        where_status: LiteralString = " AND status = %s" if status else ""
+        params: list[Any] = [bbox.max_lat, bbox.min_lat, bbox.max_lng, bbox.min_lng]
+        if status:
+            params.append(status)
+        rows = con.execute(
+            cast(
+                LiteralString,
+                """
+                SELECT id, name, status, fire_year, percent_contained, gis_acres,
+                       dominant_severity, is_point, incident_url, center_lat, center_lng, geojson
+                FROM fire_perimeters
+                WHERE min_lat <= %s AND max_lat >= %s AND min_lng <= %s AND max_lng >= %s
+                """
+                + where_status,
+            ),
+            params,
+        ).fetchall()
+    except psycopg.errors.UndefinedTable:
+        con.rollback()
+        return []
+    scored: list[tuple[float, FireNear]] = []
+    for (
+        fire_id,
+        name,
+        fire_status,
+        fire_year,
+        percent_contained,
+        gis_acres,
+        dominant_severity,
+        is_point,
+        incident_url,
+        center_lat,
+        center_lng,
+        geojson,
+    ) in rows:
+        dist = haversine_km(lat, lng, center_lat, center_lng)
+        if dist > radius_km:
+            continue
+        scored.append(
+            (
+                dist,
+                FireNear(
+                    id=fire_id,
+                    name=name,
+                    status=fire_status,
+                    fire_year=fire_year,
+                    center_lat=center_lat,
+                    center_lng=center_lng,
+                    distance_km=round(dist, 1),
+                    percent_contained=percent_contained,
+                    gis_acres=gis_acres,
+                    dominant_severity=dominant_severity,
+                    is_point=is_point or False,
+                    incident_url=incident_url,
+                    geometry=json.loads(geojson) if include_geometry and geojson else None,
+                ),
+            )
+        )
+    scored.sort(key=lambda item: item[0])
+    fires = [fire for _, fire in scored]
+    return fires[:limit] if limit is not None else fires
 
 
 def land_near(con: psycopg.Connection, *, lat: float, lng: float, radius_km: float) -> list[LandUnit]:
@@ -435,11 +517,20 @@ def alerts(
             }
         )
     recent_rain = region_precip(con, by_region.keys())
+    fires = fire_near(con, lat=home_lat, lng=home_lng, radius_km=radius_km + 30.0) if by_region else []
     for region_id, entry in by_region.items():
         rain = recent_rain.get(region_id, {})
         entry["precip_recent_7d_mm"] = rain.get("precip_7d_mm")
         entry["precip_recent_14d_mm"] = rain.get("precip_14d_mm")
         entry["precip_recent_30d_mm"] = rain.get("precip_30d_mm")
+        # `fires` carries distance_km relative to home; re-measure to this region and copy each
+        # hit so the card shows the distance from the region, not from home.
+        region_fires: list[FireNear] = []
+        for fire in fires:
+            gap = haversine_km(entry["center_lat"], entry["center_lng"], fire.center_lat, fire.center_lng)
+            if gap <= 30.0:
+                region_fires.append(replace(fire, distance_km=round(gap, 1)))
+        entry["fire_nearby"] = sorted(region_fires, key=lambda fire: fire.distance_km)[:5]
     results = list(by_region.values())
     results.sort(key=lambda region: region["total"], reverse=True)
     return results
