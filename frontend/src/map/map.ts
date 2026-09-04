@@ -181,7 +181,27 @@ export const regionRadiusKm = (): number => (state.cellDeg * KM_PER_DEG) / 2;
 
 // Per-marker sizing so a selected region can snap between its score size and its true
 // geographic footprint (see selectSize/deselectSize below) without re-plotting.
-const sizing = new WeakMap<L.Circle, { scoreRadius: number; trueRadius: number }>();
+const sizing = new WeakMap<L.Circle, { scoreRadius: number; trueRadius: number; weight: number }>();
+
+// The score-scaled fill a destination circle sits at when nothing is selected. Pulled out so
+// selectSize/deselectSize and the "dim everything else" pass below all agree on one formula.
+const scoreFillOpacity = (weight: number): number => 0.15 + 0.45 * weight;
+
+// When a region is selected its circle grows to its true footprint and can blanket a big patch
+// of map; in a dense area (Puget Sound) the other circles it overlaps used to keep compositing
+// their fills into a near-opaque blob over it. So on select, every *other* destination circle
+// drops to stroke-only (ring, no fill) - the rings still show where the other candidates are
+// without burying the focused circle or the basemap under it. Restored on the next select/
+// deselect. Scoped to plot()-drawn circles via the `sizing` map, so plan pins and the like are
+// untouched.
+function setOthersFill(selected: L.Circle, ringOnly: boolean): void {
+  for (const marker of state.markers) {
+    if (marker === selected) continue;
+    const info = sizing.get(marker as L.Circle);
+    if (!info) continue; // not a plot()-drawn destination circle (plan pin, etc.)
+    marker.setStyle({ fillOpacity: ringOnly ? 0 : scoreFillOpacity(info.weight) });
+  }
+}
 
 // No popup bound here - a bubble hovering over the marker you're trying to look at was jarring,
 // and the same info (rank, distance, species) already lives on the matching card in the side
@@ -200,12 +220,12 @@ export function plot(lat: number, lng: number, weight: number, live: boolean): L
     radius: scoreRadius,
     color: live ? LIVE : HEAT,
     fillColor: live ? LIVE : HEAT,
-    fillOpacity: 0.15 + 0.45 * weight,
+    fillOpacity: scoreFillOpacity(weight),
     opacity: 0.4 + 0.5 * weight,
     weight: 1.5,
     bubblingMouseEvents: false,
   }).addTo(map);
-  sizing.set(marker, { scoreRadius, trueRadius });
+  sizing.set(marker, { scoreRadius, trueRadius, weight });
   state.markers.push(marker);
   return marker;
 }
@@ -233,15 +253,19 @@ export function selectSize(marker: L.Circle): void {
   if (!info) return;
   marker.setRadius(info.trueRadius);
   marker.setStyle({ fillOpacity: 0.08 });
+  setOthersFill(marker, true);
 }
 
 // Reverts a previously selected marker back to its score-scaled preview size/opacity - called
 // when a different region gets selected, so only one circle shows its true footprint at a time.
+// The new selection's own selectSize() re-dims the rest; this just restores the one being
+// dropped (and, when nothing new is selected, brings every circle's fill back).
 export function deselectSize(marker: L.Circle, weight: number): void {
   const info = sizing.get(marker);
   if (!info) return;
   marker.setRadius(info.scoreRadius);
-  marker.setStyle({ fillOpacity: 0.15 + 0.45 * weight });
+  marker.setStyle({ fillOpacity: scoreFillOpacity(weight) });
+  setOthersFill(marker, false);
 }
 
 export function clearMarkers(): void {
