@@ -59,7 +59,7 @@ export async function runAlerts(): Promise<void> {
         })
         .join("")}</div>`;
     stopLinkPropagation(qs<HTMLElement>(".chips", card));
-    const selectCard = () => cardSelection.select(card, marker, weight);
+    const selectCard = () => cardSelection.select(card, marker);
     makeActivatable(card, () => {
       snapTo("full");
       focusOnMap(region.center_lat, region.center_lng, 9);

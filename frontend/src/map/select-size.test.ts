@@ -56,7 +56,7 @@ describe("selectSize / deselectSize fill management", () => {
     expect(fill(strong)).toBeCloseTo(0.08); // the focused circle itself
     expect(fill(weak)).toBe(0); // ring only - no fill to composite into a blob
 
-    deselectSize(strong, 0.8);
+    deselectSize(strong);
     expect(fill(weak)).toBeCloseTo(0.15 + 0.45 * 0.2); // back to its score-scaled fill
   });
 
@@ -66,7 +66,7 @@ describe("selectSize / deselectSize fill management", () => {
 
     selectSize(a);
     // card-select's grow(): deselect the old, then select the new
-    deselectSize(a, 0.5);
+    deselectSize(a);
     selectSize(b);
 
     expect(fill(b)).toBeCloseTo(0.08);
