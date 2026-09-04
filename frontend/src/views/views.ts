@@ -230,7 +230,7 @@ export async function runDestinations(): Promise<void> {
     // very thing you were trying to look at). The card already shows everything the popup used to.
     // Its marker also snaps to its true cell-footprint size (see selectSize in map.ts), with the
     // previously selected marker (if any) reverting to its score-scaled preview size.
-    const selectCard = () => cardSelection.select(card, marker, region.score_norm);
+    const selectCard = () => cardSelection.select(card, marker);
     makeActivatable(card, () => {
       snapTo("full"); // opening a card's detail expands the mobile sheet
       focusOnMap(region.center_lat, region.center_lng, 9);
@@ -263,7 +263,7 @@ export async function runDestinations(): Promise<void> {
   const topCard = rankList.querySelector<HTMLElement>(".rank");
   if (top && topMarker && topCard) {
     focusRegion(top.center_lat, top.center_lng);
-    cardSelection.selectInitial(topCard, topMarker, top.score_norm);
+    cardSelection.selectInitial(topCard, topMarker);
   }
 
   // Card titles start as rank + distance only; each card's notable-place name (issue #206)

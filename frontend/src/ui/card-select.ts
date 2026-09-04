@@ -32,27 +32,27 @@ export function createRunGuard(view?: View): { begin: () => () => boolean } {
  * on first render.
  */
 export function createCardSelection(container: HTMLElement): {
-  select: (card: HTMLElement, marker: L.Circle, weight: number) => void;
-  selectInitial: (card: HTMLElement, marker: L.Circle, weight: number) => void;
+  select: (card: HTMLElement, marker: L.Circle) => void;
+  selectInitial: (card: HTMLElement, marker: L.Circle) => void;
 } {
-  let selected: { marker: L.Circle; weight: number } | null = null;
+  let selected: L.Circle | null = null;
 
-  const grow = (marker: L.Circle, weight: number): void => {
-    if (selected && selected.marker !== marker) deselectSize(selected.marker, selected.weight);
+  const grow = (marker: L.Circle): void => {
+    if (selected && selected !== marker) deselectSize(selected);
     selectSize(marker);
-    selected = { marker, weight };
+    selected = marker;
   };
 
   return {
-    select(card, marker, weight) {
+    select(card, marker) {
       container.querySelectorAll(".rank").forEach((el) => el.classList.remove("active"));
       card.classList.add("active");
       card.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      grow(marker, weight);
+      grow(marker);
     },
-    selectInitial(card, marker, weight) {
+    selectInitial(card, marker) {
       card.classList.add("active");
-      grow(marker, weight);
+      grow(marker);
     },
   };
 }

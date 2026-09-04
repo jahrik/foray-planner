@@ -259,12 +259,14 @@ export function selectSize(marker: L.Circle): void {
 // Reverts a previously selected marker back to its score-scaled preview size/opacity - called
 // when a different region gets selected, so only one circle shows its true footprint at a time.
 // The new selection's own selectSize() re-dims the rest; this just restores the one being
-// dropped (and, when nothing new is selected, brings every circle's fill back).
-export function deselectSize(marker: L.Circle, weight: number): void {
+// dropped (and, when nothing new is selected, brings every circle's fill back). Size and fill
+// both come from the marker's own `sizing` entry, so every restore path uses one source of
+// truth (plot()'s weight), never a caller-passed value that could drift.
+export function deselectSize(marker: L.Circle): void {
   const info = sizing.get(marker);
   if (!info) return;
   marker.setRadius(info.scoreRadius);
-  marker.setStyle({ fillOpacity: scoreFillOpacity(weight) });
+  marker.setStyle({ fillOpacity: scoreFillOpacity(info.weight) });
   setOthersFill(marker, false);
 }
 

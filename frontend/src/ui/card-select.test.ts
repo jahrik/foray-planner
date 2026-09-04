@@ -4,7 +4,7 @@ const selectSize = vi.fn();
 const deselectSize = vi.fn();
 vi.mock("../map/map", () => ({
   selectSize: (marker: unknown) => selectSize(marker),
-  deselectSize: (marker: unknown, weight: number) => deselectSize(marker, weight),
+  deselectSize: (marker: unknown) => deselectSize(marker),
 }));
 
 const viewState = { view: "destinations" };
@@ -67,16 +67,16 @@ describe("createCardSelection", () => {
     const markerA = {};
     const markerB = {};
 
-    selection.select(a, markerA as never, 0.5);
+    selection.select(a, markerA as never);
     expect(a.classList.contains("active")).toBe(true);
     expect(a.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
     expect(selectSize).toHaveBeenCalledWith(markerA);
 
-    selection.select(b, markerB as never, 0.3);
+    selection.select(b, markerB as never);
     expect(a.classList.contains("active")).toBe(false);
     expect(b.classList.contains("active")).toBe(true);
-    // previously selected marker reverts, using the weight it was selected with
-    expect(deselectSize).toHaveBeenCalledWith(markerA, 0.5);
+    // previously selected marker reverts (map.ts restores its fill from the marker's own sizing entry)
+    expect(deselectSize).toHaveBeenCalledWith(markerA);
     expect(selectSize).toHaveBeenLastCalledWith(markerB);
   });
 
@@ -84,8 +84,8 @@ describe("createCardSelection", () => {
     const { container, a } = cards();
     const selection = createCardSelection(container);
     const marker = {};
-    selection.select(a, marker as never, 0.5);
-    selection.select(a, marker as never, 0.5);
+    selection.select(a, marker as never);
+    selection.select(a, marker as never);
     expect(deselectSize).not.toHaveBeenCalled();
   });
 
@@ -94,7 +94,7 @@ describe("createCardSelection", () => {
     b.classList.add("active");
     const selection = createCardSelection(container);
     const marker = {};
-    selection.selectInitial(a, marker as never, 0.9);
+    selection.selectInitial(a, marker as never);
     expect(a.classList.contains("active")).toBe(true);
     expect(b.classList.contains("active")).toBe(true); // not cleared
     expect(a.scrollIntoView).not.toHaveBeenCalled();
