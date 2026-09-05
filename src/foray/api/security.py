@@ -8,11 +8,13 @@ from typing import Any
 from fastapi import FastAPI, Request, Response
 
 # Public-facing app serving an HTML+JS frontend - locked down to what the frontend actually
-# needs (Leaflet bundled as 'self'; OSM tiles, Nominatim, and Esri World Imagery - the selected
-# destination's satellite fill, map.ts showSatelliteOverlay - as the only third-party origins)
-# so an XSS bug can't exfiltrate to or load script from anywhere else. style-src needs 'unsafe-inline'
-# because the frontend sets `style="..."` attributes directly (map legend swatches, score bars,
-# phenology heatmap cells) - much lower risk than script injection, so that's an accepted gap.
+# needs (Leaflet bundled as 'self'; connect-src/script-src third-party origins limited to
+# Nominatim; img-src additionally allows OSM tiles, Esri (World Imagery + the
+# Boundaries_and_Places labels overlay - the selected destination's satellite fill, map.ts
+# showSatelliteOverlay) and iNaturalist's photo hosts) so an XSS bug can't exfiltrate to or load
+# script from anywhere else. style-src needs 'unsafe-inline' because the frontend sets
+# `style="..."` attributes directly (map legend swatches, score bars, phenology heatmap cells) -
+# much lower risk than script injection, so that's an accepted gap.
 _CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
     "script-src 'self'; "
