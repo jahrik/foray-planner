@@ -31,8 +31,16 @@ panel lists them in order with a score bar and the number of species active ther
 - **Magenta markers** = strong historical signal for the selected months
 - **Cyan markers** = magenta + something was actually observed there recently
 - Bigger marker = stronger signal; marker size and color update every time you re-rank
+- Clicking a card snaps its marker to true size and dims every other circle to an
+  outline so the basemap underneath stays readable in dense clusters
 
-Each card has three tabs:
+Each card title starts as rank + distance and backfills with a notable place name
+(national park/forest, protected area, or nearest settlement) once it's looked up.
+Below the title: score, species count, recent-observation count, mean ground elevation,
+recent/antecedent rainfall, and a fire-proximity badge when a wildfire or recent burn
+scar is nearby - each shown only when that data is available for the region.
+
+Each card has five tabs:
 
 - **Species** - clickable chips for each target species active there, linking to its
   iNaturalist page.
@@ -42,6 +50,9 @@ Each card has three tabs:
 - **Photos** - thumbnails from the region's most recent observations, loaded on first
   click. Only photos with a redisplayable Creative Commons license show a thumbnail
   (with attribution); everything else still lists with a link back to its iNat page.
+- **Trails** - nearby hiking paths, named routes, and trailheads, loaded on first click.
+- **Campgrounds** - nearby developed campgrounds from Recreation.gov, loaded on first
+  click.
 
 ### Fruiting now tab - what's been spotted recently?
 
@@ -87,6 +98,14 @@ manages the land; they are informational only.
 | **Theme toggle** | Switch between dark (the default) and light; the map basemap follows. Your choice is remembered across visits. |
 | **Units toggle** | Switch between kilometers and miles for distance displays. |
 | **Text size toggle** | Bumps up font size across the panel and cards for readability. |
+
+---
+
+## Mobile
+
+On narrow screens the map goes full-screen and the side panel becomes a draggable
+bottom sheet (collapsed / half / full) - drag the handle or a card tab to expand it,
+Back collapses it instead of leaving the page. Desktop keeps the two-column layout.
 
 ---
 
@@ -143,7 +162,8 @@ Observation photos carry their own per-photo license and attribution, shown unde
 thumbnail; only Creative Commons-licensed photos are displayed.
 Camping data (c) [OpenStreetMap](https://www.openstreetmap.org) contributors (ODbL) and
 [Recreation.gov](https://recreation.gov) RIDB API. Land boundaries via BLM and USFS
-ArcGIS services. Geocoding (c) OpenStreetMap / Nominatim.
+ArcGIS services. Geocoding (c) OpenStreetMap / Nominatim. Elevation and rainfall via
+[Open-Meteo](https://open-meteo.com); wildfire perimeters and burn scars via NIFC/MTBS.
 
 ---
 
