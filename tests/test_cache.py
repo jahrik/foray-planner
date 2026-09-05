@@ -21,6 +21,7 @@ from foray.cache import (
     list_selected_genera,
     load_genera,
     load_region_place,
+    load_region_satellite,
     mark_revalidated,
     observation_ids_for_genus,
     observation_taxon_ids,
@@ -28,6 +29,7 @@ from foray.cache import (
     record_ingest,
     remove_genus,
     save_region_place,
+    save_region_satellite,
     search_fungi_genera,
     set_observation_elevations,
     stale_observation_ids,
@@ -465,6 +467,23 @@ def test_save_region_place_keeps_first_result_on_reinsert(con: psycopg.Connectio
     save_region_place(con, "425_-1099", "Something Else")
 
     assert load_region_place(con, "425_-1099") == (True, "Mt. Hood National Forest")
+
+
+def test_load_region_satellite_missing_returns_none(con: psycopg.Connection) -> None:
+    assert load_region_satellite(con, "425_-1099") is None
+
+
+def test_save_and_load_region_satellite_round_trips(con: psycopg.Connection) -> None:
+    save_region_satellite(con, "425_-1099", b"\xff\xd8jpeg-bytes", b"\x89PNGlabel-bytes")
+
+    assert load_region_satellite(con, "425_-1099") == (b"\xff\xd8jpeg-bytes", b"\x89PNGlabel-bytes")
+
+
+def test_save_region_satellite_keeps_first_result_on_reinsert(con: psycopg.Connection) -> None:
+    save_region_satellite(con, "425_-1099", b"first-image", b"first-labels")
+    save_region_satellite(con, "425_-1099", b"second-image", b"second-labels")
+
+    assert load_region_satellite(con, "425_-1099") == (b"first-image", b"first-labels")
 
 
 def _obs_row(

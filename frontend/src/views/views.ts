@@ -111,7 +111,13 @@ export async function runDestinations(): Promise<void> {
   // auto-select at the end of this function.
   const prefetchTargets: (() => void)[] = [];
   const markers = regions.map((region, rank) => {
-    const marker = plot(region.center_lat, region.center_lng, region.score_norm, region.recent_count > 0);
+    const marker = plot(
+      region.center_lat,
+      region.center_lng,
+      region.score_norm,
+      region.recent_count > 0,
+      region.region_id,
+    );
     const card = document.createElement("div");
     card.className = "rank";
     card.innerHTML = `

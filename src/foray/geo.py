@@ -54,6 +54,28 @@ def bbox_around(lat: float, lng: float, radius_km: float) -> BBox:
     return BBox(lat - dlat, lng - dlng, lat + dlat, lng + dlng)
 
 
+# Equatorial radius used by the standard "spherical" Web Mercator (EPSG:3857) that every slippy
+# tile / ArcGIS export service - and Leaflet's default CRS - projects through. Matches
+# Leaflet's L.CRS.EPSG3857 exactly (same R), which is what mattered here (#293 Copilot review):
+# the frontend projects a destination circle's bounds through this same CRS before requesting
+# its satellite export, so the two must agree or the fetched image mismatches what Leaflet
+# stretches it into.
+_WEB_MERCATOR_R = 6378137.0
+
+
+def web_mercator_bbox_m(lat: float, lng: float, radius_m: float) -> tuple[float, float, float, float]:
+    """Bounding square, in EPSG:3857 meters, of the disk of ``radius_m`` around ``(lat, lng)``.
+
+    ``(xmin, ymin, xmax, ymax)`` - center projected via the standard spherical Web Mercator
+    formula, then offset by ``radius_m`` on each axis (a true circle in this projected plane,
+    same as Leaflet's ``L.circle`` with a meter radius). Used server-side to fetch a destination's
+    satellite export at exactly the geo footprint the frontend fills with it (``sources.satellite``).
+    """
+    x = math.radians(lng) * _WEB_MERCATOR_R
+    y = math.log(math.tan(math.pi / 4 + math.radians(lat) / 2)) * _WEB_MERCATOR_R
+    return (x - radius_m, y - radius_m, x + radius_m, y + radius_m)
+
+
 def bbox_around_segment(lat1: float, lng1: float, lat2: float, lng2: float, radius_km: float) -> BBox:
     """Flat-degree bounding box covering ``radius_km`` around the segment ``1 -> 2``.
 
