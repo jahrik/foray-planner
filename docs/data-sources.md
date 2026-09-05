@@ -1,7 +1,9 @@
 # Data sources
 
-All data is fetched at ingest time and cached in Postgres. The app runs queries against the
-cache - no live network calls happen during normal use.
+All scored/ingested data is fetched at ingest time and cached in Postgres. The app runs queries
+against the cache - no live network calls happen during normal use, with one exception: the
+satellite overlay is basemap imagery, not scored data, fetched client-side the same way the OSM
+tile basemap already is (see Esri World Imagery below).
 
 ---
 
@@ -107,6 +109,29 @@ spots" value without the license problem. Do not add iOverlander or The Dyrt.
 - **No claims:** popups link the official incident page (InciWeb / NIFC); the app never asserts
   a road or forest closure - same posture as land ownership.
 - **Tests:** Network-mocked with `httpx.MockTransport`.
+
+---
+
+## Esri World Imagery (satellite overlay)
+
+**Role:** Fills a selected destination's true footprint with a satellite image
+(`showSatelliteOverlay`, `frontend/src/map/map.ts`) so the ground under the focused circle reads
+sharp and bold against the rest of the map.
+
+- **Client:** Browser-side, direct `fetch`/`<img>` request - not ingested, not cached in
+  Postgres, no backend route. Basemap imagery, not scored/ingested data, so it doesn't follow
+  the "cached in Postgres, no live network calls" rule the rest of this doc describes - the same
+  exception the OSM tile basemap itself already is.
+- **Endpoint:** ArcGIS REST `MapServer/export` (`server.arcgisonline.com/.../World_Imagery`) -
+  one raster image per selection sized to that circle's bounding box, not a tile pyramid.
+- **No key required.** CORS-open (`Access-Control-Allow-Origin: *`), confirmed against the live
+  endpoint.
+- **CSP:** allow-listed in `src/foray/api/security.py`'s `img-src` alongside the OSM tile hosts.
+- **Attribution:** "Imagery © Esri", added to the Leaflet attribution control only while a
+  selection is active (`map.attributionControl.addAttribution`/`removeAttribution`).
+- **Rate limits:** Esri doesn't publish a hard free-tier cap for this public service; usage here
+  is one request per user selection (not bulk/background), which keeps volume low. If this ever
+  needs to scale up, revisit before relying on it more heavily.
 
 ---
 

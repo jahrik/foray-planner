@@ -167,27 +167,35 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   (issue #242 Part 2 broke the big files up and grouped them into `src/{map,ui,views}/`
   subfolders). Roughly: `src/state.ts` (shared `State`, `qs()`/`setStatus()` helpers),
   `src/prefs.ts` (the 3 persisted `localStorage` prefs), `src/map/map.ts` (Leaflet init,
-  theme/tile switching, marker palette, `clear*()` helpers), `src/map/layers.ts` (camps/land/
-  trails/precise fetch + render), `src/map/popup.ts` / `src/map/markers.ts` /
-  `src/map/layer-lifecycle.ts` (map primitives), `src/map/sheet.ts` (mobile bottom sheet),
-  `src/views/views.ts` + `src/views/alerts-view.ts` + `src/views/destination-tabs.ts` (the
-  destinations + alerts panels and the per-card detail tabs), `src/views/plan.ts` (route
-  planning UI + GPX/JSON export), `src/views/view-run.ts` (`refreshCurrentView` - the single
-  "re-run the open panel" owner), `src/ui/card-select.ts` / `src/ui/card-dom.ts` /
-  `src/ui/lazy-panel.ts` / `src/ui/autocomplete.ts` (shared UI primitives), `src/ui/ui-prefs.ts`
-  + `src/ui/layer-toggles.ts` (header toggle wiring), `src/refresh.ts` (SSE refresh +
-  set-location), and `src/main.ts` (DOM wiring/orchestration). `src/api/` holds the typed client (`openapi-fetch`,
-  in `client.ts`: `getJson` / `postJson` / `deleteJson` throw an `ApiError` on non-2xx, and
-  `openRefreshStream` is the typed SSE reader for `/api/refresh/stream`) + `schema.ts`
-  generated from the backend's OpenAPI via `openapi-typescript` - `npm run gen:api`
-  regenerates both; CI fails if that produces a diff, so `schema.ts` never drifts from the
-  actual API. Every API call goes through `client.ts` - no raw `fetch` (place-search
-  autocomplete is `GET /api/location/search`, proxied server-side, issue #145).
-  Vitest covers the pure helpers (`*.test.ts` beside the source); `npm test` runs in
-  `just frontend`. `GET /api/coverage` exists on the backend (coverage regions + their
+  theme/tile switching, marker palette, `clear*()` helpers, `showSatelliteOverlay` - see below),
+  `src/map/layers.ts` (camps/land/trails/precise fetch + render), `src/map/popup.ts` /
+  `src/map/markers.ts` / `src/map/layer-lifecycle.ts` (map primitives), `src/map/sheet.ts`
+  (mobile bottom sheet), `src/views/views.ts` + `src/views/alerts-view.ts` +
+  `src/views/destination-tabs.ts` (the destinations + alerts panels and the per-card detail
+  tabs), `src/views/plan.ts` (route planning UI + GPX/JSON export), `src/views/view-run.ts`
+  (`refreshCurrentView` - the single "re-run the open panel" owner), `src/ui/card-select.ts` /
+  `src/ui/card-dom.ts` / `src/ui/lazy-panel.ts` / `src/ui/autocomplete.ts` (shared UI
+  primitives), `src/ui/ui-prefs.ts` + `src/ui/layer-toggles.ts` (header toggle wiring),
+  `src/refresh.ts` (SSE refresh + set-location), and `src/main.ts` (DOM wiring/orchestration).
+  `src/api/` holds the typed client (`openapi-fetch`, in `client.ts`: `getJson` / `postJson` /
+  `deleteJson` throw an `ApiError` on non-2xx, and `openRefreshStream` is the typed SSE reader
+  for `/api/refresh/stream`) + `schema.ts` generated from the backend's OpenAPI via
+  `openapi-typescript` - `npm run gen:api` regenerates both; CI fails if that produces a diff,
+  so `schema.ts` never drifts from the actual API. Every API call goes through `client.ts` - no
+  raw `fetch` (place-search autocomplete is `GET /api/location/search`, proxied server-side,
+  issue #145). Vitest covers the pure helpers (`*.test.ts` beside the source); `npm test` runs
+  in `just frontend`. `GET /api/coverage` exists on the backend (coverage regions + their
   last-ingest freshness) but has no frontend consumer yet. Builds into `../src/foray/web/dist`. A
   **light/dark theme toggle** is `data-theme`-driven with a `localStorage` preference (default
-  **dark**); the basemap follows it (CARTO dark / OSM light).
+  **dark**); the basemap is always OSM raster tiles, CSS-inverted (`invert() hue-rotate()`) for
+  dark mode rather than a separate dark tileset - see `map.ts`'s `TILE_URL` comment for why.
+  Selecting a destination (`selectSize` in `map.ts`) fills its true footprint with a single Esri
+  World Imagery raster (`showSatelliteOverlay`, its own Leaflet pane between the tile and vector
+  overlay panes so the circle's ring/markers/trails still draw on top, clipped to a circle in CSS
+  rather than requested pre-clipped) and, in `views.ts`, kicks off all four detail-tab fetches
+  (Calendar/Photos/Trails/Campgrounds) in the background via their existing `createLazyLoader`s -
+  a tab click after that just reveals already-loaded content. Both are basemap-shaped, client-
+  side-only additions (no DB storage, no backend route) - see docs/data-sources.md.
 
 ## Conventions
 
