@@ -298,7 +298,10 @@ export function showSatelliteOverlay(marker: L.Circle, regionId: string): void {
 }
 
 export function clearSatelliteOverlay(): void {
-  if (!satelliteOverlay) return;
+  // Checks both, not just satelliteOverlay - the two are always set/cleared together in normal
+  // use, but gating on only one risks leaving the other (or the attribution) stale if that ever
+  // stops being true (#293 Copilot review).
+  if (!satelliteOverlay && !satelliteLabelsOverlay) return;
   satelliteOverlay = clearLayer(map, satelliteOverlay);
   satelliteLabelsOverlay = clearLayer(map, satelliteLabelsOverlay);
   map.attributionControl.removeAttribution(SATELLITE_ATTRIBUTION);

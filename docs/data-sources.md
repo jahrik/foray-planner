@@ -119,34 +119,37 @@ roads/labels overlay (`showSatelliteOverlay`, `frontend/src/map/map.ts`) so the 
 focused circle reads sharp and bold against the rest of the map, without losing the road/city
 names the OSM tile basemap would otherwise show there.
 
-- **Client:** Browser-side, direct `fetch`/`<img>` requests - not ingested, not cached in
-  Postgres, no backend route. Basemap imagery, not scored/ingested data, so it doesn't follow
-  the "cached in Postgres, no live network calls" rule the rest of this doc describes - the same
-  exception the OSM tile basemap itself already is.
+- **Server-side, cached forever per region** (`region_satellite` table, `sources/satellite.py`) -
+  a live Esri export at full resolution takes 25-45s, which is fine paid once per region but not
+  something a page load should ever block on. The frontend's two `<img>` tags request
+  `/api/destinations/{region_id}/satellite/{image,labels}` instead of Esri directly; that route
+  serves the cached bytes (browser-cacheable forever - `Cache-Control: immutable`) or, on a
+  genuine cache miss, fetches + caches on the spot (a per-region lock coalesces the two `<img>`
+  tags' near-simultaneous requests so a cold region only pays Esri's render time once).
+  `foray backfill-satellite` pre-fetches every region in the `regions` table ahead of time so
+  this cold path is rare in practice.
 - **Endpoints:** ArcGIS REST `MapServer/export`, two services layered together, both under
-  `server.arcgisonline.com`:
+  `server.arcgisonline.com`, called only from `sources/satellite.py` (never the browser):
   - `World_Imagery` - the aerial photo (jpg). Has zero labels baked in - it's a bare photo.
   - `Reference/World_Boundaries_and_Places` - a transparent PNG of roads/borders/place labels,
     Esri's standard pairing for `World_Imagery` (the "hybrid" satellite view), drawn on top.
-  One request per service per selection, sized to that circle's bounding box - not a tile
-  pyramid.
-- **Resolution:** re-requested on every `zoomend` at the circle's *current* on-screen pixel
-  diameter (clamped 256-1024px) rather than fetched once at a fixed size - a fixed-size raster
-  left static while zooming in stretches into a blurry pixelated blob that swallows the map
-  underneath it, which is exactly what shipped in v1 and got caught live by the user, not CI.
+  Both requested at `MAX_PX` (4096px, Esri's own server-side cap - confirmed live, asking for
+  more just gets clamped back to 4096) and fetched concurrently to halve cold-cache latency.
+- **Resolution:** fetched once per region, at `MAX_PX`, and never re-requested on zoom - the
+  bounds are fixed geo coordinates, so Leaflet re-scales the same raster for any zoom level for
+  free. (v1 re-requested a lower-res image on every `zoomend` instead; that fixed one bug -
+  blurring past a fixed-size raster's native resolution - but introduced a full reload/flash on
+  every zoom step, which is what led to caching this server-side in the first place.)
 - **No key required.** CORS-open (`Access-Control-Allow-Origin: *`) on both services, confirmed
   against the live endpoints.
-- **CSP:** both hosts share `server.arcgisonline.com`, allow-listed once in
-  `src/foray/api/security.py`'s `img-src` alongside the OSM tile hosts.
+- **CSP:** `img-src` doesn't need an Esri entry - the browser only ever talks to our own origin
+  (`'self'`) for satellite imagery now.
 - **Attribution:** "Imagery © Esri", added to the Leaflet attribution control only while a
   selection is active (`map.attributionControl.addAttribution`/`removeAttribution`).
-- **Rate limits:** Esri doesn't publish a hard free-tier cap for these public services; usage
-  here is a couple of requests per user selection/zoom change (not bulk/background), which keeps
-  volume low. If this ever needs to scale up, revisit before relying on it more heavily.
-- **Not currently cached:** floated by the user as a follow-up (regions sit on a fixed grid, so a
-  region's imagery is stable and cacheable) but not implemented - it's a real scope increase (new
-  table/migration, new backend route, moving off today's direct-client-fetch pattern), so it's on
-  hold unless Esri rate-limiting or latency actually becomes a problem.
+- **Backfill:** `foray backfill-satellite [--limit N] [--concurrency N]` (default concurrency 8) -
+  fetches every region in `regions` missing from `region_satellite`. Safe to re-run (only
+  fetches what's still missing). Genuinely slow at national scale (thousands of regions x tens of
+  seconds each even with concurrency) - run it in the background, not inline.
 
 ---
 
