@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from psycopg_pool import ConnectionPool
 
 from foray import scoring
@@ -13,8 +14,11 @@ from foray.api.deps import get_pool, get_state, region_center, require_idle
 from foray.api.state import AppState
 from foray.api_models import CampSite, FireNear, LandUnit, RegionPlace, Trail, TrailPath
 from foray.cache import load_region_place as db_load_region_place
+from foray.cache import load_region_satellite as db_load_region_satellite
 from foray.cache import save_region_place as db_save_region_place
-from foray.sources import geocode, trails
+from foray.cache import save_region_satellite as db_save_region_satellite
+from foray.geo import KM_PER_DEG_LAT
+from foray.sources import geocode, satellite, trails
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +139,82 @@ def get_region_place(
             return RegionPlace(place_name=None)
         db_save_region_place(conn, region_id, place_name)
     return RegionPlace(place_name=place_name)
+
+
+# The frontend's two <img> tags (image + labels) request this same region within milliseconds
+# of each other, so a cache miss without coalescing would fire two full fetch_region_satellite
+# round trips (each itself two Esri calls) at once - up to 4x the necessary load on Esri and up
+# to 2x the latency either request actually needs. One lock per region_id, created on first use
+# and never removed (a handful of live cache-miss regions at a time, not an unbounded set - the
+# known region set is backfilled ahead of time by `foray backfill-satellite`) serializes that
+# down to one fetch; the second caller's post-lock cache read then just returns what the first
+# one saved instead of fetching again.
+_satellite_fetch_locks: dict[str, threading.Lock] = {}
+_satellite_fetch_locks_guard = threading.Lock()
+
+
+def _satellite_fetch_lock(region_id: str) -> threading.Lock:
+    with _satellite_fetch_locks_guard:
+        return _satellite_fetch_locks.setdefault(region_id, threading.Lock())
+
+
+def _region_satellite_bytes(region_id: str, state: AppState, pool: ConnectionPool) -> tuple[bytes, bytes]:
+    """Cached ``(image, labels)`` bytes for a region, fetching + caching on first request.
+
+    Cached forever per region (`region_satellite`), same "fixed grid, never re-resolve"
+    reasoning as `get_region_place` above. Unlike that route's Nominatim call, a live Esri
+    export at the resolution the frontend wants takes 25-45s - `foray backfill-satellite` pays
+    that ahead of time for the known region set, so this cold path should be rare in practice.
+    """
+    with pool.connection() as conn:
+        cached = db_load_region_satellite(conn, region_id)
+        if cached is not None:
+            return cached
+    with _satellite_fetch_lock(region_id):
+        with pool.connection() as conn:
+            # Re-check inside the lock: the request that was already fetching may have finished
+            # and saved while this one was waiting its turn.
+            cached = db_load_region_satellite(conn, region_id)
+            if cached is not None:
+                return cached
+            center_lat, center_lng = region_center(region_id, state.cfg)
+            radius_m = (state.cfg.cell_deg * KM_PER_DEG_LAT * 1000) / 2
+            try:
+                image, labels = satellite.fetch_region_satellite(center_lat, center_lng, radius_m)
+            except httpx.HTTPError as error:
+                logger.warning("satellite: fetch failed for region %s (%s)", region_id, error)
+                raise HTTPException(502, "satellite imagery temporarily unavailable") from None
+            db_save_region_satellite(conn, region_id, image, labels)
+        return image, labels
+
+
+# Cached forever (see _region_satellite_bytes) - safe for the browser to cache indefinitely too,
+# so a revisit never re-downloads a multi-MB image it already has.
+_SATELLITE_CACHE_CONTROL = "public, max-age=31536000, immutable"
+
+
+@router.get("/api/destinations/{region_id}/satellite/image")
+def get_region_satellite_image(
+    region_id: str,
+    state: AppState = Depends(get_state),
+    pool: ConnectionPool = Depends(get_pool),
+) -> Response:
+    """A selected destination's aerial photo (#293 follow-up) - see `_region_satellite_bytes`."""
+    require_idle(state)
+    image, _labels = _region_satellite_bytes(region_id, state, pool)
+    return Response(content=image, media_type="image/jpeg", headers={"Cache-Control": _SATELLITE_CACHE_CONTROL})
+
+
+@router.get("/api/destinations/{region_id}/satellite/labels")
+def get_region_satellite_labels(
+    region_id: str,
+    state: AppState = Depends(get_state),
+    pool: ConnectionPool = Depends(get_pool),
+) -> Response:
+    """The same destination's transparent roads/place-labels overlay - see `_region_satellite_bytes`."""
+    require_idle(state)
+    _image, labels = _region_satellite_bytes(region_id, state, pool)
+    return Response(content=labels, media_type="image/png", headers={"Cache-Control": _SATELLITE_CACHE_CONTROL})
 
 
 @router.get("/api/trails")

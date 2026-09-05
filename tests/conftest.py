@@ -35,6 +35,7 @@ _TABLES = (
     "fungi_genera",
     "app_genera",
     "region_places",
+    "region_satellite",
     "precip_daily",
     "precipitation",
     "fire_perimeters",

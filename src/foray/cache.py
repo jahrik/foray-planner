@@ -189,6 +189,19 @@ CREATE TABLE IF NOT EXISTS region_places (
     place_name TEXT
 );
 
+-- Selected-destination satellite fill (#293 follow-up): caches one Esri export pair (aerial
+-- photo + its transparent roads/labels overlay, both JPEG/PNG bytes straight from the source)
+-- per grid region forever - same "regions are a fixed grid, never re-resolve" reasoning as
+-- region_places above. A live Esri export at the resolution the frontend wants (4096px) takes
+-- 25-45s server-side, which is fine paid once at backfill time (`foray backfill-satellite`) but
+-- not something a page load should ever block on - see sources/satellite.py.
+CREATE TABLE IF NOT EXISTS region_satellite (
+    region_id  TEXT PRIMARY KEY,
+    image      BYTEA NOT NULL,        -- World_Imagery export, JPEG bytes
+    labels     BYTEA NOT NULL,        -- Boundaries_and_Places export, transparent PNG bytes
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Daily precipitation cache (issue #226). One row per grid cell per day - `cell_id` is the
 -- same "{ilat}_{ilng}" key `regions`/`phenology` derive in SQL (foray.geo.grid_cell), so the
 -- weather geography reuses the region grid rather than inventing a second one. Raw per-day
@@ -260,7 +273,7 @@ CREATE TABLE IF NOT EXISTS meta (
 # Bump whenever the SCHEMA string above OR the CONCURRENTLY index set in apply_schema changes,
 # so a running instance re-executes them once on its next apply_schema. (New _MIGRATIONS
 # entries are tracked separately by version and don't need a bump.)
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Fixed advisory-lock key so two processes starting together (API + scheduler) serialize on
 # the full apply_schema path instead of racing CREATE INDEX CONCURRENTLY.
@@ -1041,6 +1054,21 @@ def save_region_place(con: psycopg.Connection, region_id: str, place_name: str |
     con.execute(
         "INSERT INTO region_places (region_id, place_name) VALUES (%s, %s) ON CONFLICT (region_id) DO NOTHING",
         [region_id, place_name],
+    )
+
+
+def load_region_satellite(con: psycopg.Connection, region_id: str) -> tuple[bytes, bytes] | None:
+    """Cached ``(image, labels)`` bytes for a region's satellite fill, or ``None`` if never
+    fetched - caller should fetch (``sources.satellite.fetch_region_satellite``) and save."""
+    row = con.execute("SELECT image, labels FROM region_satellite WHERE region_id = %s", [region_id]).fetchone()
+    return None if row is None else (bytes(row[0]), bytes(row[1]))
+
+
+def save_region_satellite(con: psycopg.Connection, region_id: str, image: bytes, labels: bytes) -> None:
+    con.execute(
+        "INSERT INTO region_satellite (region_id, image, labels) VALUES (%s, %s, %s) "
+        "ON CONFLICT (region_id) DO NOTHING",
+        [region_id, image, labels],
     )
 
 

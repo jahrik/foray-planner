@@ -11,6 +11,7 @@ from foray.geo import (
     grid_cell,
     grid_cells_in_bbox,
     haversine_km,
+    web_mercator_bbox_m,
 )
 
 CELL = 0.25
@@ -68,3 +69,20 @@ def test_grid_cells_in_bbox_along_corridor_includes_the_line() -> None:
         lat = start[0] + frac * (dest[0] - start[0])
         lng = start[1] + frac * (dest[1] - start[1])
         assert grid_cell(lat, lng, CELL).cell_id in cells
+
+
+def test_web_mercator_bbox_m_is_a_square_centered_on_the_point() -> None:
+    xmin, ymin, xmax, ymax = web_mercator_bbox_m(47.6038, -122.3301, 5000.0)
+    assert xmax - xmin == pytest.approx(10000.0)
+    assert ymax - ymin == pytest.approx(10000.0)
+    # Center of the box is the point's own projection, not shifted off to one side.
+    assert (xmin + xmax) / 2 == pytest.approx(xmin + (xmax - xmin) / 2)
+
+
+def test_web_mercator_bbox_m_matches_leafets_own_projection_at_the_equator() -> None:
+    # At (0, 0) the spherical Web Mercator projection is the identity times earth's radius on
+    # both axes, so this pins the formula against a value anyone can hand-check - not just
+    # "internally consistent with itself".
+    earth_radius_m = 6378137.0
+    xmin, ymin, xmax, ymax = web_mercator_bbox_m(0.0, 0.0, 1000.0)
+    assert (xmin, ymin, xmax, ymax) == pytest.approx((-1000.0, -1000.0, 1000.0, 1000.0), abs=1e-6 * earth_radius_m)

@@ -11,7 +11,7 @@ from foray.config import Settings
 from foray.logging_config import setup_logging
 from foray.refresh import REFRESH_LAYERS, parse_month_list, run_home_refresh
 from foray.scoring import build_phenology, plan_route
-from foray.sources import fire, geocode
+from foray.sources import fire, geocode, satellite
 from foray.sources.camps import ingest_campgrounds
 from foray.sources.dispersed import ingest_dispersed
 from foray.sources.inat import InatQuotaExceeded, iter_fungi_genera
@@ -245,6 +245,33 @@ def backfill_precip_cmd(ctx: click.Context, limit: int | None, rebuild: bool) ->
         if updated and rebuild:
             click.echo("Rebuilding phenology…")
             build_phenology(con, cfg.cell_deg)
+    finally:
+        con.close()
+
+
+@cli.command("backfill-satellite")
+@click.option("--limit", type=int, default=None, help="Cap regions fetched this run (default: all outstanding).")
+@click.option(
+    "--concurrency", type=int, default=8, help="Parallel Esri exports in flight (each takes 25-45s server-side)."
+)
+@click.pass_context
+def backfill_satellite_cmd(ctx: click.Context, limit: int | None, concurrency: int) -> None:
+    """Fetch + cache the satellite fill (#293 follow-up) for every region that doesn't have it
+    yet, so a destination's map selection never pays Esri's ~30-45s live render time. Safe to
+    re-run - only fetches regions still missing from `region_satellite`. This is a genuinely
+    slow, one-time-per-region operation (thousands of regions x tens of seconds each even at
+    default concurrency); run it in the background and let it drain over hours, not inline."""
+    cfg = ctx.obj["cfg"]
+    con = connect()
+    try:
+        updated = satellite.backfill_region_satellite(
+            con,
+            cell_deg=cfg.cell_deg,
+            max_regions=limit,
+            concurrency=concurrency,
+            progress_cb=lambda region_id, done, total: click.echo(f"[{done}/{total}] {region_id}"),
+        )
+        click.echo(f"Cached satellite imagery for {updated} regions.")
     finally:
         con.close()
 
