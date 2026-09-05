@@ -1,3 +1,4 @@
+import type L from "leaflet";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // map.ts pulls in Leaflet (and the markercluster side-effect import) for real map wiring we
@@ -39,7 +40,7 @@ vi.mock("../state", () => ({
   qs: () => null,
 }));
 
-import { deselectSize, plot, selectSize } from "./map";
+import { deselectSize, plot, satelliteImageUrl, selectSize } from "./map";
 
 beforeEach(() => {
   fakeState.markers = [];
@@ -80,5 +81,23 @@ describe("selectSize / deselectSize fill management", () => {
 
     selectSize(plotted);
     expect(foreign.setStyle).not.toHaveBeenCalled();
+  });
+});
+
+describe("satelliteImageUrl", () => {
+  it("requests a square jpg sized to the circle's bounding box, in lng,lat bbox order", () => {
+    const bounds = {
+      getSouthWest: () => ({ lng: -122.4, lat: 47.5 }),
+      getNorthEast: () => ({ lng: -122.3, lat: 47.6 }),
+    } as unknown as L.LatLngBounds;
+
+    const url = new URL(satelliteImageUrl(bounds));
+    expect(url.origin + url.pathname).toBe(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export",
+    );
+    expect(url.searchParams.get("bbox")).toBe("-122.4,47.5,-122.3,47.6");
+    expect(url.searchParams.get("bboxSR")).toBe("4326");
+    expect(url.searchParams.get("size")).toMatch(/^(\d+),\1$/); // square
+    expect(url.searchParams.get("format")).toBe("jpg");
   });
 });

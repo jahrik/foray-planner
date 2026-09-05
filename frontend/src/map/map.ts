@@ -133,6 +133,11 @@ function preciseClusterIcon(cluster: L.MarkerCluster): L.DivIcon {
 export function initMap(home: Home): void {
   map = L.map("map").setView([home.lat, home.lng], 7);
   setTiles();
+  // Sits above the basemap tiles but below the vector overlay pane (circles, trails, markers -
+  // default z-index 400) so the selected destination's ring and every other layer still draw on
+  // top of the satellite image, not under it (see showSatelliteOverlay).
+  map.createPane("satellite");
+  map.getPane("satellite")!.style.zIndex = "350";
   preciseCluster = L.markerClusterGroup({
     iconCreateFunction: preciseClusterIcon,
     maxClusterRadius: 40,
@@ -243,17 +248,70 @@ export function setFocused(lat: number, lng: number): void {
   state.focused = { lat, lng };
 }
 
+// Esri World Imagery export endpoint - a single raster image per selection, not a tile pyramid,
+// since only the ground under one circle needs to render. Same "no key, public ArcGIS REST"
+// shape as sources/land.py and sources/fire.py server-side, just called client-side like the
+// OSM/CARTO basemap tiles already are (basemap imagery, not scored/ingested data - see
+// docs/data-sources.md). CORS-open, confirmed against the live endpoint.
+const SATELLITE_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export";
+const SATELLITE_ATTRIBUTION = "Imagery © Esri";
+// Square in pixels; the geo bounds passed in are already the circle's bounding square (see
+// showSatelliteOverlay), so a plain CSS circle() clip on this image lands exactly on the true
+// circle with no per-selection coordinate math.
+const SATELLITE_SIZE_PX = 512;
+
+export function satelliteImageUrl(bounds: L.LatLngBounds): string {
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+  const params = new URLSearchParams({
+    bbox: `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`,
+    bboxSR: "4326",
+    imageSR: "4326",
+    size: `${SATELLITE_SIZE_PX},${SATELLITE_SIZE_PX}`,
+    format: "jpg",
+    f: "image",
+  });
+  return `${SATELLITE_URL}?${params.toString()}`;
+}
+
+let satelliteOverlay: L.ImageOverlay | null = null;
+
+// Fills the selected destination's true footprint with a satellite image, clipped to a circle
+// in CSS (style.css's .sat-circle-overlay) rather than requested pre-clipped, so it's one plain
+// rectangular image request. Rendered in its own pane between the tiles and the vector overlay
+// pane (see initMap) so the destination circle's ring/stroke and every other layer still draw on
+// top of it - only the basemap underneath the selection is replaced, nothing else dims or hides.
+export function showSatelliteOverlay(marker: L.Circle): void {
+  if (!map) return; // unit tests exercise selectSize()'s fill logic without a real map/initMap()
+  clearSatelliteOverlay();
+  const bounds = marker.getBounds();
+  satelliteOverlay = L.imageOverlay(satelliteImageUrl(bounds), bounds, {
+    className: "sat-circle-overlay",
+    pane: "satellite",
+    interactive: false,
+  }).addTo(map);
+  map.attributionControl.addAttribution(SATELLITE_ATTRIBUTION);
+}
+
+export function clearSatelliteOverlay(): void {
+  if (!satelliteOverlay) return;
+  satelliteOverlay = clearLayer(map, satelliteOverlay);
+  map.attributionControl.removeAttribution(SATELLITE_ATTRIBUTION);
+}
+
 // Selecting a region (marker or card click) snaps its circle from the score-sized preview to
 // its true real-world cell_deg footprint, computed from the same live config value as plot()
 // (never hard-coded), so the user can see exactly how much ground that dot actually represents.
 // Fill goes very transparent at this size so the map underneath - which the circle now likely
-// covers a large part of - stays readable.
+// covers a large part of - stays readable. The satellite overlay (above) fills that same
+// footprint with imagery so "the map underneath" is actually worth looking at.
 export function selectSize(marker: L.Circle): void {
   const info = sizing.get(marker);
   if (!info) return;
   marker.setRadius(info.trueRadius);
   marker.setStyle({ fillOpacity: 0.08 });
   setOthersFill(marker, true);
+  showSatelliteOverlay(marker);
 }
 
 // Reverts a previously selected marker back to its score-scaled preview size/opacity - called
@@ -280,6 +338,7 @@ export function clearMarkers(): void {
   clearSelectedTrail();
   clearPlanRoute();
   clearPrecise();
+  clearSatelliteOverlay();
   state.focused = null;
 }
 
