@@ -40,7 +40,7 @@ vi.mock("../state", () => ({
   qs: () => null,
 }));
 
-import { deselectSize, plot, satelliteImageUrl, selectSize } from "./map";
+import { deselectSize, plot, satelliteImageUrl, satelliteLabelsUrl, selectSize } from "./map";
 
 beforeEach(() => {
   fakeState.markers = [];
@@ -91,13 +91,30 @@ describe("satelliteImageUrl", () => {
       getNorthEast: () => ({ lng: -122.3, lat: 47.6 }),
     } as unknown as L.LatLngBounds;
 
-    const url = new URL(satelliteImageUrl(bounds));
+    const url = new URL(satelliteImageUrl(bounds, 640));
     expect(url.origin + url.pathname).toBe(
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export",
     );
     expect(url.searchParams.get("bbox")).toBe("-122.4,47.5,-122.3,47.6");
     expect(url.searchParams.get("bboxSR")).toBe("4326");
-    expect(url.searchParams.get("size")).toMatch(/^(\d+),\1$/); // square
+    expect(url.searchParams.get("size")).toBe("640,640");
     expect(url.searchParams.get("format")).toBe("jpg");
+  });
+});
+
+describe("satelliteLabelsUrl", () => {
+  it("requests a transparent png from the boundaries/places reference service with the same bbox", () => {
+    const bounds = {
+      getSouthWest: () => ({ lng: -122.4, lat: 47.5 }),
+      getNorthEast: () => ({ lng: -122.3, lat: 47.6 }),
+    } as unknown as L.LatLngBounds;
+
+    const url = new URL(satelliteLabelsUrl(bounds, 640));
+    expect(url.origin + url.pathname).toBe(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/export",
+    );
+    expect(url.searchParams.get("bbox")).toBe("-122.4,47.5,-122.3,47.6");
+    expect(url.searchParams.get("format")).toBe("png32");
+    expect(url.searchParams.get("transparent")).toBe("true");
   });
 });
