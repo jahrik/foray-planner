@@ -189,10 +189,12 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   **light/dark theme toggle** is `data-theme`-driven with a `localStorage` preference (default
   **dark**); the basemap is always OSM raster tiles, CSS-inverted (`invert() hue-rotate()`) for
   dark mode rather than a separate dark tileset - see `map.ts`'s `TILE_URL` comment for why.
-  Selecting a destination (`selectSize` in `map.ts`) fills its true footprint with a single Esri
-  World Imagery raster (`showSatelliteOverlay`, its own Leaflet pane between the tile and vector
-  overlay panes so the circle's ring/markers/trails still draw on top, clipped to a circle in CSS
-  rather than requested pre-clipped) and, in `views.ts`, kicks off all four detail-tab fetches
+  Selecting a destination (`selectSize` in `map.ts`) fills its true footprint with an Esri World
+  Imagery raster plus a matching transparent roads/labels overlay (`showSatelliteOverlay`, its
+  own Leaflet pane between the tile and vector overlay panes so the circle's ring/markers/trails
+  still draw on top, clipped to a circle in CSS rather than requested pre-clipped) - both
+  re-requested on `zoomend` at the circle's current on-screen pixel size so they stay sharp
+  instead of stretching into a blur, and, in `views.ts`, kicks off all four detail-tab fetches
   (Calendar/Photos/Trails/Campgrounds) in the background via their existing `createLazyLoader`s -
   a tab click after that just reveals already-loaded content. Both are basemap-shaped, client-
   side-only additions (no DB storage, no backend route) - see docs/data-sources.md.

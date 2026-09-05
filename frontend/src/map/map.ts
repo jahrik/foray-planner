@@ -154,6 +154,7 @@ export function initMap(home: Home): void {
   map.on("click", (e: L.LeafletMouseEvent) => {
     onMapClick?.(e.latlng.lat, e.latlng.lng);
   });
+  map.on("zoomend", refreshSatelliteOverlayForZoom);
 }
 
 let onMapClick: ((lat: number, lng: number) => void) | null = null;
@@ -254,49 +255,102 @@ export function setFocused(lat: number, lng: number): void {
 // OSM/CARTO basemap tiles already are (basemap imagery, not scored/ingested data - see
 // docs/data-sources.md). CORS-open, confirmed against the live endpoint.
 const SATELLITE_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export";
+// Esri's standard "hybrid" pairing for World_Imagery: a transparent PNG of roads/borders/place
+// labels meant to sit on top of the aerial photo. World_Imagery alone has zero labels baked in
+// (it's just a photo) - without this, filling the circle with it silently deletes every road and
+// city name that used to be visible there via the OSM tile basemap. Same no-key/CORS-open ArcGIS
+// REST shape as the imagery service.
+const SATELLITE_LABELS_URL =
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/export";
 const SATELLITE_ATTRIBUTION = "Imagery © Esri";
-// Square in pixels; the geo bounds passed in are already the circle's bounding square (see
-// showSatelliteOverlay), so a plain CSS circle() clip on this image lands exactly on the true
-// circle with no per-selection coordinate math.
-const SATELLITE_SIZE_PX = 512;
+// Requested image is always square (the geo bounds passed in are already the circle's bounding
+// square - see showSatelliteOverlay), so a plain CSS circle() clip on it lands exactly on the
+// true circle with no per-selection coordinate math. Clamped so a fully zoomed-out circle (a
+// handful of screen pixels) doesn't fetch a needlessly huge image, and a fully zoomed-in one
+// doesn't ask Esri for more than a sane single-request size.
+const SATELLITE_MIN_PX = 256;
+const SATELLITE_MAX_PX = 1024;
 
-export function satelliteImageUrl(bounds: L.LatLngBounds): string {
+function satelliteBboxParams(bounds: L.LatLngBounds, sizePx: number): URLSearchParams {
   const sw = bounds.getSouthWest();
   const ne = bounds.getNorthEast();
-  const params = new URLSearchParams({
+  return new URLSearchParams({
     bbox: `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`,
     bboxSR: "4326",
     imageSR: "4326",
-    size: `${SATELLITE_SIZE_PX},${SATELLITE_SIZE_PX}`,
-    format: "jpg",
+    size: `${sizePx},${sizePx}`,
     f: "image",
   });
+}
+
+export function satelliteImageUrl(bounds: L.LatLngBounds, sizePx: number): string {
+  const params = satelliteBboxParams(bounds, sizePx);
+  params.set("format", "jpg");
   return `${SATELLITE_URL}?${params.toString()}`;
 }
 
-let satelliteOverlay: L.ImageOverlay | null = null;
+export function satelliteLabelsUrl(bounds: L.LatLngBounds, sizePx: number): string {
+  const params = satelliteBboxParams(bounds, sizePx);
+  params.set("format", "png32");
+  params.set("transparent", "true");
+  return `${SATELLITE_LABELS_URL}?${params.toString()}`;
+}
 
-// Fills the selected destination's true footprint with a satellite image, clipped to a circle
-// in CSS (style.css's .sat-circle-overlay) rather than requested pre-clipped, so it's one plain
-// rectangular image request. Rendered in its own pane between the tiles and the vector overlay
-// pane (see initMap) so the destination circle's ring/stroke and every other layer still draw on
-// top of it - only the basemap underneath the selection is replaced, nothing else dims or hides.
+let satelliteOverlay: L.ImageOverlay | null = null;
+let satelliteLabelsOverlay: L.ImageOverlay | null = null;
+// The currently-selected marker, so a zoomend can re-request both images at the new on-screen
+// resolution (see initMap's zoomend listener) instead of stretching the same fixed-size raster
+// past its native resolution into a blurry, pixelated blob that swallows the map underneath it.
+let satelliteMarker: L.Circle | null = null;
+
+// How big a request to make for a given geo bbox at the *current* zoom: its actual on-screen
+// pixel diameter, clamped to [SATELLITE_MIN_PX, SATELLITE_MAX_PX]. Re-run on every zoom change
+// so the image always matches what the screen can actually show.
+function satelliteRequestSizePx(bounds: L.LatLngBounds): number {
+  const topLeft = map.latLngToContainerPoint(bounds.getNorthWest());
+  const bottomRight = map.latLngToContainerPoint(bounds.getSouthEast());
+  const screenPx = Math.abs(bottomRight.x - topLeft.x);
+  return Math.round(Math.min(SATELLITE_MAX_PX, Math.max(SATELLITE_MIN_PX, screenPx)));
+}
+
+// Fills the selected destination's true footprint with a satellite image plus its matching
+// roads/labels overlay (so streets and city names stay readable, not just the bare photo),
+// clipped to a circle in CSS (style.css's .sat-circle-overlay) rather than requested
+// pre-clipped, so each is one plain rectangular image request. Both render in their own pane
+// between the tiles and the vector overlay pane (see initMap) so the destination circle's
+// ring/stroke and every other layer still draw on top - only the basemap underneath the
+// selection is replaced, nothing else dims or hides.
 export function showSatelliteOverlay(marker: L.Circle): void {
   if (!map) return; // unit tests exercise selectSize()'s fill logic without a real map/initMap()
   clearSatelliteOverlay();
   const bounds = marker.getBounds();
-  satelliteOverlay = L.imageOverlay(satelliteImageUrl(bounds), bounds, {
+  const sizePx = satelliteRequestSizePx(bounds);
+  satelliteOverlay = L.imageOverlay(satelliteImageUrl(bounds, sizePx), bounds, {
     className: "sat-circle-overlay",
     pane: "satellite",
     interactive: false,
   }).addTo(map);
+  satelliteLabelsOverlay = L.imageOverlay(satelliteLabelsUrl(bounds, sizePx), bounds, {
+    className: "sat-circle-overlay",
+    pane: "satellite",
+    interactive: false,
+  }).addTo(map);
+  satelliteMarker = marker;
   map.attributionControl.addAttribution(SATELLITE_ATTRIBUTION);
 }
 
 export function clearSatelliteOverlay(): void {
   if (!satelliteOverlay) return;
   satelliteOverlay = clearLayer(map, satelliteOverlay);
+  satelliteLabelsOverlay = clearLayer(map, satelliteLabelsOverlay);
+  satelliteMarker = null;
   map.attributionControl.removeAttribution(SATELLITE_ATTRIBUTION);
+}
+
+// Re-request the satellite image at the new zoom's on-screen resolution once a zoom finishes
+// (not mid-gesture) - see satelliteRequestSizePx. No-op when nothing is selected.
+function refreshSatelliteOverlayForZoom(): void {
+  if (satelliteMarker) showSatelliteOverlay(satelliteMarker);
 }
 
 // Selecting a region (marker or card click) snaps its circle from the score-sized preview to

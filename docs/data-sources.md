@@ -112,26 +112,41 @@ spots" value without the license problem. Do not add iOverlander or The Dyrt.
 
 ---
 
-## Esri World Imagery (satellite overlay)
+## Esri World Imagery + labels (satellite overlay)
 
-**Role:** Fills a selected destination's true footprint with a satellite image
-(`showSatelliteOverlay`, `frontend/src/map/map.ts`) so the ground under the focused circle reads
-sharp and bold against the rest of the map.
+**Role:** Fills a selected destination's true footprint with a satellite image plus its matching
+roads/labels overlay (`showSatelliteOverlay`, `frontend/src/map/map.ts`) so the ground under the
+focused circle reads sharp and bold against the rest of the map, without losing the road/city
+names the OSM tile basemap would otherwise show there.
 
-- **Client:** Browser-side, direct `fetch`/`<img>` request - not ingested, not cached in
+- **Client:** Browser-side, direct `fetch`/`<img>` requests - not ingested, not cached in
   Postgres, no backend route. Basemap imagery, not scored/ingested data, so it doesn't follow
   the "cached in Postgres, no live network calls" rule the rest of this doc describes - the same
   exception the OSM tile basemap itself already is.
-- **Endpoint:** ArcGIS REST `MapServer/export` (`server.arcgisonline.com/.../World_Imagery`) -
-  one raster image per selection sized to that circle's bounding box, not a tile pyramid.
-- **No key required.** CORS-open (`Access-Control-Allow-Origin: *`), confirmed against the live
-  endpoint.
-- **CSP:** allow-listed in `src/foray/api/security.py`'s `img-src` alongside the OSM tile hosts.
+- **Endpoints:** ArcGIS REST `MapServer/export`, two services layered together, both under
+  `server.arcgisonline.com`:
+  - `World_Imagery` - the aerial photo (jpg). Has zero labels baked in - it's a bare photo.
+  - `Reference/World_Boundaries_and_Places` - a transparent PNG of roads/borders/place labels,
+    Esri's standard pairing for `World_Imagery` (the "hybrid" satellite view), drawn on top.
+  One request per service per selection, sized to that circle's bounding box - not a tile
+  pyramid.
+- **Resolution:** re-requested on every `zoomend` at the circle's *current* on-screen pixel
+  diameter (clamped 256-1024px) rather than fetched once at a fixed size - a fixed-size raster
+  left static while zooming in stretches into a blurry pixelated blob that swallows the map
+  underneath it, which is exactly what shipped in v1 and got caught live by the user, not CI.
+- **No key required.** CORS-open (`Access-Control-Allow-Origin: *`) on both services, confirmed
+  against the live endpoints.
+- **CSP:** both hosts share `server.arcgisonline.com`, allow-listed once in
+  `src/foray/api/security.py`'s `img-src` alongside the OSM tile hosts.
 - **Attribution:** "Imagery © Esri", added to the Leaflet attribution control only while a
   selection is active (`map.attributionControl.addAttribution`/`removeAttribution`).
-- **Rate limits:** Esri doesn't publish a hard free-tier cap for this public service; usage here
-  is one request per user selection (not bulk/background), which keeps volume low. If this ever
-  needs to scale up, revisit before relying on it more heavily.
+- **Rate limits:** Esri doesn't publish a hard free-tier cap for these public services; usage
+  here is a couple of requests per user selection/zoom change (not bulk/background), which keeps
+  volume low. If this ever needs to scale up, revisit before relying on it more heavily.
+- **Not currently cached:** floated by the user as a follow-up (regions sit on a fixed grid, so a
+  region's imagery is stable and cacheable) but not implemented - it's a real scope increase (new
+  table/migration, new backend route, moving off today's direct-client-fetch pattern), so it's on
+  hold unless Esri rate-limiting or latency actually becomes a problem.
 
 ---
 
