@@ -271,13 +271,20 @@ const SATELLITE_ATTRIBUTION = "Imagery © Esri";
 const SATELLITE_MIN_PX = 256;
 const SATELLITE_MAX_PX = 1024;
 
+// Leaflet's imageOverlay stretches the fetched image linearly to fill `bounds` as *projected by
+// the map's own CRS* (Web Mercator, EPSG:3857) - not linearly by lat/lng. Requesting the export
+// in EPSG:4326 (linear-in-degrees) and letting Leaflet stretch it into a Mercator-projected
+// rectangle mismatches the two projections (Mercator's northing isn't linear in latitude),
+// distorting the image content within the circle (#293 Copilot review). Projecting the corners
+// through the map's own CRS and requesting the export in EPSG:3857 (meters) instead makes the
+// image's internal projection match exactly what Leaflet stretches it into.
 function satelliteBboxParams(bounds: L.LatLngBounds, sizePx: number): URLSearchParams {
-  const sw = bounds.getSouthWest();
-  const ne = bounds.getNorthEast();
+  const sw = L.CRS.EPSG3857.project(bounds.getSouthWest());
+  const ne = L.CRS.EPSG3857.project(bounds.getNorthEast());
   return new URLSearchParams({
-    bbox: `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`,
-    bboxSR: "4326",
-    imageSR: "4326",
+    bbox: `${sw.x},${sw.y},${ne.x},${ne.y}`,
+    bboxSR: "3857",
+    imageSR: "3857",
     size: `${sizePx},${sizePx}`,
     f: "image",
   });

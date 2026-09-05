@@ -192,11 +192,13 @@ export async function runDestinations(): Promise<void> {
     const photosLoader = createLazyLoader(() => loadPhotosInto(region.region_id, photosBody));
     const trailsLoader = createLazyLoader(() => loadTrailheadsInto(region, trailsBody));
     const campsLoader = createLazyLoader(() => loadCampgroundsInto(region, campsBody));
-    // Selecting a card (not just opening a tab) starts all four detail fetches in the background,
-    // so a tab click after that just reveals already-loaded content instead of waiting on the
-    // network - "as much detail as possible, as fast as possible" for whichever destination has
-    // the user's attention right now. Each loader is still fetch-once/idempotent (createLazyLoader),
-    // so this is purely additive to the on-click behavior below, never a duplicate fetch.
+    // Selecting a card (not just opening a tab) starts every detail tab's fetch in the
+    // background - the whole point of the destination "pop" (#293): trails/campground markers
+    // (Trails/Campgrounds loaders' map side effects, clearTrailheadMarkers/plotTrailhead,
+    // clearCardCampMarkers/plotCardCamp - destination-tabs.ts) should appear around the
+    // selected destination immediately, not only after the user finds and clicks that tab. Each
+    // loader is still fetch-once/idempotent (createLazyLoader), so this is purely additive to
+    // the on-click behavior below, never a duplicate fetch.
     const prefetchDetails = (): void => {
       calendarLoader.open();
       photosLoader.open();

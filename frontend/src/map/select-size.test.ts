@@ -1,4 +1,4 @@
-import type L from "leaflet";
+import L from "leaflet";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // map.ts pulls in Leaflet (and the markercluster side-effect import) for real map wiring we
@@ -24,12 +24,19 @@ class FakeCircle {
 }
 
 vi.mock("leaflet.markercluster", () => ({}));
-vi.mock("leaflet", () => ({
-  default: {
-    circle: (latlng: unknown, options: { radius: number; fillOpacity: number }) =>
-      new FakeCircle(latlng, options),
-  },
-}));
+// Only `circle` needs stubbing (real map wiring we don't exercise here) - CRS.EPSG3857.project
+// is pure math with no DOM/network, so keep the real implementation for the satelliteImageUrl/
+// satelliteLabelsUrl tests below to project against.
+vi.mock("leaflet", async (importOriginal) => {
+  const actual = await importOriginal<{ default: typeof L }>();
+  return {
+    default: {
+      ...actual.default,
+      circle: (latlng: unknown, options: { radius: number; fillOpacity: number }) =>
+        new FakeCircle(latlng, options),
+    },
+  };
+});
 
 const fakeState: { markers: unknown[]; cellDeg: number } = { markers: [], cellDeg: 0.5 };
 vi.mock("../state", () => ({
@@ -84,19 +91,27 @@ describe("selectSize / deselectSize fill management", () => {
   });
 });
 
+// A bbox in EPSG:3857 meters, matching what Leaflet's own imageOverlay projects `bounds`
+// through to position the image - see the comment on satelliteBboxParams in map.ts for why
+// requesting anything else (e.g. plain lat/lng degrees) mismatches and distorts the image.
+const sw3857 = L.CRS.EPSG3857.project(L.latLng(47.5, -122.4));
+const ne3857 = L.CRS.EPSG3857.project(L.latLng(47.6, -122.3));
+const expectedBbox = `${sw3857.x},${sw3857.y},${ne3857.x},${ne3857.y}`;
+
 describe("satelliteImageUrl", () => {
-  it("requests a square jpg sized to the circle's bounding box, in lng,lat bbox order", () => {
+  it("requests a square jpg sized to the circle's bounding box, projected into EPSG:3857 meters", () => {
     const bounds = {
-      getSouthWest: () => ({ lng: -122.4, lat: 47.5 }),
-      getNorthEast: () => ({ lng: -122.3, lat: 47.6 }),
+      getSouthWest: () => L.latLng(47.5, -122.4),
+      getNorthEast: () => L.latLng(47.6, -122.3),
     } as unknown as L.LatLngBounds;
 
     const url = new URL(satelliteImageUrl(bounds, 640));
     expect(url.origin + url.pathname).toBe(
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export",
     );
-    expect(url.searchParams.get("bbox")).toBe("-122.4,47.5,-122.3,47.6");
-    expect(url.searchParams.get("bboxSR")).toBe("4326");
+    expect(url.searchParams.get("bbox")).toBe(expectedBbox);
+    expect(url.searchParams.get("bboxSR")).toBe("3857");
+    expect(url.searchParams.get("imageSR")).toBe("3857");
     expect(url.searchParams.get("size")).toBe("640,640");
     expect(url.searchParams.get("format")).toBe("jpg");
   });
@@ -105,15 +120,15 @@ describe("satelliteImageUrl", () => {
 describe("satelliteLabelsUrl", () => {
   it("requests a transparent png from the boundaries/places reference service with the same bbox", () => {
     const bounds = {
-      getSouthWest: () => ({ lng: -122.4, lat: 47.5 }),
-      getNorthEast: () => ({ lng: -122.3, lat: 47.6 }),
+      getSouthWest: () => L.latLng(47.5, -122.4),
+      getNorthEast: () => L.latLng(47.6, -122.3),
     } as unknown as L.LatLngBounds;
 
     const url = new URL(satelliteLabelsUrl(bounds, 640));
     expect(url.origin + url.pathname).toBe(
       "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/export",
     );
-    expect(url.searchParams.get("bbox")).toBe("-122.4,47.5,-122.3,47.6");
+    expect(url.searchParams.get("bbox")).toBe(expectedBbox);
     expect(url.searchParams.get("format")).toBe("png32");
     expect(url.searchParams.get("transparent")).toBe("true");
   });
