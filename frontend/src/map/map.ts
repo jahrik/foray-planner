@@ -266,10 +266,12 @@ const SATELLITE_ATTRIBUTION = "Imagery © Esri";
 // Requested image is always square (the geo bounds passed in are already the circle's bounding
 // square - see showSatelliteOverlay), so a plain CSS circle() clip on it lands exactly on the
 // true circle with no per-selection coordinate math. Clamped so a fully zoomed-out circle (a
-// handful of screen pixels) doesn't fetch a needlessly huge image, and a fully zoomed-in one
-// doesn't ask Esri for more than a sane single-request size.
+// handful of screen pixels) doesn't fetch a needlessly huge image. The upper bound is Esri's own
+// server-side cap, confirmed live (a size=8192,8192 request still comes back 4096x4096) - asking
+// for less than that let a deeply-zoomed circle's on-screen box outgrow the fetched image and
+// get CSS-stretched blurry (live repro: a 1024x1024 image held in a 4318x4317 CSS box).
 const SATELLITE_MIN_PX = 256;
-const SATELLITE_MAX_PX = 1024;
+const SATELLITE_MAX_PX = 4096;
 
 // Leaflet's imageOverlay stretches the fetched image linearly to fill `bounds` as *projected by
 // the map's own CRS* (Web Mercator, EPSG:3857) - not linearly by lat/lng. Requesting the export
