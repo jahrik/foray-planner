@@ -9,20 +9,20 @@ license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = [
     "pyinaturalist>=0.19,<1.0",
-    "psycopg[binary,pool]>=3.3.4,<4.0",
+    "psycopg[binary,pool]>=3.3.5,<4.0",
     "fastapi>=0.141.1,<1.0",
     # Pulled in transitively by starlette; declared explicitly because api/app.py imports it
     # directly to cap the sync-handler thread pool to the DB pool size.
     "anyio>=4.0,<5.0",
     "uvicorn[standard]>=0.52.4,<1.0",
     "pydantic-settings>=2.15.0,<3.0",
-    "click>=8.1,<9.0",
+    "click>=8.5.0,<9.0",
     "httpx>=0.27,<1.0",
     # inat.py imports requests.exceptions and pyrate_limiter.exceptions directly (to catch
     # and re-raise them as typed errors); pin them explicitly rather than relying on
     # pyinaturalist to keep pulling them in.
     "requests>=2.32,<3.0",
-    "pyrate-limiter>=2.10,<3.0",
+    "pyrate-limiter>=4.5.0,<5.0",
     "tqdm>=4.70.0,<5.0",
     "rasterio>=1.4,<2.0",
 ]
@@ -39,8 +39,8 @@ dev = [
     "pre-commit>=4.6.2,<5.0",
     "pytest>=8.3,<10.0",
     "pytest-cov>=6.0,<8.0",
-    "ruff>=0.16.4,<1.0",
-    "ty>=0.0.74,<1.0",
+    "ruff>=0.16.5,<1.0",
+    "ty>=0.0.77,<1.0",
     "vulture>=2.14,<3.0",
 ]
 
