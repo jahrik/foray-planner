@@ -281,6 +281,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/destinations/{region_id}/satellite/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Region Satellite Image
+         * @description A selected destination's aerial photo (#293 follow-up) - see `_region_satellite_bytes`.
+         */
+        get: operations["get_region_satellite_image_api_destinations__region_id__satellite_image_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/destinations/{region_id}/satellite/labels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Region Satellite Labels
+         * @description The same destination's transparent roads/place-labels overlay - see `_region_satellite_bytes`.
+         */
+        get: operations["get_region_satellite_labels_api_destinations__region_id__satellite_labels_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/trails": {
         parameters: {
             query?: never;
@@ -1367,6 +1407,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RegionPlace"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_region_satellite_image_api_destinations__region_id__satellite_image_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                region_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_region_satellite_labels_api_destinations__region_id__satellite_labels_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                region_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
