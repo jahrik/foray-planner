@@ -24,19 +24,19 @@
     "openapi-fetch": "^0.17.0"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.5",
+    "@eslint/js": "^10.0.1",
     "@types/leaflet": "^1.9.12",
     "@types/leaflet.markercluster": "^1.5.6",
-    "eslint": "^9.39.5",
+    "eslint": "^10.9.1",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.11.0",
     "openapi-typescript": "^7.4.0",
     "prettier": "^3.9.6",
-    "jsdom": "^25.0.1",
-    "typescript": "^5.6.0",
+    "jsdom": "^30.0.1",
+    "typescript": "^7.0.2",
     "typescript-eslint": "^8.69.0",
     "vite": "^8.1.4",
     "vite-plugin-pwa": "^1.3.0",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   }
 }
