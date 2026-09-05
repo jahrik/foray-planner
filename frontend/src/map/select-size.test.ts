@@ -23,12 +23,17 @@ class FakeCircle {
 }
 
 vi.mock("leaflet.markercluster", () => ({}));
-vi.mock("leaflet", () => ({
-  default: {
-    circle: (latlng: unknown, options: { radius: number; fillOpacity: number }) =>
-      new FakeCircle(latlng, options),
-  },
-}));
+// Only `circle` needs stubbing - real map wiring we don't exercise here.
+vi.mock("leaflet", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    default: {
+      ...(actual.default as object),
+      circle: (latlng: unknown, options: { radius: number; fillOpacity: number }) =>
+        new FakeCircle(latlng, options),
+    },
+  };
+});
 
 const fakeState: { markers: unknown[]; cellDeg: number } = { markers: [], cellDeg: 0.5 };
 vi.mock("../state", () => ({
@@ -39,7 +44,7 @@ vi.mock("../state", () => ({
   qs: () => null,
 }));
 
-import { deselectSize, plot, selectSize } from "./map";
+import { deselectSize, plot, satelliteImageUrl, satelliteLabelsUrl, selectSize } from "./map";
 
 beforeEach(() => {
   fakeState.markers = [];
@@ -49,8 +54,8 @@ describe("selectSize / deselectSize fill management", () => {
   const fill = (circle: unknown): number => (circle as FakeCircle).style.fillOpacity;
 
   it("drops every other destination circle to stroke-only on select, restores on deselect", () => {
-    const strong = plot(47.6, -122.3, 0.8, false);
-    const weak = plot(47.7, -122.4, 0.2, false);
+    const strong = plot(47.6, -122.3, 0.8, false, "95_-245");
+    const weak = plot(47.7, -122.4, 0.2, false, "95_-246");
 
     selectSize(strong);
     expect(fill(strong)).toBeCloseTo(0.08); // the focused circle itself
@@ -61,8 +66,8 @@ describe("selectSize / deselectSize fill management", () => {
   });
 
   it("re-dims the rest when selection moves to another circle", () => {
-    const a = plot(47.6, -122.3, 0.5, false);
-    const b = plot(47.7, -122.4, 0.5, false);
+    const a = plot(47.6, -122.3, 0.5, false, "95_-245");
+    const b = plot(47.7, -122.4, 0.5, false, "95_-246");
 
     selectSize(a);
     // card-select's grow(): deselect the old, then select the new
@@ -74,11 +79,23 @@ describe("selectSize / deselectSize fill management", () => {
   });
 
   it("leaves markers it never plotted (plan pins, etc.) untouched", () => {
-    const plotted = plot(47.6, -122.3, 0.5, false);
+    const plotted = plot(47.6, -122.3, 0.5, false, "95_-245");
     const foreign = { style: { fillOpacity: 0.9 }, setStyle: vi.fn() };
     fakeState.markers.push(foreign);
 
     selectSize(plotted);
     expect(foreign.setStyle).not.toHaveBeenCalled();
+  });
+});
+
+// Proxied through our own API (sources/satellite.py) rather than the browser hitting Esri
+// directly - see the comment on showSatelliteOverlay in map.ts for why.
+describe("satelliteImageUrl / satelliteLabelsUrl", () => {
+  it("addresses the region's cached satellite image through our own API", () => {
+    expect(satelliteImageUrl("95_-245")).toBe("/api/destinations/95_-245/satellite/image");
+  });
+
+  it("addresses the same region's cached labels overlay through our own API", () => {
+    expect(satelliteLabelsUrl("95_-245")).toBe("/api/destinations/95_-245/satellite/labels");
   });
 });

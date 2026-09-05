@@ -8,10 +8,14 @@ from typing import Any
 from fastapi import FastAPI, Request, Response
 
 # Public-facing app serving an HTML+JS frontend - locked down to what the frontend actually
-# needs (Leaflet bundled as 'self', OSM tiles/Nominatim as the only third-party origins) so an
-# XSS bug can't exfiltrate to or load script from anywhere else. style-src needs 'unsafe-inline'
-# because the frontend sets `style="..."` attributes directly (map legend swatches, score bars,
-# phenology heatmap cells) - much lower risk than script injection, so that's an accepted gap.
+# needs (Leaflet bundled as 'self'; connect-src/script-src third-party origins limited to
+# Nominatim; img-src additionally allows OSM tiles and iNaturalist's photo hosts) so an XSS bug
+# can't exfiltrate to or load script from anywhere else. style-src needs 'unsafe-inline' because
+# the frontend sets `style="..."` attributes directly (map legend swatches, score bars, phenology
+# heatmap cells) - much lower risk than script injection, so that's an accepted gap. The selected
+# destination's satellite fill (map.ts showSatelliteOverlay) is 'self' only - it's proxied and
+# cached through our own /api/destinations/{region_id}/satellite/* routes (sources/satellite.py)
+# rather than the browser hitting Esri directly, so no arcgisonline.com entry is needed here.
 _CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
     "script-src 'self'; "

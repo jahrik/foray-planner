@@ -31,8 +31,13 @@ panel lists them in order with a score bar and the number of species active ther
 - **Magenta markers** = strong historical signal for the selected months
 - **Cyan markers** = magenta + something was actually observed there recently
 - Bigger marker = stronger signal; marker size and color update every time you re-rank
-- Clicking a card snaps its marker to true size and dims every other circle to an
-  outline so the basemap underneath stays readable in dense clusters
+- Clicking a card snaps its marker to true size, dims every other circle to an outline
+  so the basemap underneath stays readable in dense clusters, and fills that true
+  footprint with a satellite image so the ground you'd actually be standing on is the
+  one thing on the map rendered bold and sharp
+- All four detail tabs below (Calendar/Photos/Trails/Campgrounds) start loading the
+  moment you select a card, in the background - by the time you click one, it's
+  usually already there
 
 Each card title starts as rank + distance and backfills with a notable place name
 (national park/forest, protected area, or nearest settlement) once it's looked up.
@@ -65,18 +70,20 @@ links directly to the iNat observation page and flags obscured (GPS-fuzzy) sight
 ## Camping layers
 
 Each layer is off by default; toggle it on and the map plots it for whichever region
-is currently focused (click a card, or fly to a stop on the Plan route tab).
-**Public land** and **Trails** live in the always-visible Filters row; **Campgrounds**,
-**Dispersed**, and **Free only** live under the Plan route tab's Camping controls, but
-apply to the map regardless of which tab you're on.
+is currently focused (click a card, or fly to a stop on the Plan route tab). Trails
+themselves aren't a separate toggle - they live inside each card's **Trails** tab
+instead (see above).
+
+**Public land** (BLM/USFS/Tribal) and **Fire** live in the always-visible Layers row;
+**Campgrounds**, **Dispersed**, and **Free only** live under the Plan route tab's
+Camping controls, but apply to the map regardless of which tab you're on.
 
 | Toggle | What it shows | Marker |
 |---|---|---|
 | **Campgrounds** | Named campgrounds from Recreation.gov | Gold = free, Amber = fee/unknown |
 | **Dispersed** | Backcountry / dispersed campsites tagged in OpenStreetMap | Teal dot = reported site |
 | **Free only** | Filters both camping layers to free/no-fee options only | - |
-| **Public land** | Land ownership polygons shaded by agency (BLM/USFS) | Ochre = BLM, Violet = USFS |
-| **Trails** | Hiking paths, named routes & trailheads near the hotspot | Red lines = trails, Red dots = trailheads |
+| **BLM / USFS / Tribal land** | Land ownership polygons shaded by agency | Ochre = BLM, Violet = USFS, Blue = Tribal land |
 | **Fire** | Active wildfire perimeters/points + recent burn scars (NIFC/MTBS) | Red = active fire, Burnt orange = burn scar (dimmer with age) |
 
 **A note on dispersed camping:** the Dispersed layer shows only sites that someone
@@ -164,6 +171,7 @@ Camping data (c) [OpenStreetMap](https://www.openstreetmap.org) contributors (OD
 [Recreation.gov](https://recreation.gov) RIDB API. Land boundaries via BLM and USFS
 ArcGIS services. Geocoding (c) OpenStreetMap / Nominatim. Elevation and rainfall via
 [Open-Meteo](https://open-meteo.com); wildfire perimeters and burn scars via NIFC/MTBS.
+Satellite imagery under a selected destination (c) [Esri](https://www.esri.com).
 
 ---
 

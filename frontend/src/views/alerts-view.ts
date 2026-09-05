@@ -37,7 +37,7 @@ export async function runAlerts(): Promise<void> {
   const cardSelection = createCardSelection(panel);
   regions.forEach((region) => {
     const weight = Math.min(1, region.total / 10);
-    const marker = plot(region.center_lat, region.center_lng, weight, true);
+    const marker = plot(region.center_lat, region.center_lng, weight, true, region.region_id);
     const card = document.createElement("div");
     card.className = "rank";
 

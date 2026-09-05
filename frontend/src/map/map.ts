@@ -133,6 +133,11 @@ function preciseClusterIcon(cluster: L.MarkerCluster): L.DivIcon {
 export function initMap(home: Home): void {
   map = L.map("map").setView([home.lat, home.lng], 7);
   setTiles();
+  // Sits above the basemap tiles but below the vector overlay pane (circles, trails, markers -
+  // default z-index 400) so the selected destination's ring and every other layer still draw on
+  // top of the satellite image, not under it (see showSatelliteOverlay).
+  map.createPane("satellite");
+  map.getPane("satellite")!.style.zIndex = "350";
   preciseCluster = L.markerClusterGroup({
     iconCreateFunction: preciseClusterIcon,
     maxClusterRadius: 40,
@@ -180,8 +185,13 @@ const KM_PER_DEG = 111.0;
 export const regionRadiusKm = (): number => (state.cellDeg * KM_PER_DEG) / 2;
 
 // Per-marker sizing so a selected region can snap between its score size and its true
-// geographic footprint (see selectSize/deselectSize below) without re-plotting.
-const sizing = new WeakMap<L.Circle, { scoreRadius: number; trueRadius: number; weight: number }>();
+// geographic footprint (see selectSize/deselectSize below) without re-plotting. `regionId` rides
+// along so selectSize can address this marker's satellite fill (showSatelliteOverlay) without
+// widening its own signature - every caller already has the marker, not all of them the region.
+const sizing = new WeakMap<
+  L.Circle,
+  { scoreRadius: number; trueRadius: number; weight: number; regionId: string }
+>();
 
 // The score-scaled fill a destination circle sits at when nothing is selected. Pulled out so
 // selectSize/deselectSize and the "dim everything else" pass below all agree on one formula.
@@ -213,7 +223,7 @@ function setOthersFill(selected: L.Circle, ringOnly: boolean): void {
 // L.circleMarker's fixed pixel radius) so selecting a region can snap it to its true cell_deg
 // footprint (selectSize) - see the comment there for why - and so at any size the circle still
 // scales correctly with zoom instead of reading as an arbitrary screen-space blob.
-export function plot(lat: number, lng: number, weight: number, live: boolean): L.Circle {
+export function plot(lat: number, lng: number, weight: number, live: boolean, regionId: string): L.Circle {
   const trueRadius = ((state.cellDeg * KM_PER_DEG) / 2) * 1000;
   const scoreRadius = trueRadius * (0.3 + weight);
   const marker = L.circle([lat, lng], {
@@ -225,7 +235,7 @@ export function plot(lat: number, lng: number, weight: number, live: boolean): L
     weight: 1.5,
     bubblingMouseEvents: false,
   }).addTo(map);
-  sizing.set(marker, { scoreRadius, trueRadius, weight });
+  sizing.set(marker, { scoreRadius, trueRadius, weight, regionId });
   state.markers.push(marker);
   return marker;
 }
@@ -243,17 +253,73 @@ export function setFocused(lat: number, lng: number): void {
   state.focused = { lat, lng };
 }
 
+// Proxied and cached through our own API (sources/satellite.py, #293 follow-up) rather than the
+// browser hitting Esri directly: a live export at full resolution takes 25-45s server-side, and
+// `foray backfill-satellite` pre-fetches every known region so a selection is normally an
+// instant cache hit instead of paying that render time in the browser. `regionId` addresses the
+// same fixed grid cell the circle's true footprint (regionRadiusKm) already matches server-side.
+const SATELLITE_ATTRIBUTION = "Imagery © Esri";
+
+export function satelliteImageUrl(regionId: string): string {
+  return `/api/destinations/${regionId}/satellite/image`;
+}
+
+export function satelliteLabelsUrl(regionId: string): string {
+  return `/api/destinations/${regionId}/satellite/labels`;
+}
+
+let satelliteOverlay: L.ImageOverlay | null = null;
+let satelliteLabelsOverlay: L.ImageOverlay | null = null;
+
+// Fills the selected destination's true footprint with a satellite image plus its matching
+// roads/labels overlay (so streets and city names stay readable, not just the bare photo),
+// clipped to a circle in CSS (style.css's .sat-circle-overlay) rather than requested
+// pre-clipped, so each is one plain rectangular image request. Both render in their own pane
+// between the tiles and the vector overlay pane (see initMap) so the destination circle's
+// ring/stroke and every other layer still draw on top - only the basemap underneath the
+// selection is replaced, nothing else dims or hides. Fetched once - not re-requested on zoom
+// (Leaflet re-scales the same raster onto `bounds` for free), so selecting a destination costs
+// exactly one load, not a fresh reload/flash on every zoom step.
+export function showSatelliteOverlay(marker: L.Circle, regionId: string): void {
+  if (!map) return; // unit tests exercise selectSize()'s fill logic without a real map/initMap()
+  clearSatelliteOverlay();
+  const bounds = marker.getBounds();
+  satelliteOverlay = L.imageOverlay(satelliteImageUrl(regionId), bounds, {
+    className: "sat-circle-overlay",
+    pane: "satellite",
+    interactive: false,
+  }).addTo(map);
+  satelliteLabelsOverlay = L.imageOverlay(satelliteLabelsUrl(regionId), bounds, {
+    className: "sat-circle-overlay",
+    pane: "satellite",
+    interactive: false,
+  }).addTo(map);
+  map.attributionControl.addAttribution(SATELLITE_ATTRIBUTION);
+}
+
+export function clearSatelliteOverlay(): void {
+  // Checks both, not just satelliteOverlay - the two are always set/cleared together in normal
+  // use, but gating on only one risks leaving the other (or the attribution) stale if that ever
+  // stops being true (#293 Copilot review).
+  if (!satelliteOverlay && !satelliteLabelsOverlay) return;
+  satelliteOverlay = clearLayer(map, satelliteOverlay);
+  satelliteLabelsOverlay = clearLayer(map, satelliteLabelsOverlay);
+  map.attributionControl.removeAttribution(SATELLITE_ATTRIBUTION);
+}
+
 // Selecting a region (marker or card click) snaps its circle from the score-sized preview to
 // its true real-world cell_deg footprint, computed from the same live config value as plot()
 // (never hard-coded), so the user can see exactly how much ground that dot actually represents.
 // Fill goes very transparent at this size so the map underneath - which the circle now likely
-// covers a large part of - stays readable.
+// covers a large part of - stays readable. The satellite overlay (above) fills that same
+// footprint with imagery so "the map underneath" is actually worth looking at.
 export function selectSize(marker: L.Circle): void {
   const info = sizing.get(marker);
   if (!info) return;
   marker.setRadius(info.trueRadius);
   marker.setStyle({ fillOpacity: 0.08 });
   setOthersFill(marker, true);
+  showSatelliteOverlay(marker, info.regionId);
 }
 
 // Reverts a previously selected marker back to its score-scaled preview size/opacity - called
@@ -280,6 +346,7 @@ export function clearMarkers(): void {
   clearSelectedTrail();
   clearPlanRoute();
   clearPrecise();
+  clearSatelliteOverlay();
   state.focused = null;
 }
 

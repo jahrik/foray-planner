@@ -107,8 +107,17 @@ export async function runDestinations(): Promise<void> {
   // Each card's place-name lookup (issue #206) runs after the initial render, not inline in
   // this map() - see the sequential loop below.
   const titleTargets: { region: RegionScore; rank: number; numSpan: HTMLElement }[] = [];
+  // One entry per card, same index as `markers` - see prefetchDetails below and the top-result
+  // auto-select at the end of this function.
+  const prefetchTargets: (() => void)[] = [];
   const markers = regions.map((region, rank) => {
-    const marker = plot(region.center_lat, region.center_lng, region.score_norm, region.recent_count > 0);
+    const marker = plot(
+      region.center_lat,
+      region.center_lng,
+      region.score_norm,
+      region.recent_count > 0,
+      region.region_id,
+    );
     const card = document.createElement("div");
     card.className = "rank";
     card.innerHTML = `
@@ -189,6 +198,20 @@ export async function runDestinations(): Promise<void> {
     const photosLoader = createLazyLoader(() => loadPhotosInto(region.region_id, photosBody));
     const trailsLoader = createLazyLoader(() => loadTrailheadsInto(region, trailsBody));
     const campsLoader = createLazyLoader(() => loadCampgroundsInto(region, campsBody));
+    // Selecting a card (not just opening a tab) starts every detail tab's fetch in the
+    // background - the whole point of the destination "pop" (#293): trails/campground markers
+    // (Trails/Campgrounds loaders' map side effects, clearTrailheadMarkers/plotTrailhead,
+    // clearCardCampMarkers/plotCardCamp - destination-tabs.ts) should appear around the
+    // selected destination immediately, not only after the user finds and clicks that tab. Each
+    // loader is still fetch-once/idempotent (createLazyLoader), so this is purely additive to
+    // the on-click behavior below, never a duplicate fetch.
+    const prefetchDetails = (): void => {
+      calendarLoader.open();
+      photosLoader.open();
+      trailsLoader.open();
+      campsLoader.open();
+    };
+    prefetchTargets.push(prefetchDetails);
     const showTab = (tab: "species" | "calendar" | "photos" | "trails" | "camps") => {
       speciesTab.classList.toggle("active", tab === "species");
       calendarTab.classList.toggle("active", tab === "calendar");
@@ -236,6 +259,7 @@ export async function runDestinations(): Promise<void> {
       focusOnMap(region.center_lat, region.center_lng, 9);
       focusRegion(region.center_lat, region.center_lng);
       selectCard();
+      prefetchDetails();
     });
     // Opening any inner tab (Calendar/Trails/Campgrounds/…) is a detail view -> expand the sheet.
     // Capture phase: the per-tab handlers call stopPropagation(), so a bubble listener here
@@ -248,6 +272,7 @@ export async function runDestinations(): Promise<void> {
       }
       focusRegion(region.center_lat, region.center_lng);
       selectCard();
+      prefetchDetails();
     });
     rankList.appendChild(card);
     return marker;
@@ -261,9 +286,11 @@ export async function runDestinations(): Promise<void> {
   const top = regions[0];
   const topMarker = markers[0];
   const topCard = rankList.querySelector<HTMLElement>(".rank");
+  const topPrefetch = prefetchTargets[0];
   if (top && topMarker && topCard) {
     focusRegion(top.center_lat, top.center_lng);
     cardSelection.selectInitial(topCard, topMarker);
+    topPrefetch?.();
   }
 
   // Card titles start as rank + distance only; each card's notable-place name (issue #206)

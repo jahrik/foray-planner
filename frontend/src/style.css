@@ -391,6 +391,18 @@ main {
 :root[data-theme="dark"] #map .leaflet-tile-pane {
   filter: invert(1) hue-rotate(180deg);
 }
+/* The selected destination's satellite fill (map.ts showSatelliteOverlay). Its own pane sits
+   outside .leaflet-tile-pane so the dark-theme invert above never touches it - true color in
+   both themes. clip-path circle(50%) on a square bounding-box image lands exactly on the
+   circle's true footprint with no per-selection coordinate math (see map.ts for why the
+   requested bbox is square). A crisp border + shadow is what makes it read as "the one thing
+   that's sharp" against the desaturated basemap around it. */
+.sat-circle-overlay {
+  clip-path: circle(50% at 50% 50%);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+  filter: saturate(1.2) contrast(1.08);
+}
 #panel {
   background: var(--panel);
   border-left: 1px solid var(--border);
