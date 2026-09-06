@@ -72,11 +72,24 @@ def test_grid_cells_in_bbox_along_corridor_includes_the_line() -> None:
 
 
 def test_web_mercator_bbox_m_is_a_square_centered_on_the_point() -> None:
+    # radius_m=0 collapses the bbox to the point's own projection, independent of the
+    # radius=5000 call below - a real fixed point to check centering against, not an arithmetic
+    # identity that would pass even if the offset were applied unevenly.
+    point_x, point_y, _, _ = web_mercator_bbox_m(47.6038, -122.3301, 0.0)
     xmin, ymin, xmax, ymax = web_mercator_bbox_m(47.6038, -122.3301, 5000.0)
     assert xmax - xmin == pytest.approx(10000.0)
     assert ymax - ymin == pytest.approx(10000.0)
-    # Center of the box is the point's own projection, not shifted off to one side.
-    assert (xmin + xmax) / 2 == pytest.approx(xmin + (xmax - xmin) / 2)
+    assert (xmin + xmax) / 2 == pytest.approx(point_x)
+    assert (ymin + ymax) / 2 == pytest.approx(point_y)
+
+
+def test_web_mercator_bbox_m_clamps_latitude_to_the_valid_epsg3857_range() -> None:
+    # Past ~85.0511 degrees the projection diverges to +-infinity - clamp instead of raising,
+    # matching Leaflet's own CRS.EPSG3857 behavior, so an edge-of-grid region near a pole still
+    # gets a finite bbox rather than crashing the satellite fetch.
+    xmin, ymin, xmax, ymax = web_mercator_bbox_m(89.9, 0.0, 1000.0)
+    clamped_xmin, clamped_ymin, clamped_xmax, clamped_ymax = web_mercator_bbox_m(85.0511287798, 0.0, 1000.0)
+    assert (xmin, ymin, xmax, ymax) == pytest.approx((clamped_xmin, clamped_ymin, clamped_xmax, clamped_ymax))
 
 
 def test_web_mercator_bbox_m_matches_leafets_own_projection_at_the_equator() -> None:
