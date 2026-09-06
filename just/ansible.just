@@ -78,6 +78,14 @@ bulk-load-once: (_playbook "bulk-load-once")
 [group('deploy-once')]
 backfill-elevation-dem-once: (_playbook "backfill-elevation-dem-once")
 
+# Manual/opt-in only - the foray-backfill-satellite cron job (if configured) or a normal request
+# would otherwise fill region_satellite (#293) lazily, one cold cache-miss at a time. Use this to
+# warm every region's satellite fill immediately after a deploy instead of waiting - tile fetches
+# are cheap/reliable, so a full national-scale run finishes in minutes. Safe to re-run.
+[doc('Warm region_satellite on a fresh/updated droplet now instead of on cold-miss')]
+[group('deploy-once')]
+backfill-satellite-once: (_playbook "backfill-satellite-once")
+
 # One-time: populate <table>.geom for rows predating the PostGIS Phase 0 migration (#268). The
 # write triggers keep new rows current; this fills the backlog. Must hit 100% before the read
 # paths switch to geom. Idempotent + resumable; run behind the maintenance page for the big
