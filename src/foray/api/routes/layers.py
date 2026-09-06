@@ -162,9 +162,10 @@ def _region_satellite_bytes(region_id: str, state: AppState, pool: ConnectionPoo
     """Cached ``(image, labels)`` bytes for a region, fetching + caching on first request.
 
     Cached forever per region (`region_satellite`), same "fixed grid, never re-resolve"
-    reasoning as `get_region_place` above. Unlike that route's Nominatim call, a live Esri
-    export at the resolution the frontend wants takes 25-45s - `foray backfill-satellite` pays
-    that ahead of time for the known region set, so this cold path should be rare in practice.
+    reasoning as `get_region_place` above. A cache miss here fetches + stitches Esri tile-pyramid
+    imagery (`satellite.fetch_region_satellite`, ~1s) rather than a slow live `/export` render -
+    `foray backfill-satellite` pays that ahead of time for the known region set regardless, so
+    this cold path should be rare in practice.
     """
     with pool.connection() as conn:
         cached = db_load_region_satellite(conn, region_id)
