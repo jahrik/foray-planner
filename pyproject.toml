@@ -26,7 +26,7 @@ dependencies = [
     "tqdm>=4.70.0,<5.0",
     "rasterio>=1.4,<2.0",
     # sources/satellite.py stitches Esri XYZ map tiles into one raster per destination.
-    "pillow>=11.0,<12.0",
+    "pillow>=12.3.0,<13.0",
 ]
 
 [project.scripts]
