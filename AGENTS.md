@@ -192,12 +192,15 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   Selecting a destination (`selectSize` in `map.ts`) fills its true footprint with an Esri World
   Imagery raster plus a matching transparent roads/labels overlay (`showSatelliteOverlay`, its
   own Leaflet pane between the tile and vector overlay panes so the circle's ring/markers/trails
-  still draw on top, clipped to a circle in CSS rather than requested pre-clipped) - both
-  re-requested on `zoomend` at the circle's current on-screen pixel size so they stay sharp
-  instead of stretching into a blur, and, in `views.ts`, kicks off all four detail-tab fetches
+  still draw on top, clipped to a circle in CSS rather than requested pre-clipped). The frontend
+  just requests `/api/destinations/{region_id}/satellite/{image,labels}`; the backend
+  (`sources/satellite.py`, `region_satellite` table, `foray backfill-satellite`) stitches both
+  rasters from Esri's real XYZ tile pyramids rather than the dynamic `MapServer/export` renderer
+  - see docs/data-sources.md and the **ArcGIS/Esri fetches** convention below for why that
+  distinction matters. Fetched once per region and never re-requested on zoom (Leaflet re-scales
+  the one raster for free). In `views.ts`, selection also kicks off all four detail-tab fetches
   (Calendar/Photos/Trails/Campgrounds) in the background via their existing `createLazyLoader`s -
-  a tab click after that just reveals already-loaded content. Both are basemap-shaped, client-
-  side-only additions (no DB storage, no backend route) - see docs/data-sources.md.
+  a tab click after that just reveals already-loaded content.
 
 ## Conventions
 
@@ -208,6 +211,29 @@ mocked).
 No CORS middleware is configured, which is intentionally safe by omission (no
 `Access-Control-Allow-Origin` = no cross-origin JS can read responses). Don't add one later
 without scoping `allow_origins` to the real domain.
+
+**Map imagery: prefer the provider's tile pyramid over a custom/dynamic render, always.** This is
+the general rule, not an Esri-specific one - it applies to any future imagery/basemap-style
+provider, not just ArcGIS. Every serious map provider (Esri, Mapbox, OSM, Google) actually
+distributes imagery as a "tile pyramid": the world pre-rendered once at each zoom level, chopped
+into a grid of small images addressed by `{z}/{x}/{y}`, pre-rendered and CDN-cached - this is
+what `L.tileLayer` (the OSM basemap in `map.ts`) is *built around*, and what every slippy map
+client expects. Most providers *also* expose a "flexible" dynamic-render endpoint (Esri's
+`MapServer/export`: give it any bbox/size, it renders an image on the spot) that looks like the
+simpler integration - one call instead of tile-grid math - but isn't: it does real work per
+request instead of handing back something already computed, so it's slow (25-45s per call for
+Esri's, measured, issue #293), unreliable under load (~95% failure rate at just 6 concurrent
+requests), and can have quality quirks a tile pyramid doesn't (Esri's label layer draws text at a
+fixed pixel height regardless of requested resolution, so a big sharp export makes text
+illegibly tiny - a tile pyramid's labels are correctly sized per zoom by construction, the same
+as every other slippy map). Before integrating a new imagery source, check whether it publishes a
+tile pyramid (for ArcGIS: `.../MapServer?f=json` -> `"capabilities"` says `"Map,Tilemap"`) and
+reach for that first. `sources/satellite.py` is the reference implementation: compute the tile
+range covering your target bbox at a chosen zoom, fetch tiles concurrently, stitch + crop with
+Pillow to the exact bbox (since an arbitrary bbox won't land on tile boundaries). This doesn't
+apply to *vector*/attribute data - `sources/land.py`/`sources/fire.py`/`sources/trails.py`'s
+ArcGIS `query`/`FeatureServer` endpoints return features, not pixels, and are the right tool for
+that regardless of what imagery capabilities the same server might also expose.
 
 ## Commands
 

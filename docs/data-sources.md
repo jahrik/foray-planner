@@ -119,27 +119,38 @@ roads/labels overlay (`showSatelliteOverlay`, `frontend/src/map/map.ts`) so the 
 focused circle reads sharp and bold against the rest of the map, without losing the road/city
 names the OSM tile basemap would otherwise show there.
 
-- **Server-side, cached forever per region** (`region_satellite` table, `sources/satellite.py`) -
-  a live Esri export at full resolution takes 25-45s, which is fine paid once per region but not
-  something a page load should ever block on. The frontend's two `<img>` tags request
-  `/api/destinations/{region_id}/satellite/{image,labels}` instead of Esri directly; that route
-  serves the cached bytes (browser-cacheable forever - `Cache-Control: immutable`) or, on a
-  genuine cache miss, fetches + caches on the spot (a per-region lock coalesces the two `<img>`
-  tags' near-simultaneous requests so a cold region only pays Esri's render time once).
-  `foray backfill-satellite` pre-fetches every region in the `regions` table ahead of time so
-  this cold path is rare in practice.
-- **Endpoints:** ArcGIS REST `MapServer/export`, two services layered together, both under
-  `server.arcgisonline.com`, called only from `sources/satellite.py` (never the browser):
-  - `World_Imagery` - the aerial photo (jpg). Has zero labels baked in - it's a bare photo.
-  - `Reference/World_Boundaries_and_Places` - a transparent PNG of roads/borders/place labels,
-    Esri's standard pairing for `World_Imagery` (the "hybrid" satellite view), drawn on top.
-  Both requested at `MAX_PX` (4096px, Esri's own server-side cap - confirmed live, asking for
-  more just gets clamped back to 4096) and fetched concurrently to halve cold-cache latency.
-- **Resolution:** fetched once per region, at `MAX_PX`, and never re-requested on zoom - the
-  bounds are fixed geo coordinates, so Leaflet re-scales the same raster for any zoom level for
-  free. (v1 re-requested a lower-res image on every `zoomend` instead; that fixed one bug -
-  blurring past a fixed-size raster's native resolution - but introduced a full reload/flash on
-  every zoom step, which is what led to caching this server-side in the first place.)
+- **Server-side, cached forever per region** (`region_satellite` table, `sources/satellite.py`).
+  The frontend's two `<img>` tags request `/api/destinations/{region_id}/satellite/{image,labels}`
+  instead of Esri directly; that route serves the cached bytes (browser-cacheable forever -
+  `Cache-Control: immutable`) or, on a genuine cache miss, fetches + caches on the spot (a
+  per-region lock coalesces the two `<img>` tags' near-simultaneous requests so a cold region
+  only pays the fetch once). `foray backfill-satellite` pre-fetches every region in the `regions`
+  table ahead of time so this cold path is rare in practice.
+- **Endpoints:** both services are real XYZ tile pyramids under `server.arcgisonline.com`,
+  confirmed live via their `MapServer?f=json` capabilities (`"Map,Tilemap"`, not the dynamic
+  `MapServer/export` renderer `sources/land`/`sources/fire` use) - called only from
+  `sources/satellite.py` (never the browser):
+  - `World_Imagery/MapServer/tile/{z}/{y}/{x}` - the aerial photo (jpg). No labels baked in.
+  - `Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}` - a transparent PNG of
+    roads/borders/place labels, Esri's standard pairing for `World_Imagery` (the "hybrid"
+    satellite view), drawn on top.
+  `fetch_region_satellite` picks a zoom level for the region's radius, fetches every tile
+  covering its true (Web-Mercator-circle) bounding box, and stitches + crops them into one raster
+  per layer with Pillow - both layers fetched concurrently to halve cold-cache latency.
+- **Why tiles, not `/export`:** a `v1` of this fetched one big image from `MapServer/export`
+  instead. Two problems killed that approach: it renders on demand (25-45s per call, and degrades
+  to a ~95% failure rate under just 6 concurrent requests - Esri's free export service does not
+  hold up under sustained load), and its label layer draws text at a *fixed pixel height*
+  regardless of the requested resolution or `dpi` (confirmed live - this service also reports
+  `supportsDynamicLayers: false`, so there's no server-side override). That meant labels were
+  either legible-but-blurry (stretched onto the sharp imagery's bounds) or crisp-but-illegible
+  (rendered at the imagery's own high resolution, where the fixed-height text becomes a hairline).
+  A real tile pyramid doesn't have either problem: each zoom level's tiles are pre-rendered and
+  CDN-served (near-instant, no live-render latency or concurrency fragility) with text already
+  sized correctly for that zoom - the same reason the OSM basemap tiles never have this issue.
+- **Resolution:** fetched once per region, at a zoom level chosen for ~2048px across the disk,
+  and never re-requested on zoom - the bounds are fixed geo coordinates, so Leaflet re-scales the
+  same raster for any on-screen zoom level for free.
 - **No key required.** CORS-open (`Access-Control-Allow-Origin: *`) on both services, confirmed
   against the live endpoints.
 - **CSP:** `img-src` doesn't need an Esri entry - the browser only ever talks to our own origin
@@ -148,8 +159,9 @@ names the OSM tile basemap would otherwise show there.
   selection is active (`map.attributionControl.addAttribution`/`removeAttribution`).
 - **Backfill:** `foray backfill-satellite [--limit N] [--concurrency N]` (default concurrency 8) -
   fetches every region in `regions` missing from `region_satellite`. Safe to re-run (only
-  fetches what's still missing). Genuinely slow at national scale (thousands of regions x tens of
-  seconds each even with concurrency) - run it in the background, not inline.
+  fetches what's still missing). Tile fetches are cheap and reliable, so this finishes in minutes
+  even at national scale - no need to run it in the background across hours the way a live-render
+  approach would.
 
 ---
 

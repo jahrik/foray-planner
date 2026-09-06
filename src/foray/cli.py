@@ -254,18 +254,18 @@ def backfill_precip_cmd(ctx: click.Context, limit: int | None, rebuild: bool) ->
 @click.option(
     "--concurrency",
     type=int,
-    default=2,
-    help="Parallel Esri exports in flight. Esri's free service degrades hard (measured 95% "
-    "failure) under sustained higher concurrency - raise this only if you've verified it holds up.",
+    default=8,
+    help="Regions fetched in parallel. Each region's own tiles fetch concurrently too (see "
+    "sources.satellite) - these are cheap, CDN-served tile requests, not the slow live-render "
+    "exports the first version of this command used, so this can run much higher than you'd "
+    "guess from that history.",
 )
 @click.pass_context
 def backfill_satellite_cmd(ctx: click.Context, limit: int | None, concurrency: int) -> None:
     """Fetch + cache the satellite fill (#293 follow-up) for every region that doesn't have it
-    yet, so a destination's map selection never pays Esri's ~30-45s live render time. Safe to
-    re-run - only fetches regions still missing from `region_satellite`. This is a genuinely
-    slow, one-time-per-region operation (thousands of regions x tens of seconds each, plus
-    retries with backoff on failure - see `sources.satellite._RETRY_BACKOFFS_S`); run it in the
-    background and let it drain over hours, not inline."""
+    yet, so a destination's map selection never waits on a live tile fetch. Safe to re-run -
+    only fetches regions still missing from `region_satellite`. Tile fetches are fast (CDN-cached,
+    not rendered on demand), so this should finish in minutes even at national scale, not hours."""
     cfg = ctx.obj["cfg"]
     con = connect()
     try:

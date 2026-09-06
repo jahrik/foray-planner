@@ -1,108 +1,152 @@
 """Esri satellite imagery for a selected destination's map fill (#293 follow-up).
 
-Two exports per region, fetched together and cached forever in ``region_satellite`` (regions
+Two rasters per region, fetched together and cached forever in ``region_satellite`` (regions
 are a fixed grid - see ``cache.region_places``): the aerial photo (``World_Imagery``, no labels
 baked in) plus its standard "hybrid" pairing, a transparent PNG of roads/borders/place names
-(``Reference/World_Boundaries_and_Places``). Both no-key, CORS-open ArcGIS REST services, same
-shape as ``sources.land``/``sources.fire``. Esri's server clamps the requested size to its own
-cap regardless of what's asked for - confirmed live, a ``size=8192,8192`` request still comes
-back 4096x4096 - so ``MAX_PX`` requests exactly that ceiling.
+(``Reference/World_Boundaries_and_Places``). Both are real XYZ tile pyramids - confirmed live via
+their ``MapServer?f=json`` capabilities (``"Map,Tilemap"``) - not the dynamic ``MapServer/export``
+renderer sources/land and sources/fire use. That distinction matters a lot here:
+
+- ``/export`` renders on demand (25-45s at any real resolution) and degrades hard under
+  concurrent load (measured 95% failure rate at just 6 concurrent requests).
+- The tile endpoints serve pre-rendered, CDN-cached 256x256 tiles - each one returns in well
+  under a second, same as the OSM basemap tiles the frontend already fetches directly.
+- Critically, ``/export``'s label layer draws text at a fixed pixel height regardless of the
+  requested resolution or ``dpi`` (confirmed live; this service also reports
+  ``supportsDynamicLayers: false``, so there's no server-side override) - so a big single export
+  either has illegibly tiny text or, at a legible size, blurs when stretched to match a sharp
+  image layer. A real tile *pyramid* doesn't have this problem: each zoom level's tiles are
+  authored with text sized correctly for that zoom, exactly like every other slippy map.
+
+So instead of one big export call, ``fetch_region_satellite`` picks a zoom level for the
+region's radius, fetches every tile covering its true (Web-Mercator-circle) bounding box, and
+stitches + crops them into one raster with :mod:`PIL.Image` - giving a result that's crisp *and*
+legible at once, with no per-request render latency.
 """
 
 from __future__ import annotations
 
 import logging
-import time
+import math
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 
 import httpx
 import psycopg
+from PIL import Image
 
 from foray.cache import save_region_satellite
 from foray.geo import KM_PER_DEG_LAT, web_mercator_bbox_m
 
 logger = logging.getLogger(__name__)
 
-IMAGE_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export"
-LABELS_URL = (
-    "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/export"
+IMAGE_TILE_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+LABELS_TILE_URL = (
+    "https://server.arcgisonline.com/ArcGIS/rest/services/"
+    "Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
 )
 
-# Esri's own server-side cap (see module docstring) - requesting more just wastes a round trip.
-MAX_PX = 4096
+TILE_PX = 256
+
+# Same Web Mercator radius as the tile services themselves (and Leaflet's default CRS - see
+# geo.web_mercator_bbox_m) - needed here to convert a bbox in projected meters to the tile
+# pyramid's global pixel space at a given zoom.
+_WEB_MERCATOR_R = 6378137.0
+_WEB_MERCATOR_CIRCUMFERENCE = 2 * math.pi * _WEB_MERCATOR_R
+
+# Aim for a destination circle raster around this many pixels across - plenty sharp for the map
+# fill without the tile-count (and request-count) blowing up: at this target, a typical 0.25deg
+# region cell is on the order of 60-90 tiles per layer, not the 250+ a sharper target would need.
+_TARGET_DIAMETER_PX = 2048
 
 
-def _export_params(bbox: tuple[float, float, float, float]) -> dict[str, str]:
+def _zoom_for_diameter(lat: float, diameter_m: float, target_px: int) -> int:
+    meters_per_pixel_target = diameter_m / target_px
+    meters_per_pixel_at_zoom_0 = _WEB_MERCATOR_CIRCUMFERENCE / TILE_PX * math.cos(math.radians(lat))
+    zoom = math.log2(meters_per_pixel_at_zoom_0 / meters_per_pixel_target)
+    return max(0, min(19, round(zoom)))
+
+
+def _meters_to_global_pixel(x: float, y: float, zoom: int) -> tuple[float, float]:
+    """Web Mercator meters -> the tile pyramid's global pixel space at ``zoom``.
+
+    Standard slippy-map convention: pixel x grows east, pixel y grows *south* (opposite of
+    Mercator's y, which grows north) - top-left of the pyramid is (-R*pi, +R*pi) in meters.
+    """
+    map_size = TILE_PX * (2**zoom)
+    px = (x + math.pi * _WEB_MERCATOR_R) / _WEB_MERCATOR_CIRCUMFERENCE * map_size
+    py = (math.pi * _WEB_MERCATOR_R - y) / _WEB_MERCATOR_CIRCUMFERENCE * map_size
+    return px, py
+
+
+def _fetch_tile(url_template: str, zoom: int, tile_x: int, tile_y: int, client: httpx.Client) -> Image.Image:
+    response = client.get(url_template.format(z=zoom, x=tile_x, y=tile_y))
+    response.raise_for_status()
+    return Image.open(BytesIO(response.content)).convert("RGBA")
+
+
+def _stitched_crop(
+    url_template: str, bbox: tuple[float, float, float, float], zoom: int, client: httpx.Client
+) -> Image.Image:
+    """Every tile covering ``bbox`` (Web Mercator meters) at ``zoom``, stitched and cropped to
+    exactly ``bbox``'s pixel footprint - so the result aligns pixel-for-pixel with the same
+    bbox regardless of where tile boundaries happen to fall."""
     xmin, ymin, xmax, ymax = bbox
-    return {
-        "bbox": f"{xmin},{ymin},{xmax},{ymax}",
-        "bboxSR": "3857",
-        "imageSR": "3857",
-        "size": f"{MAX_PX},{MAX_PX}",
-        "f": "image",
-    }
+    left, top = _meters_to_global_pixel(xmin, ymax, zoom)
+    right, bottom = _meters_to_global_pixel(xmax, ymin, zoom)
+    tile_x0, tile_y0 = int(left // TILE_PX), int(top // TILE_PX)
+    tile_x1, tile_y1 = int((right - 1) // TILE_PX), int((bottom - 1) // TILE_PX)
+
+    tile_xs = range(tile_x0, tile_x1 + 1)
+    tile_ys = range(tile_y0, tile_y1 + 1)
+    canvas = Image.new("RGBA", (len(tile_xs) * TILE_PX, len(tile_ys) * TILE_PX))
+
+    def fetch_one(coords: tuple[int, int]) -> tuple[int, int, Image.Image]:
+        tile_x, tile_y = coords
+        return tile_x, tile_y, _fetch_tile(url_template, zoom, tile_x, tile_y, client)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        for tile_x, tile_y, tile in executor.map(fetch_one, ((x, y) for x in tile_xs for y in tile_ys)):
+            canvas.paste(tile, ((tile_x - tile_x0) * TILE_PX, (tile_y - tile_y0) * TILE_PX))
+
+    crop_box = (
+        round(left - tile_x0 * TILE_PX),
+        round(top - tile_y0 * TILE_PX),
+        round(left - tile_x0 * TILE_PX + (right - left)),
+        round(top - tile_y0 * TILE_PX + (bottom - top)),
+    )
+    return canvas.crop(crop_box)
 
 
 def fetch_region_satellite(
     lat: float, lng: float, radius_m: float, *, client: httpx.Client | None = None
 ) -> tuple[bytes, bytes]:
-    """Fetch ``(image_jpeg, labels_png)`` bytes for the disk of ``radius_m`` around ``(lat, lng)``.
-
-    Each export takes 25-45s server-side at ``MAX_PX`` (Esri renders it on demand) - fine for a
-    one-time backfill or cache-miss fetch, never something a page load should block on for long,
-    hence the generous timeout. The two exports are independent, so they run concurrently rather
-    than back-to-back - halves the worst-case cold-cache latency a live request pays (a live API
-    request only ever calls this once per region - see the coalescing lock in
-    ``api.routes.layers._region_satellite_bytes`` - so this is the only place that matters for
-    single-request latency; ``backfill_region_satellite``'s own concurrency is across regions).
-    Raises ``httpx.HTTPError`` on failure - callers decide whether to degrade (API route re-raises
-    as a 502) or retry (the backfill CLI just moves on).
+    """Fetch ``(image_jpeg, labels_png)`` bytes for the disk of ``radius_m`` around ``(lat, lng)``,
+    stitched from Esri's tile pyramids (see module docstring). Both layers are stitched at the
+    same zoom, concurrently, since they're independent - halving the worst-case cold-cache
+    latency a live request pays (the coalescing lock in ``api.routes.layers._region_satellite_bytes``
+    means a live request only ever calls this once per region; ``backfill_region_satellite``'s own
+    concurrency is across regions, not within one). Raises ``httpx.HTTPError`` on failure.
     """
     bbox = web_mercator_bbox_m(lat, lng, radius_m)
+    zoom = _zoom_for_diameter(lat, radius_m * 2, _TARGET_DIAMETER_PX)
     owns = client is None
-    client = client or httpx.Client(timeout=90.0)
+    client = client or httpx.Client(timeout=30.0)
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            image_future = executor.submit(client.get, IMAGE_URL, params={**_export_params(bbox), "format": "jpg"})
-            labels_future = executor.submit(
-                client.get,
-                LABELS_URL,
-                params={**_export_params(bbox), "format": "png32", "transparent": "true"},
-            )
-            image_resp = image_future.result()
-            labels_resp = labels_future.result()
-        image_resp.raise_for_status()
-        labels_resp.raise_for_status()
-        return image_resp.content, labels_resp.content
+            image_future = executor.submit(_stitched_crop, IMAGE_TILE_URL, bbox, zoom, client)
+            labels_future = executor.submit(_stitched_crop, LABELS_TILE_URL, bbox, zoom, client)
+            image = image_future.result()
+            labels = labels_future.result()
+        image_bytes = BytesIO()
+        image.convert("RGB").save(image_bytes, format="JPEG", quality=90)
+        labels_bytes = BytesIO()
+        labels.save(labels_bytes, format="PNG")
+        return image_bytes.getvalue(), labels_bytes.getvalue()
     finally:
         if owns:
             client.close()
-
-
-# A first pass at concurrency 6 against ~3.6k regions measured a 95% failure rate (timeouts and
-# 504s) - Esri's free service degrades hard under sustained concurrent load, not just occasional
-# slow renders. 2 workers + a few retries with backoff trades wall-clock time for actually
-# finishing; a region that still fails after all retries is skipped (re-running only re-fetches
-# what's still missing, so nothing is lost by trying gentler and slower).
-_RETRY_BACKOFFS_S = (5.0, 15.0, 30.0)
-
-
-def _fetch_with_retries(region_id: str, lat: float, lng: float, radius_m: float) -> tuple[bytes, bytes] | None:
-    for attempt, backoff in enumerate((0.0, *_RETRY_BACKOFFS_S)):
-        if backoff:
-            time.sleep(backoff)
-        try:
-            return fetch_region_satellite(lat, lng, radius_m)
-        except httpx.HTTPError as error:
-            logger.warning(
-                "backfill-satellite: %s failed on attempt %d/%d (%s)",
-                region_id,
-                attempt + 1,
-                len(_RETRY_BACKOFFS_S) + 1,
-                error,
-            )
-    return None
 
 
 def backfill_region_satellite(
@@ -110,18 +154,17 @@ def backfill_region_satellite(
     *,
     cell_deg: float,
     max_regions: int | None = None,
-    concurrency: int = 2,
+    concurrency: int = 8,
     progress_cb: Callable[[str, int, int], None] | None = None,
 ) -> int:
     """Fetch + cache satellite imagery for every region that doesn't have it yet.
 
     Regions come from the `regions` table (materialized phenology - only cells with at least one
     observation exist there), so this backfills exactly the set of destinations the app can
-    actually show, not the whole globe. Each export is 25-45s of Esri render time under light
-    load, more under sustained load (see `_RETRY_BACKOFFS_S`) - fetches run `concurrency`-wide,
-    the DB write for each result happening back on this one connection as results complete,
-    serialized, since psycopg connections aren't thread-safe. A region that still fails after
-    every retry is logged and skipped, not fatal to the run - re-running only re-fetches the ones
+    actually show, not the whole globe. Tile fetches are cheap and reliable (CDN-served, not
+    rendered on demand - see module docstring), so `concurrency` can run much higher than the old
+    live-export approach could tolerate. A region whose tiles fail (rare - transient network
+    error) is logged and skipped, not fatal to the run - re-running only re-fetches the ones
     still missing.
     """
     limit_sql = "LIMIT %s" if max_regions is not None else ""
@@ -137,8 +180,12 @@ def backfill_region_satellite(
 
     def fetch_one(row: tuple[str, float, float]) -> tuple[str, bytes, bytes] | None:
         region_id, lat, lng = row
-        result = _fetch_with_retries(region_id, lat, lng, radius_m)
-        return None if result is None else (region_id, *result)
+        try:
+            image, labels = fetch_region_satellite(lat, lng, radius_m)
+        except httpx.HTTPError as error:
+            logger.warning("backfill-satellite: %s failed (%s)", region_id, error)
+            return None
+        return region_id, image, labels
 
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         for index, result in enumerate(executor.map(fetch_one, rows), start=1):
