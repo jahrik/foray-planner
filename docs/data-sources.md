@@ -1,9 +1,10 @@
 # Data sources
 
 All scored/ingested data is fetched at ingest time and cached in Postgres. The app runs queries
-against the cache - no live network calls happen during normal use, with one exception: the
-satellite overlay is basemap imagery, not scored data, fetched client-side the same way the OSM
-tile basemap already is (see Esri World Imagery below).
+against the cache - no live network calls happen during normal use. The satellite overlay is the
+one exception worth calling out: it's basemap imagery, not scored data, so it's cached per-region
+on first request rather than ingested up front for the whole coverage area - see Esri World
+Imagery below.
 
 ---
 

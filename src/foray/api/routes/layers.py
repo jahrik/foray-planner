@@ -193,7 +193,11 @@ def _region_satellite_bytes(region_id: str, state: AppState, pool: ConnectionPoo
 _SATELLITE_CACHE_CONTROL = "public, max-age=31536000, immutable"
 
 
-@router.get("/api/destinations/{region_id}/satellite/image")
+@router.get(
+    "/api/destinations/{region_id}/satellite/image",
+    response_class=Response,
+    responses={200: {"content": {"image/jpeg": {}}}},
+)
 def get_region_satellite_image(
     region_id: str,
     state: AppState = Depends(get_state),
@@ -205,7 +209,11 @@ def get_region_satellite_image(
     return Response(content=image, media_type="image/jpeg", headers={"Cache-Control": _SATELLITE_CACHE_CONTROL})
 
 
-@router.get("/api/destinations/{region_id}/satellite/labels")
+@router.get(
+    "/api/destinations/{region_id}/satellite/labels",
+    response_class=Response,
+    responses={200: {"content": {"image/png": {}}}},
+)
 def get_region_satellite_labels(
     region_id: str,
     state: AppState = Depends(get_state),

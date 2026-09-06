@@ -55,12 +55,17 @@ def bbox_around(lat: float, lng: float, radius_km: float) -> BBox:
 
 
 # Equatorial radius used by the standard "spherical" Web Mercator (EPSG:3857) that every slippy
-# tile / ArcGIS export service - and Leaflet's default CRS - projects through. Matches
-# Leaflet's L.CRS.EPSG3857 exactly (same R), which is what mattered here (#293 Copilot review):
-# the frontend projects a destination circle's bounds through this same CRS before requesting
-# its satellite export, so the two must agree or the fetched image mismatches what Leaflet
-# stretches it into.
+# tile / ArcGIS service - and Leaflet's default CRS - projects through. Matches Leaflet's
+# L.CRS.EPSG3857 exactly (same R): the frontend's destination circle (an L.circle with a meter
+# radius) and the backend's stitched satellite raster (sources.satellite) must agree on this
+# projection, or the fetched image mismatches what Leaflet stretches it into.
 _WEB_MERCATOR_R = 6378137.0
+
+# EPSG:3857 is undefined past this latitude (the projection formula below diverges to +-infinity
+# at the poles) - this is the same clamp Leaflet's own CRS.EPSG3857 applies, so a region whose
+# grid cell happens to straddle it still gets a finite, Leaflet-consistent bbox instead of a
+# ValueError from math.log(tan(...)) going to zero/infinity.
+_WEB_MERCATOR_MAX_LAT = 85.0511287798
 
 
 def web_mercator_bbox_m(lat: float, lng: float, radius_m: float) -> tuple[float, float, float, float]:
@@ -69,10 +74,11 @@ def web_mercator_bbox_m(lat: float, lng: float, radius_m: float) -> tuple[float,
     ``(xmin, ymin, xmax, ymax)`` - center projected via the standard spherical Web Mercator
     formula, then offset by ``radius_m`` on each axis (a true circle in this projected plane,
     same as Leaflet's ``L.circle`` with a meter radius). Used server-side to fetch a destination's
-    satellite export at exactly the geo footprint the frontend fills with it (``sources.satellite``).
+    satellite imagery at exactly the geo footprint the frontend fills with it (``sources.satellite``).
     """
+    clamped_lat = max(-_WEB_MERCATOR_MAX_LAT, min(_WEB_MERCATOR_MAX_LAT, lat))
     x = math.radians(lng) * _WEB_MERCATOR_R
-    y = math.log(math.tan(math.pi / 4 + math.radians(lat) / 2)) * _WEB_MERCATOR_R
+    y = math.log(math.tan(math.pi / 4 + math.radians(clamped_lat) / 2)) * _WEB_MERCATOR_R
     return (x - radius_m, y - radius_m, x + radius_m, y + radius_m)
 
 
