@@ -12,6 +12,7 @@ back 4096x4096 - so ``MAX_PX`` requests exactly that ceiling.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
@@ -79,23 +80,49 @@ def fetch_region_satellite(
             client.close()
 
 
+# A first pass at concurrency 6 against ~3.6k regions measured a 95% failure rate (timeouts and
+# 504s) - Esri's free service degrades hard under sustained concurrent load, not just occasional
+# slow renders. 2 workers + a few retries with backoff trades wall-clock time for actually
+# finishing; a region that still fails after all retries is skipped (re-running only re-fetches
+# what's still missing, so nothing is lost by trying gentler and slower).
+_RETRY_BACKOFFS_S = (5.0, 15.0, 30.0)
+
+
+def _fetch_with_retries(region_id: str, lat: float, lng: float, radius_m: float) -> tuple[bytes, bytes] | None:
+    for attempt, backoff in enumerate((0.0, *_RETRY_BACKOFFS_S)):
+        if backoff:
+            time.sleep(backoff)
+        try:
+            return fetch_region_satellite(lat, lng, radius_m)
+        except httpx.HTTPError as error:
+            logger.warning(
+                "backfill-satellite: %s failed on attempt %d/%d (%s)",
+                region_id,
+                attempt + 1,
+                len(_RETRY_BACKOFFS_S) + 1,
+                error,
+            )
+    return None
+
+
 def backfill_region_satellite(
     con: psycopg.Connection,
     *,
     cell_deg: float,
     max_regions: int | None = None,
-    concurrency: int = 8,
+    concurrency: int = 2,
     progress_cb: Callable[[str, int, int], None] | None = None,
 ) -> int:
     """Fetch + cache satellite imagery for every region that doesn't have it yet.
 
     Regions come from the `regions` table (materialized phenology - only cells with at least one
     observation exist there), so this backfills exactly the set of destinations the app can
-    actually show, not the whole globe. Each export is 25-45s of Esri render time, not bandwidth
-    (see `fetch_region_satellite`), so fetches run `concurrency`-wide - the DB write for each
-    result happens back on this one connection as results complete, serialized, since psycopg
-    connections aren't thread-safe. A region that fails is logged and skipped, not fatal to the
-    run - re-running only re-fetches the ones still missing.
+    actually show, not the whole globe. Each export is 25-45s of Esri render time under light
+    load, more under sustained load (see `_RETRY_BACKOFFS_S`) - fetches run `concurrency`-wide,
+    the DB write for each result happening back on this one connection as results complete,
+    serialized, since psycopg connections aren't thread-safe. A region that still fails after
+    every retry is logged and skipped, not fatal to the run - re-running only re-fetches the ones
+    still missing.
     """
     limit_sql = "LIMIT %s" if max_regions is not None else ""
     params: list[object] = [max_regions] if max_regions is not None else []
@@ -110,12 +137,8 @@ def backfill_region_satellite(
 
     def fetch_one(row: tuple[str, float, float]) -> tuple[str, bytes, bytes] | None:
         region_id, lat, lng = row
-        try:
-            image, labels = fetch_region_satellite(lat, lng, radius_m)
-        except httpx.HTTPError as error:
-            logger.warning("backfill-satellite: %s failed (%s)", region_id, error)
-            return None
-        return region_id, image, labels
+        result = _fetch_with_retries(region_id, lat, lng, radius_m)
+        return None if result is None else (region_id, *result)
 
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         for index, result in enumerate(executor.map(fetch_one, rows), start=1):
