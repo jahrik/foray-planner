@@ -186,6 +186,17 @@
         - "foray:backfill-elevation-dem-once"
         - never
 
+    - name: Include one-off satellite backfill task
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/backfill_satellite_once.yml
+        apply:
+          tags:
+            - "foray:backfill-satellite-once"
+            - never
+      tags:
+        - "foray:backfill-satellite-once"
+        - never
+
     - name: Include one-off observation resync catch-up task
       ansible.builtin.include_tasks:
         file: tasks/deploy/resync_once.yml

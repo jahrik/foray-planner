@@ -18,8 +18,9 @@ ghcr.io/jahrik/foray-planner:latest
 The package is public and linked to the repo. No manual build step needed to publish it.
 
 Once the image is published, the same workflow's `deploy` job runs `foray:deploy` against
-prod automatically - see [CI/CD deploy (automated)](#cicd-deploy-automated) below. Building
-and publishing the image is unconditional; deploying it is gated behind manual approval.
+prod automatically, with no manual approval step - see
+[CI/CD deploy (automated)](#cicd-deploy-automated) below. A merge to `main` deploys to
+production.
 
 ---
 
@@ -232,6 +233,7 @@ just ansible deploy
 | `foray:cron` | Update cron schedules |
 | `foray:ingest-once` | Manual/opt-in full data ingest (`just ansible ingest-once`) - not part of `foray:deploy` or the `foray` umbrella; the daily `foray-ingest` cron job already keeps data fresh, so this only exists for warming a fresh droplet's data immediately instead of waiting for the next cron run. **Run this only after the first `foray:deploy`** - it depends on the env file that deploy renders (`/opt/foray-planner/foray.env`) and fails fast with a clear message if that hasn't happened yet. |
 | `foray:backfill-elevation-dem-once` | Manual/opt-in one-pass elevation backfill (`just ansible backfill-elevation-dem-once`) - samples local Copernicus GLO-90 tiles on the droplet to clear the whole elevation backlog at once, instead of the hourly `foray-backfill-elevation` cron trickling through Open-Meteo's ~10k/day free tier. Downloads ~5 GB of tiles, then removes them. Set-based `COPY` + `UPDATE ... FROM` writes with `--sleep` pacing and a short `lock_timeout` so the live site keeps serving; `--no-rebuild` (daily ingest rematerializes phenology). Safe to re-run to finish a partial pass. Same env-file dependency and fail-fast as `foray:ingest-once`, plus a free-disk precheck. |
+| `foray:backfill-satellite-once` | Manual/opt-in one-off satellite-fill backfill (`just ansible backfill-satellite-once`, issue #293) - runs `foray backfill-satellite` on the droplet against every region missing from `region_satellite`. Tile fetches are cheap/reliable (see `sources/satellite.py`), so this finishes in minutes at national scale - no maintenance window needed, unlike the DEM backfill. Safe to re-run (only fetches what's still missing). Same env-file dependency and fail-fast as `foray:ingest-once`. |
 | `foray:firewall-allow-runner` / `foray:firewall-revoke-runner` | CI-internal only - adds/removes the GitHub Actions runner's own IP from the live SSH firewall rule around an automated `foray:deploy` run (see below). Not something an operator runs directly. |
 
 ---
@@ -243,10 +245,11 @@ after every image publish on `main`, replacing the need to manually run `just an
 for routine app updates. `foray:provision` and the one-off tags stay manual/local - only the
 app-update path (`foray:deploy`) is automated.
 
-**Manual approval gate.** The `deploy` job targets a GitHub `production` Environment with
-required reviewers, so it pauses after the image is published and waits for someone to
-approve it in the Actions tab before touching the droplet - merging to `main` alone never
-silently redeploys prod.
+**No approval gate.** The `deploy` job targets a GitHub `production` Environment, but it has no
+required reviewers configured - a merge (or any push) to `main` deploys straight through, image
+publish and droplet update, with no pause for approval in the Actions tab. `[skip deploy]` in the
+head commit message is the only way to land a change without redeploying (see the `deploy` job's
+`if:` condition in `cd.yml`).
 
 **No standing SSH access for CI.** GitHub-hosted runners don't have a stable IP, so the
 firewall isn't opened permanently for them. Each deploy run: resolves its own runner's public
