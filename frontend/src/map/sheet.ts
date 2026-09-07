@@ -47,7 +47,17 @@ let velocity = 0;
 let renderedTop = 0;
 
 const viewportH = (): number => window.innerHeight;
-const detentTopPx = (detent: Detent): number => DETENT_TOP[detent] * viewportH();
+
+// The `full` detent is additionally capped so the sheet's top edge never rises above the
+// floating search bar + pill row (issue #297) - otherwise the pills sit behind the sheet at
+// `full` and can't be tapped. Falls back to the fractional value when the shell isn't measured.
+function detentTopPx(detent: Detent): number {
+  const fractional = DETENT_TOP[detent] * viewportH();
+  if (detent !== "full") return fractional;
+  const shell = document.querySelector(".map-shell");
+  const shellBottom = shell ? shell.getBoundingClientRect().bottom : 0;
+  return Math.max(fractional, shellBottom + 8);
+}
 
 export const currentDetent = (): Detent => current;
 
@@ -82,6 +92,16 @@ export function collapseIfOpen(): boolean {
   return false;
 }
 
+// Width in px the desktop results dock (issue #297) currently occludes on the left of the map:
+// its rendered width when open, else 0 (closed, or mobile where the bottom sheet takes over).
+// Used to offset setView / fitBounds so a focused region or route doesn't land behind it.
+export function dockOffsetPx(): number {
+  if (enabled) return 0;
+  const dock = document.getElementById("dock");
+  if (!dock || dock.classList.contains("closed") || dock.offsetParent === null) return 0;
+  return dock.getBoundingClientRect().width;
+}
+
 // Center the map on a point, offset upward on mobile so it lands in the visible strip above
 // the sheet rather than behind it. On desktop this is a plain setView.
 export function focusOnMap(lat: number, lng: number, zoom: number): void {
@@ -90,9 +110,8 @@ export function focusOnMap(lat: number, lng: number, zoom: number): void {
     // it's open, shift the focused point right by half the dock width so it lands in the
     // visible map area rather than behind the panel - mirrors the mobile upward offset below.
     map.setView([lat, lng], zoom, { animate: false });
-    const dock = document.getElementById("dock");
-    const dockOpen = dock !== null && !dock.classList.contains("closed") && dock.offsetParent !== null;
-    if (dockOpen) map.panBy([-dock.getBoundingClientRect().width / 2, 0], { animate: false });
+    const dockOffset = dockOffsetPx();
+    if (dockOffset > 0) map.panBy([-dockOffset / 2, 0], { animate: false });
     return;
   }
   // animate:false so the pan below isn't undone when setView's own pan tween settles.

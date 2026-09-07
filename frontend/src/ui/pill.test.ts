@@ -85,6 +85,29 @@ describe("createPill", () => {
     expect(popoverB.hidden).toBe(false);
   });
 
+  it("closeOnSelect closes the popover when a control inside it is activated", () => {
+    const popover = document.createElement("div");
+    const preset = document.createElement("button");
+    popover.appendChild(preset);
+    const pill = createPill({ label: "Radius", render: () => "150 km", popover, closeOnSelect: true });
+    mount(pill);
+    pill.button.click();
+    expect(popover.hidden).toBe(false);
+    preset.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(popover.hidden).toBe(true);
+  });
+
+  it("without closeOnSelect the popover stays open after an inner control is activated", () => {
+    const popover = document.createElement("div");
+    const box = document.createElement("input");
+    popover.appendChild(box);
+    const pill = createPill({ label: "Land", render: () => "Off", popover });
+    mount(pill);
+    pill.button.click();
+    box.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(popover.hidden).toBe(false);
+  });
+
   it("a bare toggle pill flips its active state and calls onToggle", () => {
     let on = false;
     const onToggle = vi.fn((next: boolean) => {

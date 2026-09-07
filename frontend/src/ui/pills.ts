@@ -58,6 +58,7 @@ export function initPills(): void {
     label: "Radius",
     render: () => dist(state.home?.radius_km ?? 150),
     popover: qs("#radius-presets"),
+    closeOnSelect: true, // single choice - pick a preset and it's done
   });
 
   monthsPill = createPill({
@@ -65,6 +66,7 @@ export function initPills(): void {
     render: monthsLabel,
     popover: qs("#months"),
     active: () => state.months.size > 0 && state.months.size < 12,
+    closeOnSelect: true,
   });
 
   const generaPill = createPill({
