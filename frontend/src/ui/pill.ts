@@ -22,9 +22,9 @@ export interface CreatePillOptions {
   // Drives the pill's active (.on) styling: the toggle state for a bare pill, or e.g.
   // "any genus selected" / "any layer on" for a popover pill.
   active?: () => boolean;
-  // Close the popover as soon as a control inside it is activated. For effectively
-  // single-choice popovers (Radius, Months) - Google Maps closes those on pick. Leave off for
-  // multi-select popovers (Genera, Land, Camping) so the user can toggle several.
+  // Close the popover as soon as a control inside it is activated. For single-choice popovers
+  // like Radius - Google Maps closes those on pick. Leave off for multi-select popovers
+  // (Months, Genera, Land, Camping) so the user can toggle several without it closing.
   closeOnSelect?: boolean;
 }
 
