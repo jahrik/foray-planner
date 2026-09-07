@@ -58,7 +58,7 @@ describe("selectSize / deselectSize fill management", () => {
     const weak = plot(47.7, -122.4, 0.2, false, "95_-246");
 
     selectSize(strong);
-    expect(fill(strong)).toBeCloseTo(0.08); // the focused circle itself
+    expect(fill(strong)).toBe(0); // the focused circle itself - satellite overlay is the fill now
     expect(fill(weak)).toBe(0); // ring only - no fill to composite into a blob
 
     deselectSize(strong);
@@ -74,7 +74,7 @@ describe("selectSize / deselectSize fill management", () => {
     deselectSize(a);
     selectSize(b);
 
-    expect(fill(b)).toBeCloseTo(0.08);
+    expect(fill(b)).toBe(0);
     expect(fill(a)).toBe(0);
   });
 

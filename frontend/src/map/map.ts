@@ -310,14 +310,16 @@ export function clearSatelliteOverlay(): void {
 // Selecting a region (marker or card click) snaps its circle from the score-sized preview to
 // its true real-world cell_deg footprint, computed from the same live config value as plot()
 // (never hard-coded), so the user can see exactly how much ground that dot actually represents.
-// Fill goes very transparent at this size so the map underneath - which the circle now likely
-// covers a large part of - stays readable. The satellite overlay (above) fills that same
-// footprint with imagery so "the map underneath" is actually worth looking at.
+// Fill drops to fully transparent at this size - the circle's own vector fill draws in Leaflet's
+// overlayPane, which sits *above* the "satellite" pane (see initMap/showSatelliteOverlay), so
+// any nonzero fillOpacity here would tint the satellite imagery underneath with the circle's
+// score hue instead of leaving it true-color. The satellite overlay (below, z-order-wise) fills
+// the footprint with imagery; only the ring needs to stay drawn on top of it.
 export function selectSize(marker: L.Circle): void {
   const info = sizing.get(marker);
   if (!info) return;
   marker.setRadius(info.trueRadius);
-  marker.setStyle({ fillOpacity: 0.08 });
+  marker.setStyle({ fillOpacity: 0 });
   setOthersFill(marker, true);
   showSatelliteOverlay(marker, info.regionId);
 }

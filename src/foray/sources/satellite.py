@@ -2,8 +2,11 @@
 
 Two rasters per region, fetched together and cached forever in ``region_satellite`` (regions
 are a fixed grid - see ``cache.region_places``): the aerial photo (``World_Imagery``, no labels
-baked in) plus its standard "hybrid" pairing, a transparent PNG of roads/borders/place names
-(``Reference/World_Boundaries_and_Places``). Both are real XYZ tile pyramids - confirmed live via
+baked in) plus a "hybrid" overlay composited from Esri's two standard reference layers -
+``Reference/World_Transportation`` (roads, drawn first) under ``Reference/World_Boundaries_and_Places``
+(borders/place names, drawn on top so label halos stay legible over the road lines) - flattened
+into the one cached ``labels`` PNG so the frontend/schema still only deal with two rasters. All
+three are real XYZ tile pyramids - confirmed live via
 their ``MapServer?f=json`` capabilities (``"Map,Tilemap"``) - not the dynamic ``MapServer/export``
 renderer sources/land and sources/fire use. That distinction matters a lot here:
 
@@ -42,6 +45,9 @@ from foray.geo import KM_PER_DEG_LAT, web_mercator_bbox_m
 logger = logging.getLogger(__name__)
 
 IMAGE_TILE_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+ROADS_TILE_URL = (
+    "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"
+)
 LABELS_TILE_URL = (
     "https://server.arcgisonline.com/ArcGIS/rest/services/"
     "Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
@@ -123,26 +129,31 @@ def fetch_region_satellite(
     lat: float, lng: float, radius_m: float, *, client: httpx.Client | None = None
 ) -> tuple[bytes, bytes]:
     """Fetch ``(image_jpeg, labels_png)`` bytes for the disk of ``radius_m`` around ``(lat, lng)``,
-    stitched from Esri's tile pyramids (see module docstring). Both layers are stitched at the
-    same zoom, concurrently, since they're independent - halving the worst-case cold-cache
-    latency a live request pays (the coalescing lock in ``api.routes.layers._region_satellite_bytes``
-    means a live request only ever calls this once per region; ``backfill_region_satellite``'s own
-    concurrency is across regions, not within one). Raises ``httpx.HTTPError`` on failure.
+    stitched from Esri's tile pyramids (see module docstring). All three layers are stitched at
+    the same zoom, concurrently, since they're independent - keeping the worst-case cold-cache
+    latency a live request pays down near one layer's fetch time (the coalescing lock in
+    ``api.routes.layers._region_satellite_bytes`` means a live request only ever calls this once
+    per region; ``backfill_region_satellite``'s own concurrency is across regions, not within
+    one). Raises ``httpx.HTTPError`` on failure.
     """
     bbox = web_mercator_bbox_m(lat, lng, radius_m)
     zoom = _zoom_for_diameter(lat, radius_m * 2, _TARGET_DIAMETER_PX)
     owns = client is None
     client = client or httpx.Client(timeout=30.0)
     try:
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             image_future = executor.submit(_stitched_crop, IMAGE_TILE_URL, bbox, zoom, client)
+            roads_future = executor.submit(_stitched_crop, ROADS_TILE_URL, bbox, zoom, client)
             labels_future = executor.submit(_stitched_crop, LABELS_TILE_URL, bbox, zoom, client)
             image = image_future.result()
+            roads = roads_future.result()
             labels = labels_future.result()
         image_bytes = BytesIO()
         image.convert("RGB").save(image_bytes, format="JPEG", quality=90)
+        # Roads first, place-name labels on top - matches Esri's own "Imagery Hybrid" layer
+        # order, so label halos stay legible over the road lines instead of the reverse.
         labels_bytes = BytesIO()
-        labels.save(labels_bytes, format="PNG")
+        Image.alpha_composite(roads, labels).save(labels_bytes, format="PNG")
         return image_bytes.getvalue(), labels_bytes.getvalue()
     finally:
         if owns:
