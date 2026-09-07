@@ -22,6 +22,10 @@ export interface CreatePillOptions {
   // Drives the pill's active (.on) styling: the toggle state for a bare pill, or e.g.
   // "any genus selected" / "any layer on" for a popover pill.
   active?: () => boolean;
+  // Close the popover as soon as a control inside it is activated. For effectively
+  // single-choice popovers (Radius, Months) - Google Maps closes those on pick. Leave off for
+  // multi-select popovers (Genera, Land, Camping) so the user can toggle several.
+  closeOnSelect?: boolean;
 }
 
 export interface Pill {
@@ -95,7 +99,14 @@ export function createPill(options: CreatePillOptions): Pill {
   });
 
   if (popover) {
-    popover.addEventListener("click", (event) => event.stopPropagation());
+    popover.addEventListener("click", (event) => {
+      event.stopPropagation();
+      // Single-choice popovers close on pick (Radius, Months). Only a real control activation
+      // counts, not a stray click on the popover's own padding.
+      if (options.closeOnSelect && (event.target as HTMLElement).closest("button, input, a")) {
+        setOpen(false);
+      }
+    });
     document.addEventListener("click", () => setOpen(false));
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") setOpen(false);

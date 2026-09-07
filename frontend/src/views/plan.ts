@@ -4,6 +4,7 @@ import { getJson } from "../api/client";
 import type { Stop, TripPlan } from "../api/types";
 import { escapeXml, feeLabel } from "../format";
 import { focusRegion } from "../map/layers";
+import { dockOffsetPx, focusOnMap } from "../map/sheet";
 import { addMarker, clearMarkers, map, setPlanRoute, HOME_DOT_STYLE, PLAN_STOP } from "../map/map";
 import { circleStyle } from "../map/markers";
 import { buildPopup } from "../map/popup";
@@ -106,8 +107,12 @@ export async function runPlan(): Promise<void> {
     addMarker(marker);
   });
 
-  // Fit the map to the full route.
-  map.fitBounds(L.latLngBounds(routePoints), { padding: [40, 40] });
+  // Fit the map to the full route, keeping it clear of the desktop results dock (issue #297)
+  // on the left - a symmetric padding would push western legs behind the open panel.
+  map.fitBounds(L.latLngBounds(routePoints), {
+    paddingTopLeft: [40 + dockOffsetPx(), 40],
+    paddingBottomRight: [40, 40],
+  });
 
   // Build the panel.
   const monthNames = trip.months.map((month) => MONTHS[month - 1]).join(", ");
@@ -233,9 +238,10 @@ function buildStopCard(stop: Stop): HTMLElement {
     card.appendChild(fireEl);
   }
 
-  // Click → zoom the map to this stop and load layers around it.
+  // Click → zoom the map to this stop and load layers around it. focusOnMap keeps the stop
+  // clear of the desktop dock / mobile sheet (issue #297).
   card.onclick = () => {
-    map.setView([stop.center_lat, stop.center_lng], 10);
+    focusOnMap(stop.center_lat, stop.center_lng, 10);
     focusRegion(stop.center_lat, stop.center_lng);
   };
 

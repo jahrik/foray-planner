@@ -1063,7 +1063,8 @@ table.cal .heat {
   } /* real handle replaces the old cosmetic one */
 
   /* Lift the OSM attribution (bottom-right) clear of the collapsed sheet's peek so it stays
-     visible. The zoom control sits top-left and is never covered at the collapsed detent. */
+     visible. The zoom control (bottom-right, issue #297) sits above it and is never covered at
+     the collapsed detent. */
   body[data-sheet="on"] .leaflet-bottom.leaflet-right {
     bottom: 18dvh;
   }
