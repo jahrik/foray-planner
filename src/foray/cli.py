@@ -283,7 +283,7 @@ def backfill_satellite_cmd(ctx: click.Context, limit: int | None, concurrency: i
             progress_cb=lambda region_id, done, total: click.echo(f"[{done}/{total}] {region_id}"),
         )
         click.echo(f"Cached satellite imagery for {updated} regions ({failed} failed).")
-        if failed and failed >= updated:
+        if failed and failed > updated:
             raise click.ClickException(f"{failed}/{updated + failed} regions failed - likely Esri throttling; re-run.")
     finally:
         con.close()

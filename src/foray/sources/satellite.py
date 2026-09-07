@@ -93,10 +93,12 @@ def _meters_to_global_pixel(x: float, y: float, zoom: int) -> tuple[float, float
     return px, py
 
 
-# Esri's arcgisonline tile CDN throttles bursts (a full-grid backfill fans out to
-# concurrency * _stitched_crop workers at once) with HTTP 429s and dropped connections. Those
-# are recoverable - back off and retry - unlike a 4xx/5xx that means the tile genuinely isn't
-# there. Kept small: the point is to ride out a rate-limit blip, not to hammer a down service.
+# Esri's arcgisonline tile CDN throttles bursts with HTTP 429s and dropped connections. A
+# full-grid backfill fans out hard: `concurrency` regions in parallel, each stitching 3 layers
+# concurrently, each layer's `_stitched_crop` running its own pool of up to 5 tile workers - so
+# the peak in-flight request count is roughly concurrency * 3 * 5. Those failures are
+# recoverable - back off and retry - unlike a 4xx/5xx that means the tile genuinely isn't there.
+# Kept small: the point is to ride out a rate-limit blip, not to hammer a down service.
 _TILE_RETRY_ATTEMPTS = 4
 _TILE_RETRY_BACKOFF_S = 0.75
 
