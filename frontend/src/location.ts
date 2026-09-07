@@ -25,13 +25,13 @@ export function initPlaceAutocomplete(
   input: HTMLInputElement,
   list: HTMLUListElement,
   form: HTMLFormElement,
-  onSelect: (query: string) => void,
+  onSelect: (query: string) => void | Promise<boolean>,
   options: { clearInputOnSelect?: boolean } = {},
 ): void {
   const clearInputOnSelect = options.clearInputOnSelect ?? true;
   const emit = (query: string): void => {
     if (clearInputOnSelect) input.value = "";
-    onSelect(query);
+    void onSelect(query);
   };
   initAutocomplete<PlaceSuggestion>({
     input,
@@ -40,8 +40,28 @@ export function initPlaceAutocomplete(
     fetchSuggestions,
     label: (result) => result.name,
     onPick: (result) => emit(`${result.lat}, ${result.lng}`),
-    onSubmitText: emit,
+    // Free-text submit can fail to geocode - unlike a picked suggestion, which is already
+    // resolved coordinates. Keep the typed text and flash the field so the user can fix a
+    // typo instead of having to remember and retype what they entered.
+    onSubmitText: async (text) => {
+      const settled = await onSelect(text);
+      if (settled === false) {
+        flashInvalid(form);
+        return;
+      }
+      if (clearInputOnSelect) input.value = "";
+    },
   });
+}
+
+// Brief red pulse on the search field. The detailed reason is already on `#status`
+// (aria-live); this is the at-a-glance visual cue that the submit didn't take.
+function flashInvalid(target: HTMLElement): void {
+  target.classList.remove("invalid");
+  // reflow so re-adding the class restarts the animation on a rapid second failure
+  void target.offsetWidth;
+  target.classList.add("invalid");
+  target.addEventListener("animationend", () => target.classList.remove("invalid"), { once: true });
 }
 
 export function initLocationAutocomplete(): void {
