@@ -1,7 +1,7 @@
 import type L from "leaflet";
 
 import type { ApiError, Home, TripPlan } from "./api/types";
-import { getUnits } from "./prefs";
+import { getMonths, getUnits } from "./prefs";
 
 export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 export const CURRENT_MONTH = new Date().getMonth() + 1; // 1-12
@@ -29,7 +29,7 @@ export interface State {
 }
 
 export const state: State = {
-  months: new Set([CURRENT_MONTH]),
+  months: new Set(getMonths() ?? [CURRENT_MONTH]),
   view: "destinations",
   home: null,
   markers: [],

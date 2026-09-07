@@ -10,6 +10,7 @@ const STORAGE_KEYS = {
   theme: "foray-theme",
   textSize: "foray-text-size",
   units: "foray-units",
+  months: "foray-months",
 } as const;
 
 type Theme = "dark" | "light";
@@ -39,4 +40,20 @@ export function getUnits(): Units {
 
 export function setUnits(units: Units): void {
   localStorage.setItem(STORAGE_KEYS.units, units);
+}
+
+// Selected month filter (1-12). Persisted like the other pill state so a reload doesn't
+// silently snap back to the current month. `null` = never set (caller defaults to the
+// current month); an explicit empty array is kept (reads as "all months" via monthsParam).
+export function getMonths(): number[] | null {
+  const stored = localStorage.getItem(STORAGE_KEYS.months);
+  if (stored === null) return null;
+  return stored
+    .split(",")
+    .map((part) => Number(part))
+    .filter((month) => Number.isInteger(month) && month >= 1 && month <= 12);
+}
+
+export function setMonths(months: Iterable<number>): void {
+  localStorage.setItem(STORAGE_KEYS.months, [...months].sort((left, right) => left - right).join(","));
 }

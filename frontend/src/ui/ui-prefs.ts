@@ -5,6 +5,7 @@
 import { currentTheme, setTiles, updateHome } from "../map/map";
 import { getLargeText, setLargeText, setTheme, setUnits } from "../prefs";
 import { qs, state, type Units } from "../state";
+import { refreshCurrentView } from "../views/view-run";
 
 export function initTheme(): void {
   const toggle = qs<HTMLButtonElement>("#theme-toggle");
@@ -58,5 +59,9 @@ export function initUnits(): void {
     const next: Units = state.units === "mi" ? "km" : "mi";
     setUnits(next);
     apply(next);
+    // updateHome() (in apply) only repaints the search-bar readout. The destination / alert /
+    // plan cards already on screen were rendered in the old unit and stay stale until the next
+    // scope change - re-run the open view so every distance / elevation / rainfall flips now.
+    refreshCurrentView();
   };
 }

@@ -9,6 +9,7 @@ import {
   loadTrailheadsInto,
 } from "./destination-tabs";
 import { focusRegion } from "../map/layers";
+import { setMonths } from "../prefs";
 import { createLazyLoader } from "../ui/lazy-panel";
 import { focusOnMap, sheetEnabled, snapTo } from "../map/sheet";
 import { clearMarkers, map, plot } from "../map/map";
@@ -43,6 +44,7 @@ export function initMonths(): void {
         button.classList.add("on");
       }
       button.setAttribute("aria-pressed", String(state.months.has(month)));
+      setMonths(state.months); // persist so a reload keeps the selection (not snap to now)
       onScopeChange(); // keep the Months filter pill's label in sync (issue #297)
       if (state.view === "destinations") runDestinations();
     };

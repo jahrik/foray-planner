@@ -49,6 +49,7 @@ body {
 /* ── Floating search bar (issue #297) ── the rounded, shadowed box over the top-left of the
    full-bleed map. .locbar is the column: search row, then the resolved-home readout. */
 .locbar {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -495,6 +496,8 @@ main {
    it (map returns to full width), #dock-reopen brings it back. On mobile it is inert: the
    bottom sheet (#229) owns the panel. */
 .dock {
+  position: relative; /* containing block for #dock-close - without it the absolutely
+                          positioned ✕ escapes to .rail and lands on the search bar's ⋮ */
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -520,9 +523,9 @@ main {
 }
 .dock-close {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  z-index: 2;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
   min-width: 30px;
   min-height: 30px;
   padding: 0;
@@ -554,12 +557,13 @@ main {
   display: none;
 }
 
-/* Refresh: a small floating map control (issue #297). Bottom-right, stacked above the
-   relocated Leaflet zoom control so no floating UI covers either. */
+/* Refresh: a small floating map control (issue #297). Bottom-right, stacked clear above the
+   relocated Leaflet zoom control (~62px tall, 10px margin) plus the collapsed attribution
+   row, so no floating UI covers either. */
 .map-fab {
   position: absolute;
   right: 12px;
-  bottom: 92px;
+  bottom: 132px;
   z-index: 800;
   width: 40px;
   height: 40px;

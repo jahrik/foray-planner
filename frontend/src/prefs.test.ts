@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { getLargeText, getTheme, getUnits, setLargeText, setTheme, setUnits } from "./prefs";
+import {
+  getLargeText,
+  getMonths,
+  getTheme,
+  getUnits,
+  setLargeText,
+  setMonths,
+  setTheme,
+  setUnits,
+} from "./prefs";
 
 beforeEach(() => localStorage.clear());
 
@@ -33,5 +42,22 @@ describe("prefs", () => {
     expect(getUnits()).toBe("km");
     localStorage.setItem("foray-units", "furlongs");
     expect(getUnits()).toBe("mi");
+  });
+
+  it("returns null for months until one is stored, then round-trips a sorted list", () => {
+    expect(getMonths()).toBeNull();
+    setMonths(new Set([10, 3, 9]));
+    expect(localStorage.getItem("foray-months")).toBe("3,9,10");
+    expect(getMonths()).toEqual([3, 9, 10]);
+  });
+
+  it("keeps an explicitly empty month selection (distinct from never-set)", () => {
+    setMonths([]);
+    expect(getMonths()).toEqual([]);
+  });
+
+  it("drops out-of-range or non-numeric stored month values", () => {
+    localStorage.setItem("foray-months", "0,5,13,foo,11");
+    expect(getMonths()).toEqual([5, 11]);
   });
 });
