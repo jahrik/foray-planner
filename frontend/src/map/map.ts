@@ -130,12 +130,29 @@ function preciseClusterIcon(cluster: L.MarkerCluster): L.DivIcon {
   });
 }
 
+// The attribution now lists four providers (OSM + iNaturalist + Open-Meteo + Esri) and rendered
+// as a large opaque slab floating over the map - worst on mobile, where it sat mid-map above the
+// bottom sheet and never moved with it. Collapse it to a single "ⓘ" chip that expands on hover
+// (desktop) or tap (touch). Leaflet only mutates the container's innerHTML on re-render, so the
+// class we set here survives showSatelliteOverlay's addAttribution/removeAttribution calls.
+function collapseAttribution(target: L.Map): void {
+  const container = target.attributionControl.getContainer();
+  if (!container) return;
+  container.classList.add("attrib-collapsed");
+  L.DomEvent.on(container, "click", (ev) => {
+    if ((ev.target as HTMLElement).tagName === "A") return; // let credit links through
+    L.DomEvent.stop(ev);
+    container.classList.toggle("attrib-collapsed");
+  });
+}
+
 export function initMap(home: Home): void {
   // Zoom control bottom-right (issue #297): the Google-Maps-style slide-out dock and the
   // floating search bar / pill row all sit over the top-left, so the default top-left zoom
   // buttons would be covered.
   map = L.map("map", { zoomControl: false }).setView([home.lat, home.lng], 7);
   L.control.zoom({ position: "bottomright" }).addTo(map);
+  collapseAttribution(map);
   setTiles();
   // Sits above the basemap tiles but below the vector overlay pane (circles, trails, markers -
   // default z-index 400) so the selected destination's ring and every other layer still draw on
