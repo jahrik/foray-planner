@@ -123,14 +123,14 @@ export function cancelRefresh(): void {
   resetRefreshUI();
 }
 
-export async function setLocation(query: string): Promise<void> {
+export async function setLocation(query: string): Promise<boolean> {
   setStatus("Finding location…");
   let response: LocationResponse;
   try {
     response = await postJson("/api/location", { body: { query } });
   } catch (error) {
     setStatus(errorDetail(error) || "location not found");
-    return;
+    return false;
   }
   updateHome(response.home);
   // refreshCurrentView() -> a view runner -> clearMarkers(), which also clears the land layer.
@@ -139,6 +139,7 @@ export async function setLocation(query: string): Promise<void> {
   refreshCurrentView();
   loadLand();
   loadFire();
+  return true;
 }
 
 // Map clicks (e.g. on a city label on the base tiles) carry only coordinates; the backend

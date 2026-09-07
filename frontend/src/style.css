@@ -83,6 +83,23 @@ body {
 .locbar input:focus {
   outline: none;
 }
+/* Failed geocode on a free-text submit (location.ts flashInvalid) - a short red pulse. */
+.locbar form.invalid {
+  animation: locbar-invalid 0.45s ease-out;
+}
+@keyframes locbar-invalid {
+  0%,
+  100% {
+    border-color: var(--border);
+  }
+  20%,
+  60% {
+    border-color: #e0524a;
+    box-shadow:
+      0 2px 12px rgba(0, 0, 0, 0.25),
+      0 0 0 2px rgba(224, 82, 74, 0.35);
+  }
+}
 .overflow-toggle {
   flex: 0 0 auto;
   min-width: 34px;
