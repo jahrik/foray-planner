@@ -66,7 +66,6 @@ export function initPills(): void {
     render: monthsLabel,
     popover: qs("#months"),
     active: () => state.months.size > 0 && state.months.size < 12,
-    closeOnSelect: true,
   });
 
   const generaPill = createPill({
