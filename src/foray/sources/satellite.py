@@ -22,7 +22,8 @@ renderer sources/land and sources/fire use. That distinction matters a lot here:
   authored with text sized correctly for that zoom, exactly like every other slippy map.
 
 So instead of one big export call, ``fetch_region_satellite`` picks a zoom level for the
-region's radius, fetches every tile covering its true (Web-Mercator-circle) bounding box, and
+region's radius, fetches every tile covering its bounding box (the same box Leaflet's geodesic
+``L.circle.getBounds()`` reports for that footprint - see ``geo.web_mercator_bbox_m``), and
 stitches + crops them into one raster with :mod:`PIL.Image` - giving a result that's crisp *and*
 legible at once, with no per-request render latency.
 """
