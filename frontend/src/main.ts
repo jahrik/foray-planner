@@ -16,6 +16,7 @@ import { collapseIfOpen, currentDetent, initSheet, snapTo } from "./map/sheet";
 import { errorDetail, onScopeChange, qs, setStatus, state } from "./state";
 import { initTextSize, initTheme, initUnits } from "./ui/ui-prefs";
 import { initPills, syncPillsForView } from "./ui/pills";
+import { OPEN_EVENT } from "./ui/pill";
 import { refreshCurrentView } from "./views/view-run";
 import { initMonths, runDestinations } from "./views/views";
 
@@ -77,11 +78,26 @@ function initOverflowMenu(): void {
     const open = menu.hidden;
     menu.hidden = !open;
     toggle.setAttribute("aria-expanded", String(open));
+    // Opening the menu closes any open pill popover (and vice versa, below) so only one
+    // floating layer is ever up - matches the pills' own mutual-exclusion.
+    if (open) document.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: menu }));
   };
-  menu.onclick = (event) => event.stopPropagation();
-  document.addEventListener("click", close);
+  // Close on any click outside the menu itself. A plain `document` "close" listener plus
+  // `menu.onclick = stopPropagation` used to trap the menu open on mobile: the menu overlays
+  // the pill row, so a tap meant for a pill lands on the menu, gets its propagation stopped,
+  // and nothing closes. Now that tap closes the menu (the pill then takes a second tap, the
+  // standard dropdown behaviour).
+  document.addEventListener("click", (event) => {
+    if (menu.hidden) return;
+    const target = event.target as Node;
+    if (menu.contains(target) || toggle.contains(target)) return;
+    close();
+  });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") close();
+  });
+  document.addEventListener(OPEN_EVENT, (event) => {
+    if ((event as CustomEvent).detail !== menu) close();
   });
 }
 

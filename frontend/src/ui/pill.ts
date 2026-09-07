@@ -8,7 +8,10 @@
 // refresh() the caller hooks into the existing change handlers. A pill with no popover is a
 // bare toggle (Fire).
 
-const OPEN_EVENT = "pill:open";
+// Dispatched on `document` whenever a pill popover (or the search-bar overflow menu, see
+// main.ts) opens, with the opening element as `detail`. Every other pill / menu listens and
+// closes itself unless it is the one that opened - so only one floating layer is ever open.
+export const OPEN_EVENT = "pill:open";
 
 export interface CreatePillOptions {
   // Static prefix, e.g. "Land". An empty string renders the value alone (Months, Genera).
