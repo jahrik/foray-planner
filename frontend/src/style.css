@@ -1187,6 +1187,7 @@ table.cal .heat {
   border-radius: 4px 0 0 0;
   border-top: 1px solid var(--border);
   border-left: 1px solid var(--border);
+  cursor: pointer;
 }
 .leaflet-container .leaflet-control-attribution a {
   color: var(--muted);
@@ -1194,6 +1195,35 @@ table.cal .heat {
 @media (max-width: 640px) {
   .leaflet-container .leaflet-control-attribution {
     max-width: 68vw;
+  }
+}
+
+/* Collapsed by default (see collapseAttribution in map.ts): the four-provider credit string is a
+   large opaque slab over the map (worst on mobile, floating mid-map over the bottom sheet), so
+   shrink it to a single "ⓘ" chip. It expands to the full credit on hover for a mouse, and on tap
+   for touch (the click handler toggles the class); expanded it wraps rather than clipping so
+   every provider link stays reachable. */
+.leaflet-container .leaflet-control-attribution.attrib-collapsed {
+  max-width: 22px;
+  font-size: 0;
+  padding: 2px 5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.leaflet-container .leaflet-control-attribution.attrib-collapsed::after {
+  content: "ⓘ";
+  font-size: 12px;
+  color: var(--muted);
+}
+@media (hover: hover) {
+  .leaflet-container .leaflet-control-attribution.attrib-collapsed:hover {
+    max-width: min(60ch, calc(100vw - 24px));
+    font-size: 10px;
+    padding: 2px 6px;
+    white-space: normal;
+  }
+  .leaflet-container .leaflet-control-attribution.attrib-collapsed:hover::after {
+    content: none;
   }
 }
 
