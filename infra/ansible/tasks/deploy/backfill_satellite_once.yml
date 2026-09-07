@@ -1,10 +1,12 @@
 ---
 # Manual/opt-in only - not part of foray:deploy. Populates region_satellite (#293) so a
-# destination's satellite fill never pays a cold-cache tile-stitch on a live request. Tile
-# fetches are cheap and reliable (see sources/satellite.py's module docstring) - a full
-# national-scale run finishes in minutes, not the hours/maintenance-window the old /export-based
-# approach would have needed, so this needs no downtime handling unlike
-# backfill-elevation-dem-once. Safe to re-run - only fetches regions still missing.
+# destination's satellite fill never pays a cold-cache tile-stitch on a live request. Esri's
+# tile CDN throttles a wide fan-out, so `foray backfill-satellite` paces itself and retries -
+# a full national-scale run is tens of minutes, and the CLI exits non-zero (failing this task)
+# if failures dominate, so re-run until it's clean. No downtime handling needed unlike
+# backfill-elevation-dem-once. Safe to re-run - a plain run only fetches regions still missing;
+# pass foray_satellite_backfill_args=--refresh to clear the table first and re-fetch everything
+# (after a change to what a region's raster should contain - bbox, zoom, tiles, compositing).
 - name: Check for the deploy-rendered env file
   ansible.builtin.stat:
     path: /opt/foray-planner/foray.env
@@ -32,4 +34,4 @@
     detach: false
     cleanup: true
     env_file: /opt/foray-planner/foray.env
-    command: "foray backfill-satellite"
+    command: "foray backfill-satellite {{ foray_satellite_backfill_args | default('') }}"

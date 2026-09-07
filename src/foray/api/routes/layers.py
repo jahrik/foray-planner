@@ -189,9 +189,12 @@ def _region_satellite_bytes(region_id: str, state: AppState, pool: ConnectionPoo
         return image, labels
 
 
-# Cached forever (see _region_satellite_bytes) - safe for the browser to cache indefinitely too,
-# so a revisit never re-downloads a multi-MB image it already has.
-_SATELLITE_CACHE_CONTROL = "public, max-age=31536000, immutable"
+# A day of browser caching - long enough that panning back to a region you just looked at is
+# free, short enough that a server-side raster change (new tiles, corrected bbox, a
+# `region_satellite` refresh) reaches every client within 24h on its own. Deliberately *not*
+# `immutable`: the URL is stable but its bytes are not, and `immutable` told browsers never to
+# revalidate, so a raster fix stayed invisible to anyone who'd already loaded the old one.
+_SATELLITE_CACHE_CONTROL = "public, max-age=86400"
 
 
 @router.get(

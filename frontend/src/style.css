@@ -1007,6 +1007,31 @@ table.cal .heat {
   color: var(--muted);
 }
 
+/* Leaflet ships `.leaflet-container .leaflet-control-attribution` as a hard-coded white box with
+   #333 text - fine on the light basemap, a bright slab against the dark theme. Re-skin it to the
+   panel tokens (its own selector matched here for specificity). The source list also grew to
+   four providers (OSM + iNaturalist + Open-Meteo + Esri) and was stretching one line off the map
+   edge under the side panel, so cap the width and let it wrap. */
+.leaflet-container .leaflet-control-attribution {
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 2px 6px;
+  max-width: min(60ch, calc(100vw - 24px));
+  border-radius: 4px 0 0 0;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+}
+.leaflet-container .leaflet-control-attribution a {
+  color: var(--muted);
+}
+@media (max-width: 640px) {
+  .leaflet-container .leaflet-control-attribution {
+    max-width: 68vw;
+  }
+}
+
 /* Larger text mode (toggle next to mi/km and day/night in the header) - bumps font sizes across
    the panel/cards/calendar/controls, which is the actual reading surface on a phone. Layout
    (padding, radii, gaps) stays the same; only font-size changes, so existing flex-wrap absorbs

@@ -81,9 +81,11 @@ backfill-elevation-dem-once: (_playbook "backfill-elevation-dem-once")
 # Manual/opt-in only - there's no recurring cron for this (unlike ingest/layers/elevation).
 # Without it, region_satellite (#293) only fills lazily, one cold cache-miss at a time, as real
 # requests hit new regions. Use this to warm every region's satellite fill immediately after a
-# deploy instead of waiting - tile fetches are cheap/reliable, so a full national-scale run
-# finishes in minutes. Safe to re-run.
-[doc('Warm region_satellite on a fresh/updated droplet now instead of on cold-miss')]
+# deploy instead of waiting. Esri throttles a wide tile fan-out, so a full national-scale run is
+# paced (tens of minutes), not instant - re-run to pick up any regions that failed. Pass
+# `-e foray_satellite_backfill_args=--refresh` to clear the table first and re-fetch every
+# region (needed after a change to the raster logic in sources/satellite.py).
+[doc('Warm/refresh region_satellite on the droplet (append -e foray_satellite_backfill_args=--refresh to rebuild)')]
 [group('deploy-once')]
 backfill-satellite-once: (_playbook "backfill-satellite-once")
 

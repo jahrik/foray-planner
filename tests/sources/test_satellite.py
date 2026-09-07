@@ -9,8 +9,10 @@ import pytest
 from PIL import Image
 
 from foray.geo import web_mercator_bbox_m
+from foray.sources import satellite
 from foray.sources.satellite import (
     TILE_PX,
+    _fetch_tile,
     _meters_to_global_pixel,
     _zoom_for_diameter,
     fetch_region_satellite,
@@ -87,3 +89,30 @@ def test_fetch_region_satellite_propagates_a_failing_tile_request() -> None:
     client = httpx.Client(transport=httpx.MockTransport(handler))
     with pytest.raises(httpx.HTTPError):
         fetch_region_satellite(HOOD_LAT, HOOD_LNG, 15_000.0, client=client)
+
+
+def test_fetch_tile_retries_past_esri_throttling(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(satellite.time, "sleep", lambda _s: None)
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        if attempts["n"] < 3:  # first two calls are rate-limited, third succeeds
+            return httpx.Response(429)
+        return _solid_tile_response((1, 2, 3, 255))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    tile = _fetch_tile(satellite.IMAGE_TILE_URL, 12, 0, 0, client)
+    assert tile.size == (TILE_PX, TILE_PX)
+    assert attempts["n"] == 3
+
+
+def test_fetch_tile_gives_up_after_the_retry_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(satellite.time, "sleep", lambda _s: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(httpx.HTTPStatusError):
+        _fetch_tile(satellite.IMAGE_TILE_URL, 12, 0, 0, client)

@@ -254,29 +254,37 @@ def backfill_precip_cmd(ctx: click.Context, limit: int | None, rebuild: bool) ->
 @click.option(
     "--concurrency",
     type=int,
-    default=8,
-    help="Regions fetched in parallel. Each region's own tiles fetch concurrently too (see "
-    "sources.satellite) - these are cheap, CDN-served tile requests, not the slow live-render "
-    "exports the first version of this command used, so this can run much higher than you'd "
-    "guess from that history.",
+    default=4,
+    help="Regions fetched in parallel. Each region also fans out to a handful of tile workers "
+    "(see sources.satellite); Esri's tile CDN throttles a wide fan-out, so keep this modest.",
+)
+@click.option(
+    "--refresh",
+    is_flag=True,
+    help="Clear region_satellite first and re-fetch every region. Use after a change to what a "
+    "region's raster should contain (bbox, zoom, tile sources, compositing in sources.satellite) "
+    "- a plain run only fills regions that are still missing.",
 )
 @click.pass_context
-def backfill_satellite_cmd(ctx: click.Context, limit: int | None, concurrency: int) -> None:
+def backfill_satellite_cmd(ctx: click.Context, limit: int | None, concurrency: int, refresh: bool) -> None:
     """Fetch + cache the satellite fill (#293 follow-up) for every region that doesn't have it
     yet, so a destination's map selection never waits on a live tile fetch. Safe to re-run -
-    only fetches regions still missing from `region_satellite`. Tile fetches are fast (CDN-cached,
-    not rendered on demand), so this should finish in minutes even at national scale, not hours."""
+    a plain run only fetches regions still missing from `region_satellite`; `--refresh` clears
+    the table first. Esri throttles a wide tile fan-out, so a full run is paced, not instant."""
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
-        updated = satellite.backfill_region_satellite(
+        updated, failed = satellite.backfill_region_satellite(
             con,
             cell_deg=cfg.cell_deg,
             max_regions=limit,
             concurrency=concurrency,
+            refresh=refresh,
             progress_cb=lambda region_id, done, total: click.echo(f"[{done}/{total}] {region_id}"),
         )
-        click.echo(f"Cached satellite imagery for {updated} regions.")
+        click.echo(f"Cached satellite imagery for {updated} regions ({failed} failed).")
+        if failed and failed >= updated:
+            raise click.ClickException(f"{failed}/{updated + failed} regions failed - likely Esri throttling; re-run.")
     finally:
         con.close()
 
