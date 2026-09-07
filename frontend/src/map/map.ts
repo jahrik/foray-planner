@@ -4,7 +4,7 @@ import "leaflet.markercluster";
 import type { CampSite, Home } from "../api/types";
 import { clearLayer, clearLayerList } from "./layer-lifecycle";
 import { circleStyle } from "./markers";
-import { dist, qs, state } from "../state";
+import { dist, onScopeChange, qs, state } from "../state";
 
 // Marker palette - bright/neon so it pops on the dark basemap (the default), while still
 // reading over the lighter OSM terrain in light mode. Deliberately non-green vs the terrain.
@@ -131,7 +131,11 @@ function preciseClusterIcon(cluster: L.MarkerCluster): L.DivIcon {
 }
 
 export function initMap(home: Home): void {
-  map = L.map("map").setView([home.lat, home.lng], 7);
+  // Zoom control bottom-right (issue #297): the Google-Maps-style slide-out dock and the
+  // floating search bar / pill row all sit over the top-left, so the default top-left zoom
+  // buttons would be covered.
+  map = L.map("map", { zoomControl: false }).setView([home.lat, home.lng], 7);
+  L.control.zoom({ position: "bottomright" }).addTo(map);
   setTiles();
   // Sits above the basemap tiles but below the vector overlay pane (circles, trails, markers -
   // default z-index 400) so the selected destination's ring and every other layer still draw on
@@ -171,6 +175,7 @@ export function updateHome(home: Home): void {
     homeMarker.setLatLng([home.lat, home.lng]).bindPopup("Location: " + home.name);
     map.setView([home.lat, home.lng], 8);
   }
+  onScopeChange();
 }
 
 // Matches the same 111 km/degree approximation used backend-side (camps.py, land.py,

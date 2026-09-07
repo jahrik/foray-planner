@@ -13,8 +13,9 @@ import { initMap, map, setMapClickHandler, updateHome } from "./map/map";
 import { runPlan } from "./views/plan";
 import { setLocationLatLng, startRefresh } from "./refresh";
 import { collapseIfOpen, currentDetent, initSheet, snapTo } from "./map/sheet";
-import { errorDetail, qs, setStatus, state } from "./state";
+import { errorDetail, onScopeChange, qs, setStatus, state } from "./state";
 import { initTextSize, initTheme, initUnits } from "./ui/ui-prefs";
+import { initPills, syncPillsForView } from "./ui/pills";
 import { refreshCurrentView } from "./views/view-run";
 import { initMonths, runDestinations } from "./views/views";
 
@@ -43,14 +44,12 @@ function initTabs(): void {
       button.classList.add("active");
       state.view = (button.dataset.view as typeof state.view) ?? "destinations";
 
-      // Show plan controls only while on the Plan tab.
+      // Plan-route fields are a query form, not map filters (issue #297) - shown in the dock /
+      // sheet header only while the Plan tab is active. The Months pill hides on Fruiting now
+      // (no month param there) and the Camping pill shows only on Plan - syncPillsForView.
       const planRow = document.getElementById("plan-row");
       if (planRow) planRow.style.display = state.view === "plan" ? "flex" : "none";
-
-      // Alerts (Fruiting now) has no months param - it's a fixed trailing-weeks window, not
-      // a month picker (see /api/alerts) - so the filter is irrelevant, not just redundant.
-      const monthsField = document.getElementById("months-field");
-      if (monthsField) monthsField.style.display = state.view === "alerts" ? "none" : "flex";
+      syncPillsForView(state.view);
 
       // Each run*() only replaces #panel's content once its fetch resolves, so without this
       // the previous tab's cards stay on screen (and interactive) for a beat after switching -
@@ -62,42 +61,43 @@ function initTabs(): void {
   });
 }
 
-// Mobile-only toggle (hidden by CSS on desktop, where the filters row is always visible).
-function initFiltersToggle(): void {
-  const toggle = qs<HTMLButtonElement>("#filters-toggle");
-  const row = qs("#filters-row");
-  toggle.onclick = () => {
-    const open = row.classList.toggle("open");
-    toggle.setAttribute("aria-expanded", String(open));
-    // Keep the filters row (top of the screen) clear of a fully-raised sheet.
-    if (open && currentDetent() === "full") snapTo("half");
-    // Opening/closing the filters row changes how much vertical space main (and #map) get on
-    // mobile - resync Leaflet's cached container size once the reflow settles, same reason as
-    // the resize listener in main().
-    requestAnimationFrame(() => map.invalidateSize());
-  };
-}
-
-// Small popover explaining the core flow for a first-time visitor - closes on outside click,
-// Escape, or toggling it again, same pattern as the mobile filters disclosure.
-function initHelp(): void {
-  const toggle = qs<HTMLButtonElement>("#help-toggle");
-  const popover = qs("#help-popover");
+// The utility overflow menu behind the "⋮" button in the search bar (issue #297): units,
+// theme, text size, help text and the source link. The toggles themselves are wired in
+// ui/ui-prefs.ts - this only opens/closes the menu (outside-click + Escape + toggle again),
+// the same pattern the old header help popover used.
+function initOverflowMenu(): void {
+  const toggle = qs<HTMLButtonElement>("#overflow-toggle");
+  const menu = qs("#overflow-menu");
   const close = () => {
-    popover.hidden = true;
+    menu.hidden = true;
     toggle.setAttribute("aria-expanded", "false");
   };
-  toggle.onclick = (e) => {
-    e.stopPropagation();
-    const open = popover.hidden;
-    popover.hidden = !open;
+  toggle.onclick = (event) => {
+    event.stopPropagation();
+    const open = menu.hidden;
+    menu.hidden = !open;
     toggle.setAttribute("aria-expanded", String(open));
   };
-  popover.onclick = (e) => e.stopPropagation();
+  menu.onclick = (event) => event.stopPropagation();
   document.addEventListener("click", close);
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") close();
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
   });
+}
+
+// Desktop: the results dock is a left-anchored slide-out over the map, dismissible so the map
+// returns to full width; #dock-reopen brings it back (issue #297). Inert on mobile, where the
+// bottom sheet (#229) owns show/hide via its detents and both buttons are hidden by CSS.
+function initDock(): void {
+  const dock = qs("#dock");
+  const closeButton = qs<HTMLButtonElement>("#dock-close");
+  const reopenButton = qs<HTMLButtonElement>("#dock-reopen");
+  const setClosed = (closed: boolean) => {
+    dock.classList.toggle("closed", closed);
+    reopenButton.hidden = !closed;
+  };
+  closeButton.onclick = () => setClosed(true);
+  reopenButton.onclick = () => setClosed(false);
 }
 
 async function main(): Promise<void> {
@@ -107,8 +107,8 @@ async function main(): Promise<void> {
   initTheme();
   initUnits();
   initTextSize();
-  initHelp();
-  initFiltersToggle();
+  initOverflowMenu();
+  initDock();
   initMonths();
   initMap(config.home);
   initSheet();
@@ -153,7 +153,13 @@ async function main(): Promise<void> {
   };
   initLayerToggles();
   initLocationAutocomplete();
-  initGenusSelection(refreshCurrentView);
+  initGenusSelection(() => {
+    refreshCurrentView();
+    onScopeChange();
+  });
+  // Build the filter-pill row last: it moves the radius / months / genus / layer control DOM
+  // into each pill's popover, so every module that wires those controls has run first.
+  initPills();
 
   // Kick geolocation off immediately, but don't let it block the initial paint. If a home
   // (already-granted permission, no browser prompt) resolves within the head-start window, the

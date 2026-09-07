@@ -33,20 +33,7 @@ body {
   color: var(--ink);
   display: flex;
   flex-direction: column;
-}
-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-  padding: 4px 12px;
-  border-bottom: 1px solid var(--border);
-}
-header h1 {
-  margin: 0;
-  font-size: 13px;
-  white-space: nowrap;
-  flex-shrink: 0;
+  overflow: hidden;
 }
 .theme-toggle {
   min-width: 40px;
@@ -59,28 +46,66 @@ header h1 {
   align-items: center;
   justify-content: center;
 }
+/* ── Floating search bar (issue #297) ── the rounded, shadowed box over the top-left of the
+   full-bleed map. .locbar is the column: search row, then the resolved-home readout. */
 .locbar {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
 }
 .locbar form {
   position: relative;
-  flex: 0 1 280px;
-  min-width: 160px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+}
+.locbar-icon {
+  flex: 0 0 auto;
+  font-size: 13px;
+  opacity: 0.7;
 }
 .locbar input {
-  width: 100%;
-  padding: 5px 10px;
-  border-radius: 6px;
-  font-size: 13px;
-  border: 1px solid var(--border);
-  background: var(--panel);
+  flex: 1;
+  min-width: 0;
+  padding: 6px 2px;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+}
+.locbar input:focus {
+  outline: none;
+}
+.overflow-toggle {
+  flex: 0 0 auto;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+.overflow-toggle:hover {
+  background: var(--border);
   color: var(--ink);
 }
 .loc-current {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 2px 10px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.2);
   font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
@@ -95,12 +120,12 @@ header h1 {
 }
 .radius-presets {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  flex-shrink: 0;
 }
 .radius-presets button {
-  padding: 3px 7px;
-  font-size: 11px;
+  padding: 4px 9px;
+  font-size: 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--panel);
@@ -110,41 +135,64 @@ header h1 {
   border-color: var(--accent);
   color: var(--ink);
 }
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  margin-left: auto;
-}
-.help-wrap {
-  position: relative;
-}
-.help-popover {
+
+/* ── Utility overflow menu (issue #297) ── units / theme / text size / help / source, behind
+   the search bar's "⋮". Replaces the old header button cluster; the toggles keep their
+   ui-prefs.ts wiring. */
+.overflow-menu {
   position: absolute;
-  top: 100%;
+  top: calc(100% + 6px);
   right: 0;
-  z-index: 1000;
-  margin-top: 6px;
+  z-index: 1200;
   width: 260px;
-  padding: 12px 14px;
+  padding: 10px 14px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
   font-size: 13px;
+}
+.overflow-menu[hidden] {
+  display: none;
+}
+.overflow-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+}
+.overflow-label {
+  color: var(--muted);
+}
+.overflow-help {
+  margin: 8px 0;
+  color: var(--muted);
   line-height: 1.5;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
 }
-.help-popover p {
-  margin: 0;
+.overflow-source {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 12px;
 }
-.action-status {
-  gap: 4px !important;
+.overflow-source:hover {
+  color: var(--ink);
 }
-.action-status #status {
+.dock-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 12px 0;
+  min-height: 0;
+}
+.dock-status #status {
   font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .loc-suggestions {
   position: absolute;
@@ -179,23 +227,6 @@ header h1 {
   background: var(--border);
 }
 
-.controls {
-  display: flex;
-  flex-direction: column;
-  flex: 0 0 auto;
-  gap: 4px;
-  padding: 4px 12px;
-  border-bottom: 1px solid var(--border);
-}
-.row {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: flex-end;
-}
-.filters-toggle {
-  display: none;
-} /* mobile-only; desktop always shows the filters row */
 .field {
   display: flex;
   flex-direction: column;
@@ -355,10 +386,10 @@ progress::-moz-progress-bar {
   border-bottom-color: var(--accent2);
 }
 
-/* #sheet is a passthrough wrapper on desktop (see index.html): its children (.tabs,
-   .contour-rule) lay out as direct body children exactly as before, and #panel stays in the
-   <main> grid. sheet.ts promotes it to a real fixed, draggable element at the mobile
-   breakpoint (issue #229) and moves #panel inside it. */
+/* #sheet is a passthrough wrapper on desktop (issue #297): its children (.tabs, #plan-row,
+   .contour-rule) lay out as direct children of #dock, above #panel. sheet.ts promotes it to a
+   real fixed, draggable element at the mobile breakpoint (issue #229) and moves #panel inside
+   it. */
 #sheet {
   display: contents;
 }
@@ -367,16 +398,17 @@ progress::-moz-progress-bar {
   display: none;
 }
 
-/* main claims whatever vertical space header/controls/tabs don't use, instead of a hardcoded
-   "100vh minus a magic number" that broke whenever the header's height changed. */
+/* ── Full-bleed map shell (issue #297) ── the map fills <main>; every piece of chrome floats
+   over it. .rail is the left column (search bar, pill row, results dock); it is click-through
+   so the map stays draggable around it, and its interactive children opt back in. */
 main {
-  display: grid;
-  grid-template-columns: 1fr 380px;
-  gap: 0;
+  position: relative;
   flex: 1;
   min-height: 0;
 }
 .map-wrap {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -385,6 +417,195 @@ main {
   flex: 1;
   min-height: 0;
   background: #0c0d09;
+}
+.rail {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  bottom: 12px;
+  width: min(360px, calc(100vw - 24px));
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.rail > * {
+  pointer-events: auto;
+}
+.map-shell {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  scrollbar-width: none;
+}
+.pills::-webkit-scrollbar {
+  display: none;
+}
+.pill-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+.pill {
+  white-space: nowrap;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.pill:hover {
+  border-color: var(--accent);
+}
+.pill.on {
+  background: var(--accent2);
+  color: var(--panel);
+  border-color: var(--accent2);
+  font-weight: 600;
+}
+.pill-wrap.open .pill {
+  border-color: var(--accent);
+}
+.pill-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 1100;
+  min-width: 200px;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.pill-popover[hidden] {
+  display: none;
+}
+
+/* ── Slide-out results dock (issue #297) ── left-anchored over the map; #dock-close dismisses
+   it (map returns to full width), #dock-reopen brings it back. On mobile it is inert: the
+   bottom sheet (#229) owns the panel. */
+.dock {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+  transition:
+    transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.2s ease;
+}
+.dock.closed {
+  transform: translateX(calc(-100% - 24px));
+  opacity: 0;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dock {
+    transition: none;
+  }
+}
+.dock-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+}
+.dock-close:hover {
+  background: var(--border);
+  color: var(--ink);
+}
+.dock-reopen {
+  position: absolute;
+  bottom: 40px;
+  left: 12px;
+  z-index: 850;
+  padding: 8px 14px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.dock-reopen[hidden] {
+  display: none;
+}
+
+/* Refresh: a small floating map control (issue #297). Bottom-right, stacked above the
+   relocated Leaflet zoom control so no floating UI covers either. */
+.map-fab {
+  position: absolute;
+  right: 12px;
+  bottom: 92px;
+  z-index: 800;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+.map-fab:disabled {
+  opacity: 0.5;
+}
+
+/* Tabs sit at the top of the dock now; keep the underline treatment. */
+.tabs {
+  margin: 0;
+  border-radius: 12px 12px 0 0;
+}
+.dock .tabs {
+  padding: 8px 10px 0;
+}
+.plan-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.plan-form .field {
+  flex: 1 1 130px;
+}
+.plan-form form {
+  position: relative;
+}
+.plan-form input[type="text"],
+.plan-form input[type="number"] {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
 }
 /* Inverts the standard (light) OSM tiles rather than brightening a separate dark tileset -
    see the comment on TILE_URL in map.ts for why. */
@@ -404,8 +625,9 @@ main {
   filter: saturate(1.2) contrast(1.08);
 }
 #panel {
+  flex: 1 1 auto;
+  min-height: 0;
   background: var(--panel);
-  border-left: 1px solid var(--border);
   overflow-y: auto;
   padding: 14px 16px;
 }
@@ -685,68 +907,45 @@ table.cal .heat {
 }
 
 @media (max-width: 780px) {
-  header {
-    flex-wrap: wrap;
-    row-gap: 6px;
+  /* Reclaim the header row (issue #297 / #229 follow-up): the search bar and pill row float
+     over the top of the full-screen map instead of sitting in a bar above it. The .rail spans
+     the width; the dock is inert here (the bottom sheet owns the panel). */
+  .rail {
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    bottom: auto;
+    width: auto;
   }
-  /* .locbar (search box + home name/coords) never wrapped, so on a narrow phone it
-     could overflow past the viewport or overlap .header-actions. `order` reflows header's
-     3 top-level children (h1, .locbar, .header-actions) without touching markup: title +
-     icon toggles share row 1 (same as desktop), .locbar claims its own full-width row below
-     and wraps internally. Radius presets moved out of .locbar entirely - they now live in
-     #filters-row (see index.html), so on mobile they're collapsed behind the same "Filters"
-     disclosure as Months/Layers instead of needing header space of their own. */
-  header h1 {
-    order: 1;
+  .dock {
+    display: contents;
   }
-  .header-actions {
-    order: 2;
-  }
-  .locbar {
-    order: 3;
-    flex-basis: 100%;
-    flex-wrap: wrap;
-    row-gap: 4px;
-  }
-  .locbar form {
-    flex: 1 1 160px;
-  }
-  .loc-current {
-    flex: 1 1 auto;
-    min-width: 120px;
-  }
-  .controls {
-    padding: 4px 10px;
-    gap: 4px;
-  }
-  .row {
-    gap: 6px;
-  }
-  main {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 0;
-  }
-  /* Months/layers are one-off adjustments, not live status - collapse them behind a toggle
-     by default so they don't permanently eat map height on a small screen. */
-  .filters-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    font-size: 12px;
-    align-self: flex-end;
-  }
-  #filters-row:not(.open) {
+  .dock-close,
+  .dock-reopen {
     display: none;
   }
-  .filters-toggle[aria-expanded="true"] .chevron {
-    transform: rotate(180deg);
+  /* #sheet-summary already mirrors #status on mobile (state.ts setStatus). */
+  .dock-status {
+    display: none;
   }
-  .chevron {
-    display: inline-block;
-    transition: transform 0.15s ease;
+  /* The fixed bottom sheet is a descendant of the click-through .rail in the DOM - opt it back
+     into pointer events. */
+  body[data-sheet="on"] #sheet {
+    pointer-events: auto;
+  }
+  .locbar form {
+    padding: 3px 4px 3px 10px;
+  }
+  /* Pills wrap rather than scroll on mobile: an overflow container (either axis) would clip the
+     anchored pill popovers, and the full-screen map easily spares one extra row. */
+  .pills {
+    overflow: visible;
+  }
+  .map-fab {
+    bottom: calc(18dvh + 8px);
+  }
+  .leaflet-bottom.leaflet-right {
+    margin-bottom: 0;
   }
   /* Segmented-control look instead of the desktop underline style - the tab bar now sits
      directly above the reflowed map card + sheet, so it should read as attached to it. */
@@ -780,17 +979,8 @@ table.cal .heat {
   /* Map-first: #map fills the screen; the destinations list rides over its lower portion in a
      draggable bottom sheet (issue #229), the way Google/Apple Maps do it. */
   .map-wrap {
-    flex: 1;
-    min-height: 0;
-    position: relative;
-    margin: 0;
     border: none;
     border-radius: 0;
-    overflow: hidden;
-  }
-  #map {
-    flex: 1;
-    min-height: 0;
   }
   /* Float the legend just above the collapsed sheet's peek instead of below it (off-screen). */
   body[data-sheet="on"] #legend {
@@ -888,7 +1078,7 @@ table.cal .heat {
   .months button,
   .radius-presets button,
   .toggle-btn span,
-  .filters-toggle {
+  .pill {
     min-height: 40px;
     display: inline-flex;
     align-items: center;
@@ -904,34 +1094,8 @@ table.cal .heat {
   }
 }
 
-/* ── Plan route ── */
-#plan-row input[type="number"] {
-  width: 80px;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--panel);
-  color: var(--ink);
-  font-size: 14px;
-}
-#plan-start-field,
-#plan-destination-field {
-  min-width: 180px;
-}
-#plan-start-field form,
-#plan-destination-field form {
-  position: relative;
-}
-#plan-start-field input,
-#plan-destination-field input {
-  width: 100%;
-  padding: 5px 10px;
-  border-radius: 6px;
-  font-size: 13px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--ink);
-}
+/* ── Plan route ── the query form (#plan-row) now renders in the dock / sheet header when the
+   Plan view is active (issue #297); .plan-form owns its layout above. */
 .plan-header {
   display: flex;
   justify-content: space-between;
@@ -1039,8 +1203,8 @@ table.cal .heat {
 :root[data-text-size="large"] body {
   font-size: 17px;
 }
-:root[data-text-size="large"] header h1 {
-  font-size: 15px;
+:root[data-text-size="large"] .pill {
+  font-size: 14px;
 }
 :root[data-text-size="large"] .loc-current,
 :root[data-text-size="large"] .loc-meta {

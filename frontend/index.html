@@ -12,204 +12,194 @@
   </head>
   <body>
     <div id="load-bar" role="progressbar" aria-label="Loading" aria-hidden="true"></div>
-    <header>
-      <h1>🍄 Foray Planner</h1>
-      <div class="locbar" id="locform-wrap">
-        <form id="locform" autocomplete="off">
-          <input id="loc" type="text" placeholder="Search location…" autocomplete="off" />
-          <ul id="loc-suggestions" class="loc-suggestions"></ul>
-        </form>
-        <span class="loc-current" id="home-line">
-          <strong id="home-name">…</strong>
-          <span class="loc-meta">(<span id="home-coords">…</span>) · <span id="home-radius">…</span></span>
-        </span>
-      </div>
-      <div class="header-actions">
-        <div class="help-wrap">
-          <button
-            type="button"
-            id="help-toggle"
-            class="theme-toggle"
-            aria-label="Help"
-            aria-expanded="false"
-            aria-controls="help-popover"
-          >
-            ?
-          </button>
-          <div id="help-popover" class="help-popover" hidden>
-            <p>
-              Foray Planner auto-detects your location and ranks nearby regions by mushroom activity. Click a
-              destination card to see its species and 12-month calendar. Use the tabs above to check recent
-              activity alerts or plan a multi-stop route.
-            </p>
-          </div>
-        </div>
-        <a
-          href="https://github.com/jahrik/foray-planner"
-          target="_blank"
-          rel="noopener"
-          class="theme-toggle"
-          aria-label="View source on GitHub"
-          title="View source on GitHub"
-          >🐙</a
-        >
-        <button type="button" id="text-size-toggle" class="theme-toggle" aria-label="Toggle larger text">
-          A+
-        </button>
-        <button type="button" id="units-toggle" class="theme-toggle" aria-label="Toggle units">mi</button>
-        <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">🌙</button>
-      </div>
-    </header>
-
-    <section class="controls">
-      <div class="row">
-        <button
-          type="button"
-          id="filters-toggle"
-          class="filters-toggle"
-          aria-expanded="false"
-          aria-controls="filters-row"
-        >
-          Filters <span class="chevron">▾</span>
-        </button>
-        <div class="field" style="align-self: flex-end">
-          <button id="refresh">Refresh</button>
-        </div>
-        <div class="field action-status" style="align-self: flex-end">
-          <span id="status" role="status" aria-live="polite"></span>
-          <progress
-            id="refresh-progress"
-            value="0"
-            max="100"
-            style="display: none"
-            aria-label="Refresh Progress"
-          ></progress>
-        </div>
-      </div>
-      <div class="row" id="filters-row">
-        <div class="field">
-          <label>Radius</label>
-          <div class="radius-presets" id="radius-presets">
-            <button type="button" data-km="50" aria-label="Set search radius to 50 kilometers">50 km</button>
-            <button type="button" data-km="150" aria-label="Set search radius to 150 kilometers">
-              150 km
-            </button>
-            <button type="button" data-km="300" aria-label="Set search radius to 300 kilometers">
-              300 km
-            </button>
-            <button type="button" data-km="500" aria-label="Set search radius to 500 kilometers">
-              500 km
-            </button>
-          </div>
-        </div>
-        <div class="field" id="months-field">
-          <label>Months</label>
-          <div id="months" class="months"></div>
-        </div>
-        <div class="field" id="genus-field">
-          <label>Target genera</label>
-          <form id="genusform" autocomplete="off">
-            <input
-              id="genus"
-              type="text"
-              placeholder="Search genus (e.g. Cantharellus)…"
-              autocomplete="off"
-            />
-            <ul id="genus-suggestions" class="loc-suggestions"></ul>
-          </form>
-          <div id="genus-chips" class="chips"></div>
-        </div>
-        <div class="field">
-          <label>Layers</label>
-          <div class="toggle-group">
-            <label class="toggle-btn"><input type="checkbox" id="show-land-blm" /> <span>BLM</span></label>
-            <label class="toggle-btn"><input type="checkbox" id="show-land-usfs" /> <span>USFS</span></label>
-            <label class="toggle-btn"
-              ><input type="checkbox" id="show-land-tribal" /> <span>Tribal land</span></label
-            >
-            <label class="toggle-btn"><input type="checkbox" id="show-fire" /> <span>Fire</span></label>
-          </div>
-        </div>
-      </div>
-      <div class="row plan-row" id="plan-row" style="display: none">
-        <div class="field" id="plan-start-field">
-          <label for="plan-start">Start</label>
-          <form id="plan-start-form" autocomplete="off">
-            <input id="plan-start" type="text" placeholder="Current location…" autocomplete="off" />
-            <ul id="plan-start-suggestions" class="loc-suggestions"></ul>
-          </form>
-        </div>
-        <div class="field" id="plan-destination-field">
-          <label for="plan-destination">Destination</label>
-          <form id="plan-destination-form" autocomplete="off">
-            <input
-              id="plan-destination"
-              type="text"
-              placeholder="Leave blank to auto-pick…"
-              autocomplete="off"
-            />
-            <ul id="plan-destination-suggestions" class="loc-suggestions"></ul>
-          </form>
-        </div>
-        <div class="field">
-          <label for="plan-stops">Max stops</label>
-          <input id="plan-stops" type="number" min="1" max="20" value="5" />
-        </div>
-        <div class="field">
-          <label for="plan-drive">Max leg (km)</label>
-          <input id="plan-drive" type="number" min="50" max="2000" value="400" step="50" />
-        </div>
-        <div class="field" style="justify-content: flex-end">
-          <label class="toggle-btn">
-            <input type="checkbox" id="plan-free-camp" />
-            <span>Free camp</span>
-          </label>
-        </div>
-        <div class="field">
-          <label>Camping</label>
-          <div class="toggle-group">
-            <label class="toggle-btn"
-              ><input type="checkbox" id="show-camps" /> <span>Campgrounds</span></label
-            >
-            <label class="toggle-btn"
-              ><input type="checkbox" id="show-dispersed" /> <span>Dispersed</span></label
-            >
-            <label class="toggle-btn"><input type="checkbox" id="free-camps" /> <span>Free only</span></label>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- On mobile #sheet is a fixed, draggable bottom sheet over a full-screen map (issue #229);
-         on desktop it is `display: contents`, so .tabs + .contour-rule lay out exactly as before
-         and #panel stays in the <main> grid (sheet.ts moves #panel in here only on mobile). -->
-    <div id="sheet" role="region" aria-label="Destinations panel">
-      <button
-        type="button"
-        id="sheet-handle"
-        class="sheet-handle"
-        aria-label="Expand destinations panel"
-        aria-expanded="false"
-        aria-controls="panel"
-      ></button>
-      <nav class="tabs">
-        <button data-view="destinations" class="active">Destinations</button>
-        <button data-view="alerts">Fruiting now</button>
-        <button data-view="plan">🗺️ Plan route</button>
-      </nav>
-      <div id="sheet-summary" class="sheet-summary" aria-hidden="true"></div>
-      <div class="contour-rule" aria-hidden="true"></div>
-    </div>
 
     <main>
       <div class="map-wrap">
         <div id="map"></div>
         <div id="legend" class="map-legend" role="region" aria-label="Map legend"></div>
       </div>
-      <aside id="panel">
-        <p class="hint">Finding your best destination…</p>
-      </aside>
+
+      <!-- Floating shell over the top-left of the full-bleed map (issue #297): rounded search
+           bar, then the horizontal filter-pill row, then the slide-out results dock. .rail
+           itself is click-through; its children re-enable pointer events. -->
+      <div class="rail">
+        <div class="map-shell">
+          <div class="locbar" id="locform-wrap">
+            <form id="locform" autocomplete="off">
+              <span class="locbar-icon" aria-hidden="true">🔍</span>
+              <input id="loc" type="text" placeholder="Search location…" autocomplete="off" />
+              <button
+                type="button"
+                id="overflow-toggle"
+                class="overflow-toggle"
+                aria-label="Settings and help"
+                aria-haspopup="true"
+                aria-expanded="false"
+                aria-controls="overflow-menu"
+              >
+                ⋮
+              </button>
+              <ul id="loc-suggestions" class="loc-suggestions"></ul>
+            </form>
+            <span class="loc-current" id="home-line">
+              <strong id="home-name">…</strong>
+              <span class="loc-meta"
+                >(<span id="home-coords">…</span>) · <span id="home-radius">…</span></span
+              >
+            </span>
+            <div id="overflow-menu" class="overflow-menu" hidden>
+              <div class="overflow-group">
+                <span class="overflow-label">Units</span>
+                <button type="button" id="units-toggle" class="theme-toggle" aria-label="Toggle units">
+                  mi
+                </button>
+              </div>
+              <div class="overflow-group">
+                <span class="overflow-label">Theme</span>
+                <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">
+                  🌙
+                </button>
+              </div>
+              <div class="overflow-group">
+                <span class="overflow-label">Text size</span>
+                <button
+                  type="button"
+                  id="text-size-toggle"
+                  class="theme-toggle"
+                  aria-label="Toggle larger text"
+                >
+                  A+
+                </button>
+              </div>
+              <p class="overflow-help">
+                Foray Planner auto-detects your location and ranks nearby regions by mushroom activity. Click
+                a destination card to see its species and 12-month calendar. Use the tabs to check recent
+                activity alerts or plan a multi-stop route.
+              </p>
+              <a
+                href="https://github.com/jahrik/foray-planner"
+                target="_blank"
+                rel="noopener"
+                class="overflow-source"
+                >🐙 View source on GitHub</a
+              >
+            </div>
+          </div>
+
+          <div id="pills" class="pills" role="toolbar" aria-label="Map filters"></div>
+        </div>
+
+        <!-- On mobile #sheet is promoted to a fixed, draggable bottom sheet over a full-screen
+             map (issue #229) and #panel moves inside it; on desktop #sheet is
+             `display: contents`, so .tabs / #plan-row / .contour-rule flow as children of #dock
+             above #panel and the whole dock is the Google-Maps-style slide-out (issue #297). -->
+        <div id="dock" class="dock">
+          <div id="sheet" role="region" aria-label="Destinations panel">
+            <button
+              type="button"
+              id="sheet-handle"
+              class="sheet-handle"
+              aria-label="Expand destinations panel"
+              aria-expanded="false"
+              aria-controls="panel"
+            ></button>
+            <nav class="tabs">
+              <button data-view="destinations" class="active">Destinations</button>
+              <button data-view="alerts">Fruiting now</button>
+              <button data-view="plan">🗺️ Plan route</button>
+            </nav>
+            <div class="dock-status">
+              <span id="status" role="status" aria-live="polite"></span>
+              <progress
+                id="refresh-progress"
+                value="0"
+                max="100"
+                style="display: none"
+                aria-label="Refresh Progress"
+              ></progress>
+            </div>
+            <div class="plan-form" id="plan-row" style="display: none">
+              <div class="field" id="plan-start-field">
+                <label for="plan-start">Start</label>
+                <form id="plan-start-form" autocomplete="off">
+                  <input id="plan-start" type="text" placeholder="Current location…" autocomplete="off" />
+                  <ul id="plan-start-suggestions" class="loc-suggestions"></ul>
+                </form>
+              </div>
+              <div class="field" id="plan-destination-field">
+                <label for="plan-destination">Destination</label>
+                <form id="plan-destination-form" autocomplete="off">
+                  <input
+                    id="plan-destination"
+                    type="text"
+                    placeholder="Leave blank to auto-pick…"
+                    autocomplete="off"
+                  />
+                  <ul id="plan-destination-suggestions" class="loc-suggestions"></ul>
+                </form>
+              </div>
+              <div class="field">
+                <label for="plan-stops">Max stops</label>
+                <input id="plan-stops" type="number" min="1" max="20" value="5" />
+              </div>
+              <div class="field">
+                <label for="plan-drive">Max leg (km)</label>
+                <input id="plan-drive" type="number" min="50" max="2000" value="400" step="50" />
+              </div>
+              <div class="field">
+                <label class="toggle-btn">
+                  <input type="checkbox" id="plan-free-camp" />
+                  <span>Free camp</span>
+                </label>
+              </div>
+            </div>
+            <div id="sheet-summary" class="sheet-summary" aria-hidden="true"></div>
+            <div class="contour-rule" aria-hidden="true"></div>
+          </div>
+          <aside id="panel">
+            <p class="hint">Finding your best destination…</p>
+          </aside>
+          <button type="button" id="dock-close" class="dock-close" aria-label="Hide results panel">✕</button>
+        </div>
+      </div>
+
+      <button type="button" id="dock-reopen" class="dock-reopen" hidden>Results</button>
+      <button type="button" id="refresh" class="map-fab" aria-label="Refresh mushroom data">⟳</button>
     </main>
+
+    <!-- Pill-popover control sources. initPills() (ui/pills.ts) moves each node into its pill's
+         popover; each keeps the wiring it already had (initRadiusPresets, initMonths,
+         initGenusSelection, initLayerToggles). Kept in the document (not rebuilt) so those
+         modules' qs() lookups still resolve. -->
+    <div id="pill-sources" hidden>
+      <div class="radius-presets" id="radius-presets">
+        <button type="button" data-km="50" aria-label="Set search radius to 50 kilometers">50 km</button>
+        <button type="button" data-km="150" aria-label="Set search radius to 150 kilometers">150 km</button>
+        <button type="button" data-km="300" aria-label="Set search radius to 300 kilometers">300 km</button>
+        <button type="button" data-km="500" aria-label="Set search radius to 500 kilometers">500 km</button>
+      </div>
+      <div id="months" class="months"></div>
+      <div id="genus-field">
+        <form id="genusform" autocomplete="off">
+          <input id="genus" type="text" placeholder="Search genus (e.g. Cantharellus)…" autocomplete="off" />
+          <ul id="genus-suggestions" class="loc-suggestions"></ul>
+        </form>
+        <div id="genus-chips" class="chips"></div>
+      </div>
+      <div class="toggle-group" id="land-toggles">
+        <label class="toggle-btn"><input type="checkbox" id="show-land-blm" /> <span>BLM</span></label>
+        <label class="toggle-btn"><input type="checkbox" id="show-land-usfs" /> <span>USFS</span></label>
+        <label class="toggle-btn"
+          ><input type="checkbox" id="show-land-tribal" /> <span>Tribal land</span></label
+        >
+      </div>
+      <input type="checkbox" id="show-fire" />
+      <div class="toggle-group" id="camp-toggles">
+        <label class="toggle-btn"><input type="checkbox" id="show-camps" /> <span>Campgrounds</span></label>
+        <label class="toggle-btn"><input type="checkbox" id="show-dispersed" /> <span>Dispersed</span></label>
+        <label class="toggle-btn"><input type="checkbox" id="free-camps" /> <span>Free only</span></label>
+      </div>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

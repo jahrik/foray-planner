@@ -19,6 +19,7 @@ import {
   fireBadges,
   monthsParam,
   MONTHS,
+  onScopeChange,
   qs,
   rainMeta,
   setStatus,
@@ -42,6 +43,7 @@ export function initMonths(): void {
         button.classList.add("on");
       }
       button.setAttribute("aria-pressed", String(state.months.has(month)));
+      onScopeChange(); // keep the Months filter pill's label in sync (issue #297)
       if (state.view === "destinations") runDestinations();
     };
     box.appendChild(button);

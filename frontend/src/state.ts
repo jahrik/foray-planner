@@ -128,6 +128,15 @@ export function fireBadges(fires: readonly FireBadge[] | undefined): string {
   return rows.join("");
 }
 
+// Presentation hook fired whenever a scoping input that a filter pill's label reflects changes
+// (home/radius, units, months, genera, layers). ui/pills.ts registers refreshPills() here so
+// the pill row stays in sync without map.ts / ui-prefs.ts importing the pill module (which
+// would cycle through map/sheet). No-op until initPills() runs.
+export let onScopeChange: () => void = () => {};
+export function setScopeChangeHook(hook: () => void): void {
+  onScopeChange = hook;
+}
+
 export function qs<T extends HTMLElement = HTMLElement>(selector: string, root: ParentNode = document): T {
   const element = root.querySelector<T>(selector);
   if (!element) throw new Error(`missing element: ${selector}`);
