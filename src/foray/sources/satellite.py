@@ -13,7 +13,11 @@ renderer sources/land and sources/fire use. That distinction matters a lot here:
 - ``/export`` renders on demand (25-45s at any real resolution) and degrades hard under
   concurrent load (measured 95% failure rate at just 6 concurrent requests).
 - The tile endpoints serve pre-rendered, CDN-cached 256x256 tiles - each one returns in well
-  under a second, same as the OSM basemap tiles the frontend already fetches directly.
+  under a second, same as the OSM basemap tiles the frontend already fetches directly. A single
+  region's live fetch (a handful of tile workers) sails through; a full-grid backfill fanning
+  out across regions does get throttled (429s, dropped connections), so ``_fetch_tile`` retries
+  with backoff and ``backfill_region_satellite`` keeps its concurrency modest and reports how
+  many regions still failed.
 - Critically, ``/export``'s label layer draws text at a fixed pixel height regardless of the
   requested resolution or ``dpi`` (confirmed live; this service also reports
   ``supportsDynamicLayers: false``, so there's no server-side override) - so a big single export
@@ -32,6 +36,8 @@ from __future__ import annotations
 
 import logging
 import math
+import random
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
@@ -87,10 +93,30 @@ def _meters_to_global_pixel(x: float, y: float, zoom: int) -> tuple[float, float
     return px, py
 
 
+# Esri's arcgisonline tile CDN throttles bursts (a full-grid backfill fans out to
+# concurrency * _stitched_crop workers at once) with HTTP 429s and dropped connections. Those
+# are recoverable - back off and retry - unlike a 4xx/5xx that means the tile genuinely isn't
+# there. Kept small: the point is to ride out a rate-limit blip, not to hammer a down service.
+_TILE_RETRY_ATTEMPTS = 4
+_TILE_RETRY_BACKOFF_S = 0.75
+
+
 def _fetch_tile(url_template: str, zoom: int, tile_x: int, tile_y: int, client: httpx.Client) -> Image.Image:
-    response = client.get(url_template.format(z=zoom, x=tile_x, y=tile_y))
-    response.raise_for_status()
-    return Image.open(BytesIO(response.content)).convert("RGBA")
+    url = url_template.format(z=zoom, x=tile_x, y=tile_y)
+    for attempt in range(_TILE_RETRY_ATTEMPTS):
+        last = attempt == _TILE_RETRY_ATTEMPTS - 1
+        try:
+            response = client.get(url)
+            if response.status_code == 429 and not last:
+                time.sleep(_TILE_RETRY_BACKOFF_S * 2**attempt + random.uniform(0, 0.25))
+                continue
+            response.raise_for_status()
+            return Image.open(BytesIO(response.content)).convert("RGBA")
+        except httpx.TransportError:
+            if last:
+                raise
+            time.sleep(_TILE_RETRY_BACKOFF_S * 2**attempt + random.uniform(0, 0.25))
+    raise AssertionError("unreachable: the final attempt returns or raises")  # pragma: no cover
 
 
 def _stitched_crop(
@@ -113,7 +139,7 @@ def _stitched_crop(
         tile_x, tile_y = coords
         return tile_x, tile_y, _fetch_tile(url_template, zoom, tile_x, tile_y, client)
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         for tile_x, tile_y, tile in executor.map(fetch_one, ((x, y) for x in tile_xs for y in tile_ys)):
             canvas.paste(tile, ((tile_x - tile_x0) * TILE_PX, (tile_y - tile_y0) * TILE_PX))
 
@@ -166,19 +192,27 @@ def backfill_region_satellite(
     *,
     cell_deg: float,
     max_regions: int | None = None,
-    concurrency: int = 8,
+    concurrency: int = 4,
+    refresh: bool = False,
     progress_cb: Callable[[str, int, int], None] | None = None,
-) -> int:
-    """Fetch + cache satellite imagery for every region that doesn't have it yet.
+) -> tuple[int, int]:
+    """Fetch + cache satellite imagery for every region that doesn't have it yet. Returns
+    ``(cached, failed)``.
 
     Regions come from the `regions` table (materialized phenology - only cells with at least one
     observation exist there), so this backfills exactly the set of destinations the app can
-    actually show, not the whole globe. Tile fetches are cheap and reliable (CDN-served, not
-    rendered on demand - see module docstring), so `concurrency` can run much higher than the old
-    live-export approach could tolerate. A region whose tiles fail (rare - transient network
-    error) is logged and skipped, not fatal to the run - re-running only re-fetches the ones
-    still missing.
+    actually show, not the whole globe. ``refresh=True`` clears `region_satellite` first, so a
+    change to what a region's raster should contain (bbox, zoom, tile sources, compositing) is
+    re-fetched for every region instead of only new ones (`save_region_satellite` is
+    `ON CONFLICT DO NOTHING`).
+
+    Esri's tile CDN throttles a wide fan-out (429s, dropped connections), so `concurrency`
+    stays modest and `_fetch_tile` retries with backoff; a region whose tiles still fail after
+    that is logged and counted, not fatal - re-running picks it up. The caller decides what a
+    high `failed` count means (the CLI exits non-zero when failures dominate).
     """
+    if refresh:
+        con.execute("TRUNCATE region_satellite")
     limit_sql = "LIMIT %s" if max_regions is not None else ""
     params: list[object] = [max_regions] if max_regions is not None else []
     rows = con.execute(
@@ -189,6 +223,7 @@ def backfill_region_satellite(
     radius_m = (cell_deg * KM_PER_DEG_LAT * 1000) / 2
     total = len(rows)
     updated = 0
+    failed = 0
 
     def fetch_one(row: tuple[str, float, float]) -> tuple[str, bytes, bytes] | None:
         region_id, lat, lng = row
@@ -205,6 +240,10 @@ def backfill_region_satellite(
                 region_id, image, labels = result
                 save_region_satellite(con, region_id, image, labels)
                 updated += 1
+            else:
+                failed += 1
             if progress_cb:
                 progress_cb(result[0] if result else rows[index - 1][0], index, total)
-    return updated
+    if failed:
+        logger.warning("backfill-satellite: %d of %d regions failed", failed, total)
+    return updated, failed
