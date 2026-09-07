@@ -1187,7 +1187,6 @@ table.cal .heat {
   border-radius: 4px 0 0 0;
   border-top: 1px solid var(--border);
   border-left: 1px solid var(--border);
-  cursor: pointer;
 }
 .leaflet-container .leaflet-control-attribution a {
   color: var(--muted);
@@ -1198,32 +1197,34 @@ table.cal .heat {
   }
 }
 
-/* Collapsed by default (see collapseAttribution in map.ts): the four-provider credit string is a
-   large opaque slab over the map (worst on mobile, floating mid-map over the bottom sheet), so
-   shrink it to a single "ⓘ" chip. It expands to the full credit on hover for a mouse, and on tap
-   for touch (the click handler toggles the class); expanded it wraps rather than clipping so
-   every provider link stays reachable. */
-.leaflet-container .leaflet-control-attribution.attrib-collapsed {
-  max-width: 22px;
-  font-size: 0;
-  padding: 2px 5px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.leaflet-container .leaflet-control-attribution.attrib-collapsed::after {
-  content: "ⓘ";
+/* Collapsed behind an "ⓘ" toggle button by default (see decorateAttribution in map.ts): the
+   four-provider credit string is a large opaque slab over the map, worst on mobile where it
+   floated mid-map over the bottom sheet. The credit text (.attrib-list) is revealed by pressing
+   the button (touch + keyboard) or, for a mouse, hovering/focusing the control; it is fully
+   removed from the layout - and the links from the tab order - while hidden. */
+.leaflet-container .leaflet-control-attribution .attrib-toggle {
+  margin: 0;
+  padding: 0 3px;
+  border: 0;
+  background: none;
+  font: inherit;
   font-size: 12px;
+  line-height: 1;
   color: var(--muted);
+  cursor: pointer;
+}
+.leaflet-container .leaflet-control-attribution .attrib-list {
+  display: none;
+}
+.leaflet-container .leaflet-control-attribution.attrib-open .attrib-list {
+  display: inline;
 }
 @media (hover: hover) {
-  .leaflet-container .leaflet-control-attribution.attrib-collapsed:hover {
-    max-width: min(60ch, calc(100vw - 24px));
-    font-size: 10px;
-    padding: 2px 6px;
-    white-space: normal;
+  .leaflet-container .leaflet-control-attribution:hover .attrib-list {
+    display: inline;
   }
-  .leaflet-container .leaflet-control-attribution.attrib-collapsed:hover::after {
-    content: none;
+  .leaflet-container .leaflet-control-attribution:hover .attrib-toggle {
+    display: none;
   }
 }
 

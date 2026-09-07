@@ -130,20 +130,43 @@ function preciseClusterIcon(cluster: L.MarkerCluster): L.DivIcon {
   });
 }
 
-// The attribution now lists four providers (OSM + iNaturalist + Open-Meteo + Esri) and rendered
-// as a large opaque slab floating over the map - worst on mobile, where it sat mid-map above the
-// bottom sheet and never moved with it. Collapse it to a single "ⓘ" chip that expands on hover
-// (desktop) or tap (touch). Leaflet only mutates the container's innerHTML on re-render, so the
-// class we set here survives showSatelliteOverlay's addAttribution/removeAttribution calls.
-function collapseAttribution(target: L.Map): void {
+// The attribution lists four providers (OSM + iNaturalist + Open-Meteo + Esri) and rendered as a
+// large opaque slab floating over the map - worst on mobile, where it sat mid-map above the
+// bottom sheet and never moved with it. Collapse the credit text behind a real "ⓘ" toggle button
+// (focusable, Enter/Space for free, aria-expanded); it also reveals on hover/focus for a mouse.
+// The credit links are display:none while collapsed so they stay out of the tab order (#300
+// Copilot review).
+let attributionOpen = false;
+
+// Leaflet rebuilds the attribution container's innerHTML on every _update (each addAttribution /
+// removeAttribution / layer add), which wipes the button + wrapper, so re-run this after any such
+// call rather than once at init.
+function decorateAttribution(target: L.Map): void {
   const container = target.attributionControl.getContainer();
-  if (!container) return;
-  container.classList.add("attrib-collapsed");
-  L.DomEvent.on(container, "click", (ev) => {
-    if ((ev.target as HTMLElement).tagName === "A") return; // let credit links through
+  if (!container || container.querySelector(".attrib-toggle")) return;
+
+  const list = document.createElement("span");
+  list.className = "attrib-list";
+  while (container.firstChild) list.appendChild(container.firstChild);
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "attrib-toggle";
+  toggle.setAttribute("aria-label", "Map data credits");
+
+  const apply = (): void => {
+    container.classList.toggle("attrib-open", attributionOpen);
+    toggle.setAttribute("aria-expanded", String(attributionOpen));
+    toggle.textContent = attributionOpen ? "×" : "ⓘ"; // × / ⓘ
+  };
+  L.DomEvent.on(toggle, "click", (ev) => {
     L.DomEvent.stop(ev);
-    container.classList.toggle("attrib-collapsed");
+    attributionOpen = !attributionOpen;
+    apply();
   });
+
+  container.append(toggle, list);
+  apply();
 }
 
 export function initMap(home: Home): void {
@@ -152,8 +175,8 @@ export function initMap(home: Home): void {
   // buttons would be covered.
   map = L.map("map", { zoomControl: false }).setView([home.lat, home.lng], 7);
   L.control.zoom({ position: "bottomright" }).addTo(map);
-  collapseAttribution(map);
   setTiles();
+  decorateAttribution(map);
   // Sits above the basemap tiles but below the vector overlay pane (circles, trails, markers -
   // default z-index 400) so the selected destination's ring and every other layer still draw on
   // top of the satellite image, not under it (see showSatelliteOverlay).
@@ -317,6 +340,7 @@ export function showSatelliteOverlay(marker: L.Circle, regionId: string): void {
     interactive: false,
   }).addTo(map);
   map.attributionControl.addAttribution(SATELLITE_ATTRIBUTION);
+  decorateAttribution(map);
 }
 
 export function clearSatelliteOverlay(): void {
@@ -327,6 +351,7 @@ export function clearSatelliteOverlay(): void {
   satelliteOverlay = clearLayer(map, satelliteOverlay);
   satelliteLabelsOverlay = clearLayer(map, satelliteLabelsOverlay);
   map.attributionControl.removeAttribution(SATELLITE_ATTRIBUTION);
+  decorateAttribution(map);
 }
 
 // Selecting a region (marker or card click) snaps its circle from the score-sized preview to
