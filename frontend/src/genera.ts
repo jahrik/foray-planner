@@ -6,6 +6,12 @@ import { displayName, errorDetail, escapeHtml, qs, setStatus } from "./state";
 let selected: GenusResult[] = [];
 let onChange: (() => void) | null = null;
 
+/** The currently-selected target genera (server-side per-device state, loaded by
+ * initGenusSelection). Read-only snapshot for the Genera filter pill's label (issue #297). */
+export function selectedGenera(): readonly GenusResult[] {
+  return selected;
+}
+
 async function fetchSuggestions(query: string): Promise<GenusResult[]> {
   try {
     return await getJson("/api/genera", { query: { q: query } });

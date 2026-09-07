@@ -86,7 +86,13 @@ export function collapseIfOpen(): boolean {
 // the sheet rather than behind it. On desktop this is a plain setView.
 export function focusOnMap(lat: number, lng: number, zoom: number): void {
   if (!enabled) {
-    map.setView([lat, lng], zoom); // desktop: plain setView, Leaflet's default animation
+    // Desktop: the results dock (issue #297) is a left-anchored slide-out over the map. When
+    // it's open, shift the focused point right by half the dock width so it lands in the
+    // visible map area rather than behind the panel - mirrors the mobile upward offset below.
+    map.setView([lat, lng], zoom, { animate: false });
+    const dock = document.getElementById("dock");
+    const dockOpen = dock !== null && !dock.classList.contains("closed") && dock.offsetParent !== null;
+    if (dockOpen) map.panBy([-dock.getBoundingClientRect().width / 2, 0], { animate: false });
     return;
   }
   // animate:false so the pan below isn't undone when setView's own pan tween settles.
@@ -228,7 +234,9 @@ export function initSheet(): void {
   sheetEl = qs("#sheet");
   handleEl = qs<HTMLButtonElement>("#sheet-handle");
   panelEl = qs("#panel");
-  mainEl = qs("main");
+  // #panel's desktop home is the slide-out dock (issue #297); enable() moves it into #sheet
+  // for the mobile bottom sheet and disable() moves it back here.
+  mainEl = qs("#dock");
 
   const mq = window.matchMedia(MOBILE_MQ);
   const applyMode = (): void => (mq.matches ? enable() : disable());
@@ -273,6 +281,12 @@ export function initSheet(): void {
 
   // A map drag or a tap on the map returns the sheet to its peek.
   map.on("dragstart", () => collapseIfOpen());
+
+  // Opening a filter pill's popover while the sheet is fully raised would put the popover
+  // behind the sheet - nudge it down to half (issue #297), same call initFiltersToggle made.
+  document.addEventListener("pill:open", () => {
+    if (enabled && current === "full") snapTo("half");
+  });
 
   applyMode();
 }
