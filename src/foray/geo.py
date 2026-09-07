@@ -72,14 +72,20 @@ def web_mercator_bbox_m(lat: float, lng: float, radius_m: float) -> tuple[float,
     """Bounding square, in EPSG:3857 meters, of the disk of ``radius_m`` around ``(lat, lng)``.
 
     ``(xmin, ymin, xmax, ymax)`` - center projected via the standard spherical Web Mercator
-    formula, then offset by ``radius_m`` on each axis (a true circle in this projected plane,
-    same as Leaflet's ``L.circle`` with a meter radius). Used server-side to fetch a destination's
-    satellite imagery at exactly the geo footprint the frontend fills with it (``sources.satellite``).
+    formula, then offset on each axis by ``radius_m`` scaled up by the Web Mercator point scale
+    ``1 / cos(lat)``. That scale factor matters: ``radius_m`` is a real-world ground distance, but
+    an EPSG:3857 offset is in *projected* meters, and the projection stretches by ``sec(lat)``
+    away from the equator (~1.48x at Puget Sound). Leaflet's ``L.circle`` is a geodesic circle,
+    so the lat/lng box it reports from ``getBounds()`` - the box the frontend drops the imagery
+    into - spans ``±radius_m / cos(lat)`` in projected meters, not ``±radius_m``. Matching that
+    here is what keeps the satellite raster aligned with the circle (and the basemap under it)
+    instead of stretched ~48% too large. Used by ``sources.satellite``.
     """
     clamped_lat = max(-_WEB_MERCATOR_MAX_LAT, min(_WEB_MERCATOR_MAX_LAT, lat))
     x = math.radians(lng) * _WEB_MERCATOR_R
     y = math.log(math.tan(math.pi / 4 + math.radians(clamped_lat) / 2)) * _WEB_MERCATOR_R
-    return (x - radius_m, y - radius_m, x + radius_m, y + radius_m)
+    offset = radius_m / math.cos(math.radians(clamped_lat))
+    return (x - offset, y - offset, x + offset, y + offset)
 
 
 def bbox_around_segment(lat1: float, lng1: float, lat2: float, lng2: float, radius_km: float) -> BBox:
