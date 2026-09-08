@@ -186,8 +186,8 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   - `src/state.ts` - the one flat `state` object; its `State` type is `MapState & ScopeState &
     UiState` (Leaflet handles / scoping inputs / display prefs). `View` is `"destinations" |
     "plan"`. Plus `qs()` / `setStatus()` / the scope-change hook and small formatters.
-  - `src/prefs.ts` - the persisted `localStorage` prefs (theme / units / text-size / months /
-    genera).
+  - `src/prefs.ts` - the `localStorage`-persisted prefs (theme / units / text-size / months).
+    Selected genera are server-side instead (`app_genera` via `/api/genera/{taxon_id}`).
   - `src/views/views.ts` - the ranked-list flow. `runDestinations()` fetches `/api/destinations`
     and, when `state.sort === "active"`, delegates to `runActiveNow()` (the old "Fruiting now"
     tab: fetches `/api/alerts`, same card shell). `buildResultCard` (in `ui/card-dom.ts`) is the
