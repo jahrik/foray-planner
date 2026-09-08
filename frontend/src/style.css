@@ -1194,10 +1194,23 @@ table.cal .heat {
     touch-action: pan-y;
     overscroll-behavior: contain;
   }
-  /* Route-bar rides at the sheet's bottom edge, after the scrolling #panel. */
+  /* The mobile sheet is a full-height element translated below the fold, so a bar at its bottom
+     edge is off-screen. Pin the route-bar to the viewport instead, above the sheet (z 1100). */
   body[data-sheet="on"] #route-bar {
-    flex: 0 0 auto;
-    touch-action: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1101;
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.18);
+  }
+  /* Hidden while the sheet is just a peek - it would cover the collapsed sheet's bottom edge. */
+  body[data-sheet="on"] #sheet[data-detent="collapsed"] ~ #route-bar {
+    display: none;
+  }
+  /* ...and give the sheet's scroll region room so the last card clears the pinned bar. */
+  body[data-sheet="on"] #panel {
+    padding-bottom: 68px;
   }
   body[data-sheet="on"] #panel::before {
     content: none;

@@ -124,6 +124,9 @@ export function setTiles(): void {
   tileLayer = L.tileLayer(url, { attribution: tileAttribution(theme), maxZoom: 14 }).addTo(map);
   tileLayer.setZIndex(0); // stay under every overlay pane
   tileTheme = theme;
+  // Adding the layer rebuilds the attribution control's innerHTML (Leaflet _update), wiping the
+  // ⓘ toggle - re-decorate so a live theme switch doesn't leave the credits fully expanded.
+  decorateAttribution(map);
 }
 
 // A plain DOM block below the map (not a Leaflet map-overlay control) - on small screens an
