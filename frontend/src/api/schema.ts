@@ -829,6 +829,8 @@ export interface components {
             species: components["schemas"]["SpeciesHit"][];
             /** Elevation M */
             elevation_m?: number | null;
+            /** Pheno Trend */
+            pheno_trend?: string | null;
             /** Precip Obs 7D Mm */
             precip_obs_7d_mm?: number | null;
             /** Precip Obs 30D Mm */
