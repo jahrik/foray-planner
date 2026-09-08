@@ -97,7 +97,11 @@ CREATE TABLE IF NOT EXISTS trails (
     url         TEXT,                -- official source (the OSM element page)
     center_lat  DOUBLE PRECISION,    -- representative point on the trail
     center_lng  DOUBLE PRECISION,
-    geojson     TEXT                 -- GeoJSON text (LineString / MultiLineString / Point)
+    geojson     TEXT,                -- GeoJSON text (LineString / MultiLineString / Point)
+    connects    TEXT[]               -- trailhead rows only: ids of the path/route trails whose
+                                     -- geometry passes within ~35 m of the node, computed at
+                                     -- ingest so selecting a trailhead draws its trail straight
+                                     -- from cache with no live Overpass call (issue #306)
 );
 
 -- Wildfire perimeters + points (issue #227). An active fire and a recent burn scar are the
@@ -454,6 +458,11 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         "ALTER TABLE fire_perimeters DROP COLUMN IF EXISTS min_lat, DROP COLUMN IF EXISTS min_lng, "
         "DROP COLUMN IF EXISTS max_lat, DROP COLUMN IF EXISTS max_lng",
     ),
+    # --- Trail preload (issue #306) ------------------------------------------------------
+    # `connects` on a trailhead row lists the trail ids its geometry touches, computed at
+    # ingest (trails._parse_trails) so `resolve_trail_network` draws the trail from cache
+    # instead of a live per-selection Overpass query. Additive - older images ignore it.
+    (28, "ALTER TABLE trails ADD COLUMN IF NOT EXISTS connects TEXT[]"),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]
@@ -865,7 +874,8 @@ def upsert_public_land(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]])
 def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
     """Upsert trail tuples, refreshing existing rows in place. Returns rows attempted.
 
-    Each tuple is (id, name, kind, source, url, center_lat, center_lng, geojson).
+    Each tuple is (id, name, kind, source, url, center_lat, center_lng, geojson, connects) -
+    ``connects`` is a list of trail ids on trailhead rows, ``None`` elsewhere.
     """
     columns: tuple[LiteralString, ...] = (
         "id",
@@ -876,6 +886,7 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
         "center_lat",
         "center_lng",
         "geojson",
+        "connects",
     )
     return upsert_rows(con, "trails", columns, rows)
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any, LiteralString, cast
 
@@ -291,12 +292,12 @@ def trails_near(
 def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
     """Single trail row by id, or None if not cached. No camp-distance annotation (see ``trails_near``)."""
     row = con.execute(
-        "SELECT id, name, kind, source, url, center_lat, center_lng, geojson FROM trails WHERE id = %s",
+        "SELECT id, name, kind, source, url, center_lat, center_lng, geojson, connects FROM trails WHERE id = %s",
         [trail_id],
     ).fetchone()
     if row is None:
         return None
-    trail_id_, name, kind, source, url, clat, clng, geojson = row
+    trail_id_, name, kind, source, url, clat, clng, geojson, connects = row
     return Trail(
         id=trail_id_,
         name=name,
@@ -308,7 +309,39 @@ def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
         distance_km=0.0,
         camp_distance_km=None,
         geometry=json.loads(geojson),
+        connects=connects,
     )
+
+
+def connected_trails(con: psycopg.Connection, trail_ids: Sequence[str]) -> list[Trail]:
+    """The path/route trails named in a trailhead's ``connects`` list, geometry included.
+
+    Feeds ``trails.resolve_trail_network``: the ingest-time spatial link (issue #306) recorded
+    which trails a trailhead node touches, and this reads them back so the selection draws from
+    cache. Order follows ``trail_ids``; ids no longer in the cache are silently dropped.
+    """
+    if not trail_ids:
+        return []
+    rows = con.execute(
+        "SELECT id, name, kind, source, url, center_lat, center_lng, geojson FROM trails WHERE id = ANY(%s)",
+        [list(trail_ids)],
+    ).fetchall()
+    by_id = {
+        row[0]: Trail(
+            id=row[0],
+            name=row[1],
+            kind=row[2],
+            source=row[3],
+            url=row[4],
+            center_lat=row[5],
+            center_lng=row[6],
+            distance_km=0.0,
+            camp_distance_km=None,
+            geometry=json.loads(row[7]),
+        )
+        for row in rows
+    }
+    return [by_id[tid] for tid in trail_ids if tid in by_id]
 
 
 def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: float = 2.0) -> Trail | None:

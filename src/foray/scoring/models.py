@@ -109,6 +109,10 @@ class Trail:
     # list without geometry (``trails_near(with_geometry=False)``) - the destination-card list
     # only needs names + distances and fetches real geometry per row via ``/api/trails/network``.
     geometry: dict[str, Any] | None = None
+    # Trailhead rows only: ids of the trails this node connects to, from the ingest-time spatial
+    # link (``sources.trails._link_trailheads``). ``resolve_trail_network`` stitches these into
+    # the drawn trail with no live query. ``None`` on non-trailhead rows and pre-#306 caches.
+    connects: list[str] | None = None
 
 
 @dataclass
