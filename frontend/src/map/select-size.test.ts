@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // don't exercise here - stub both so we can unit-test the select/deselect fill logic.
 class FakeCircle {
   radius: number;
-  style: { fillOpacity: number };
+  style: { fillOpacity: number; color?: string };
   constructor(_latlng: unknown, options: { radius: number; fillOpacity: number }) {
     this.radius = options.radius;
     this.style = { fillOpacity: options.fillOpacity };
@@ -16,8 +16,11 @@ class FakeCircle {
     this.radius = radius;
     return this;
   }
-  setStyle(style: { fillOpacity?: number }): this {
+  setStyle(style: { fillOpacity?: number; color?: string }): this {
     Object.assign(this.style, style);
+    return this;
+  }
+  bindTooltip(): this {
     return this;
   }
 }
@@ -54,20 +57,22 @@ describe("selectSize / deselectSize fill management", () => {
   const fill = (circle: unknown): number => (circle as FakeCircle).style.fillOpacity;
 
   it("drops every other destination circle to stroke-only on select, restores on deselect", () => {
-    const strong = plot(47.6, -122.3, 0.8, false, "95_-245");
-    const weak = plot(47.7, -122.4, 0.2, false, "95_-246");
+    const strong = plot(47.6, -122.3, 0.8, false, "95_-245", 0);
+    const weak = plot(47.7, -122.4, 0.2, false, "95_-246", 5);
 
     selectSize(strong);
     expect(fill(strong)).toBe(0); // the focused circle itself - satellite overlay is the fill now
+    expect((strong as unknown as { style: { color: string } }).style.color).toBe("#4a3a4d"); // purple ring
     expect(fill(weak)).toBe(0); // ring only - no fill to composite into a blob
 
     deselectSize(strong);
     expect(fill(weak)).toBeCloseTo(0.15 + 0.45 * 0.2); // back to its score-scaled fill
+    expect((strong as unknown as { style: { color: string } }).style.color).toBe("#7a4326"); // rust again
   });
 
   it("re-dims the rest when selection moves to another circle", () => {
-    const a = plot(47.6, -122.3, 0.5, false, "95_-245");
-    const b = plot(47.7, -122.4, 0.5, false, "95_-246");
+    const a = plot(47.6, -122.3, 0.5, false, "95_-245", 4);
+    const b = plot(47.7, -122.4, 0.5, false, "95_-246", 5);
 
     selectSize(a);
     // card-select's grow(): deselect the old, then select the new
@@ -79,7 +84,7 @@ describe("selectSize / deselectSize fill management", () => {
   });
 
   it("leaves markers it never plotted (plan pins, etc.) untouched", () => {
-    const plotted = plot(47.6, -122.3, 0.5, false, "95_-245");
+    const plotted = plot(47.6, -122.3, 0.5, false, "95_-245", 5);
     const foreign = { style: { fillOpacity: 0.9 }, setStyle: vi.fn() };
     fakeState.markers.push(foreign);
 

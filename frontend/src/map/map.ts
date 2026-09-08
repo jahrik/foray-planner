@@ -6,11 +6,12 @@ import { clearLayer, clearLayerList } from "./layer-lifecycle";
 import { circleStyle } from "./markers";
 import { dist, onScopeChange, qs, state } from "../state";
 
-// Marker palette - bright/neon so it pops on the dark basemap (the default), while still
-// reading over the lighter OSM terrain in light mode. Deliberately non-green vs the terrain.
-export const HEAT = "#ff2d9b"; // hot magenta - historical strength (destinations)
-export const HEAT_RGB = "255,45,155";
-export const LIVE = "#22e0ff"; // electric cyan - fresh / recently observed
+// Marker palette. Destination + recency markers now read their colour from tokens.css at
+// runtime (markerPalette below) so they track the active theme and stay on the spore-print
+// palette (issue #301). HEAT_RGB is the rust used for the calendar heat cells
+// (destination-tabs.ts); the rest of the constants below are fixed-hue overlay markers
+// (camps, land, fire, trails, plan pins) that keep their own distinct colours.
+export const HEAT_RGB = "122,67,38"; // --rust, for the phenology calendar heat cells
 export const HOME_FILL = "#ffffff"; // white "you are here" dot
 export const HOME_RING = "#0c0d09";
 export const CAMP_FREE = "#ffe14d"; // neon gold - free / no-fee campground
@@ -70,6 +71,33 @@ let preciseCluster: L.MarkerClusterGroup;
 export const currentTheme = (): "dark" | "light" =>
   document.documentElement.dataset.theme === "light" ? "light" : "dark";
 
+// Marker colours come from tokens.css so they follow the theme toggle. cssVar falls back to
+// the light-theme literal when the stylesheet is not in the document yet (unit tests, the
+// brief window before style.css loads).
+function cssVar(name: string, fallback: string): string {
+  if (typeof getComputedStyle !== "function") return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+export function markerPalette(): { rust: string; flush: string; purple: string; moss: string } {
+  return {
+    rust: cssVar("--rust", "#7a4326"),
+    flush: cssVar("--flush", "#5f7d3e"),
+    purple: cssVar("--purple", "#4a3a4d"),
+    moss: cssVar("--moss", "#4c5d43"),
+  };
+}
+
+// Marker hierarchy (issue #301): the map used to draw ~200 near-identical circles. Now rank
+// drives three tiers so the shortlist reads at a glance -
+//   top 3  (rank 0-2)  : filled circle + a permanent rank numeral
+//   top 10 (rank 3-9)  : solid ring, score-scaled fill
+//   the rest (rank 10+): a small dim moss dot, fixed size, no score scaling
+const HERO_RANK_MAX = 2;
+const PROMINENT_RANK_MAX = 9;
+const DIM_DOT_RADIUS_M = 900; // fixed ground radius for the rank-11+ dots
+
 export function setTiles(): void {
   if (!map) return; // map not built yet; initMap lays the first tiles for the current theme
   const theme = currentTheme();
@@ -103,9 +131,12 @@ export function renderLegend(): void {
   const blm = (document.getElementById("show-land-blm") as HTMLInputElement | null)?.checked;
   const usfs = (document.getElementById("show-land-usfs") as HTMLInputElement | null)?.checked;
   const tribal = (document.getElementById("show-land-tribal") as HTMLInputElement | null)?.checked;
+  const palette = markerPalette();
   const entries: [string, string][] = [
-    [HEAT, "Destination (historical)"],
-    [LIVE, "Recently observed"],
+    [palette.rust, "Top destination"],
+    [palette.flush, "Seen in the last few weeks"],
+    [palette.moss, "Other region in range"],
+    [palette.purple, "Selected"],
     [PRECISE, "Precise observation (verified location)"],
   ];
   if (camps) {
@@ -246,7 +277,14 @@ export const regionRadiusKm = (): number => (state.cellDeg * KM_PER_DEG) / 2;
 // widening its own signature - every caller already has the marker, not all of them the region.
 const sizing = new WeakMap<
   L.Circle,
-  { scoreRadius: number; trueRadius: number; weight: number; regionId: string }
+  {
+    scoreRadius: number;
+    trueRadius: number;
+    weight: number;
+    regionId: string;
+    baseColor: string;
+    restFillOpacity: number;
+  }
 >();
 
 // The score-scaled fill a destination circle sits at when nothing is selected. Pulled out so
@@ -265,7 +303,7 @@ function setOthersFill(selected: L.Circle, ringOnly: boolean): void {
     if (marker === selected) continue;
     const info = sizing.get(marker as L.Circle);
     if (!info) continue; // not a plot()-drawn destination circle (plan pin, etc.)
-    marker.setStyle({ fillOpacity: ringOnly ? 0 : scoreFillOpacity(info.weight) });
+    marker.setStyle({ fillOpacity: ringOnly ? 0 : info.restFillOpacity });
   }
 }
 
@@ -273,26 +311,49 @@ function setOthersFill(selected: L.Circle, ringOnly: boolean): void {
 // and the same info (rank, distance, species) already lives on the matching card in the side
 // panel. Callers wire the marker's click to highlight/scroll to that card instead.
 //
-// Hue distinguishes category (magenta = historical destination, cyan = recently observed);
-// score is carried by size and fill opacity within that hue - a faint, small circle is a weak
-// match, a bold, larger one is a strong one. Uses L.circle (a geographic radius in meters, not
-// L.circleMarker's fixed pixel radius) so selecting a region can snap it to its true cell_deg
-// footprint (selectSize) - see the comment there for why - and so at any size the circle still
-// scales correctly with zoom instead of reading as an arbitrary screen-space blob.
-export function plot(lat: number, lng: number, weight: number, live: boolean, regionId: string): L.Circle {
+// `rank` (0-indexed position in the ranked list) drives the marker hierarchy - see the tier
+// constants up top. Colour: rust for a ranked destination, moss for the dim 11+ dots, flush
+// green when the region has recent observations. Score is still carried by size + fill opacity
+// within the top-10 tier. Uses L.circle (a geographic radius in meters, not L.circleMarker's
+// fixed pixel radius) so selecting a region can snap it to its true cell_deg footprint
+// (selectSize) and so the circle scales with zoom instead of reading as a screen-space blob.
+export function plot(
+  lat: number,
+  lng: number,
+  weight: number,
+  live: boolean,
+  regionId: string,
+  rank: number,
+): L.Circle {
+  const palette = markerPalette();
   const trueRadius = ((state.cellDeg * KM_PER_DEG) / 2) * 1000;
-  const scoreRadius = trueRadius * (0.3 + weight);
+  const isDim = rank > PROMINENT_RANK_MAX;
+  const isHero = rank <= HERO_RANK_MAX;
+  const baseColor = live ? palette.flush : isDim ? palette.moss : palette.rust;
+  const scoreRadius = isDim ? DIM_DOT_RADIUS_M : trueRadius * (0.3 + weight);
+  const restFillOpacity = isDim
+    ? 0.28
+    : isHero
+      ? Math.max(0.35, scoreFillOpacity(weight))
+      : scoreFillOpacity(weight);
   const marker = L.circle([lat, lng], {
     radius: scoreRadius,
-    color: live ? LIVE : HEAT,
-    fillColor: live ? LIVE : HEAT,
-    fillOpacity: scoreFillOpacity(weight),
-    opacity: 0.4 + 0.5 * weight,
-    weight: 1.5,
+    color: baseColor,
+    fillColor: baseColor,
+    fillOpacity: restFillOpacity,
+    opacity: isDim ? 0.5 : 0.4 + 0.5 * weight,
+    weight: isDim ? 1 : isHero ? 2 : 1.5,
     bubblingMouseEvents: false,
   }).addTo(map);
-  sizing.set(marker, { scoreRadius, trueRadius, weight, regionId });
+  sizing.set(marker, { scoreRadius, trueRadius, weight, regionId, baseColor, restFillOpacity });
   state.markers.push(marker);
+  if (isHero) {
+    marker.bindTooltip(String(rank + 1), {
+      permanent: true,
+      direction: "center",
+      className: "rank-numeral",
+    });
+  }
   return marker;
 }
 
@@ -377,7 +438,7 @@ export function selectSize(marker: L.Circle): void {
   const info = sizing.get(marker);
   if (!info) return;
   marker.setRadius(info.trueRadius);
-  marker.setStyle({ fillOpacity: 0 });
+  marker.setStyle({ fillOpacity: 0, color: markerPalette().purple });
   setOthersFill(marker, true);
   showSatelliteOverlay(marker, info.regionId);
 }
@@ -392,7 +453,7 @@ export function deselectSize(marker: L.Circle): void {
   const info = sizing.get(marker);
   if (!info) return;
   marker.setRadius(info.scoreRadius);
-  marker.setStyle({ fillOpacity: scoreFillOpacity(info.weight) });
+  marker.setStyle({ fillOpacity: info.restFillOpacity, color: info.baseColor });
   setOthersFill(marker, false);
 }
 
