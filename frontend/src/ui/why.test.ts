@@ -51,7 +51,7 @@ describe("whySentence", () => {
         fire_nearby: [{ status: "historical", name: "X", fire_year: 2024, distance_km: 12 }] as never,
       }),
     );
-    expect(scar).toContain("morel ground");
+    expect(scar).toContain("burn scar");
     const both = whySentence(
       region({
         fire_nearby: [
@@ -61,7 +61,7 @@ describe("whySentence", () => {
       }),
     );
     expect(both).toContain("check access");
-    expect(both).not.toContain("morel ground");
+    expect(both).not.toContain("burn scar");
   });
 
   it("uses one singular 'record' at a count of 1", () => {

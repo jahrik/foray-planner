@@ -80,13 +80,24 @@ function cssVar(name: string, fallback: string): string {
   return value || fallback;
 }
 
-export function markerPalette(): { rust: string; flush: string; purple: string; moss: string } {
-  return {
+type MarkerPalette = { rust: string; flush: string; purple: string; moss: string };
+let paletteCache: MarkerPalette | null = null;
+let paletteCacheTheme: "dark" | "light" | null = null;
+
+// Cached per theme - plot() calls this once per region, and getComputedStyle on each call
+// would be hundreds of style reads per render (Copilot review). The toggle in ui-prefs.ts
+// swaps data-theme then calls setTiles(), so currentTheme() flipping is the invalidation cue.
+export function markerPalette(): MarkerPalette {
+  const theme = currentTheme();
+  if (paletteCache && paletteCacheTheme === theme) return paletteCache;
+  paletteCache = {
     rust: cssVar("--rust", "#7a4326"),
     flush: cssVar("--flush", "#5f7d3e"),
     purple: cssVar("--purple", "#4a3a4d"),
     moss: cssVar("--moss", "#4c5d43"),
   };
+  paletteCacheTheme = theme;
+  return paletteCache;
 }
 
 // Marker hierarchy (issue #301): the map used to draw ~200 near-identical circles. Now rank
