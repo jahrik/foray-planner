@@ -28,7 +28,6 @@ export const LAND_DEFAULT = "#b5b5b5"; // any other agency
 // when its geometry comes from real OSM topology, dashed when it's the nearest-cached fallback.
 export const TRAIL = "#ff5555";
 export const PLAN_STOP = "#ffd060"; // neon gold - planned-route stops and connecting line
-export const PRECISE = "#c792ea"; // bright lavender - known-precise (non-obscured) observation pin
 export const FIRE_ACTIVE = "#ff3b1f"; // hot red - active wildfire perimeter/point (issue #227)
 export const FIRE_SCAR = "#ff8c42"; // burnt orange - recent burn scar (dimmer for older years)
 
@@ -80,7 +79,7 @@ function cssVar(name: string, fallback: string): string {
   return value || fallback;
 }
 
-type MarkerPalette = { rust: string; flush: string; purple: string; moss: string };
+type MarkerPalette = { rust: string; flush: string; purple: string; moss: string; spore: string };
 let paletteCache: MarkerPalette | null = null;
 let paletteCacheTheme: "dark" | "light" | null = null;
 
@@ -95,6 +94,7 @@ export function markerPalette(): MarkerPalette {
     flush: cssVar("--flush", "#5f7d3e"),
     purple: cssVar("--purple", "#4a3a4d"),
     moss: cssVar("--moss", "#4c5d43"),
+    spore: cssVar("--spore", "#b06a82"),
   };
   paletteCacheTheme = theme;
   return paletteCache;
@@ -148,7 +148,7 @@ export function renderLegend(): void {
     [palette.flush, "Seen in the last few weeks"],
     [palette.moss, "Other region in range"],
     [palette.purple, "Selected"],
-    [PRECISE, "Precise observation (verified location)"],
+    [palette.spore, "Precise observation (verified location)"],
   ];
   if (camps) {
     entries.push([CAMP_FREE, "Free campground"], [CAMP_PAID, "Paid / unknown campground"]);
@@ -165,17 +165,17 @@ export function renderLegend(): void {
     .join("");
 }
 
-// Cluster badge styling: a lavender disc (same hue as an individual pin) with a dark ring and
-// the count in the middle - readable on both the dark and light basemap, and visually reads as
-// "more precise pins" rather than borrowing the plugin's default blue/yellow/orange severity
-// gradient, which has no meaning here.
+// Cluster badge styling: a spore-pink disc (same --spore hue as an individual pin) with a dark
+// ring and the count in the middle - readable on both the dark and light basemap, and visually
+// reads as "more precise pins" rather than borrowing the plugin's default blue/yellow/orange
+// severity gradient, which has no meaning here.
 function preciseClusterIcon(cluster: L.MarkerCluster): L.DivIcon {
   const count = cluster.getChildCount();
   const size = count < 10 ? 30 : count < 100 ? 36 : 42;
   return L.divIcon({
     html: `<div style="
       width:${size}px;height:${size}px;line-height:${size}px;
-      background:${PRECISE};border:2px solid ${HOME_RING};border-radius:50%;
+      background:${markerPalette().spore};border:2px solid ${HOME_RING};border-radius:50%;
       text-align:center;font-weight:600;color:${HOME_RING};
     ">${count}</div>`,
     className: "precise-cluster-icon",
