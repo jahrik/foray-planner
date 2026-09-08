@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -42,6 +43,7 @@ def plan(
     max_drive_km: float = Query(400.0, gt=0),
     camp_radius_km: float = Query(40.0, gt=0),
     require_free_camp: bool = Query(False),
+    waypoints: str | None = Query(None, max_length=400),
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
 ) -> TripPlan:
@@ -55,6 +57,14 @@ def plan(
     if is_new:
         set_device_cookie(request, response, device_id)
     selected_months = parse_months(months) if months is not None else [dt.date.today().month]
+
+    # Ordered region ids hand-picked from the shortlist ("+ Plan"), threaded in as required
+    # stops. Region ids are grid coords ("ilat_ilng", either part optionally negative).
+    picked_waypoints: list[str] = []
+    if waypoints:
+        picked_waypoints = [part.strip() for part in waypoints.split(",") if part.strip()]
+        if len(picked_waypoints) > 10 or any(not re.fullmatch(r"-?\d+_-?\d+", w) for w in picked_waypoints):
+            raise HTTPException(422, "waypoints must be up to 10 comma-separated region ids")
 
     def resolve_point(query: str) -> tuple[float, float]:
         try:
@@ -87,6 +97,7 @@ def plan(
                 max_drive_km=max_drive_km,
                 camp_radius_km=camp_radius_km,
                 require_free_camp=require_free_camp,
+                waypoints=picked_waypoints,
             )
     except psycopg.errors.UndefinedTable:
         raise HTTPException(409, "no data for this area yet - click Fetch data") from None

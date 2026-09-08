@@ -1622,6 +1622,7 @@ export interface operations {
                 max_drive_km?: number;
                 camp_radius_km?: number;
                 require_free_camp?: boolean;
+                waypoints?: string | null;
             };
             header?: never;
             path?: never;
