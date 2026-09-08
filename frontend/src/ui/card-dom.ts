@@ -52,3 +52,96 @@ export const speciesChip = (hit: ChipData, extraClass?: string): string =>
   `<a class="chip${extraClass ? " " + extraClass : ""}" href="${inatUrl(hit.taxon_id)}"
       target="_blank" rel="noopener"${hit.title ? ` title="${escapeHtml(hit.title)}"` : ""}
    >${escapeHtml(displayName(hit))}${hit.label ? " · " + escapeHtml(hit.label) : ""}</a>`;
+
+// The one result-card shape, rendered by both the Destinations rank list and the "Active now"
+// (alerts) list. A scannable summary only - rank + title, the plain-language line, a meta row,
+// species/hit chips with show-more, fire badges, and a two-button action row. The per-region
+// detail tabs (Calendar / Photos / Trails / Campgrounds) are not here any more; "Details" opens
+// them in the dedicated Details view (views/details.ts).
+export interface ResultCardModel {
+  rank: number;
+  // Right side of the title line - the distance at first, swapped for "Place - distance" once
+  // the notable-place lookup resolves (views.ts writes through the returned titleNum node).
+  titleText: string;
+  // Pre-rendered HTML: the "why" sentence for a destination, the last-seen line for an alert.
+  // Empty string omits the line entirely.
+  whyHtml: string;
+  // Pre-rendered HTML meta row (score / spp / recent / elev / rain, or "N recent - rain").
+  metaHtml: string;
+  // 0..1 for the score bar; null omits the bar (alert regions have no score).
+  scoreNorm: number | null;
+  // Pre-rendered fire-badge HTML (state.fireBadges) - empty string when nothing nearby.
+  fireHtml: string;
+  // Renders the chip row; called with false for the capped view and true on "show all".
+  renderChips: (showAll: boolean) => string;
+  chipCount: number;
+  cappedChipCount: number;
+}
+
+export interface ResultCardHandlers {
+  // Passed the card element so the caller can hand it to its card-selection manager without a
+  // forward reference back into its own map() closure.
+  onSelect: (card: HTMLElement) => void;
+  onDetails: (card: HTMLElement, titleNum: HTMLElement) => void;
+  onPlan: () => void;
+  isPlanned: () => boolean;
+}
+
+export function buildResultCard(
+  model: ResultCardModel,
+  handlers: ResultCardHandlers,
+): { card: HTMLElement; titleNum: HTMLElement } {
+  const card = document.createElement("div");
+  card.className = model.rank < 3 ? "rank hero" : "rank";
+  const hasMore = model.chipCount > model.cappedChipCount;
+  card.innerHTML = `
+    <h3><span class="num">#${model.rank + 1} · ${escapeHtml(model.titleText)}</span></h3>
+    ${model.whyHtml ? `<p class="why">${model.whyHtml}</p>` : ""}
+    ${model.scoreNorm != null ? `<div class="bar"><span style="width:${(model.scoreNorm * 100).toFixed(0)}%"></span></div>` : ""}
+    <div class="meta">${model.metaHtml}</div>
+    ${model.fireHtml}
+    <div class="chips">${model.renderChips(false)}</div>
+    ${hasMore ? `<button type="button" class="show-more" aria-expanded="false">Show all ${model.chipCount}</button>` : ""}
+    <div class="card-actions">
+      <button type="button" class="card-action" data-act="details">Details</button>
+      <button type="button" class="card-action card-action-plan" data-act="plan"></button>
+    </div>`;
+
+  const titleNum = card.querySelector<HTMLElement>(".num")!;
+  const chips = card.querySelector<HTMLElement>(".chips")!;
+  stopLinkPropagation(chips);
+
+  const showMore = card.querySelector<HTMLButtonElement>(".show-more");
+  if (showMore) {
+    let expanded = false;
+    showMore.onclick = (event) => {
+      event.stopPropagation();
+      expanded = !expanded;
+      chips.innerHTML = model.renderChips(expanded);
+      showMore.textContent = expanded ? "Show less" : `Show all ${model.chipCount}`;
+      showMore.setAttribute("aria-expanded", String(expanded));
+    };
+  }
+
+  const planButton = card.querySelector<HTMLButtonElement>('[data-act="plan"]')!;
+  const syncPlan = (): void => {
+    const on = handlers.isPlanned();
+    planButton.textContent = on ? "✓ In route" : "+ Plan";
+    planButton.classList.toggle("on", on);
+    planButton.setAttribute("aria-pressed", String(on));
+  };
+  syncPlan();
+  planButton.onclick = (event) => {
+    event.stopPropagation();
+    handlers.onPlan();
+    syncPlan();
+  };
+
+  card.querySelector<HTMLButtonElement>('[data-act="details"]')!.onclick = (event) => {
+    event.stopPropagation();
+    handlers.onDetails(card, titleNum);
+  };
+
+  makeActivatable(card, () => handlers.onSelect(card));
+  return { card, titleNum };
+}

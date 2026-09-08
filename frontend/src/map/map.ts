@@ -52,8 +52,12 @@ export const HOME_DOT_STYLE = circleStyle({
 const OSM_TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
 const GRAY_CANVAS_TILE_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
-const TILE_ATTRIBUTION =
-  "© OpenStreetMap · Tiles © Esri · observations © iNaturalist · elevation &amp; weather © Open-Meteo";
+const DATA_ATTRIBUTION = "observations © iNaturalist · elevation &amp; weather © Open-Meteo";
+// "Tiles © Esri" only belongs on the light base - dark mode serves OSM tiles, no Esri request.
+const tileAttribution = (theme: "dark" | "light"): string =>
+  theme === "light"
+    ? `© OpenStreetMap · Tiles © Esri · ${DATA_ATTRIBUTION}`
+    : `© OpenStreetMap · ${DATA_ATTRIBUTION}`;
 let tileLayer: L.TileLayer | null = null;
 let tileTheme: "dark" | "light" | null = null;
 
@@ -102,9 +106,9 @@ export function markerPalette(): MarkerPalette {
 
 // Marker hierarchy (issue #301): the map used to draw ~200 near-identical circles. Now rank
 // drives three tiers so the shortlist reads at a glance -
-//   top 3  (rank 0-2)  : filled circle + a permanent rank numeral
-//   top 10 (rank 3-9)  : solid ring, score-scaled fill
-//   the rest (rank 10+): a small dim moss dot, fixed size, no score scaling
+//   top 3   (rank 0-2)  : score-scaled circle with a translucent fill + a permanent rank numeral
+//   next 7  (rank 3-9)   : ring only (no fill), fixed radius - a marker, not a region wash
+//   the rest (rank 10+)  : a small dim moss dot, fixed size, no score scaling
 const HERO_RANK_MAX = 2;
 const PROMINENT_RANK_MAX = 9;
 const DIM_DOT_RADIUS_M = 900; // fixed ground radius for the rank-11+ dots
@@ -117,7 +121,7 @@ export function setTiles(): void {
   // Esri's gray canvas has no {s} placeholder, so the default 'abc' subdomains are simply
   // unused for it; OSM uses them.
   const url = theme === "light" ? GRAY_CANVAS_TILE_URL : OSM_TILE_URL;
-  tileLayer = L.tileLayer(url, { attribution: TILE_ATTRIBUTION, maxZoom: 14 }).addTo(map);
+  tileLayer = L.tileLayer(url, { attribution: tileAttribution(theme), maxZoom: 14 }).addTo(map);
   tileLayer.setZIndex(0); // stay under every overlay pane
   tileTheme = theme;
 }

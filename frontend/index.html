@@ -186,6 +186,13 @@
           <aside id="panel" role="tabpanel" aria-labelledby="tab-destinations" tabindex="0">
             <p class="hint">Finding your best destination…</p>
           </aside>
+          <!-- Route shortlist action bar (issue #301): appears once "+ Plan" has added a region;
+               "Plan a route" opens the plan form seeded with those regions as waypoints. -->
+          <div id="route-bar" class="route-bar" hidden>
+            <span class="route-bar-count">0 spots</span>
+            <button type="button" class="route-bar-clear">Clear</button>
+            <button type="button" class="route-bar-go">Plan a route</button>
+          </div>
           <button type="button" id="dock-close" class="dock-close" aria-label="Hide results panel">✕</button>
         </div>
       </div>

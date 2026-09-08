@@ -1,18 +1,13 @@
 import { getJson } from "../api/client";
 import type { RegionPlace, RegionScore } from "../api/types";
 import { createCardSelection, createRunGuard } from "../ui/card-select";
-import { makeActivatable, speciesChip, stopLinkPropagation } from "../ui/card-dom";
+import { buildResultCard, speciesChip, type ResultCardModel } from "../ui/card-dom";
 import { whySentence } from "../ui/why";
 import { sortRegions } from "./sort";
-import {
-  loadCalendarInto,
-  loadCampgroundsInto,
-  loadPhotosInto,
-  loadTrailheadsInto,
-} from "./destination-tabs";
+import { openDetails } from "./details";
+import { inShortlist, toggleShortlist } from "./shortlist";
 import { focusRegion } from "../map/layers";
 import { setMonths } from "../prefs";
-import { createLazyLoader } from "../ui/lazy-panel";
 import { focusOnMap, sheetEnabled, snapTo } from "../map/sheet";
 import { clearMarkers, map, plot } from "../map/map";
 import {
@@ -113,20 +108,36 @@ export async function runDestinations({ reuseCache = false }: { reuseCache?: boo
     setStatus("");
     return;
   }
-  // Rank list is the only thing in the panel now - each card's calendar lives behind a tab
-  // inside that card (see below) instead of a shared slot above the list, so picking a region
-  // no longer reshuffles what's on screen above it.
+  // The panel is just the ranked list of summary cards now - each region's detail tabs open in
+  // the Details view (openDetails), reached from a card's "Details" button, so selecting a
+  // region no longer expands a nested tab strip inside its card.
   panel.innerHTML = `<div id="rank-list"></div>`;
   const rankList = qs("#rank-list");
   // Only one region's marker shows its true real-world size at a time; selecting a new one
   // reverts whichever marker held that spot back to its score-scaled preview size.
   const cardSelection = createCardSelection(rankList);
-  // Each card's place-name lookup (issue #206) runs after the initial render, not inline in
-  // this map() - see the sequential loop below.
+  // Card titles start as rank + distance; the notable-place name (issue #206) is filled in
+  // afterward through each card's own .num node - see the batch lookup at the end.
   const titleTargets: { region: RegionScore; rank: number; numSpan: HTMLElement }[] = [];
-  // One entry per card, same index as `markers` - see prefetchDetails below and the top-result
-  // auto-select at the end of this function.
-  const prefetchTargets: (() => void)[] = [];
+
+  const renderChips = (region: RegionScore, showAll: boolean): string =>
+    region.species
+      .slice(0, showAll ? undefined : 6)
+      .map((hit) => {
+        const pct = Math.round(hit.w_pheno * 100);
+        return speciesChip({
+          ...hit,
+          label: `${pct}% · ${hit.month_count}`,
+          title: phenoTitle(pct, hit.month_count, allMonths),
+        });
+      })
+      .join("");
+
+  // Back out of the Details view: re-render the list from the cached payload, no refetch.
+  const restoreList = (): void => {
+    void runDestinations({ reuseCache: true });
+  };
+
   const markers = regions.map((region, rank) => {
     const marker = plot(
       region.center_lat,
@@ -136,180 +147,66 @@ export async function runDestinations({ reuseCache = false }: { reuseCache?: boo
       region.region_id,
       rank,
     );
-    const card = document.createElement("div");
-    card.className = rank < 3 ? "rank hero" : "rank";
-    card.innerHTML = `
-      <h3><span class="num">#${rank + 1} · ${dist(region.distance_km)}</span></h3>
-      <p class="why">${whySentence(region)}</p>
-      <div class="bar"><span style="width:${(region.score_norm * 100).toFixed(0)}%"></span></div>
-      <div class="meta">score <span class="num">${region.score_norm.toFixed(2)}</span> · <span class="num">${region.n_species}</span> spp · ${region.recent_count ? `<span class="num">${region.recent_count}</span> recent` : "no recent obs"}${region.elevation_m != null ? ` · elev <span class="num">${elevationLabel(region.elevation_m)}</span>` : ""}${rainMeta(region)}</div>
-      ${fireBadges(region.fire_nearby)}
 
-      <div class="rank-tabs">
-        <button type="button" class="rank-tab active" data-tab="species">Species</button>
-        <button type="button" class="rank-tab" data-tab="calendar">Calendar</button>
-        <button type="button" class="rank-tab" data-tab="photos">Photos</button>
-        <button type="button" class="rank-tab" data-tab="trails">Trails</button>
-        <button type="button" class="rank-tab" data-tab="camps">Campgrounds</button>
-      </div>
-      <div data-tab-content="species">
-        <div class="chips">${region.species
-          .slice(0, 6)
-          .map((hit) => {
-            const pct = Math.round(hit.w_pheno * 100);
-            return speciesChip({
-              ...hit,
-              label: `${pct}% · ${hit.month_count}`,
-              title: phenoTitle(pct, hit.month_count, allMonths),
-            });
-          })
-          .join("")}</div>
-        ${
-          region.species.length > 6
-            ? `<button type="button" class="show-more" aria-expanded="false">Show all ${region.species.length}</button>`
-            : ""
-        }
-      </div>
-      <div class="rank-calendar" data-tab-content="calendar" style="display:none"></div>
-      <div class="rank-photos" data-tab-content="photos" style="display:none"></div>
-      <div class="rank-trails" data-tab-content="trails" style="display:none"></div>
-      <div class="rank-camps" data-tab-content="camps" style="display:none"></div>`;
-    titleTargets.push({ region, rank, numSpan: qs<HTMLElement>(".num", card) });
-    const speciesTab = qs<HTMLButtonElement>('[data-tab="species"]', card);
-    const calendarTab = qs<HTMLButtonElement>('[data-tab="calendar"]', card);
-    const photosTab = qs<HTMLButtonElement>('[data-tab="photos"]', card);
-    const trailsTab = qs<HTMLButtonElement>('[data-tab="trails"]', card);
-    const campsTab = qs<HTMLButtonElement>('[data-tab="camps"]', card);
-    const speciesBody = qs<HTMLElement>('[data-tab-content="species"]', card);
-    const calendarBody = qs<HTMLElement>('[data-tab-content="calendar"]', card);
-    const photosBody = qs<HTMLElement>('[data-tab-content="photos"]', card);
-    const trailsBody = qs<HTMLElement>('[data-tab-content="trails"]', card);
-    const campsBody = qs<HTMLElement>('[data-tab-content="camps"]', card);
-    stopLinkPropagation(speciesBody);
-    stopLinkPropagation(photosBody);
-    stopLinkPropagation(trailsBody);
-    stopLinkPropagation(campsBody);
-    const chipsContainer = qs<HTMLElement>(".chips", speciesBody);
-    const showMoreButton = card.querySelector<HTMLButtonElement>(".show-more");
-    if (showMoreButton) {
-      let expanded = false;
-      showMoreButton.onclick = (e) => {
-        e.stopPropagation();
-        expanded = !expanded;
-        chipsContainer.innerHTML = region.species
-          .slice(0, expanded ? undefined : 6)
-          .map((hit) => {
-            const pct = Math.round(hit.w_pheno * 100);
-            return speciesChip({
-              ...hit,
-              label: `${pct}% · ${hit.month_count}`,
-              title: phenoTitle(pct, hit.month_count, allMonths),
-            });
-          })
-          .join("");
-        showMoreButton.textContent = expanded ? "Show less" : `Show all ${region.species.length}`;
-        showMoreButton.setAttribute("aria-expanded", String(expanded));
-      };
-    }
-    // Each detail tab fetches once, on first open (createLazyLoader owns the idle/loading/loaded
-    // guard and the retry-on-failure reset).
-    const calendarLoader = createLazyLoader(() => loadCalendarInto(region.region_id, calendarBody));
-    const photosLoader = createLazyLoader(() => loadPhotosInto(region.region_id, photosBody));
-    const trailsLoader = createLazyLoader(() => loadTrailheadsInto(region, trailsBody));
-    const campsLoader = createLazyLoader(() => loadCampgroundsInto(region, campsBody));
-    // Selecting a card (not just opening a tab) starts every detail tab's fetch in the
-    // background - the whole point of the destination "pop" (#293): trails/campground markers
-    // (Trails/Campgrounds loaders' map side effects, clearTrailheadMarkers/plotTrailhead,
-    // clearCardCampMarkers/plotCardCamp - destination-tabs.ts) should appear around the
-    // selected destination immediately, not only after the user finds and clicks that tab. Each
-    // loader is still fetch-once/idempotent (createLazyLoader), so this is purely additive to
-    // the on-click behavior below, never a duplicate fetch.
-    const prefetchDetails = (): void => {
-      calendarLoader.open();
-      photosLoader.open();
-      trailsLoader.open();
-      campsLoader.open();
+    const metaHtml =
+      `score <span class="num">${region.score_norm.toFixed(2)}</span> · ` +
+      `<span class="num">${region.n_species}</span> spp · ` +
+      (region.recent_count ? `<span class="num">${region.recent_count}</span> recent` : "no recent obs") +
+      (region.elevation_m != null
+        ? ` · elev <span class="num">${elevationLabel(region.elevation_m)}</span>`
+        : "") +
+      rainMeta(region);
+
+    const model: ResultCardModel = {
+      rank,
+      titleText: dist(region.distance_km),
+      whyHtml: whySentence(region),
+      metaHtml,
+      scoreNorm: region.score_norm,
+      fireHtml: fireBadges(region.fire_nearby),
+      renderChips: (showAll) => renderChips(region, showAll),
+      chipCount: region.species.length,
+      cappedChipCount: 6,
     };
-    prefetchTargets.push(prefetchDetails);
-    const showTab = (tab: "species" | "calendar" | "photos" | "trails" | "camps") => {
-      speciesTab.classList.toggle("active", tab === "species");
-      calendarTab.classList.toggle("active", tab === "calendar");
-      photosTab.classList.toggle("active", tab === "photos");
-      trailsTab.classList.toggle("active", tab === "trails");
-      campsTab.classList.toggle("active", tab === "camps");
-      speciesBody.style.display = tab === "species" ? "" : "none";
-      calendarBody.style.display = tab === "calendar" ? "" : "none";
-      photosBody.style.display = tab === "photos" ? "" : "none";
-      trailsBody.style.display = tab === "trails" ? "" : "none";
-      campsBody.style.display = tab === "camps" ? "" : "none";
-    };
-    speciesTab.onclick = (e) => {
-      e.stopPropagation();
-      showTab("species");
-    };
-    calendarTab.onclick = (e) => {
-      e.stopPropagation();
-      showTab("calendar");
-      calendarLoader.open();
-    };
-    photosTab.onclick = (e) => {
-      e.stopPropagation();
-      showTab("photos");
-      photosLoader.open();
-    };
-    trailsTab.onclick = (e) => {
-      e.stopPropagation();
-      showTab("trails");
-      trailsLoader.open();
-    };
-    campsTab.onclick = (e) => {
-      e.stopPropagation();
-      showTab("camps");
-      campsLoader.open();
-    };
-    // Selecting a region - from either its card or its map marker - highlights the card and
-    // scrolls it into view instead of popping a bubble over the marker (which covered up the
-    // very thing you were trying to look at). The card already shows everything the popup used to.
-    // Its marker also snaps to its true cell-footprint size (see selectSize in map.ts), with the
-    // previously selected marker (if any) reverting to its score-scaled preview size.
-    const selectCard = () => cardSelection.select(card, marker);
-    makeActivatable(card, () => {
-      snapTo("full"); // opening a card's detail expands the mobile sheet
-      focusOnMap(region.center_lat, region.center_lng, 9);
-      focusRegion(region.center_lat, region.center_lng);
-      selectCard();
-      prefetchDetails();
+
+    const { card, titleNum } = buildResultCard(model, {
+      onSelect: (cardEl) => {
+        snapTo("full");
+        focusOnMap(region.center_lat, region.center_lng, 9);
+        focusRegion(region.center_lat, region.center_lng);
+        cardSelection.select(cardEl, marker);
+      },
+      onDetails: (cardEl, numEl) => {
+        snapTo("full");
+        cardSelection.select(cardEl, marker);
+        openDetails(region, numEl.textContent ?? region.region_id, restoreList);
+      },
+      onPlan: () => toggleShortlist(region.region_id),
+      isPlanned: () => inShortlist(region.region_id),
     });
-    // Opening any inner tab (Calendar/Trails/Campgrounds/…) is a detail view -> expand the sheet.
-    // Capture phase: the per-tab handlers call stopPropagation(), so a bubble listener here
-    // would never see the click.
-    qs<HTMLElement>(".rank-tabs", card).addEventListener("click", () => snapTo("full"), true);
+    titleTargets.push({ region, rank, numSpan: titleNum });
+
     marker.on("click", () => {
       if (sheetEnabled()) {
         snapTo("half"); // a map-pin tap raises the sheet to its middle detent
         focusOnMap(region.center_lat, region.center_lng, map.getZoom()); // offset clear of the sheet
       }
       focusRegion(region.center_lat, region.center_lng);
-      selectCard();
-      prefetchDetails();
+      cardSelection.select(card, marker);
     });
     rankList.appendChild(card);
     return marker;
   });
   setStatus(`${regions.length} regions`);
 
-  // No auto-zoom/pan on results - the map stays wherever the user has it (centered on their
-  // location by default) and they zoom/pan themselves. The (already server-sorted) top result
-  // is auto-selected (focus + highlighted card) like a click on the #1 card; each card's detail
-  // tabs still load on demand when opened.
+  // No auto-zoom/pan on results - the map stays wherever the user has it. The (already
+  // server-sorted) top result is auto-selected (focus + highlighted card) like a click on #1.
   const top = regions[0];
   const topMarker = markers[0];
   const topCard = rankList.querySelector<HTMLElement>(".rank");
-  const topPrefetch = prefetchTargets[0];
   if (top && topMarker && topCard) {
     focusRegion(top.center_lat, top.center_lng);
     cardSelection.selectInitial(topCard, topMarker);
-    topPrefetch?.();
   }
 
   // Card titles start as rank + distance only; each card's notable-place name (issue #206)

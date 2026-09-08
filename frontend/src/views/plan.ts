@@ -8,6 +8,7 @@ import { dockOffsetPx, focusOnMap } from "../map/sheet";
 import { addMarker, clearMarkers, map, setPlanRoute, HOME_DOT_STYLE, PLAN_STOP } from "../map/map";
 import { circleStyle } from "../map/markers";
 import { buildPopup } from "../map/popup";
+import { shortlistIds } from "./shortlist";
 import { dist, displayName, errorDetail, inatUrl, monthsParam, MONTHS, qs, setStatus, state } from "../state";
 
 export async function runPlan({ reuseCache = false }: { reuseCache?: boolean } = {}): Promise<void> {
@@ -28,6 +29,9 @@ export async function runPlan({ reuseCache = false }: { reuseCache?: boolean } =
   const requireFree = (document.getElementById("plan-free-camp") as HTMLInputElement).checked;
   const start = (document.getElementById("plan-start") as HTMLInputElement).value.trim();
   const destination = (document.getElementById("plan-destination") as HTMLInputElement).value.trim();
+  // Regions the user added with "+ Plan" on a result card - threaded through the corridor as
+  // ordered required stops (issue #301). Empty list = the server auto-picks stops as before.
+  const waypoints = shortlistIds();
 
   let trip: TripPlan;
   try {
@@ -39,6 +43,7 @@ export async function runPlan({ reuseCache = false }: { reuseCache?: boolean } =
         max_stops: maxStops,
         max_drive_km: maxDrive,
         require_free_camp: requireFree,
+        waypoints: waypoints.length ? waypoints.join(",") : null,
       },
     });
   } catch (error) {
