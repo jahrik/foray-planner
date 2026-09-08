@@ -255,6 +255,7 @@ def trails_near(
     sql: LiteralString = f"""
         WITH pt AS (SELECT {GEOG_POINT} AS g)
         SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, {geojson_select} AS geojson,
+               t.length_km, t.attrs,
                ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km,
                {camp_select}
         FROM trails t, pt{camp_join}
@@ -263,41 +264,46 @@ def trails_near(
         """
     rows = con.execute(sql, params).fetchall()
 
-    scored: list[tuple[float, Trail]] = []
-    for trail_id, name, kind, source, url, clat, clng, geojson, dist, camp_dist in rows:
-        scored.append(
-            (
-                dist,
-                Trail(
-                    id=trail_id,
-                    name=name,
-                    kind=kind,
-                    source=source,
-                    url=url,
-                    center_lat=clat,
-                    center_lng=clng,
-                    distance_km=round(dist, 1),
-                    camp_distance_km=round(camp_dist, 1) if camp_dist is not None else None,
-                    geometry=json.loads(geojson) if geojson else None,
-                ),
-            )
-        )
-    # Rank on the unrounded distance so near-ties keep their true order (matches ``camps_near``);
-    # the rounded ``distance_km`` is display-only.
-    scored.sort(key=lambda item: item[0])
+    # row[10] = unrounded distance, row[11] = camp distance. Rank on the unrounded distance so
+    # near-ties keep their true order (matches ``camps_near``); rounded ``distance_km`` is display.
+    scored = sorted(
+        ((row[10], _base_trail(row, distance_km=row[10], camp_distance_km=row[11])) for row in rows),
+        key=lambda item: item[0],
+    )
     trails = [trail for _, trail in scored]
     return trails[:limit] if limit is not None else trails
+
+
+def _base_trail(row: Sequence[Any], *, distance_km: float, camp_distance_km: float | None) -> Trail:
+    """Build a ``Trail`` from the standard 10-column prefix
+    ``(id, name, kind, source, url, center_lat, center_lng, geojson, length_km, attrs)``."""
+    tid, name, kind, source, url, clat, clng, geojson, length_km, attrs = row[:10]
+    return Trail(
+        id=tid,
+        name=name,
+        kind=kind,
+        source=source,
+        url=url,
+        center_lat=clat,
+        center_lng=clng,
+        distance_km=round(distance_km, 1),
+        camp_distance_km=round(camp_distance_km, 1) if camp_distance_km is not None else None,
+        geometry=json.loads(geojson) if geojson else None,
+        length_km=length_km,
+        attrs=json.loads(attrs) if attrs else None,
+    )
 
 
 def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
     """Single trail row by id, or None if not cached. No camp-distance annotation (see ``trails_near``)."""
     row = con.execute(
-        "SELECT id, name, kind, source, url, center_lat, center_lng, geojson, connects FROM trails WHERE id = %s",
+        "SELECT id, name, kind, source, url, center_lat, center_lng, geojson, connects, length_km, attrs "
+        "FROM trails WHERE id = %s",
         [trail_id],
     ).fetchone()
     if row is None:
         return None
-    trail_id_, name, kind, source, url, clat, clng, geojson, connects = row
+    trail_id_, name, kind, source, url, clat, clng, geojson, connects, length_km, attrs = row
     return Trail(
         id=trail_id_,
         name=name,
@@ -310,6 +316,8 @@ def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
         camp_distance_km=None,
         geometry=json.loads(geojson),
         connects=connects,
+        length_km=length_km,
+        attrs=json.loads(attrs) if attrs else None,
     )
 
 
@@ -323,24 +331,11 @@ def connected_trails(con: psycopg.Connection, trail_ids: Sequence[str]) -> list[
     if not trail_ids:
         return []
     rows = con.execute(
-        "SELECT id, name, kind, source, url, center_lat, center_lng, geojson FROM trails WHERE id = ANY(%s)",
+        "SELECT id, name, kind, source, url, center_lat, center_lng, geojson, length_km, attrs "
+        "FROM trails WHERE id = ANY(%s)",
         [list(trail_ids)],
     ).fetchall()
-    by_id = {
-        row[0]: Trail(
-            id=row[0],
-            name=row[1],
-            kind=row[2],
-            source=row[3],
-            url=row[4],
-            center_lat=row[5],
-            center_lng=row[6],
-            distance_km=0.0,
-            camp_distance_km=None,
-            geometry=json.loads(row[7]),
-        )
-        for row in rows
-    }
+    by_id = {row[0]: _base_trail(row, distance_km=0.0, camp_distance_km=None) for row in rows}
     return [by_id[tid] for tid in trail_ids if tid in by_id]
 
 
@@ -356,7 +351,7 @@ def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: fl
     sql: LiteralString = f"""
         WITH pt AS (SELECT {GEOG_POINT} AS g)
         SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
-               ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km
+               t.length_km, t.attrs, ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km
         FROM trails t, pt
         WHERE t.kind IN ('path', 'route')
           AND t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s)
@@ -366,19 +361,7 @@ def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: fl
     row = con.execute(sql, [lng, lat, max_km * 1000.0]).fetchone()
     if row is None:
         return None
-    trail_id, name, kind, source, url, clat, clng, geojson, dist = row
-    return Trail(
-        id=trail_id,
-        name=name,
-        kind=kind,
-        source=source,
-        url=url,
-        center_lat=clat,
-        center_lng=clng,
-        distance_km=round(dist, 1),
-        camp_distance_km=None,
-        geometry=json.loads(geojson),
-    )
+    return _base_trail(row, distance_km=row[10], camp_distance_km=None)
 
 
 def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[int]) -> dict[int, dict[str, Any]]:

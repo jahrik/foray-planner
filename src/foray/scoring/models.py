@@ -113,6 +113,11 @@ class Trail:
     # link (``sources.trails._link_trailheads``). ``resolve_trail_network`` stitches these into
     # the drawn trail with no live query. ``None`` on non-trailhead rows and pre-#306 caches.
     connects: list[str] | None = None
+    # Path/route rows: great-circle length of the full (pre-thinned) polyline, and the kept OSM
+    # detail tags (surface, sac_scale, trail_visibility, network, operator, informal). ``None``
+    # on trailhead rows and pre-#306 caches.
+    length_km: float | None = None
+    attrs: dict[str, str] | None = None
 
 
 @dataclass

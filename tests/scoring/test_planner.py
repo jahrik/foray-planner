@@ -75,7 +75,7 @@ def _seed(con: psycopg.Connection) -> None:
     upsert_trails(
         con,
         [
-            ("osm:trail:1", "Near Loop Trail", "trail", "osm", "u", NEAR[0], NEAR[1], point, None),
+            ("osm:trail:1", "Near Loop Trail", "trail", "osm", "u", NEAR[0], NEAR[1], point, None, None, None),
         ],
     )
 

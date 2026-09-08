@@ -98,10 +98,14 @@ CREATE TABLE IF NOT EXISTS trails (
     center_lat  DOUBLE PRECISION,    -- representative point on the trail
     center_lng  DOUBLE PRECISION,
     geojson     TEXT,                -- GeoJSON text (LineString / MultiLineString / Point)
-    connects    TEXT[]               -- trailhead rows only: ids of the path/route trails whose
+    connects    TEXT[],              -- trailhead rows only: ids of the path/route trails whose
                                      -- geometry passes within ~35 m of the node, computed at
                                      -- ingest so selecting a trailhead draws its trail straight
                                      -- from cache with no live Overpass call (issue #306)
+    length_km   DOUBLE PRECISION,    -- path/route rows: great-circle length of the full polyline
+    attrs       TEXT                 -- path/route rows: JSON of the OSM detail tags (surface,
+                                     -- sac_scale, trail_visibility, network, operator, informal),
+                                     -- stored as text like `geojson` - the map/Details view read it
 );
 
 -- Wildfire perimeters + points (issue #227). An active fire and a recent burn scar are the
@@ -463,6 +467,13 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # ingest (trails._parse_trails) so `resolve_trail_network` draws the trail from cache
     # instead of a live per-selection Overpass query. Additive - older images ignore it.
     (28, "ALTER TABLE trails ADD COLUMN IF NOT EXISTS connects TEXT[]"),
+    # --- Trail attributes (issue #306) ---------------------------------------------------
+    # `length_km` (great-circle sum over the full pre-thinned polyline) drives the "hide the
+    # 50 m stub" list filter and the "longest" sort; `attrs` is JSON text of the OSM detail
+    # tags (surface, sac_scale, trail_visibility, network, operator, informal) the Details
+    # view and relevance score read - stored as text like `geojson`. Both additive.
+    (29, "ALTER TABLE trails ADD COLUMN IF NOT EXISTS length_km DOUBLE PRECISION"),
+    (30, "ALTER TABLE trails ADD COLUMN IF NOT EXISTS attrs TEXT"),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]
@@ -893,8 +904,9 @@ def upsert_public_land(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]])
 def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
     """Upsert trail tuples, refreshing existing rows in place. Returns rows attempted.
 
-    Each tuple is (id, name, kind, source, url, center_lat, center_lng, geojson, connects) -
-    ``connects`` is a list of trail ids on trailhead rows, ``None`` elsewhere.
+    Each tuple is (id, name, kind, source, url, center_lat, center_lng, geojson, connects,
+    length_km, attrs) - ``connects`` is set on trailhead rows, ``length_km``/``attrs`` on
+    path/route rows, ``None`` on the other kind.
     """
     columns: tuple[LiteralString, ...] = (
         "id",
@@ -906,6 +918,8 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
         "center_lng",
         "geojson",
         "connects",
+        "length_km",
+        "attrs",
     )
     return upsert_rows(con, "trails", columns, rows)
 

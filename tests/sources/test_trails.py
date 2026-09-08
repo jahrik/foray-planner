@@ -72,6 +72,32 @@ def test_parse_element_names_unnamed_way_from_ref_then_fallback() -> None:
     assert bare is not None and bare[1] == "Trail (OSM)"
 
 
+def test_parse_element_derives_length_km_and_keeps_detail_tags() -> None:
+    row = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {
+                "highway": "path",
+                "name": "Ridge",
+                "surface": "dirt",
+                "sac_scale": "mountain_hiking",
+                "informal": "yes",
+                "foot": "yes",  # not in _ATTR_TAGS - dropped
+            },
+            "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.30}],  # ~1.1 km
+        }
+    )
+    assert row is not None
+    assert 1.0 < row[9] < 1.3  # length_km, great-circle over the full polyline
+    assert json.loads(row[10]) == {"surface": "dirt", "sac_scale": "mountain_hiking", "informal": "yes"}
+
+    bare = _parse_element(
+        {"type": "way", "id": 2, "tags": {"highway": "path"}, "geometry": [{"lat": 47.6, "lon": -122.3}]}
+    )
+    assert bare is not None and bare[9] is None and bare[10] is None  # single vertex, no detail tags
+
+
 def test_parse_element_reads_a_trailhead_node() -> None:
     row = _parse_element({"type": "node", "id": 9, "lat": 47.6, "lon": -122.3, "tags": {"highway": "trailhead"}})
     assert row is not None
@@ -607,6 +633,8 @@ def test_resolve_trail_network_uses_the_cached_link_without_a_live_call(con: psy
         -122.30,
         '{"type":"Point","coordinates":[-122.30,47.60]}',
         ["osm:way/2"],
+        None,  # length_km
+        None,  # attrs
     )
     upsert_trails(con, [trailhead, path])
 
