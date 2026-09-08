@@ -10,8 +10,8 @@ import { state, type View } from "../state";
  * itself is still in flight - startup's head-start timer vs geolocation resolving,
  * tab switches, refreshCurrentView(). `begin()` claims the newest token and returns
  * `isCurrent()`, which reports `false` once a newer run has begun or - when `view` is given -
- * once the user has switched away from that view. See views.ts runDestinations/runAlerts and
- * layers.ts animateTrail.
+ * once the user has switched away from that view. See views.ts runDestinations/runActiveNow
+ * and layers.ts animateTrail.
  */
 export function createRunGuard(view?: View): { begin: () => () => boolean } {
   let latest = 0;

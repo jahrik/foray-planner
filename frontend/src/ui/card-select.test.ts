@@ -38,13 +38,13 @@ describe("createRunGuard", () => {
     const guard = createRunGuard("destinations");
     const isCurrent = guard.begin();
     expect(isCurrent()).toBe(true);
-    viewState.view = "alerts";
+    viewState.view = "plan";
     expect(isCurrent()).toBe(false);
   });
 
   it("without a view name, ignores state.view", () => {
     const isCurrent = createRunGuard().begin();
-    viewState.view = "alerts";
+    viewState.view = "plan";
     expect(isCurrent()).toBe(true);
   });
 });

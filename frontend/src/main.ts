@@ -80,8 +80,8 @@ function initTabs(): void {
       state.view = (button.dataset.view as typeof state.view) ?? "destinations";
 
       // Plan-route fields are a query form, not map filters (issue #297) - shown in the dock /
-      // sheet header only while the Plan tab is active. The Months pill hides on Fruiting now
-      // (no month param there) and the Camping pill shows only on Plan - syncPillsForView.
+      // sheet header only while the Plan tab is active. syncPillsForView hides Sort (and Months)
+      // off the Destinations flow.
       const planRow = document.getElementById("plan-row");
       if (planRow) planRow.style.display = state.view === "plan" ? "flex" : "none";
       syncPillsForView(state.view);

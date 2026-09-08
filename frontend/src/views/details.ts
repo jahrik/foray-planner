@@ -4,7 +4,6 @@
 // pane; the back button restores the list from its last payload (no refetch). The tab loaders
 // themselves are unchanged (views/destination-tabs.ts) - just re-hosted.
 
-import type { RegionScore } from "../api/types";
 import { escapeHtml } from "../format";
 import { qs } from "../state";
 import { createLazyLoader } from "../ui/lazy-panel";
@@ -18,7 +17,13 @@ import {
 
 type DetailTab = "calendar" | "photos" | "trails" | "camps";
 
-export function openDetails(region: RegionScore, title: string, onBack: () => void): void {
+// Only the region id is needed - every loader queries by it. Both a scored destination
+// (RegionScore) and an "Active now" alert region satisfy this.
+export interface DetailRegion {
+  region_id: string;
+}
+
+export function openDetails(region: DetailRegion, title: string, onBack: () => void): void {
   const panel = qs("#panel");
   panel.innerHTML = `
     <div class="details-view">

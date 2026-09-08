@@ -1,14 +1,7 @@
 import L from "leaflet";
 
 import { getJson } from "../api/client";
-import type {
-  Calendar,
-  CampSite,
-  RecentObservation,
-  RecentObservationsPage,
-  RegionScore,
-  Trail,
-} from "../api/types";
+import type { Calendar, CampSite, RecentObservation, RecentObservationsPage, Trail } from "../api/types";
 import { selectTrailhead } from "../map/layers";
 import {
   clearCardCampMarkers,
@@ -148,7 +141,10 @@ export async function loadPhotosInto(regionId: string, container: HTMLElement): 
 // issue #115 follow-up) - a destination card should list what's actually reachable from inside
 // it, not every path/route/trailhead in the search area. Selecting a row draws the real trail on
 // the map (layers.ts's selectTrailhead) rather than just opening a popup.
-export async function loadTrailheadsInto(region: RegionScore, container: HTMLElement): Promise<boolean> {
+export async function loadTrailheadsInto(
+  region: { region_id: string },
+  container: HTMLElement,
+): Promise<boolean> {
   container.innerHTML = "<p class='hint'>Loading…</p>";
   let trailheads: Trail[];
   try {
@@ -203,7 +199,10 @@ export async function loadTrailheadsInto(region: RegionScore, container: HTMLEle
 // circle (regionRadiusKm()). Unlike a trailhead, a campsite is already a complete point feature
 // (name, fee, coords) - no server-side "resolve the real thing" step, so selecting a row just
 // syncs the active chip/marker pair and opens the marker's popup, instead of drawing anything new.
-export async function loadCampgroundsInto(region: RegionScore, container: HTMLElement): Promise<boolean> {
+export async function loadCampgroundsInto(
+  region: { region_id: string },
+  container: HTMLElement,
+): Promise<boolean> {
   container.innerHTML = "<p class='hint'>Loading…</p>";
   let sites: CampSite[];
   try {

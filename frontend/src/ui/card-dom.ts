@@ -1,5 +1,5 @@
-// Shared result-card DOM + keyboard/click plumbing for the Destinations and Alerts panels
-// (views.ts, alerts-view.ts). The cards are plain <div>s for layout flexibility but act as
+// Shared result-card DOM + keyboard/click plumbing for the Destinations list and the "Active
+// now" list (both in views.ts). The cards are plain <div>s for layout flexibility but act as
 // buttons, so this makes them keyboard-operable and keeps nested links clickable without also
 // activating the card. buildResultCard() is the one card template both views render through
 // (issue #301) - a scannable summary card; the per-region detail tabs live in the Details view
@@ -54,7 +54,7 @@ export const speciesChip = (hit: ChipData, extraClass?: string): string =>
    >${escapeHtml(displayName(hit))}${hit.label ? " · " + escapeHtml(hit.label) : ""}</a>`;
 
 // The one result-card shape, rendered by both the Destinations rank list and the "Active now"
-// (alerts) list. A scannable summary only - rank + title, the plain-language line, a meta row,
+// now (alerts) list. A scannable summary only - rank + title, the plain-language line, a meta row,
 // species/hit chips with show-more, fire badges, and a two-button action row. The per-region
 // detail tabs (Calendar / Photos / Trails / Campgrounds) are not here any more; "Details" opens
 // them in the dedicated Details view (views/details.ts).
