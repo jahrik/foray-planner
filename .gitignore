@@ -39,4 +39,5 @@ infra/ansible/.ansible/
 
 # local QA screenshots
 verify-*.png
+redesign-*.png
 *.playwright-mcp
