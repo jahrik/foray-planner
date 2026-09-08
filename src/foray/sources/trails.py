@@ -174,7 +174,7 @@ def _trail_url(etype: str, eid: int) -> str:
     return f"https://www.openstreetmap.org/{etype}/{eid}"
 
 
-_ATTR_TAGS = ("surface", "sac_scale", "trail_visibility", "network", "operator", "informal", "trailblazed")
+_ATTR_TAGS = ("surface", "sac_scale", "trail_visibility", "network", "operator", "informal")
 
 
 def _attrs(tags: dict[str, Any]) -> dict[str, str] | None:
