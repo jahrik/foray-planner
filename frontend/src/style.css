@@ -876,6 +876,95 @@ a.chip:hover {
   color: var(--ink);
 }
 
+/* Card action row (issue #301): "Details" opens the Details view, "+ Plan" adds the region to
+   the route shortlist. Kept quiet - an outline button pair below the card's content. */
+.card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.card-action {
+  flex: 1;
+  padding: 5px 10px;
+  font-size: var(--text-label);
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--edge);
+  background: var(--paper-2);
+  color: var(--ink);
+  cursor: pointer;
+}
+.card-action:hover {
+  border-color: var(--rust);
+}
+.card-action.on {
+  background: var(--rust);
+  border-color: var(--rust);
+  color: var(--on-accent);
+}
+
+/* Details view - the per-region tabs, swapped into #panel in place of the list. */
+.details-back {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--rust);
+  font-size: var(--text-data);
+  font-weight: 600;
+  cursor: pointer;
+}
+.details-back:hover {
+  text-decoration: underline;
+}
+.details-title {
+  margin: 0 0 8px;
+  font-size: var(--text-h3);
+}
+
+/* Route shortlist action bar - pinned to the bottom of the dock/sheet when the list is non-empty. */
+.route-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--edge);
+  background: var(--paper-2);
+}
+/* The class sets display:flex, so the bare [hidden] attribute (UA display:none) loses on
+   specificity - restore it explicitly. */
+.route-bar[hidden] {
+  display: none;
+}
+.route-bar-count {
+  flex: 1;
+  font-size: var(--text-data);
+  font-weight: 600;
+  color: var(--ink);
+}
+.route-bar-clear {
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: var(--text-label);
+  cursor: pointer;
+}
+.route-bar-clear:hover {
+  color: var(--ink);
+}
+.route-bar-go {
+  padding: 6px 12px;
+  border: 1px solid var(--rust);
+  border-radius: 6px;
+  background: var(--rust);
+  color: var(--on-accent);
+  font-weight: 600;
+  font-size: var(--text-label);
+  cursor: pointer;
+}
+
 #genus-field {
   min-width: 200px;
 }
