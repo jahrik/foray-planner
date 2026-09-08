@@ -36,3 +36,7 @@ FRONTEND.md
 
 # Ansible local collection/role/module cache (reinstalled via `just ansible install`)
 infra/ansible/.ansible/
+
+# local QA screenshots
+verify-*.png
+*.playwright-mcp
