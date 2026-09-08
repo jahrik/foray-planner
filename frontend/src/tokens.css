@@ -1,0 +1,73 @@
+/* ── Design tokens ──────────────────────────────────────────────────────────
+   Foray Planner's visual identity: the spore-print colour chart a forager uses
+   to key a mushroom, over USGS-quad cartography. Light-first (field guides are
+   printed); dark is the pre-dawn alt, a deep humus brown-black.
+
+   Legacy names (--bg / --panel / --ink / --muted / --accent / --accent2 /
+   --border) are kept and remapped onto the new palette so the existing
+   stylesheet reskins without a token-by-token sweep. New work should reach for
+   the semantic names (--paper, --rust, --purple, --moss, --flush, --warn). */
+
+:root,
+:root[data-theme="light"] {
+  --paper: #e9e8df; /* cool spore-print card stock (not warm cream) */
+  --paper-2: #f3f2ec; /* raised surfaces / cards */
+  --ink: #23201b; /* brown-black, Coprinus spore print */
+  --ink-soft: #5c574c; /* secondary text */
+  --rust: #7a4326; /* rust-brown spore print - primary accent, links, emphasis */
+  --purple: #4a3a4d; /* purple-brown spore print - selected state */
+  --moss: #4c5d43; /* topo vegetation overprint - map fills, hairlines */
+  --flush: #5f7d3e; /* fresh growth - RESERVED for "active now / rained recently" */
+  --edge: #cfcdbf; /* hairline borders, topo linework weight */
+  --warn: #a6472f; /* fire / avoid - redder and higher-chroma than rust */
+  --on-accent: #f3f2ec; /* text on a --rust / --purple fill */
+
+  --bg: var(--paper);
+  --panel: var(--paper-2);
+  --muted: var(--ink-soft);
+  --accent: var(--rust);
+  --accent2: var(--rust);
+  --border: var(--edge);
+
+  --font-display: "Fraunces Variable", "Iowan Old Style", Palatino, Georgia, serif;
+  --font-body: "IBM Plex Sans Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Modular scale ~1.25 off 16px. */
+  --text-hero: 2.44rem;
+  --text-h2: 1.56rem;
+  --text-h3: 1.25rem;
+  --text-body: 1rem;
+  --text-data: 0.94rem;
+  --text-label: 0.81rem;
+}
+
+:root[data-theme="dark"] {
+  --paper: #1b1915; /* deep humus brown-black */
+  --paper-2: #241f1b;
+  --ink: #e9e6dd;
+  --ink-soft: #9c958a;
+  --rust: #c6805a; /* raised in lightness so it carries on the dark ground */
+  --purple: #b99bbe;
+  --moss: #7f9270;
+  --flush: #8fb36a;
+  --edge: #3a342e;
+  --warn: #d9755a;
+  --on-accent: #1b1915;
+}
+
+/* prefers-color-scheme with no explicit choice - mirror the dark block. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #1b1915;
+    --paper-2: #241f1b;
+    --ink: #e9e6dd;
+    --ink-soft: #9c958a;
+    --rust: #c6805a;
+    --purple: #b99bbe;
+    --moss: #7f9270;
+    --flush: #8fb36a;
+    --edge: #3a342e;
+    --warn: #d9755a;
+    --on-accent: #1b1915;
+  }
+}

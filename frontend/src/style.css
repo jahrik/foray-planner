@@ -1,22 +1,4 @@
-:root,
-:root[data-theme="dark"] {
-  --bg: #14160f;
-  --panel: #1c2016;
-  --ink: #eef0e2;
-  --muted: #9aa088;
-  --accent: #e0a940;
-  --accent2: #7fae5e;
-  --border: #2c3122;
-}
-:root[data-theme="light"] {
-  --bg: #f0ead9;
-  --panel: #fffdf8;
-  --ink: #201d13;
-  --muted: #6b6650;
-  --accent: #c2791f;
-  --accent2: #3f6b3f;
-  --border: #ddd3b8;
-}
+/* Palette + type tokens live in tokens.css (imported first). */
 * {
   box-sizing: border-box;
 }
@@ -26,14 +8,40 @@ body {
 }
 body {
   margin: 0;
-  font:
-    15px/1.5 system-ui,
-    sans-serif;
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.55;
   background: var(--bg);
   color: var(--ink);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Fraunces carries the naturalist-title-page voice on headings only; body + data
+   stay in Plex Sans. SOFT + WONK soften the serif so it reads field-guide, not
+   fashion-Didone. */
+h1,
+h2,
+h3,
+.rank h3,
+.stop-num {
+  font-family: var(--font-display);
+  font-weight: 560;
+  font-variation-settings:
+    "SOFT" 40,
+    "WONK" 1;
+  letter-spacing: 0.005em;
+}
+
+/* Tabular figures keep columns of distance / score / elevation aligned down a
+   list without a monospace face (the generated-page tell we deliberately drop). */
+.num,
+.rank .meta,
+table.cal,
+.stop-drive {
+  font-variant-numeric: tabular-nums;
 }
 .theme-toggle {
   min-width: 40px;
@@ -251,14 +259,12 @@ body {
   gap: 3px;
 }
 .field label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-size: var(--text-label);
   color: var(--muted);
 }
 .field small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--text-label);
 }
 .toggle-group {
   display: flex;
@@ -291,7 +297,7 @@ body {
 }
 .toggle-btn input[type="checkbox"]:checked + span {
   background: var(--accent2);
-  color: #10230a;
+  color: var(--on-accent);
   border-color: var(--accent2);
   font-weight: 600;
 }
@@ -313,7 +319,7 @@ body {
 }
 .months button.on {
   background: var(--accent);
-  color: #241a05;
+  color: var(--on-accent);
   border-color: var(--accent);
   font-weight: 600;
 }
@@ -338,7 +344,7 @@ button {
 }
 button.primary {
   background: var(--accent2);
-  color: #10230a;
+  color: var(--on-accent);
   border-color: var(--accent2);
   font-weight: 600;
 }
@@ -694,12 +700,12 @@ main {
   line-height: 1.35;
 }
 .fire-warn {
-  color: #ff6b52;
-  background: rgba(255, 59, 31, 0.12);
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
 }
 .fire-scar {
-  color: #ffa45c;
-  background: rgba(255, 140, 66, 0.12);
+  color: var(--rust);
+  background: color-mix(in srgb, var(--rust) 12%, transparent);
 }
 .bar {
   height: 6px;
@@ -712,13 +718,6 @@ main {
   display: block;
   height: 100%;
   background: linear-gradient(90deg, var(--accent2), var(--accent));
-}
-
-/* Distance/species-count/score figures read like a field instrument's readout - tabular
-   monospace numerals keep columns of them aligned as you scan down a list of cards. */
-.num {
-  font-family: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
-  font-variant-numeric: tabular-nums;
 }
 
 /* The one signature motif (spore-print/contour-map reference) - used once, under the tab bar,
@@ -762,8 +761,8 @@ a.chip:hover {
   border-color: var(--accent);
 }
 .chip.live {
-  border-color: #22c3e6;
-  color: #22c3e6;
+  border-color: var(--flush);
+  color: var(--flush);
 }
 /* Selected trailhead in a destination card's Trails tab (views.ts's loadTrailheadsInto). */
 .chip.active {
@@ -852,7 +851,7 @@ a.chip:hover {
 }
 .rank-tab.active {
   background: var(--accent2);
-  color: #10230a;
+  color: var(--on-accent);
   border-color: var(--accent2);
   font-weight: 600;
 }
