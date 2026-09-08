@@ -1,6 +1,9 @@
 import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+import "@fontsource-variable/fraunces";
+import "@fontsource-variable/ibm-plex-sans";
+import "./tokens.css";
 import "./style.css";
 
 import { getJson, postJson } from "./api/client";
