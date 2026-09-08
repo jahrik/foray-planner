@@ -879,6 +879,7 @@ a.chip:hover {
 
 .rank-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-top: 8px;
 }
@@ -890,6 +891,7 @@ a.chip:hover {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+  white-space: nowrap;
 }
 .rank-tab.active {
   background: var(--accent2);
@@ -948,10 +950,15 @@ table.cal .heat {
   background: var(--panel);
   color: var(--ink);
   padding: 4px 10px;
+  /* Clear the floating results dock (.rail, same width) on the left so legend entries never
+     hide behind it; the bottom-right zoom + attribution controls bound the other side. */
+  padding-left: calc(min(360px, 100vw - 24px) + 24px);
   border-top: 1px solid var(--border);
   font-size: 11px;
   line-height: 1.4;
-  max-height: 28px;
+  /* Wraps to as many rows as the entries need (the toggleable camp/land/fire rows can push it
+     to three or four); capped so it never eats more than a strip of the map, scroll past that. */
+  max-height: 4.6em;
   overflow-y: auto;
 }
 .legend-item {
@@ -1050,6 +1057,7 @@ table.cal .heat {
     left: 0;
     right: 0;
     bottom: calc(18dvh + 22px);
+    padding-left: 10px; /* reset the desktop dock-clearance indent */
     z-index: 900;
     border-top: none;
   }
