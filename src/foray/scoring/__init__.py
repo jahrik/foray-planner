@@ -30,6 +30,7 @@ from foray.scoring.models import (
 )
 from foray.scoring.planner import plan_route
 from foray.scoring.queries import (
+    TrailSort,
     alerts,
     camps_near,
     connected_trails,
@@ -54,6 +55,7 @@ __all__ = [
     "Stop",
     "Trail",
     "TrailPath",
+    "TrailSort",
     "TripPlan",
     "alerts",
     "build_phenology",

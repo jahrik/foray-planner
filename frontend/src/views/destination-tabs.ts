@@ -150,7 +150,16 @@ export async function loadTrailheadsInto(
   try {
     // See layers.ts's LandUnit cast - `geometry` is real GeoJSON, just untyped on the backend.
     trailheads = (await getJson("/api/trails", {
-      query: { region_id: region.region_id, kind: "trailhead", radius_km: regionRadiusKm(), limit: 20 },
+      query: {
+        region_id: region.region_id,
+        kind: "trailhead",
+        radius_km: regionRadiusKm(),
+        limit: 20,
+        // Rank by the trail each trailhead leads to (named route, then length) rather than raw
+        // proximity, and drop the ones that only connect to unnamed OSM connector stubs (#306).
+        sort: "relevance",
+        significant_only: true,
+      },
     })) as unknown as Trail[];
   } catch (error) {
     container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
