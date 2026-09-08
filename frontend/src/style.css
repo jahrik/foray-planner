@@ -1194,6 +1194,11 @@ table.cal .heat {
     touch-action: pan-y;
     overscroll-behavior: contain;
   }
+  /* Route-bar rides at the sheet's bottom edge, after the scrolling #panel. */
+  body[data-sheet="on"] #route-bar {
+    flex: 0 0 auto;
+    touch-action: none;
+  }
   body[data-sheet="on"] #panel::before {
     content: none;
   } /* real handle replaces the old cosmetic one */

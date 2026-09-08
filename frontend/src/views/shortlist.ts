@@ -7,10 +7,13 @@
 import { qs, state } from "../state";
 
 const ids: string[] = [];
-let onChange: () => void = () => {};
+// Fired when the shortlist changes in a way that isn't already reflected on a card - i.e. a
+// bulk clear. A single toggle comes from one card's own "+ Plan" button, which re-syncs itself
+// (card-dom syncPlan), so it doesn't need the hook.
+let onBulkChange: () => void = () => {};
 
 export function setShortlistChangeHook(hook: () => void): void {
-  onChange = hook;
+  onBulkChange = hook;
 }
 
 export function inShortlist(regionId: string): boolean {
@@ -26,13 +29,13 @@ export function toggleShortlist(regionId: string): void {
   if (at === -1) ids.push(regionId);
   else ids.splice(at, 1);
   renderActionBar();
-  onChange();
 }
 
 export function clearShortlist(): void {
+  if (ids.length === 0) return;
   ids.length = 0;
   renderActionBar();
-  onChange();
+  onBulkChange();
 }
 
 // Keeps #route-bar in sync: visible only on the Destinations flow (redundant inside Plan mode),

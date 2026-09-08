@@ -29,16 +29,16 @@ export function openDetails(region: DetailRegion, title: string, onBack: () => v
     <div class="details-view">
       <button type="button" class="details-back">&larr; Back to results</button>
       <h3 class="details-title">${escapeHtml(title)}</h3>
-      <div class="rank-tabs" role="tablist">
-        <button type="button" class="rank-tab active" data-tab="calendar">Calendar</button>
-        <button type="button" class="rank-tab" data-tab="photos">Photos</button>
-        <button type="button" class="rank-tab" data-tab="trails">Trails</button>
-        <button type="button" class="rank-tab" data-tab="camps">Campgrounds</button>
+      <div class="rank-tabs" role="tablist" aria-label="Region details">
+        <button type="button" role="tab" id="dtab-calendar" aria-controls="dpanel-calendar" aria-selected="true" class="rank-tab active" data-tab="calendar">Calendar</button>
+        <button type="button" role="tab" id="dtab-photos" aria-controls="dpanel-photos" aria-selected="false" tabindex="-1" class="rank-tab" data-tab="photos">Photos</button>
+        <button type="button" role="tab" id="dtab-trails" aria-controls="dpanel-trails" aria-selected="false" tabindex="-1" class="rank-tab" data-tab="trails">Trails</button>
+        <button type="button" role="tab" id="dtab-camps" aria-controls="dpanel-camps" aria-selected="false" tabindex="-1" class="rank-tab" data-tab="camps">Campgrounds</button>
       </div>
-      <div class="rank-calendar" data-tab-content="calendar"></div>
-      <div class="rank-photos" data-tab-content="photos" hidden></div>
-      <div class="rank-trails" data-tab-content="trails" hidden></div>
-      <div class="rank-camps" data-tab-content="camps" hidden></div>
+      <div class="rank-calendar" id="dpanel-calendar" role="tabpanel" aria-labelledby="dtab-calendar" tabindex="0" data-tab-content="calendar"></div>
+      <div class="rank-photos" id="dpanel-photos" role="tabpanel" aria-labelledby="dtab-photos" tabindex="0" data-tab-content="photos" hidden></div>
+      <div class="rank-trails" id="dpanel-trails" role="tabpanel" aria-labelledby="dtab-trails" tabindex="0" data-tab-content="trails" hidden></div>
+      <div class="rank-camps" id="dpanel-camps" role="tabpanel" aria-labelledby="dtab-camps" tabindex="0" data-tab-content="camps" hidden></div>
     </div>`;
 
   qs<HTMLButtonElement>(".details-back", panel).onclick = onBack;
@@ -62,14 +62,32 @@ export function openDetails(region: DetailRegion, title: string, onBack: () => v
 
   const tabs = [...panel.querySelectorAll<HTMLButtonElement>(".rank-tab")];
   const show = (tab: DetailTab): void => {
-    tabs.forEach((button) => button.classList.toggle("active", button.dataset.tab === tab));
+    tabs.forEach((button) => {
+      const selected = button.dataset.tab === tab;
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1; // roving tabindex - one tab stop for the strip
+    });
     (Object.keys(bodies) as DetailTab[]).forEach((key) => {
       bodies[key].hidden = key !== tab;
     });
     loaders[tab].open();
   };
-  tabs.forEach((button) => {
+  tabs.forEach((button, index) => {
     button.onclick = () => show(button.dataset.tab as DetailTab);
+    // Left/Right move between tabs per the WAI-ARIA tabs pattern.
+    button.onkeydown = (event) => {
+      const next =
+        event.key === "ArrowRight"
+          ? tabs[(index + 1) % tabs.length]
+          : event.key === "ArrowLeft"
+            ? tabs[(index - 1 + tabs.length) % tabs.length]
+            : null;
+      if (!next) return;
+      event.preventDefault();
+      next.focus();
+      next.click();
+    };
   });
 
   show("calendar");

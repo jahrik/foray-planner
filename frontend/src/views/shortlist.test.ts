@@ -32,13 +32,16 @@ describe("shortlist", () => {
     expect(inShortlist("5_5")).toBe(false);
   });
 
-  it("fires the change hook on every mutation", () => {
+  it("fires the bulk-change hook only on a non-empty clear, not on toggles", () => {
     const hook = vi.fn();
     setShortlistChangeHook(hook);
     toggleShortlist("2_3");
-    toggleShortlist("2_3");
+    toggleShortlist("5_5");
+    expect(hook).not.toHaveBeenCalled();
     clearShortlist();
-    expect(hook).toHaveBeenCalledTimes(3);
+    expect(hook).toHaveBeenCalledTimes(1);
+    clearShortlist(); // already empty - no-op
+    expect(hook).toHaveBeenCalledTimes(1);
   });
 
   it("shows the bar on the Destinations flow and updates its label + Clear button", () => {
