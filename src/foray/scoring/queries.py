@@ -303,11 +303,11 @@ def trails_near(
         """
     rows = con.execute(sql, params).fetchall()
 
-    # row layout: [10] unrounded distance, [11] camp distance, [12] best connected length,
-    # [13] connects-a-route flag. Prominence is that lead length (or the row's own for a path),
-    # plus a bonus if it is / leads to a named route.
+    # row layout: [8] this row's own length_km, [9] attrs, [10] unrounded distance, [11] camp
+    # distance, [12] best connected length, [13] connects-a-route flag. Prominence is the lead
+    # trail's length (for a trailhead) or the row's own (for a path), plus a route bonus.
     def lead_length(row: Sequence[Any]) -> float:
-        return row[12] if row[12] is not None else (row[9] or 0.0)
+        return row[12] if row[12] is not None else (row[8] or 0.0)
 
     def significant(row: Sequence[Any]) -> bool:
         name, row_kind = row[1], row[2]
@@ -398,15 +398,22 @@ def connected_trails(con: psycopg.Connection, trail_ids: Sequence[str]) -> list[
     return [by_id[tid] for tid in trail_ids if tid in by_id]
 
 
+# Beyond this, "no trailhead nearby" and "this area isn't mapped yet" are indistinguishable, so
+# region_access returns None (unknown - no score effect) rather than a distance that would
+# always trip the remote penalty. Also bounds the KNN so a stale row from a prior home / a
+# different refresh area can't be the "nearest" match (Copilot review, PR #307).
+_ACCESS_SEARCH_KM = 45.0
+
+
 def region_access(
     con: psycopg.Connection, regions: Sequence[tuple[str, float, float]]
 ) -> dict[str, tuple[float | None, float | None, bool | None]]:
-    """Nearest trailhead / campground to each ``(region_id, lat, lng)`` in km, plus whether that
-    nearest campsite is free-tagged.
+    """Nearest trailhead / campground to each ``(region_id, lat, lng)`` in km (within
+    ``_ACCESS_SEARCH_KM``), plus whether that nearest campsite is free-tagged.
 
     One batched KNN pass off ``ix_trails_geom`` / ``ix_campsites_geom`` - feeds the ``access``
-    multiplier and the card why-sentence (issue #306). Regions with an empty trail / camp cache
-    come back with ``None`` in that slot.
+    multiplier and the card why-sentence (issue #306). A region with nothing cached within the
+    search radius comes back ``None`` in that slot - treated as "unknown", not "remote".
     """
     if not regions:
         return {}
@@ -414,6 +421,8 @@ def region_access(
     params: list[Any] = []
     for region_id, lat, lng in regions:
         params += [region_id, lng, lat]
+    params.append(_ACCESS_SEARCH_KM * 1000.0)
+    params.append(_ACCESS_SEARCH_KM * 1000.0)
     sql: LiteralString = f"""
         WITH r(id, g) AS (VALUES {values})
         SELECT r.id, th.dist_km, camp.dist_km, camp.free
@@ -421,12 +430,12 @@ def region_access(
         LEFT JOIN LATERAL (
             SELECT ST_Distance(t.geom, r.g) / 1000.0 AS dist_km
             FROM trails t
-            WHERE t.kind = 'trailhead' AND t.geom IS NOT NULL
+            WHERE t.kind = 'trailhead' AND t.geom IS NOT NULL AND ST_DWithin(t.geom, r.g, %s)
             ORDER BY t.geom <-> r.g LIMIT 1
         ) th ON true
         LEFT JOIN LATERAL (
             SELECT ST_Distance(c.geom, r.g) / 1000.0 AS dist_km, c.free
-            FROM campsites c WHERE c.geom IS NOT NULL
+            FROM campsites c WHERE c.geom IS NOT NULL AND ST_DWithin(c.geom, r.g, %s)
             ORDER BY c.geom <-> r.g LIMIT 1
         ) camp ON true
         """

@@ -272,24 +272,28 @@ def _apply_fire(con: psycopg.Connection, results: list[RegionScore], *, taxon_id
 def _apply_access(con: psycopg.Connection, results: list[RegionScore]) -> None:
     """Fold the trail/camp access signals (issue #306) into an already-ranked list, in place.
 
-    A hotspot with a trailhead within ``ACCESS_NEAR_KM`` gets a small boost; one with neither a
-    trailhead nor a campground within ``ACCESS_FAR_KM`` gets a penalty. Records the nearest
-    trailhead / campground distances on each region for the card why-sentence. Re-normalizes and
-    re-sorts. A no-op when the trail and camp caches are both empty for the area."""
+    A hotspot with a trailhead within ``ACCESS_NEAR_KM`` gets a small boost; one where the
+    nearest trailhead *and* the nearest campground are both known to be past ``ACCESS_FAR_KM``
+    gets a penalty. ``region_access`` returns ``None`` (not a huge distance) when nothing is
+    cached within its search radius, so an un-mapped area reads as "unknown" and is left alone
+    rather than penalised. Records the distances for the why-sentence; re-normalizes and
+    re-sorts. A no-op when nothing is cached anywhere near the ranked area."""
     if not results:
         return
     access = region_access(con, [(r.region_id, r.center_lat, r.center_lng) for r in results])
     if not any(th is not None or camp is not None for th, camp, _ in access.values()):
-        return  # neither layer ingested for this area - don't penalise every region as "remote"
+        return  # nothing cached near this area - don't touch any score
     for region in results:
         trailhead_km, camp_km, camp_is_free = access.get(region.region_id, (None, None, None))
         region.trailhead_km = trailhead_km
         region.camp_km = camp_km
         region.camp_is_free = camp_is_free
         near_trailhead = trailhead_km is not None and trailhead_km <= ACCESS_NEAR_KM
-        no_trailhead = trailhead_km is None or trailhead_km > ACCESS_FAR_KM
-        no_camp = camp_km is None or camp_km > ACCESS_FAR_KM
-        if no_trailhead and no_camp:
+        # Penalise only on positive knowledge that both are far - a ``None`` here means "no data",
+        # not "remote".
+        trailhead_far = trailhead_km is not None and trailhead_km > ACCESS_FAR_KM
+        camp_far = camp_km is not None and camp_km > ACCESS_FAR_KM
+        if trailhead_far and camp_far:
             region.score *= ACCESS_REMOTE_PENALTY
         elif near_trailhead:
             region.score *= ACCESS_TRAILHEAD_BONUS
