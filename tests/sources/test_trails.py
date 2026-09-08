@@ -18,6 +18,8 @@ from foray.sources.trails import (
     _parse_trails,
     _sample,
     _tile_bboxes,
+    _trails_query,
+    _trails_query_bbox,
     fetch_trails,
     ingest_trails,
     ingest_trails_region,
@@ -485,6 +487,20 @@ def test_network_query_filters_on_the_trailhead_node_and_highway_ways() -> None:
     assert "node(id:123);" in query
     assert 'way(bn)["highway"]' in query
     assert 'rel(bw.segs)["route"="hiking"]' in query
+
+
+def test_trails_query_fetches_relations_in_a_separate_out_statement() -> None:
+    # Inside a union, `out geom` returns a route relation with only `bounds` and no members, so
+    # `_parse_element` can never build a `kind='route'` row (issue #306). Both the radius and the
+    # bbox query must emit the relation clause after the way/node union closes, with its own out.
+    for query in (
+        _trails_query(HOME_LAT, HOME_LNG, 5000),
+        _trails_query_bbox(47.0, -123.0, 48.0, -122.0),
+    ):
+        # relation clause sits after the way/node union closes (`);`), with its own `out geom;`
+        assert query.index('relation["route"="hiking"]') > query.index(");")
+        _, _, after_relation = query.partition('relation["route"="hiking"]')
+        assert after_relation.rstrip().endswith("out geom;")
 
 
 def test_parse_trailhead_id_extracts_the_numeric_node_id() -> None:
