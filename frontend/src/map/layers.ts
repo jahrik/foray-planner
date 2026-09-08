@@ -310,7 +310,8 @@ export async function selectTrailhead(trail: Trail): Promise<void> {
   if (!parts.length) return;
   const layer = L.polyline([], {
     color: TRAIL,
-    weight: 3,
+    // A named hiking route reads as a heavier line than a lone path (issue #306).
+    weight: path.trail.kind === "route" ? 5 : 3,
     opacity: 0.9,
     dashArray: path.authoritative ? undefined : "6 6",
     bubblingMouseEvents: false,
