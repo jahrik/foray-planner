@@ -124,6 +124,30 @@ def test_parse_trails_dedupes_by_id() -> None:
     assert [row[0] for row in _parse_trails(payload)] == ["osm:node/1"]
 
 
+def test_parse_trails_links_a_trailhead_to_the_path_it_sits_on() -> None:
+    payload = {
+        "elements": [
+            # trailhead node right on the first vertex of way 2
+            {"type": "node", "id": 1, "lat": 47.600, "lon": -122.300, "tags": {"highway": "trailhead"}},
+            {
+                "type": "way",
+                "id": 2,
+                "tags": {"highway": "path", "name": "On It"},
+                "geometry": [{"lat": 47.600, "lon": -122.300}, {"lat": 47.602, "lon": -122.298}],
+            },
+            {  # a way ~400 m away - outside _LINK_SNAP_M, must not link
+                "type": "way",
+                "id": 3,
+                "tags": {"highway": "path", "name": "Far Off"},
+                "geometry": [{"lat": 47.604, "lon": -122.300}, {"lat": 47.605, "lon": -122.299}],
+            },
+        ]
+    }
+    rows = {row[0]: row for row in _parse_trails(payload)}
+    assert rows["osm:node/1"][8] == ["osm:way/2"]  # connects: only the path it touches
+    assert rows["osm:way/2"][8] is None  # non-trailhead rows carry no connects
+
+
 def test_sample_thins_to_cap_keeping_endpoints() -> None:
     coords = [(float(index), 0.0) for index in range(200)]
     thinned = _sample(coords, 60)
@@ -561,6 +585,39 @@ def test_trailhead_network_returns_none_on_a_failing_query() -> None:
 def test_resolve_trail_network_raises_for_an_unknown_trailhead(con: psycopg.Connection) -> None:
     with pytest.raises(LookupError):
         resolve_trail_network(con, "osm:node/999", client=httpx.Client())
+
+
+def test_resolve_trail_network_uses_the_cached_link_without_a_live_call(con: psycopg.Connection) -> None:
+    path = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "path", "name": "Cached Ridge"},
+            "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.29}],
+        }
+    )
+    assert path is not None
+    trailhead = (
+        "osm:node/1",
+        "TH",
+        "trailhead",
+        "osm",
+        "u",
+        47.60,
+        -122.30,
+        '{"type":"Point","coordinates":[-122.30,47.60]}',
+        ["osm:way/2"],
+    )
+    upsert_trails(con, [trailhead, path])
+
+    def boom(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("resolve_trail_network made a live Overpass call despite a cached link")
+
+    result = resolve_trail_network(con, "osm:node/1", client=httpx.Client(transport=httpx.MockTransport(boom)))
+    assert result is not None
+    assert result.authoritative is True
+    assert result.trail.name == "Cached Ridge"
+    assert result.trail.geometry is not None and result.trail.geometry["type"] == "LineString"
 
 
 def test_resolve_trail_network_uses_live_topology_when_available(con: psycopg.Connection) -> None:

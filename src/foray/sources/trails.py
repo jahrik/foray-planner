@@ -36,7 +36,10 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import math
+from collections import Counter, defaultdict
 from collections.abc import Callable, Sequence
+from itertools import pairwise
 from typing import Any
 
 import httpx
@@ -176,12 +179,14 @@ def _row(
     name: str,
     kind: str,
     lines: Sequence[Sequence[tuple[float, float]]],
+    connects: list[str] | None = None,
 ) -> tuple[Any, ...] | None:
     """Build a trails row from one or more (lat, lng) polylines, or None if all are empty.
 
     A lone vertex (a trailhead node) becomes a ``Point``; a single line a ``LineString``; several
     a ``MultiLineString``. The center is the middle vertex of the concatenated geometry so it
-    lands on the trail, not in its bbox gap.
+    lands on the trail, not in its bbox gap. ``connects`` (trailhead rows only) is the trail ids
+    whose geometry passes within ``_LINK_SNAP_M`` of the node - see ``_link_trailheads``.
     """
     thinned = [_sample(line, _MAX_POINTS_PER_LINE) for line in lines if line]
     flat = [point for line in thinned for point in line]
@@ -207,6 +212,7 @@ def _row(
         center_lat,
         center_lng,
         json.dumps(geometry, separators=(",", ":")),
+        connects,
     )
 
 
@@ -244,14 +250,106 @@ def _parse_element(element: dict[str, Any]) -> tuple[Any, ...] | None:
     return None
 
 
+_LINK_SNAP_M = 35.0  # a trailhead node this close to a trail's polyline is treated as connected
+_LINK_CELL_DEG = 0.02  # ~2 km grid cells for the trailhead/trail spatial prefilter
+
+
+def _point_polyline_m(point: tuple[float, float], coords: Sequence[tuple[float, float]]) -> float:
+    """Metres from ``point`` to the nearest point on the ``coords`` polyline (equirectangular -
+    fine at the tens-of-metres scale ``_LINK_SNAP_M`` cares about)."""
+    m_per_deg_lat = 111_320.0
+    m_per_deg_lng = 111_320.0 * math.cos(math.radians(point[0]))
+    px, py = point[1] * m_per_deg_lng, point[0] * m_per_deg_lat
+    if len(coords) == 1:
+        return math.hypot(px - coords[0][1] * m_per_deg_lng, py - coords[0][0] * m_per_deg_lat)
+    best = math.inf
+    for (a_lat, a_lng), (b_lat, b_lng) in pairwise(coords):
+        ax, ay = a_lng * m_per_deg_lng, a_lat * m_per_deg_lat
+        dx, dy = b_lng * m_per_deg_lng - ax, b_lat * m_per_deg_lat - ay
+        seg_sq = dx * dx + dy * dy
+        t = 0.0 if seg_sq == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / seg_sq))
+        best = min(best, math.hypot(px - (ax + t * dx), py - (ay + t * dy)))
+    return best
+
+
+def _trail_polylines(payload: dict[str, Any]) -> list[tuple[str, list[tuple[float, float]]]]:
+    """(trail row id, (lat, lng) polyline) for every path/route way in the payload - the
+    geometry a trailhead node can snap onto. A route contributes one entry per member way."""
+    lines: list[tuple[str, list[tuple[float, float]]]] = []
+    for element in payload.get("elements", []):
+        etype, eid = element.get("type"), element.get("id")
+        if eid is None:
+            continue
+        if etype == "way" and (coords := _line_coords(element.get("geometry") or [])):
+            lines.append((f"osm:way/{eid}", coords))
+        elif etype == "relation":
+            lines.extend(
+                (f"osm:relation/{eid}", coords)
+                for member in element.get("members") or []
+                if member.get("type") == "way" and (coords := _line_coords(member.get("geometry") or []))
+            )
+    return lines
+
+
+def _link_trailheads(payload: dict[str, Any]) -> dict[str, list[str]]:
+    """Trailhead row id -> ids of the trails whose geometry passes within ``_LINK_SNAP_M``.
+
+    Computed here, at ingest, from geometry already in the payload so ``resolve_trail_network``
+    can draw a selected trailhead's trail straight from the cache instead of a live Overpass
+    query (issue #306). A coarse vertex grid keeps it to a handful of distance checks per node.
+    """
+    lines = _trail_polylines(payload)
+    grid: dict[tuple[int, int], set[int]] = defaultdict(set)
+    for index, (_id, coords) in enumerate(lines):
+        for lat, lng in coords:
+            grid[(int(lat / _LINK_CELL_DEG), int(lng / _LINK_CELL_DEG))].add(index)
+
+    links: dict[str, list[str]] = {}
+    for element in payload.get("elements", []):
+        if element.get("type") != "node" or (element.get("tags") or {}).get("highway") != "trailhead":
+            continue
+        lat, lng = element.get("lat"), element.get("lon")
+        if lat is None or lng is None:
+            continue
+        node = (float(lat), float(lng))
+        cell_lat, cell_lng = int(node[0] / _LINK_CELL_DEG), int(node[1] / _LINK_CELL_DEG)
+        candidates: set[int] = set()
+        for d_lat in (-1, 0, 1):
+            for d_lng in (-1, 0, 1):
+                candidates |= grid.get((cell_lat + d_lat, cell_lng + d_lng), set())
+        hits = {lines[index][0] for index in candidates if _point_polyline_m(node, lines[index][1]) <= _LINK_SNAP_M}
+        if hits:
+            links[f"osm:node/{element['id']}"] = sorted(hits)
+    return links
+
+
 def _parse_trails(payload: dict[str, Any]) -> list[tuple[Any, ...]]:
-    """Overpass payload -> trails rows, deduped by id (paths, hiking routes, trailheads)."""
+    """Overpass payload -> trails rows, deduped by id (paths, hiking routes, trailheads).
+
+    Trailhead rows are annotated with ``connects`` - the ids of the trails their node touches
+    (``_link_trailheads``) - so a selection draws from cache without a live query.
+    """
+    links = _link_trailheads(payload)
     by_id: dict[str, tuple[Any, ...]] = {}
     for element in payload.get("elements", []):
         row = _parse_element(element)
-        if row is not None:
-            by_id[row[0]] = row
-    return list(by_id.values())
+        if row is None:
+            continue
+        row_id: str = row[0]
+        if row[2] == "trailhead" and (connects := links.get(row_id)):
+            row = (*row[:8], connects)
+        by_id[row_id] = row
+    rows = list(by_id.values())
+    counts = Counter(row[2] for row in rows)
+    logger.info(
+        "trails: parsed %d rows (%d path, %d route, %d trailhead; %d trailheads linked)",
+        len(rows),
+        counts["path"],
+        counts["route"],
+        counts["trailhead"],
+        len(links),
+    )
+    return rows
 
 
 def fetch_trails(
@@ -275,7 +373,6 @@ def fetch_trails(
             progress_cb("Fetching trails…", 50.0)
         payload = overpass.post(client, _trails_query(lat, lng, radius_m))
         rows = _parse_trails(payload)
-        logger.info("trails: %d trails/routes/trailheads", len(rows))
         return rows
     except SOURCE_ERRORS as error:
         logger.warning("trails: query failed (%s) - skipping", error)
@@ -367,19 +464,57 @@ def trailhead_network(node_id: int, *, client: httpx.Client | None = None) -> di
     return {"name": name or "Trail (OSM)", "kind": kind, "geometry": geometry}
 
 
+_SYNTHETIC_NAMES = {"Trail (OSM)", "Hiking route (OSM)", "Trailhead (OSM)"}
+
+
+def _merge_connected(trailhead: scoring.Trail, parts: Sequence[scoring.Trail]) -> scoring.Trail | None:
+    """One ``Trail`` covering every connected path/route, or None if none carry geometry.
+
+    Coordinates are concatenated into a single LineString/MultiLineString; the name is the best
+    real name among the parts (a named route wins over a named path), falling back to the
+    trailhead's own name. ``kind`` is ``route`` if any part is a route, else ``path``.
+    """
+    lines: list[list[list[float]]] = []
+    for part in parts:
+        geometry = part.geometry or {}
+        if geometry.get("type") == "LineString":
+            lines.append(geometry["coordinates"])
+        elif geometry.get("type") == "MultiLineString":
+            lines.extend(geometry["coordinates"])
+    if not lines:
+        return None
+    routes = [p for p in parts if p.kind == "route" and p.name not in _SYNTHETIC_NAMES]
+    named = [p for p in parts if p.name not in _SYNTHETIC_NAMES]
+    name = (routes or named or [trailhead])[0].name
+    kind = "route" if any(p.kind == "route" for p in parts) else "path"
+    geometry = (
+        {"type": "LineString", "coordinates": lines[0]}
+        if len(lines) == 1
+        else {"type": "MultiLineString", "coordinates": lines}
+    )
+    return dataclasses.replace(trailhead, name=name, kind=kind, geometry=geometry)
+
+
 def resolve_trail_network(
     con: psycopg.Connection, trailhead_id: str, *, client: httpx.Client | None = None
 ) -> scoring.TrailPath | None:
-    """The real trail for a selected trailhead, falling back to the nearest cached path/route.
+    """The real trail for a selected trailhead.
 
-    Raises ``LookupError`` if the trailhead id itself doesn't resolve to a cached trailhead row -
-    callers (``api.py``) treat that as "unknown trailhead". Returns None if the trailhead is known
-    but neither live OSM topology nor a nearby cached path/route could be found for it - a
-    distinct "no trail found" case, still a 404 but for a different reason.
+    Order of preference: the ingest-time cached link (``trails.connects``, issue #306 - no
+    network), then a live Overpass topology query, then the nearest cached path/route as a
+    proximity guess. Raises ``LookupError`` if the id doesn't resolve to a cached trailhead row
+    (``api.py`` treats that as "unknown trailhead"); returns None if the trailhead is known but
+    no trail could be found for it at all (a distinct 404).
     """
     trailhead = scoring.get_trail(con, trailhead_id)
     if trailhead is None or trailhead.kind != "trailhead":
         raise LookupError(f"no trailhead cached for id {trailhead_id!r}")
+
+    if trailhead.connects:
+        merged = _merge_connected(trailhead, scoring.connected_trails(con, trailhead.connects))
+        if merged is not None:
+            return scoring.TrailPath(trail=merged, authoritative=True)
+
     node_id = _parse_trailhead_id(trailhead_id)
     live = trailhead_network(node_id, client=client)
     if live is not None:
@@ -417,7 +552,6 @@ def fetch_trails_bbox(
             progress_cb("Fetching trails…", 50.0)
         payload = overpass.post(client, _trails_query_bbox(min_lat, min_lng, max_lat, max_lng, timeout_s=timeout_s))
         rows = _parse_trails(payload)
-        logger.info("trails: %d trails/routes/trailheads", len(rows))
         return rows
     except SOURCE_ERRORS as error:
         if raise_on_error:
