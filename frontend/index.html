@@ -218,19 +218,35 @@
         </form>
         <div id="genus-chips" class="chips"></div>
       </div>
-      <div class="toggle-group" id="land-toggles">
-        <label class="toggle-btn"><input type="checkbox" id="show-land-blm" /> <span>BLM</span></label>
-        <label class="toggle-btn"><input type="checkbox" id="show-land-usfs" /> <span>USFS</span></label>
-        <label class="toggle-btn"
-          ><input type="checkbox" id="show-land-tribal" /> <span>Tribal land</span></label
-        >
-      </div>
-      <input type="checkbox" id="show-fire" />
-      <input type="checkbox" id="show-aerial" />
-      <div class="toggle-group" id="camp-toggles">
-        <label class="toggle-btn"><input type="checkbox" id="show-camps" /> <span>Campgrounds</span></label>
-        <label class="toggle-btn"><input type="checkbox" id="show-dispersed" /> <span>Dispersed</span></label>
-        <label class="toggle-btn"><input type="checkbox" id="free-camps" /> <span>Free only</span></label>
+      <!-- One "Layers" popover holds every map overlay toggle (issue #301: 8 pills -> 3).
+           initLayerToggles() still wires each checkbox by id; the ids and groups are unchanged,
+           just re-parented here. -->
+      <div id="layer-toggles" class="layer-toggles">
+        <div class="layer-group" id="land-toggles">
+          <span class="layer-heading">Public land</span>
+          <label class="toggle-btn"><input type="checkbox" id="show-land-blm" /> <span>BLM</span></label>
+          <label class="toggle-btn"><input type="checkbox" id="show-land-usfs" /> <span>USFS</span></label>
+          <label class="toggle-btn"
+            ><input type="checkbox" id="show-land-tribal" /> <span>Tribal land</span></label
+          >
+        </div>
+        <div class="layer-group" id="camp-toggles">
+          <span class="layer-heading">Camping</span>
+          <label class="toggle-btn"><input type="checkbox" id="show-camps" /> <span>Campgrounds</span></label>
+          <label class="toggle-btn"
+            ><input type="checkbox" id="show-dispersed" /> <span>Dispersed</span></label
+          >
+          <label class="toggle-btn"><input type="checkbox" id="free-camps" /> <span>Free only</span></label>
+        </div>
+        <div class="layer-group">
+          <span class="layer-heading">Other</span>
+          <label class="toggle-btn"
+            ><input type="checkbox" id="show-fire" /> <span>Fire &amp; burn scars</span></label
+          >
+          <label class="toggle-btn"
+            ><input type="checkbox" id="show-aerial" /> <span>Aerial imagery</span></label
+          >
+        </div>
       </div>
     </div>
 

@@ -13,7 +13,6 @@ import { SORT_LABEL } from "../views/sort";
 let pills: Pill[] = [];
 let sortPill: Pill | null = null;
 let monthsPill: Pill | null = null;
-let campingPill: Pill | null = null;
 
 // getElementById, not qs(): a pill's render/active callbacks run once inside createPill() while
 // the moved-in control node is still detached from the document (the wrap is appended to the
@@ -22,11 +21,6 @@ let campingPill: Pill | null = null;
 const checkbox = (id: string): HTMLInputElement | null =>
   document.getElementById(id) as HTMLInputElement | null;
 const isChecked = (id: string): boolean => checkbox(id)?.checked ?? false;
-
-function checkedLabels(entries: [string, string][]): string {
-  const on = entries.filter(([id]) => isChecked(id)).map(([, label]) => label);
-  return on.length ? on.join(", ") : "Off";
-}
 
 function monthsLabel(): string {
   const count = state.months.size;
@@ -46,12 +40,12 @@ export function refreshPills(): void {
   pills.forEach((pill) => pill.refresh());
 }
 
-// Destinations: all pills except Camping. Fruiting now (alerts): no Months (that view has no
-// month param - a fixed trailing-weeks window). Plan route: adds Camping.
+// Sort only applies to the ranked Destinations list. Fruiting now (alerts): no Months (that
+// view has no month param - a fixed trailing-weeks window). Layers / Genera stay put on every
+// view.
 export function syncPillsForView(view: View): void {
   if (sortPill) sortPill.el.hidden = view !== "destinations";
   if (monthsPill) monthsPill.el.hidden = view === "alerts";
-  if (campingPill) campingPill.el.hidden = view !== "plan";
 }
 
 export function initPills(): void {
@@ -86,64 +80,35 @@ export function initPills(): void {
     active: () => selectedGenera().length > 0,
   });
 
-  const landEntries: [string, string][] = [
-    ["show-land-blm", "BLM"],
-    ["show-land-usfs", "USFS"],
-    ["show-land-tribal", "Tribal"],
+  // Every map-overlay toggle now lives behind one "Layers" pill (issue #301: 8 pills -> 3).
+  // The label counts how many overlays are on rather than naming them - the popover shows the
+  // detail, and the names (BLM / USFS / Campgrounds / Dispersed / ...) don't fit a pill.
+  const layerIds = [
+    "show-land-blm",
+    "show-land-usfs",
+    "show-land-tribal",
+    "show-camps",
+    "show-dispersed",
+    "free-camps",
+    "show-fire",
+    "show-aerial",
   ];
-  const landPill = createPill({
-    label: "Land",
-    render: () => checkedLabels(landEntries),
-    popover: qs("#land-toggles"),
-    active: () => landEntries.some(([id]) => isChecked(id)),
-  });
-
-  const firePill = createPill({
-    label: "Fire",
-    render: () => (isChecked("show-fire") ? "On" : "Off"),
-    active: () => isChecked("show-fire"),
-    onToggle: (next) => {
-      const input = checkbox("show-fire");
-      if (!input) return;
-      input.checked = next;
-      input.dispatchEvent(new Event("change"));
+  const layersPill = createPill({
+    label: "Layers",
+    render: () => {
+      const count = layerIds.filter((id) => isChecked(id)).length;
+      return count === 0 ? "Off" : `${count} on`;
     },
+    popover: qs("#layer-toggles"),
+    active: () => layerIds.some((id) => isChecked(id)),
   });
 
-  const aerialPill = createPill({
-    label: "Aerial",
-    render: () => (isChecked("show-aerial") ? "On" : "Off"),
-    active: () => isChecked("show-aerial"),
-    onToggle: (next) => {
-      const input = checkbox("show-aerial");
-      if (!input) return;
-      input.checked = next;
-      input.dispatchEvent(new Event("change"));
-    },
-  });
-
-  const campEntries: [string, string][] = [
-    ["show-camps", "Campgrounds"],
-    ["show-dispersed", "Dispersed"],
-    ["free-camps", "Free only"],
-  ];
-  campingPill = createPill({
-    label: "Camping",
-    render: () => checkedLabels(campEntries),
-    popover: qs("#camp-toggles"),
-    active: () => campEntries.some(([id]) => isChecked(id)),
-  });
-
-  pills = [sortPill, radiusPill, monthsPill, generaPill, landPill, firePill, aerialPill, campingPill];
+  pills = [sortPill, radiusPill, monthsPill, generaPill, layersPill];
   pills.forEach((pill) => row.appendChild(pill.el));
 
   // A layer checkbox lives inside a pill popover now, so its own change handler (initLayerToggles)
-  // no longer implies a refresh - update the pill labels whenever one flips.
-  ["show-fire", "show-aerial", ...landEntries.map(([id]) => id), ...campEntries.map(([id]) => id)].forEach(
-    (id) => {
-      checkbox(id)?.addEventListener("change", refreshPills);
-    },
-  );
+  // no longer implies a refresh - update the pill label whenever one flips.
+  layerIds.forEach((id) => checkbox(id)?.addEventListener("change", refreshPills));
 
   setScopeChangeHook(refreshPills);
   syncPillsForView(state.view);
