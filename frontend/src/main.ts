@@ -22,7 +22,7 @@ import { initPills, syncPillsForView } from "./ui/pills";
 import { OPEN_EVENT } from "./ui/pill";
 import { refreshCurrentView } from "./views/view-run";
 import { initMonths, runDestinations } from "./views/views";
-import { initRouteBar } from "./views/shortlist";
+import { initRouteBar, renderActionBar } from "./views/shortlist";
 
 // Wires a plan-tab Start/Destination field: unlike the header's home search (which persists the
 // choice via /api/location), a selected suggestion here just fills the input with resolved
@@ -42,58 +42,26 @@ function initPlanPlaceField(inputId: string, listId: string, formId: string): vo
   );
 }
 
-function initTabs(): void {
-  const tabs = [...document.querySelectorAll<HTMLButtonElement>(".tabs button")];
-  const panel = qs("#panel");
+// Plan route is no longer a tab (issue #301) - it is a mode entered from the shortlist action
+// bar and left with the #plan-back button. enterPlan/exitPlan swap state.view, toggle the
+// plan-route query form (#plan-row) and the back button, re-sync the pills (Sort/Months only
+// apply to the Destinations flow), and run the matching view.
+function setPlanMode(on: boolean): void {
+  state.view = on ? "plan" : "destinations";
+  const planRow = document.getElementById("plan-row");
+  if (planRow) planRow.style.display = on ? "flex" : "none";
+  const back = document.getElementById("plan-back");
+  if (back) back.hidden = !on;
+  renderActionBar(); // hide the shortlist bar inside Plan mode, restore it on the way out
+  syncPillsForView(state.view);
+  // run*() only replaces #panel once its fetch resolves - clear it now so the previous mode's
+  // content doesn't linger, looking interactive, for a beat after the switch.
+  qs("#panel").innerHTML = "<p class='hint'>Loading…</p>";
+  refreshCurrentView();
+}
 
-  const activate = (button: HTMLButtonElement, moveFocus: boolean): void => {
-    tabs.forEach((other) => {
-      const selected = other === button;
-      other.classList.toggle("active", selected);
-      other.setAttribute("aria-selected", String(selected));
-      other.tabIndex = selected ? 0 : -1; // roving tabindex - one stop for the whole tablist
-    });
-    panel.setAttribute("aria-labelledby", button.id);
-    if (moveFocus) button.focus();
-  };
-
-  tabs.forEach((button, index) => {
-    // Left/Right (and Home/End) move between tabs per the WAI-ARIA tabs pattern; the browser's
-    // native click still fires on Enter/Space, which runs the onclick below.
-    button.addEventListener("keydown", (event) => {
-      const keys: Record<string, number> = {
-        ArrowLeft: (index - 1 + tabs.length) % tabs.length,
-        ArrowRight: (index + 1) % tabs.length,
-        Home: 0,
-        End: tabs.length - 1,
-      };
-      const target = keys[event.key];
-      if (target === undefined) return;
-      const next = tabs[target];
-      if (!next) return;
-      event.preventDefault();
-      next.focus(); // activate() runs with moveFocus:false from onclick, so move focus here
-      next.click();
-    });
-    button.onclick = () => {
-      activate(button, false);
-      state.view = (button.dataset.view as typeof state.view) ?? "destinations";
-
-      // Plan-route fields are a query form, not map filters (issue #297) - shown in the dock /
-      // sheet header only while the Plan tab is active. syncPillsForView hides Sort (and Months)
-      // off the Destinations flow.
-      const planRow = document.getElementById("plan-row");
-      if (planRow) planRow.style.display = state.view === "plan" ? "flex" : "none";
-      syncPillsForView(state.view);
-
-      // Each run*() only replaces #panel's content once its fetch resolves, so without this
-      // the previous tab's cards stay on screen (and interactive) for a beat after switching -
-      // easy to mistake for the new tab's data since nothing visibly changed yet.
-      qs("#panel").innerHTML = "<p class='hint'>Loading…</p>";
-
-      refreshCurrentView();
-    };
-  });
+function initPlanNav(): void {
+  qs<HTMLButtonElement>("#plan-back").onclick = () => setPlanMode(false);
 }
 
 // The utility overflow menu behind the "⋮" button in the search bar (issue #297): units,
@@ -187,12 +155,12 @@ async function main(): Promise<void> {
   });
   loadLand();
   loadFire();
-  initTabs();
+  initPlanNav();
   initRadiusPresets();
   initSort();
-  // "Plan a route" on the shortlist action bar jumps to the Plan view; runPlan() reads the
+  // "Plan a route" on the shortlist action bar enters the Plan mode; runPlan() reads the
   // shortlisted region ids itself (views/plan.ts) and threads them as waypoints.
-  initRouteBar(() => qs<HTMLButtonElement>("#tab-plan").click());
+  initRouteBar(() => setPlanMode(true));
   // 'change' (not 'input') so a re-run only fires on blur/enter/stepper-click, not every
   // keystroke while typing a number.
   qs("#plan-stops").addEventListener("change", () => runPlan());

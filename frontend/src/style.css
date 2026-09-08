@@ -391,41 +391,7 @@ progress::-moz-progress-bar {
   border-radius: 5px;
 }
 
-/* Underline-style tabs - the accent-colored border on .active is the primary "you are here"
-   cue (stronger than the old opacity-only treatment, which read as barely-there buttons). */
-.tabs {
-  display: flex;
-  gap: 4px;
-  padding: 6px 12px 0;
-  flex: 0 0 auto;
-  border-bottom: 2px solid var(--border);
-}
-.tabs button {
-  border: none;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -2px;
-  border-radius: 6px 6px 0 0;
-  padding: 8px 18px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted);
-  background: transparent;
-  transition:
-    color 0.15s ease,
-    border-color 0.15s ease,
-    background 0.15s ease;
-}
-.tabs button:hover {
-  color: var(--ink);
-  background: var(--border);
-}
-.tabs button.active {
-  color: var(--ink);
-  background: var(--panel);
-  border-bottom-color: var(--accent2);
-}
-
-/* #sheet is a passthrough wrapper on desktop (issue #297): its children (.tabs, #plan-row,
+/* #sheet is a passthrough wrapper on desktop (issue #297): its children (#plan-back, #plan-row,
    .contour-rule) lay out as direct children of #dock, above #panel. sheet.ts promotes it to a
    real fixed, draggable element at the mobile breakpoint (issue #229) and moves #panel inside
    it. */
@@ -622,13 +588,8 @@ main {
   opacity: 0.5;
 }
 
-/* Tabs sit at the top of the dock now; keep the underline treatment. */
-.tabs {
-  margin: 0;
-  border-radius: 12px 12px 0 0;
-}
-.dock .tabs {
-  padding: 8px 10px 0;
+#plan-back {
+  margin: 10px 12px 0;
 }
 .plan-form {
   display: flex;
@@ -918,6 +879,11 @@ a.chip:hover {
 .details-back:hover {
   text-decoration: underline;
 }
+/* #plan-back carries the bare [hidden] attribute off Plan mode; the class sets display so
+   restore the attribute's suppression explicitly. */
+.details-back[hidden] {
+  display: none;
+}
 .details-title {
   margin: 0 0 8px;
   font-size: var(--text-h3);
@@ -1120,35 +1086,6 @@ table.cal .heat {
   .leaflet-bottom.leaflet-right {
     margin-bottom: 0;
   }
-  /* Segmented-control look instead of the desktop underline style - the tab bar now sits
-     directly above the reflowed map card + sheet, so it should read as attached to it. */
-  .tabs {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 3px;
-    margin: 8px 10px 0;
-    padding: 3px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background: var(--panel);
-    border-bottom: none;
-  }
-  .tabs button {
-    border-radius: 9px;
-    margin-bottom: 0;
-    border-bottom: none;
-    padding: 8px 4px;
-    text-align: center;
-  }
-  /* var(--panel) rather than a fixed dark hex - accent2 is a dark green in the light theme, so
-     a near-black fixed text color read at ~2.7:1 contrast there (fails WCAG AA 4.5:1); --panel
-     stays light-on-dark-green (light theme) and dark-on-light-green (dark theme) in both cases,
-     landing above 6:1 either way. */
-  .tabs button.active {
-    background: var(--accent2);
-    color: var(--panel);
-    border-bottom-color: transparent;
-  }
   /* Map-first: #map fills the screen; the destinations list rides over its lower portion in a
      draggable bottom sheet (issue #229), the way Google/Apple Maps do it. */
   .map-wrap {
@@ -1204,11 +1141,6 @@ table.cal .heat {
     border-radius: 3px;
     background: var(--border);
     margin: 0 auto;
-  }
-  body[data-sheet="on"] .tabs {
-    flex: 0 0 auto;
-    margin: 0 10px 6px;
-    touch-action: none;
   }
   body[data-sheet="on"] .sheet-summary {
     display: block;
