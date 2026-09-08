@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request, Response
 
 # Public-facing app serving an HTML+JS frontend - locked down to what the frontend actually
 # needs (Leaflet bundled as 'self'; connect-src/script-src third-party origins limited to
-# Nominatim; img-src additionally allows OSM tiles and iNaturalist's photo hosts) so an XSS bug
+# Nominatim; img-src additionally allows OSM + Esri gray-canvas tiles and iNaturalist's photo hosts) so an XSS bug
 # can't exfiltrate to or load script from anywhere else. style-src needs 'unsafe-inline' because
 # the frontend sets `style="..."` attributes directly (map legend swatches, score bars, phenology
 # heatmap cells) - much lower risk than script injection, so that's an accepted gap. The selected
@@ -20,7 +20,7 @@ _CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
     "script-src 'self'; "
     "style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' https://*.tile.openstreetmap.org "
+    "img-src 'self' https://*.tile.openstreetmap.org https://server.arcgisonline.com "
     "https://static.inaturalist.org https://inaturalist-open-data.s3.amazonaws.com data:; "
     "connect-src 'self' https://nominatim.openstreetmap.org; "
     "font-src 'self'; "
