@@ -330,18 +330,24 @@ export function plot(
   const isDim = rank > PROMINENT_RANK_MAX;
   const isHero = rank <= HERO_RANK_MAX;
   const baseColor = live ? palette.flush : isDim ? palette.moss : palette.rust;
-  const scoreRadius = isDim ? DIM_DOT_RADIUS_M : trueRadius * (0.3 + weight);
+  // Hero circles stay score-scaled (their size is part of the read); ranks 4-10 shrink to a
+  // tighter ring that reads as a marker, not a region wash; 11+ are small solid dots.
+  const scoreRadius = isDim
+    ? DIM_DOT_RADIUS_M
+    : isHero
+      ? trueRadius * (0.35 + weight * 0.65)
+      : trueRadius * 0.5;
   // Only the top 3 carry a fill - at this zoom the score-scaled cell circles overlap heavily,
   // so a translucent fill on every one of the top 10 composited into an unreadable blob. Ranks
   // 4-10 are rings only; 11+ are small solid dots (too small to blob).
-  const restFillOpacity = isHero ? Math.max(0.35, scoreFillOpacity(weight)) : isDim ? 0.55 : 0;
+  const restFillOpacity = isHero ? Math.max(0.35, scoreFillOpacity(weight)) : isDim ? 0.6 : 0;
   const marker = L.circle([lat, lng], {
     radius: scoreRadius,
     color: baseColor,
     fillColor: baseColor,
     fillOpacity: restFillOpacity,
-    opacity: isDim ? 0.65 : isHero ? 0.95 : 0.7,
-    weight: isDim ? 1 : isHero ? 2 : 1.5,
+    opacity: isDim ? 0.75 : isHero ? 0.95 : 0.9,
+    weight: isDim ? 1 : isHero ? 2 : 2.5,
     bubblingMouseEvents: false,
   }).addTo(map);
   sizing.set(marker, { scoreRadius, trueRadius, weight, regionId, baseColor, restFillOpacity });
