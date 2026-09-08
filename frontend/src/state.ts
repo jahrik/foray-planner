@@ -6,7 +6,7 @@ import { getMonths, getUnits } from "./prefs";
 export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 export const CURRENT_MONTH = new Date().getMonth() + 1; // 1-12
 
-export type View = "destinations" | "alerts" | "plan";
+export type View = "destinations" | "plan";
 
 export type Units = "km" | "mi";
 

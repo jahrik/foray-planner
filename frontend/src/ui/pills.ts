@@ -38,14 +38,17 @@ function generaLabel(): string {
 
 export function refreshPills(): void {
   pills.forEach((pill) => pill.refresh());
+  // "Active now" (/api/alerts) has no month param - a fixed trailing-weeks window - so the
+  // Months filter can't apply there (issue #301).
+  if (monthsPill) monthsPill.el.hidden = state.view !== "destinations" || state.sort === "active";
 }
 
-// Sort only applies to the ranked Destinations list. Fruiting now (alerts): no Months (that
-// view has no month param - a fixed trailing-weeks window). Layers / Genera stay put on every
-// view.
+// Sort only applies to the Destinations flow, not the Plan view. Months visibility also depends
+// on the sort (hidden under "Active now") so it is driven from refreshPills(); Layers / Genera
+// stay put on every view.
 export function syncPillsForView(view: View): void {
   if (sortPill) sortPill.el.hidden = view !== "destinations";
-  if (monthsPill) monthsPill.el.hidden = view === "alerts";
+  refreshPills();
 }
 
 export function initPills(): void {

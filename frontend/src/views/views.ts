@@ -1,5 +1,6 @@
 import { getJson } from "../api/client";
-import type { RegionPlace, RegionScore } from "../api/types";
+import type { AlertRegion, RegionPlace, RegionScore } from "../api/types";
+import { escapeHtml } from "../format";
 import { createCardSelection, createRunGuard } from "../ui/card-select";
 import { buildResultCard, speciesChip, type ResultCardModel } from "../ui/card-dom";
 import { whySentence } from "../ui/why";
@@ -12,6 +13,7 @@ import { focusOnMap, sheetEnabled, snapTo } from "../map/sheet";
 import { clearMarkers, map, plot } from "../map/map";
 import {
   dist,
+  displayName,
   elevationLabel,
   errorDetail,
   fireBadges,
@@ -23,6 +25,60 @@ import {
   setStatus,
   state,
 } from "../state";
+
+type PlottedMarker = ReturnType<typeof plot>;
+
+interface CardSpec {
+  regionId: string;
+  lat: number;
+  lng: number;
+  live: boolean;
+  plotWeight: number;
+  model: ResultCardModel;
+}
+
+interface CardContext {
+  rankList: HTMLElement;
+  cardSelection: ReturnType<typeof createCardSelection>;
+  restoreList: () => void;
+}
+
+// Plots one region's marker, builds its card through the shared builder (ui/card-dom), and
+// wires selection / Details / shortlist. Shared by the scored Destinations list and the
+// "Active now" (alerts) list - the only differences between the two live in the CardSpec the
+// caller passes.
+function addCard(
+  spec: CardSpec,
+  rank: number,
+  ctx: CardContext,
+): { marker: PlottedMarker; titleNum: HTMLElement } {
+  const marker = plot(spec.lat, spec.lng, spec.plotWeight, spec.live, spec.regionId, rank);
+  const { card, titleNum } = buildResultCard(spec.model, {
+    onSelect: (cardEl) => {
+      snapTo("full");
+      focusOnMap(spec.lat, spec.lng, 9);
+      focusRegion(spec.lat, spec.lng);
+      ctx.cardSelection.select(cardEl, marker);
+    },
+    onDetails: (cardEl, numEl) => {
+      snapTo("full");
+      ctx.cardSelection.select(cardEl, marker);
+      openDetails({ region_id: spec.regionId }, numEl.textContent ?? spec.regionId, ctx.restoreList);
+    },
+    onPlan: () => toggleShortlist(spec.regionId),
+    isPlanned: () => inShortlist(spec.regionId),
+  });
+  marker.on("click", () => {
+    if (sheetEnabled()) {
+      snapTo("half"); // a map-pin tap raises the sheet to its middle detent
+      focusOnMap(spec.lat, spec.lng, map.getZoom()); // offset clear of the sheet
+    }
+    focusRegion(spec.lat, spec.lng);
+    ctx.cardSelection.select(card, marker);
+  });
+  ctx.rankList.appendChild(card);
+  return { marker, titleNum };
+}
 
 export function initMonths(): void {
   const box = qs("#months");
@@ -77,6 +133,10 @@ const destinationsGuard = createRunGuard("destinations");
 let lastRegions: RegionScore[] | null = null;
 
 export async function runDestinations({ reuseCache = false }: { reuseCache?: boolean } = {}): Promise<void> {
+  // "Active now" is a different question - "where were my target species just seen?" - answered
+  // by /api/alerts, not a re-sort of the scored list. Same view, same card shell (issue #301).
+  if (state.sort === "active") return runActiveNow({ reuseCache });
+
   const isCurrent = destinationsGuard.begin();
   setStatus("Ranking…");
   clearMarkers();
@@ -137,17 +197,9 @@ export async function runDestinations({ reuseCache = false }: { reuseCache?: boo
   const restoreList = (): void => {
     void runDestinations({ reuseCache: true });
   };
+  const ctx: CardContext = { rankList, cardSelection, restoreList };
 
   const markers = regions.map((region, rank) => {
-    const marker = plot(
-      region.center_lat,
-      region.center_lng,
-      region.score_norm,
-      region.recent_count > 0,
-      region.region_id,
-      rank,
-    );
-
     const metaHtml =
       `score <span class="num">${region.score_norm.toFixed(2)}</span> · ` +
       `<span class="num">${region.n_species}</span> spp · ` +
@@ -169,32 +221,19 @@ export async function runDestinations({ reuseCache = false }: { reuseCache?: boo
       cappedChipCount: 6,
     };
 
-    const { card, titleNum } = buildResultCard(model, {
-      onSelect: (cardEl) => {
-        snapTo("full");
-        focusOnMap(region.center_lat, region.center_lng, 9);
-        focusRegion(region.center_lat, region.center_lng);
-        cardSelection.select(cardEl, marker);
+    const { marker, titleNum } = addCard(
+      {
+        regionId: region.region_id,
+        lat: region.center_lat,
+        lng: region.center_lng,
+        live: region.recent_count > 0,
+        plotWeight: region.score_norm,
+        model,
       },
-      onDetails: (cardEl, numEl) => {
-        snapTo("full");
-        cardSelection.select(cardEl, marker);
-        openDetails(region, numEl.textContent ?? region.region_id, restoreList);
-      },
-      onPlan: () => toggleShortlist(region.region_id),
-      isPlanned: () => inShortlist(region.region_id),
-    });
+      rank,
+      ctx,
+    );
     titleTargets.push({ region, rank, numSpan: titleNum });
-
-    marker.on("click", () => {
-      if (sheetEnabled()) {
-        snapTo("half"); // a map-pin tap raises the sheet to its middle detent
-        focusOnMap(region.center_lat, region.center_lng, map.getZoom()); // offset clear of the sheet
-      }
-      focusRegion(region.center_lat, region.center_lng);
-      cardSelection.select(card, marker);
-    });
-    rankList.appendChild(card);
     return marker;
   });
   setStatus(`${regions.length} regions`);
@@ -249,4 +288,106 @@ export async function runDestinations({ reuseCache = false }: { reuseCache?: boo
       if (place.place_name) setTitle(target, place.place_name);
     }
   })();
+}
+
+// "Active now" branch of the Destinations flow (issue #301): the old "Fruiting now" tab. Lists
+// regions where a target genus was seen in the trailing window (/api/alerts), rendered through
+// the same card shell as the scored list. No months param (the endpoint uses a fixed
+// trailing-weeks window) and no score bar; the card leads with the last-seen line and the
+// per-hit observation chips instead.
+const activeGuard = createRunGuard("destinations");
+let lastActive: AlertRegion[] | null = null;
+
+async function runActiveNow({ reuseCache = false }: { reuseCache?: boolean }): Promise<void> {
+  const isCurrent = activeGuard.begin();
+  setStatus("Checking recent activity…");
+  clearMarkers();
+
+  let regions: AlertRegion[];
+  if (reuseCache && lastActive) {
+    regions = lastActive;
+  } else {
+    try {
+      regions = await getJson("/api/alerts");
+    } catch (error) {
+      if (!isCurrent()) return;
+      setStatus(errorDetail(error));
+      return;
+    }
+    lastActive = regions;
+  }
+  if (!isCurrent()) return;
+
+  const panel = qs("#panel");
+  if (!regions.length) {
+    panel.innerHTML =
+      "<p class='hint'>No target species seen in the trailing window yet. Widen your genera, or switch the sort back to Best overall.</p>";
+    setStatus("");
+    return;
+  }
+
+  panel.innerHTML = `<div id="rank-list"></div>`;
+  const rankList = qs("#rank-list");
+  const cardSelection = createCardSelection(rankList);
+  const restoreList = (): void => {
+    void runActiveNow({ reuseCache: true });
+  };
+  const ctx: CardContext = { rankList, cardSelection, restoreList };
+
+  const renderHits = (region: AlertRegion, showAll: boolean): string =>
+    region.species
+      .slice(0, showAll ? undefined : 6)
+      .map((hit) => {
+        const label = `${hit.count} · ${hit.last_seen}${hit.obscured ? " ⚠ fuzzy" : ""}`;
+        const safeUri = hit.uri && hit.uri.startsWith("https://") ? hit.uri : null;
+        if (safeUri) {
+          return `<a class="chip live" href="${escapeHtml(safeUri)}" target="_blank" rel="noopener"
+             >${escapeHtml(displayName(hit))} · ${escapeHtml(label)}</a>`;
+        }
+        return speciesChip({ ...hit, label }, "live");
+      })
+      .join("");
+
+  const markers = regions.map((region, rank) => {
+    const place = region.species[0]?.place_guess ?? null;
+    const topHit = region.species[0];
+    const whyHtml = topHit
+      ? `<strong>${escapeHtml(displayName(topHit))}</strong> last seen ${escapeHtml(topHit.last_seen)}` +
+        `${place ? ` near ${escapeHtml(place)}` : ""}.`
+      : "";
+
+    const model: ResultCardModel = {
+      rank,
+      titleText: place ? `${place} · ${dist(region.distance_km)}` : dist(region.distance_km),
+      whyHtml,
+      metaHtml: `<span class="num">${region.total}</span> recent${rainMeta(region)}`,
+      scoreNorm: null,
+      fireHtml: fireBadges(region.fire_nearby),
+      renderChips: (showAll) => renderHits(region, showAll),
+      chipCount: region.species.length,
+      cappedChipCount: 6,
+    };
+
+    const { marker } = addCard(
+      {
+        regionId: region.region_id,
+        lat: region.center_lat,
+        lng: region.center_lng,
+        live: true, // every region here is here because it was seen recently
+        plotWeight: Math.min(1, region.total / 10),
+        model,
+      },
+      rank,
+      ctx,
+    );
+    return marker;
+  });
+  setStatus(`${regions.length} active regions`);
+
+  const top = regions[0];
+  const topCard = rankList.querySelector<HTMLElement>(".rank");
+  if (top && markers[0] && topCard) {
+    focusRegion(top.center_lat, top.center_lng);
+    cardSelection.selectInitial(topCard, markers[0]);
+  }
 }
