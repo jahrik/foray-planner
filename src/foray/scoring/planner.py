@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import psycopg
 
-from foray.geo import haversine_km, project_to_plane, segment_progress_and_offset
+from foray.geo import (
+    KM_PER_DEG_LAT,
+    grid_cell_center,
+    haversine_km,
+    project_to_plane,
+    segment_progress_and_offset,
+)
 from foray.scoring.models import CampSite, RegionScore, Stop, Trail, TripPlan
 from foray.scoring.queries import camps_near, trails_near
 from foray.scoring.ranking import rank_destinations, rank_destinations_corridor
-
-
-def _region_center(region_id: str, cell_deg: float) -> tuple[float, float]:
-    """Approximate (lat, lng) center of a grid region from its ``"ilat_ilng"`` id - the cell
-    midpoint. Close enough for routing geometry (the real per-region center is the observation
-    centroid, carried on the ``RegionScore`` once the region is ranked)."""
-    ilat, ilng = region_id.split("_")
-    return (int(ilat) + 0.5) * cell_deg, (int(ilng) + 0.5) * cell_deg
 
 
 def plan_route(
@@ -85,9 +83,9 @@ def plan_route(
         # Span the picks: destination = the waypoint farthest from start.
         farthest = max(
             forced_ids,
-            key=lambda region_id: haversine_km(start_lat, start_lng, *_region_center(region_id, cell_deg)),
+            key=lambda region_id: haversine_km(start_lat, start_lng, *grid_cell_center(region_id, cell_deg)),
         )
-        destination_lat, destination_lng = _region_center(farthest, cell_deg)
+        destination_lat, destination_lng = grid_cell_center(farthest, cell_deg)
         destination_name = farthest
     elif auto:
         picks = rank_destinations(
@@ -130,10 +128,10 @@ def plan_route(
     if forced_ids:
         dx, dy = project_to_plane(start_lat, start_lng, destination_lat, destination_lng)
         for region_id in forced_ids:
-            way_lat, way_lng = _region_center(region_id, cell_deg)
+            way_lat, way_lng = grid_cell_center(region_id, cell_deg)
             plane_x, plane_y = project_to_plane(start_lat, start_lng, way_lat, way_lng)
             _, offset_km = segment_progress_and_offset(plane_x, plane_y, dx, dy)
-            corridor_km = max(corridor_km, offset_km + cell_deg * 111.0)
+            corridor_km = max(corridor_km, offset_km + cell_deg * KM_PER_DEG_LAT)
 
     ranked = rank_destinations_corridor(
         con,
@@ -182,7 +180,10 @@ def plan_route(
             seen_forced.add(region.region_id)
         else:
             optional.append((region, camp, camp_is_free, trail))
-        if seen_forced >= forced_set and len(optional) >= max_stops:
+        # Once every waypoint is in hand, only the fill slots that waypoints didn't claim
+        # still need candidates - keep scanning just for those.
+        remaining_fill = max(max_stops - len(forced_set), 0)
+        if seen_forced >= forced_set and len(optional) >= remaining_fill:
             break
 
     # Keep every waypoint, then fill up to max_stops with the best remaining regions.
