@@ -12,7 +12,7 @@ import datetime as dt
 import json
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any, LiteralString, cast
+from typing import Any, Literal, LiteralString, cast
 
 import psycopg
 
@@ -194,6 +194,15 @@ def land_near(con: psycopg.Connection, *, lat: float, lng: float, radius_km: flo
     ]
 
 
+TrailSort = Literal["nearest", "relevance", "longest"]
+
+# A trailhead / path is worth listing (vs. leaving as a thin line on the map) if it is named, is
+# part of a hiking route, or runs at least this far - keeps the list clear of OSM's 50-200 m
+# connector stubs (issue #306). Synthetic names all end in "(OSM)".
+_SIGNIFICANT_LENGTH_KM = 0.5
+_ROUTE_RELEVANCE_BONUS = 3.0  # a trailhead whose trail is a named route sorts well above a spur
+
+
 def trails_near(
     con: psycopg.Connection,
     *,
@@ -202,10 +211,19 @@ def trails_near(
     radius_km: float,
     kind: str | None = None,
     limit: int | None = None,
+    sort: TrailSort = "nearest",
+    significant_only: bool = False,
     with_camp_distance: bool = True,
     with_geometry: bool = True,
 ) -> list[Trail]:
-    """Trails within ``radius_km`` of a hotspot, nearest first.
+    """Trails within ``radius_km`` of a hotspot.
+
+    ``sort`` orders the result: ``"nearest"`` (default, unchanged) by point-to-trail distance;
+    ``"relevance"`` by a trail-prominence score (part of a named route, then the length of the
+    trail the row leads to) with distance as the tiebreak; ``"longest"`` by that length.
+    ``relevance`` / ``longest`` can't use the KNN pre-limit, so they fetch every trail in the
+    radius (hard-capped) then sort. ``significant_only`` drops rows that are an unnamed
+    sub-0.5 km stub with no route - the OSM connector noise the Details list shouldn't show.
 
     Index-backed ``ST_DWithin`` on ``geom`` for the radius cut; ``ST_Distance`` gives the exact
     point-to-trail distance (issue #268 - previously a bbox prefilter then a ``haversine_km``
@@ -245,32 +263,70 @@ def trails_near(
     else:
         camp_select = "NULL::double precision AS camp_km"
         camp_join = ""
+    # A trailhead row's "prominence" comes from the trail it leads to (its ``connects`` list); a
+    # path/route row's from itself. ``lead`` carries the best connected trail's length + whether
+    # any is a route so ``relevance`` / ``longest`` can rank on it - only joined when sorting on it.
+    if sort == "nearest":
+        lead_join: LiteralString = ""
+        lead_select: LiteralString = "NULL::double precision AS best_len, NULL::boolean AS has_route"
+    else:
+        lead_join = """
+        LEFT JOIN LATERAL (
+            SELECT max(ct.length_km) AS best_len, bool_or(ct.kind = 'route') AS has_route
+            FROM trails ct WHERE t.connects IS NOT NULL AND ct.id = ANY(t.connects)
+        ) lead ON true"""
+        lead_select = "lead.best_len, lead.has_route"
     order_limit: LiteralString = ""
-    if limit is not None:
+    if sort == "nearest" and limit is not None:
         # geography `<->` is true spherical distance in PostGIS >= 2.2 (same as ST_Distance,
         # not a centroid approximation), so the KNN pre-limit picks the genuine nearest N -
         # the Python re-sort below just orders them. Same pattern as `nearest_trail`.
         order_limit = "ORDER BY t.geom <-> pt.g LIMIT %s"
         params.append(limit)
+    elif sort != "nearest":
+        # relevance / longest need every candidate before sorting; cap so a trail-dense radius
+        # can't return a pathological row count.
+        order_limit = "ORDER BY t.geom <-> pt.g LIMIT 500"
     sql: LiteralString = f"""
         WITH pt AS (SELECT {GEOG_POINT} AS g)
         SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, {geojson_select} AS geojson,
                t.length_km, t.attrs,
                ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km,
-               {camp_select}
-        FROM trails t, pt{camp_join}
+               {camp_select},
+               {lead_select}
+        FROM trails t, pt{camp_join}{lead_join}
         WHERE t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s) {kind_filter}
         {order_limit}
         """
     rows = con.execute(sql, params).fetchall()
 
-    # row[10] = unrounded distance, row[11] = camp distance. Rank on the unrounded distance so
-    # near-ties keep their true order (matches ``camps_near``); rounded ``distance_km`` is display.
-    scored = sorted(
-        ((row[10], _base_trail(row, distance_km=row[10], camp_distance_km=row[11])) for row in rows),
-        key=lambda item: item[0],
-    )
-    trails = [trail for _, trail in scored]
+    # row layout: [10] unrounded distance, [11] camp distance, [12] best connected length,
+    # [13] connects-a-route flag. Prominence is that lead length (or the row's own for a path),
+    # plus a bonus if it is / leads to a named route.
+    def lead_length(row: Sequence[Any]) -> float:
+        return row[12] if row[12] is not None else (row[9] or 0.0)
+
+    def significant(row: Sequence[Any]) -> bool:
+        name, row_kind = row[1], row[2]
+        return (
+            (name is not None and not name.endswith("(OSM)"))
+            or row_kind == "route"
+            or bool(row[13])
+            or lead_length(row) >= _SIGNIFICANT_LENGTH_KM
+        )
+
+    def relevance(row: Sequence[Any]) -> float:
+        return lead_length(row) + (_ROUTE_RELEVANCE_BONUS if (row[13] or row[2] == "route") else 0.0)
+
+    candidates = [row for row in rows if not significant_only or significant(row)]
+    if sort == "relevance":
+        candidates.sort(key=lambda row: (-relevance(row), row[10]))
+    elif sort == "longest":
+        candidates.sort(key=lambda row: (-lead_length(row), row[10]))
+    else:
+        # Rank on the unrounded distance so near-ties keep their true order (matches ``camps_near``).
+        candidates.sort(key=lambda row: row[10])
+    trails = [_base_trail(row, distance_km=row[10], camp_distance_km=row[11]) for row in candidates]
     return trails[:limit] if limit is not None else trails
 
 

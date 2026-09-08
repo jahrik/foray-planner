@@ -327,6 +327,69 @@ def test_trails_near_no_rows_ingested_returns_empty(con: psycopg.Connection) -> 
     assert trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0) == []
 
 
+def _seed_trailhead_network(con: psycopg.Connection) -> None:
+    """A route + long path + short unnamed stub, and three trailheads that lead to them."""
+    route = _parse_element(
+        {
+            "type": "relation",
+            "id": 1,
+            "tags": {"route": "hiking", "name": "Ridge Route"},
+            "members": [
+                {"type": "way", "geometry": [{"lat": 47.700, "lon": -122.30}, {"lat": 47.740, "lon": -122.30}]},
+            ],
+        }
+    )
+    long_path = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "path", "name": "Long Path"},
+            "geometry": [{"lat": 47.600, "lon": -122.30}, {"lat": 47.620, "lon": -122.30}],  # ~2.2 km
+        }
+    )
+    stub = _parse_element(
+        {
+            "type": "way",
+            "id": 3,
+            "tags": {"highway": "path"},  # unnamed
+            "geometry": [{"lat": 47.6100, "lon": -122.310}, {"lat": 47.6108, "lon": -122.310}],  # ~90 m
+        }
+    )
+    assert route and long_path and stub
+
+    def th(node: int, lat: float, lng: float, name: str, connects: list[str]) -> tuple[object, ...]:
+        point = f'{{"type":"Point","coordinates":[{lng},{lat}]}}'
+        return (f"osm:node/{node}", name, "trailhead", "osm", "u", lat, lng, point, connects, None, None)
+
+    upsert_trails(
+        con,
+        [
+            route,
+            long_path,
+            stub,
+            th(10, 47.605, -122.30, "Long Path TH", ["osm:way/2"]),  # ~0.6 km from home
+            th(11, 47.700, -122.30, "Route TH", ["osm:relation/1"]),  # ~10 km - farther but a route
+            th(12, 47.610, -122.310, "Trailhead (OSM)", ["osm:way/3"]),  # unnamed, only a stub
+        ],
+    )
+
+
+def test_trails_near_relevance_ranks_the_route_trailhead_over_a_closer_spur(con: psycopg.Connection) -> None:
+    _seed_trailhead_network(con)
+    by_relevance = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, kind="trailhead", sort="relevance")
+    assert [t.name for t in by_relevance[:2]] == ["Route TH", "Long Path TH"]
+    # nearest still puts the closest trailhead first
+    by_distance = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, kind="trailhead")
+    assert by_distance[0].name == "Long Path TH"
+
+
+def test_trails_near_significant_only_drops_the_stub_trailhead(con: psycopg.Connection) -> None:
+    _seed_trailhead_network(con)
+    kept = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, kind="trailhead", significant_only=True)
+    assert "Trailhead (OSM)" not in {t.name for t in kept}
+    assert {"Route TH", "Long Path TH"} <= {t.name for t in kept}
+
+
 def test_ingest_trails_upserts_into_cache(con: psycopg.Connection) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

@@ -259,13 +259,17 @@ def get_trails(
     radius_km: float = Query(40.0),
     kind: str | None = Query(None),
     limit: int | None = Query(None, gt=0),
+    sort: scoring.TrailSort = "nearest",
+    significant_only: bool = False,
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
 ) -> list[Trail]:
-    """Trails near a region (by id) or an explicit lat/lng, nearest to the hotspot first.
+    """Trails near a region (by id) or an explicit lat/lng.
 
     ``kind``/``limit`` scope this to e.g. just the nearest 20 trailheads for a destination
-    card's Trails tab, instead of every path/route/trailhead in the radius.
+    card's Trails tab, instead of every path/route/trailhead in the radius. ``sort`` is
+    ``nearest`` (default), ``relevance`` (named-route / longer trail first), or ``longest``;
+    ``significant_only`` drops the unnamed OSM connector stubs.
 
     Geometry is omitted (``with_geometry=False``): this feeds a name + distance row list, and
     selecting a row draws the real trail by fetching ``/api/trails/network`` for that one id.
@@ -286,6 +290,8 @@ def get_trails(
             radius_km=radius_km,
             kind=kind,
             limit=limit,
+            sort=sort,
+            significant_only=significant_only,
             with_geometry=False,
         )
     return [Trail.model_validate(trail) for trail in found]
