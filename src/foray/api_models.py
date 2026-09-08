@@ -231,6 +231,8 @@ class Trail(BaseModel):
     center_lng: float
     distance_km: float
     camp_distance_km: float | None
+    length_km: float | None = None  # path/route rows: great-circle length of the full polyline
+    attrs: dict[str, str] | None = None  # path/route rows: kept OSM detail tags (issue #306)
     # Raw GeoJSON geometry, same as LandUnit.geometry. ``None`` on the ``/api/trails`` list
     # response - that feeds a name/distance row list whose selection fetches the real geometry
     # from ``/api/trails/network``; see ``scoring.trails_near(with_geometry=False)``.

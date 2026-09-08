@@ -48,6 +48,7 @@ import psycopg
 from foray import scoring
 from foray.cache import connection, is_ingested, record_ingest, upsert_trails
 from foray.config import CoverageRegion, Settings
+from foray.geo import haversine_km
 from foray.sources import overpass
 from foray.sources.http import SOURCE_ERRORS
 from foray.sources.ingest_base import run_area_ingest
@@ -173,6 +174,23 @@ def _trail_url(etype: str, eid: int) -> str:
     return f"https://www.openstreetmap.org/{etype}/{eid}"
 
 
+_ATTR_TAGS = ("surface", "sac_scale", "trail_visibility", "network", "operator", "informal", "trailblazed")
+
+
+def _attrs(tags: dict[str, Any]) -> dict[str, str] | None:
+    """The OSM detail tags worth keeping for a path/route row, or None if it carries none."""
+    picked = {tag: str(tags[tag]) for tag in _ATTR_TAGS if tags.get(tag)}
+    return picked or None
+
+
+def _polyline_length_km(lines: Sequence[Sequence[tuple[float, float]]]) -> float | None:
+    """Great-circle length of the (multi-)polyline over its *full* vertex list, or None for a
+    lone point. Computed before ``_sample`` thins the geometry so a long trail keeps its real
+    length."""
+    total = sum(haversine_km(a[0], a[1], b[0], b[1]) for line in lines for a, b in pairwise(line))
+    return round(total, 3) if total > 0 else None
+
+
 def _row(
     etype: str,
     eid: int,
@@ -180,6 +198,7 @@ def _row(
     kind: str,
     lines: Sequence[Sequence[tuple[float, float]]],
     connects: list[str] | None = None,
+    attrs: dict[str, str] | None = None,
 ) -> tuple[Any, ...] | None:
     """Build a trails row from one or more (lat, lng) polylines, or None if all are empty.
 
@@ -187,6 +206,7 @@ def _row(
     a ``MultiLineString``. The center is the middle vertex of the concatenated geometry so it
     lands on the trail, not in its bbox gap. ``connects`` (trailhead rows only) is the trail ids
     whose geometry passes within ``_LINK_SNAP_M`` of the node - see ``_link_trailheads``.
+    ``attrs`` (path/route rows) is the kept OSM detail tags; ``length_km`` is derived here.
     """
     thinned = [_sample(line, _MAX_POINTS_PER_LINE) for line in lines if line]
     flat = [point for line in thinned for point in line]
@@ -213,6 +233,8 @@ def _row(
         center_lng,
         json.dumps(geometry, separators=(",", ":")),
         connects,
+        _polyline_length_km(lines),
+        json.dumps(attrs, separators=(",", ":")) if attrs else None,
     )
 
 
@@ -235,7 +257,7 @@ def _parse_element(element: dict[str, Any]) -> tuple[Any, ...] | None:
         if not coords:
             return None
         name = tags.get("name") or tags.get("ref") or "Trail (OSM)"
-        return _row("way", int(eid), name, "path", [coords])
+        return _row("way", int(eid), name, "path", [coords], attrs=_attrs(tags))
     if etype == "relation":
         # `out geom` returns each way member with its own `geometry`; stitch them into one route.
         lines = [
@@ -246,7 +268,7 @@ def _parse_element(element: dict[str, Any]) -> tuple[Any, ...] | None:
         if not lines:
             return None
         name = tags.get("name") or tags.get("ref") or "Hiking route (OSM)"
-        return _row("relation", int(eid), name, "route", lines)
+        return _row("relation", int(eid), name, "route", lines, attrs=_attrs(tags))
     return None
 
 
@@ -337,7 +359,7 @@ def _parse_trails(payload: dict[str, Any]) -> list[tuple[Any, ...]]:
             continue
         row_id: str = row[0]
         if row[2] == "trailhead" and (connects := links.get(row_id)):
-            row = (*row[:8], connects)
+            row = (*row[:8], connects, *row[9:])
         by_id[row_id] = row
     rows = list(by_id.values())
     counts = Counter(row[2] for row in rows)

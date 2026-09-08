@@ -929,6 +929,12 @@ export interface components {
             distance_km: number;
             /** Camp Distance Km */
             camp_distance_km: number | null;
+            /** Length Km */
+            length_km?: number | null;
+            /** Attrs */
+            attrs?: {
+                [key: string]: string;
+            } | null;
             /** Geometry */
             geometry?: {
                 [key: string]: unknown;
