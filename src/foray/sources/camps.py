@@ -96,16 +96,19 @@ def _fee_range(fee: str | None) -> tuple[float | None, float | None]:
 
 def _free_from_fee(fee: str | None) -> bool | None:
     """TRUE when the fee text explicitly says no charge, or every amount it names is $0;
-    otherwise unknown (None) - never guessed as paid."""
+    otherwise unknown (None) - never guessed as paid.
+
+    A blob that names a real charge anywhere ("No Fee day use ... Camping : $8") is *not* free
+    even though it also contains a free marker, so the parsed range gets the final say.
+    """
     if not fee:
         return None
-    text = fee.lower()
-    if any(marker in text for marker in _FREE_MARKERS):
-        return True
     low, high = _fee_range(fee)
+    if high:  # names a positive amount somewhere -> a charge applies, marker notwithstanding
+        return None
     if low == 0.0 and high == 0.0:
         return True
-    return None
+    return True if any(marker in fee.lower() for marker in _FREE_MARKERS) else None
 
 
 def _query_centers(lat: float, lng: float, radius_km: float, query_radius_km: float) -> list[tuple[float, float]]:

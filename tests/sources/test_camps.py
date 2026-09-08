@@ -28,6 +28,9 @@ def test_free_from_fee_only_asserts_on_explicit_signal() -> None:
     assert _free_from_fee("Fee: $0 per night, $0 per extra vehicle") is True  # every amount is $0
     # A described fee, or silence, is left unknown - never guessed as paid or free.
     assert _free_from_fee("$15 per night") is None
+    # A "No Fee" marker doesn't win when the blob also names a real charge (free day-use +
+    # paid camping is a common RIDB shape).
+    assert _free_from_fee("Day-Use: No Fee. Camping: $8 per night.") is None
     assert _free_from_fee(None) is None
     assert _free_from_fee("") is None
 
