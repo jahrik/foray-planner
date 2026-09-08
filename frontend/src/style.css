@@ -440,6 +440,10 @@ main {
 #map {
   flex: 1;
   min-height: 0;
+  /* Tile-load backdrop - matches each base map's own ground so there's no flash. */
+  background: var(--paper);
+}
+:root[data-theme="dark"] #map {
   background: #0c0d09;
 }
 .rail {

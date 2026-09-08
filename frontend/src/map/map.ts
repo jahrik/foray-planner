@@ -41,17 +41,21 @@ export const HOME_DOT_STYLE = circleStyle({
   fillOpacity: 1,
 });
 
-// A single standard OSM tile source for both themes - dark mode inverts it via CSS
-// (`invert() hue-rotate()` in style.css) instead of swapping in a separate dark tileset.
-// The CARTO dark_all raster this used to load renders minor labels (peaks, lakes, wilderness
-// boundaries) in very low-contrast gray by design, and no CSS brightness/contrast filter could
-// fix that without also crushing the rest of the tile. Inverting OSM's normal high-contrast
-// dark-on-light labels turns them into equally high-contrast light-on-dark, so everything from
-// city names down to trail/forest labels stays legible.
-const TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+// Base tiles by theme (issue #301). Light mode gets Esri's World Light Gray Canvas - a quiet
+// grey cartographic base that recedes behind the region/overlay layers, the whole point of the
+// redesign's map (CARTO Positron would be the obvious pick but its keyless CDN now watermarks
+// every tile). Dark mode keeps standard OSM inverted via CSS (`invert() hue-rotate()` in
+// style.css): grey "dark canvas" rasters render minor labels (peaks, lakes, wilderness
+// boundaries) in very low-contrast grey by design and no CSS filter fixes that, whereas
+// inverting OSM's high-contrast dark-on-light labels keeps everything from city names down to
+// trail/forest labels legible. So the source swaps on theme change, not just the filter.
+const OSM_TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const GRAY_CANVAS_TILE_URL =
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
 const TILE_ATTRIBUTION =
-  "© OpenStreetMap · observations © iNaturalist · elevation &amp; weather © Open-Meteo";
+  "© OpenStreetMap · Tiles © Esri · observations © iNaturalist · elevation &amp; weather © Open-Meteo";
 let tileLayer: L.TileLayer | null = null;
+let tileTheme: "dark" | "light" | null = null;
 
 export let map: L.Map;
 let homeMarker: L.CircleMarker;
@@ -68,8 +72,15 @@ export const currentTheme = (): "dark" | "light" =>
 
 export function setTiles(): void {
   if (!map) return; // map not built yet; initMap lays the first tiles for the current theme
-  if (tileLayer) return; // same tile source for both themes now; the CSS filter handles dark mode
-  tileLayer = L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 14 }).addTo(map);
+  const theme = currentTheme();
+  if (tileLayer && tileTheme === theme) return; // already showing the right base
+  if (tileLayer) map.removeLayer(tileLayer);
+  // Esri's gray canvas has no {s} placeholder, so the default 'abc' subdomains are simply
+  // unused for it; OSM uses them.
+  const url = theme === "light" ? GRAY_CANVAS_TILE_URL : OSM_TILE_URL;
+  tileLayer = L.tileLayer(url, { attribution: TILE_ATTRIBUTION, maxZoom: 14 }).addTo(map);
+  tileLayer.setZIndex(0); // stay under every overlay pane
+  tileTheme = theme;
 }
 
 // A plain DOM block below the map (not a Leaflet map-overlay control) - on small screens an
