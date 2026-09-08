@@ -57,6 +57,18 @@
   --on-accent: #1b1915;
 }
 
+/* Large-text mode (issue #301 redesign uses the --text-* scale, so bump the tokens rather than
+   chase every new component with a px rule - style.css keeps a few extra overrides for the
+   older token-less controls). */
+:root[data-text-size="large"] {
+  --text-hero: 2.7rem;
+  --text-h2: 1.72rem;
+  --text-h3: 1.38rem;
+  --text-body: 1.12rem;
+  --text-data: 1.06rem;
+  --text-label: 0.92rem;
+}
+
 /* prefers-color-scheme with no explicit choice - mirror the dark block. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
