@@ -15,11 +15,13 @@ export type Units = "km" | "mi";
 // just the order, applied client-side to the fetched payload.
 export type Sort = "best" | "active" | "nearest";
 
-export interface State {
-  months: Set<number>;
-  view: View;
-  sort: Sort;
-  home: Home | null;
+// One flat `state` object, but the shape is grouped by concern so the three kinds of field
+// stay legible: live Leaflet layer handles (map.ts owns their lifecycle), the user's scoping
+// inputs, and view/display preferences. Kept flat rather than nested so every call site stays
+// `state.foo` (issue #301 - the split is documentation, not a 20-file rename).
+
+/** Leaflet layer/marker handles - written only from map.ts (issue #103). */
+interface MapState {
   markers: L.CircleMarker[];
   campMarkers: L.CircleMarker[];
   landLayer: L.GeoJSON | null;
@@ -28,11 +30,25 @@ export interface State {
   cardCampMarkers: L.CircleMarker[];
   selectedTrailLayer: L.Polyline | null;
   planRouteLayer: L.Polyline | null;
-  planTrip: TripPlan | null;
   focused: { lat: number; lng: number } | null;
-  units: Units;
+}
+
+/** What the user is asking about: location, months, and (server-supplied) grid resolution. */
+interface ScopeState {
+  home: Home | null;
+  months: Set<number>;
   cellDeg: number;
 }
+
+/** How results are shown: which view, sort order, unit system, and the last plan payload. */
+interface UiState {
+  view: View;
+  sort: Sort;
+  units: Units;
+  planTrip: TripPlan | null;
+}
+
+export type State = MapState & ScopeState & UiState;
 
 export const state: State = {
   months: new Set(getMonths() ?? [CURRENT_MONTH]),
