@@ -1,7 +1,9 @@
-// Shared keyboard/click plumbing for the result cards in the Destinations and Alerts panels
+// Shared result-card DOM + keyboard/click plumbing for the Destinations and Alerts panels
 // (views.ts, alerts-view.ts). The cards are plain <div>s for layout flexibility but act as
 // buttons, so this makes them keyboard-operable and keeps nested links clickable without also
-// activating the card.
+// activating the card. buildResultCard() is the one card template both views render through
+// (issue #301) - a scannable summary card; the per-region detail tabs live in the Details view
+// (views/details.ts) now, not nested inside every card.
 
 import { escapeHtml } from "../format";
 import { displayName, inatUrl } from "../state";

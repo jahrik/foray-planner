@@ -23,7 +23,7 @@ import {
   LAND_COLORS,
   LAND_DEFAULT,
   map,
-  PRECISE,
+  markerPalette,
   regionRadiusKm,
   renderLegend,
   setFireLayer,
@@ -347,10 +347,11 @@ export async function loadPreciseObservations(): Promise<void> {
     setStatus(errorDetail(error));
     return;
   }
+  const spore = markerPalette().spore;
   observations.forEach((obs) => {
     const marker = L.circleMarker(
       [obs.lat, obs.lng],
-      circleStyle({ radius: 4, fill: PRECISE, stroke: HOME_RING, weight: 1, fillOpacity: 0.9 }),
+      circleStyle({ radius: 4, fill: spore, stroke: HOME_RING, weight: 1, fillOpacity: 0.9 }),
     ).bindPopup(precisePopup(obs));
     addPreciseMarker(marker);
   });
