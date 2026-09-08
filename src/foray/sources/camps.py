@@ -6,9 +6,14 @@ campgrounds - named sites with facilities. It needs a free API key, read from th
 container/systemd env var on the server). If the key is absent, camps ingest is skipped
 so the iNaturalist refresh still works.
 
-The facilities search only accepts a point + radius (miles, capped), so a wide home radius
-is covered by *tiling*: query circles laid on a grid dense enough to cover the whole disk,
-then facilities are deduped by id and clipped to the true home radius with ``haversine_km``.
+RIDB's point+radius facilities search silently under-returns - it only matches facilities
+whose own ``FacilityLatitude/Longitude`` is populated and near the point, which measured at
+~1/3 of what is actually there (45 camping facilities within 50 mi of Eugene, OR by state
+listing vs 13 by radius search). So the primary path is a **per-state** listing
+(``facilities?state=XX&activity=CAMPING``, paged), with each facility clipped to the true
+home radius by ``haversine_km``. The state set is the ``cfg.coverage`` regions whose bbox
+reaches the home disk. Homes outside the US (no state resolves) fall back to the old
+radius-tiling path.
 
 Dispersed (free, undeveloped) camping has no authoritative dataset and is a separate,
 proxy-based layer (tracked separately) - this module only handles developed campgrounds.
@@ -22,14 +27,14 @@ import math
 import os
 import re
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 import httpx
 import psycopg
 
 from foray.cache import upsert_campsites
-from foray.config import Settings
+from foray.config import CoverageRegion, Settings
 from foray.geo import KM_PER_DEG_LAT, haversine_km
 from foray.sources.http import SOURCE_ERRORS, USER_AGENT, Throttle, retry_after_seconds
 from foray.sources.ingest_base import run_area_ingest
@@ -113,6 +118,86 @@ def _query_centers(lat: float, lng: float, radius_km: float, query_radius_km: fl
     return centers
 
 
+# USPS codes for the ``cfg.coverage`` region names (US states + DC). The RIDB ``state`` filter
+# wants the two-letter code; coverage regions carry only the name.
+_STATE_CODES: dict[str, str] = {
+    "Alabama": "AL",
+    "Alaska": "AK",
+    "Arizona": "AZ",
+    "Arkansas": "AR",
+    "California": "CA",
+    "Colorado": "CO",
+    "Connecticut": "CT",
+    "Delaware": "DE",
+    "District of Columbia": "DC",
+    "Florida": "FL",
+    "Georgia": "GA",
+    "Hawaii": "HI",
+    "Idaho": "ID",
+    "Illinois": "IL",
+    "Indiana": "IN",
+    "Iowa": "IA",
+    "Kansas": "KS",
+    "Kentucky": "KY",
+    "Louisiana": "LA",
+    "Maine": "ME",
+    "Maryland": "MD",
+    "Massachusetts": "MA",
+    "Michigan": "MI",
+    "Minnesota": "MN",
+    "Mississippi": "MS",
+    "Missouri": "MO",
+    "Montana": "MT",
+    "Nebraska": "NE",
+    "Nevada": "NV",
+    "New Hampshire": "NH",
+    "New Jersey": "NJ",
+    "New Mexico": "NM",
+    "New York": "NY",
+    "North Carolina": "NC",
+    "North Dakota": "ND",
+    "Ohio": "OH",
+    "Oklahoma": "OK",
+    "Oregon": "OR",
+    "Pennsylvania": "PA",
+    "Rhode Island": "RI",
+    "South Carolina": "SC",
+    "South Dakota": "SD",
+    "Tennessee": "TN",
+    "Texas": "TX",
+    "Utah": "UT",
+    "Vermont": "VT",
+    "Virginia": "VA",
+    "Washington": "WA",
+    "West Virginia": "WV",
+    "Wisconsin": "WI",
+    "Wyoming": "WY",
+}
+
+
+def _states_for_disk(coverage: Sequence[CoverageRegion], lat: float, lng: float, radius_km: float) -> list[str]:
+    """USPS codes of the coverage regions whose bbox reaches within ``radius_km`` of home.
+
+    The home disk's bounding box is tested for overlap against each region's
+    ``(west, south, east, north)`` bbox - a cheap superset of "the disk touches the state",
+    which is all we need to decide whether to list that state's facilities. Regions with no
+    bbox or no known code are skipped; an empty result means "not in the US, use tiling".
+    """
+    dlat = radius_km / KM_PER_DEG_LAT
+    dlng = radius_km / (KM_PER_DEG_LAT * max(math.cos(math.radians(lat)), 0.01))
+    disk_w, disk_e = lng - dlng, lng + dlng
+    disk_s, disk_n = lat - dlat, lat + dlat
+    codes: list[str] = []
+    for region in coverage:
+        code = _STATE_CODES.get(region.name)
+        if code is None or region.bbox is None:
+            continue
+        west, south, east, north = region.bbox
+        if west <= disk_e and east >= disk_w and south <= disk_n and north >= disk_s:
+            codes.append(code)
+    return codes
+
+
 def _parse_facility(record: dict[str, Any]) -> tuple[Any, ...] | None:
     """RIDB facility record -> a campsites row tuple, or None if it lacks usable coords."""
     facility_id = record.get("FacilityID")
@@ -165,24 +250,19 @@ def _iter_facilities(
     client: httpx.Client,
     throttle: Throttle,
     api_key: str,
-    lat: float,
-    lng: float,
-    radius_mi: float,
+    query: dict[str, Any],
 ) -> Iterator[dict[str, Any]]:
-    """Yield every CAMPING facility RIDB returns for one query circle, paging by offset."""
+    """Yield every CAMPING facility RIDB returns for one query, paging by offset.
+
+    ``query`` carries the scope filter - ``{"state": "OR"}`` for the per-state listing or
+    ``{"latitude": .., "longitude": .., "radius": ..}`` for the fallback radius search.
+    """
     offset = 0
     while True:
         resp = _get_page(
             client,
             throttle,
-            params={
-                "latitude": lat,
-                "longitude": lng,
-                "radius": radius_mi,
-                "activity": "CAMPING",
-                "limit": _PAGE_SIZE,
-                "offset": offset,
-            },
+            params={**query, "activity": "CAMPING", "limit": _PAGE_SIZE, "offset": offset},
             headers={"apikey": api_key, "User-Agent": USER_AGENT},
         )
         payload = resp.json()
@@ -196,32 +276,47 @@ def _iter_facilities(
             return
 
 
+def _query_scopes(lat: float, lng: float, radius_km: float, states: Sequence[str]) -> list[tuple[str, dict[str, Any]]]:
+    """(label, RIDB query params) pairs to page through - per-state when states resolved,
+    otherwise the fallback radius tiling."""
+    if states:
+        return [(code, {"state": code}) for code in states]
+    query_radius_mi = _QUERY_RADIUS_MI
+    return [
+        (f"{clat:.3f},{clng:.3f}", {"latitude": clat, "longitude": clng, "radius": query_radius_mi})
+        for clat, clng in _query_centers(lat, lng, radius_km, _QUERY_RADIUS_MI * _KM_PER_MILE)
+    ]
+
+
 def fetch_campsites(
     *,
     lat: float,
     lng: float,
     radius_km: float,
     api_key: str,
+    states: Sequence[str] = (),
     client: httpx.Client | None = None,
     min_interval: float = _MIN_REQUEST_INTERVAL,
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> list[tuple[Any, ...]]:
-    """Fetch developed campgrounds within ``radius_km`` of home, deduped and clipped."""
+    """Fetch developed campgrounds within ``radius_km`` of home, deduped and clipped.
+
+    ``states`` is the USPS codes to list (``_states_for_disk``); empty falls back to the
+    radius-tiling path for a non-US home.
+    """
     owns = client is None
     client = client or httpx.Client(timeout=30.0)
     throttle = Throttle(min_interval)
-    query_radius_km = _QUERY_RADIUS_MI * _KM_PER_MILE
     by_id: dict[str, tuple[Any, ...]] = {}
+    scopes = _query_scopes(lat, lng, radius_km, states)
     try:
-        centers = _query_centers(lat, lng, radius_km, query_radius_km)
-        total_centers = len(centers)
-        for index, (center_lat, center_lng) in enumerate(centers):
+        for index, (label, query) in enumerate(scopes):
             if progress_cb:
                 progress_cb(
-                    f"Fetching campgrounds ({index + 1}/{total_centers})…",
-                    ((index + 1) / total_centers) * 100.0 if total_centers else 100.0,
+                    f"Fetching campgrounds ({index + 1}/{len(scopes)}: {label})…",
+                    ((index + 1) / len(scopes)) * 100.0 if scopes else 100.0,
                 )
-            for record in _iter_facilities(client, throttle, api_key, center_lat, center_lng, _QUERY_RADIUS_MI):
+            for record in _iter_facilities(client, throttle, api_key, query):
                 row = _parse_facility(record)
                 if row is None:
                     continue
@@ -231,7 +326,7 @@ def fetch_campsites(
     except SOURCE_ERRORS as error:
         # Match the land / trails / dispersed ingests: a RIDB outage (or a malformed page)
         # degrades to "no campgrounds this run" rather than aborting the whole refresh. Any
-        # facilities already collected from earlier query circles are kept.
+        # facilities already collected from earlier scopes are kept.
         logger.warning("camps: RIDB fetch failed (%s) - keeping %d sites gathered so far", error, len(by_id))
     finally:
         if owns:
@@ -252,13 +347,19 @@ def ingest_campgrounds(
     if not api_key:
         logger.info("camps: RIDB_API_KEY unset - skipping campground ingest")
         return 0
+    home = cfg.home
+    states = _states_for_disk(cfg.coverage, home.lat, home.lng, home.radius_km)
+    logger.info(
+        "camps: %s",
+        f"listing {len(states)} states ({', '.join(states)})" if states else "no US state resolved - radius tiling",
+    )
     return run_area_ingest(
         cfg,
         con,
         prefix="camps:ridb:",
         label="camps",
         noun="Campgrounds",
-        fetch=lambda **kw: fetch_campsites(api_key=api_key, client=client, **kw),
+        fetch=lambda **kw: fetch_campsites(api_key=api_key, client=client, states=states, **kw),
         upsert=upsert_campsites,
         progress_cb=progress_cb,
     )

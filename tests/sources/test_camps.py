@@ -7,12 +7,14 @@ import psycopg
 import pytest
 
 from foray.cache import upsert_campsites
+from foray.config import CoverageRegion
 from foray.scoring import camps_near
 from foray.sources.camps import (
     _clean_text,
     _free_from_fee,
     _parse_facility,
     _query_centers,
+    _states_for_disk,
     fetch_campsites,
 )
 
@@ -91,6 +93,61 @@ def test_query_centers_caps_request_count_for_huge_radius() -> None:
     # The kept centers are the ones closest to home, not an arbitrary slice.
     distances = [haversine_km(HOME_LAT, HOME_LNG, lat, lng) for lat, lng in centers]
     assert distances == sorted(distances)
+
+
+_COVERAGE = [
+    CoverageRegion(name="Oregon", place_id=10, bbox=(-124.57, 41.99, -116.46, 46.29)),
+    CoverageRegion(name="Washington", place_id=11, bbox=(-124.85, 45.54, -116.92, 49.00)),
+    CoverageRegion(name="California", place_id=12, bbox=(-124.48, 32.53, -114.13, 42.01)),
+    CoverageRegion(name="Maine", place_id=13, bbox=(-71.08, 42.92, -66.88, 47.46)),
+    CoverageRegion(name="United States", place_id=1),  # no bbox → skipped
+]
+
+
+def test_states_for_disk_picks_only_regions_the_disk_reaches() -> None:
+    # ~300 km around Coos Bay, OR reaches OR + WA + northern CA, never Maine.
+    codes = _states_for_disk(_COVERAGE, 43.37, -124.22, 300.0)
+    assert set(codes) == {"OR", "WA", "CA"}
+    # A tight disk stays inside one state.
+    assert _states_for_disk(_COVERAGE, 44.0, -120.5, 20.0) == ["OR"]
+    # A non-US point resolves nothing → caller falls back to radius tiling.
+    assert _states_for_disk(_COVERAGE, 48.85, 2.35, 100.0) == []
+
+
+def test_fetch_campsites_lists_by_state_and_clips_to_radius() -> None:
+    seen_states: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_states.append(request.url.params["state"])
+        assert request.url.params["activity"] == "CAMPING"
+        return httpx.Response(
+            200,
+            json={
+                "RECDATA": [
+                    {
+                        "FacilityID": "1",
+                        "FacilityName": "Near",
+                        "FacilityLatitude": 47.65,
+                        "FacilityLongitude": -122.35,
+                    },
+                    {"FacilityID": "2", "FacilityName": "Far", "FacilityLatitude": 40.0, "FacilityLongitude": -122.3},
+                ],
+                "METADATA": {"RESULTS": {"TOTAL_COUNT": 2}},
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    rows = fetch_campsites(
+        lat=HOME_LAT,
+        lng=HOME_LNG,
+        radius_km=50.0,
+        api_key="test-key",
+        states=["WA", "OR"],
+        client=client,
+        min_interval=0.0,
+    )
+    assert seen_states == ["WA", "OR"]  # one paged listing per state, no radius tiling
+    assert [row[0] for row in rows] == ["ridb:1"]  # far one clipped, near one deduped across states
 
 
 def test_fetch_campsites_dedupes_and_clips_to_radius() -> None:
