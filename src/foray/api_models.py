@@ -118,6 +118,11 @@ class RegionScore(BaseModel):
     precip_recent_30d_mm: float | None = None
     # Nearby active fires (warnings) + recent burn scars (morel opportunities), issue #227.
     fire_nearby: list[FireNear] = []
+    # Nearest trailhead / campground to the region cell (issue #306), km, for the "park -> hike"
+    # access clause in the card why-sentence. None until the trail / camp layer is ingested.
+    trailhead_km: float | None = None
+    camp_km: float | None = None
+    camp_is_free: bool | None = None
 
 
 class RegionPlace(BaseModel):

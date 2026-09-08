@@ -395,6 +395,49 @@ def connected_trails(con: psycopg.Connection, trail_ids: Sequence[str]) -> list[
     return [by_id[tid] for tid in trail_ids if tid in by_id]
 
 
+def region_access(
+    con: psycopg.Connection, regions: Sequence[tuple[str, float, float]]
+) -> dict[str, tuple[float | None, float | None, bool | None]]:
+    """Nearest trailhead / campground to each ``(region_id, lat, lng)`` in km, plus whether that
+    nearest campsite is free-tagged.
+
+    One batched KNN pass off ``ix_trails_geom`` / ``ix_campsites_geom`` - feeds the ``access``
+    multiplier and the card why-sentence (issue #306). Regions with an empty trail / camp cache
+    come back with ``None`` in that slot.
+    """
+    if not regions:
+        return {}
+    values = ", ".join(["(%s, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography)"] * len(regions))
+    params: list[Any] = []
+    for region_id, lat, lng in regions:
+        params += [region_id, lng, lat]
+    sql: LiteralString = f"""
+        WITH r(id, g) AS (VALUES {values})
+        SELECT r.id, th.dist_km, camp.dist_km, camp.free
+        FROM r
+        LEFT JOIN LATERAL (
+            SELECT ST_Distance(t.geom, r.g) / 1000.0 AS dist_km
+            FROM trails t
+            WHERE t.kind = 'trailhead' AND t.geom IS NOT NULL
+            ORDER BY t.geom <-> r.g LIMIT 1
+        ) th ON true
+        LEFT JOIN LATERAL (
+            SELECT ST_Distance(c.geom, r.g) / 1000.0 AS dist_km, c.free
+            FROM campsites c WHERE c.geom IS NOT NULL
+            ORDER BY c.geom <-> r.g LIMIT 1
+        ) camp ON true
+        """
+    rows = con.execute(sql, params).fetchall()
+    return {
+        rid: (
+            round(th_km, 1) if th_km is not None else None,
+            round(camp_km, 1) if camp_km is not None else None,
+            camp_free,
+        )
+        for rid, th_km, camp_km, camp_free in rows
+    }
+
+
 def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: float = 2.0) -> Trail | None:
     """Nearest cached path/route to (``lat``, ``lng``), or None if nothing is within ``max_km``.
 

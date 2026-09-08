@@ -69,4 +69,12 @@ describe("whySentence", () => {
     one.species[0]!.month_count = 1;
     expect(whySentence(one)).toContain("1 record in your months");
   });
+
+  it("adds a trailhead clause only when one is close, with a free camp when in range", () => {
+    expect(whySentence(region({ trailhead_km: 1.2 }))).toMatch(/Trailhead \d+ \w+\.$/);
+    expect(whySentence(region({ trailhead_km: 1.2, camp_km: 6, camp_is_free: true }))).toMatch(
+      /Trailhead \d+ \w+, free camp \d+ \w+\.$/,
+    );
+    expect(whySentence(region({ trailhead_km: 40 }))).not.toContain("Trailhead");
+  });
 });
