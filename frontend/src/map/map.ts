@@ -331,17 +331,16 @@ export function plot(
   const isHero = rank <= HERO_RANK_MAX;
   const baseColor = live ? palette.flush : isDim ? palette.moss : palette.rust;
   const scoreRadius = isDim ? DIM_DOT_RADIUS_M : trueRadius * (0.3 + weight);
-  const restFillOpacity = isDim
-    ? 0.28
-    : isHero
-      ? Math.max(0.35, scoreFillOpacity(weight))
-      : scoreFillOpacity(weight);
+  // Only the top 3 carry a fill - at this zoom the score-scaled cell circles overlap heavily,
+  // so a translucent fill on every one of the top 10 composited into an unreadable blob. Ranks
+  // 4-10 are rings only; 11+ are small solid dots (too small to blob).
+  const restFillOpacity = isHero ? Math.max(0.35, scoreFillOpacity(weight)) : isDim ? 0.55 : 0;
   const marker = L.circle([lat, lng], {
     radius: scoreRadius,
     color: baseColor,
     fillColor: baseColor,
     fillOpacity: restFillOpacity,
-    opacity: isDim ? 0.5 : 0.4 + 0.5 * weight,
+    opacity: isDim ? 0.65 : isHero ? 0.95 : 0.7,
     weight: isDim ? 1 : isHero ? 2 : 1.5,
     bubblingMouseEvents: false,
   }).addTo(map);

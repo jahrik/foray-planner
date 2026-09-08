@@ -56,18 +56,23 @@ beforeEach(() => {
 describe("selectSize / deselectSize fill management", () => {
   const fill = (circle: unknown): number => (circle as FakeCircle).style.fillOpacity;
 
-  it("drops every other destination circle to stroke-only on select, restores on deselect", () => {
-    const strong = plot(47.6, -122.3, 0.8, false, "95_-245", 0);
-    const weak = plot(47.7, -122.4, 0.2, false, "95_-246", 5);
+  it("drops every other destination circle to stroke-only on select, restores its resting fill on deselect", () => {
+    const selected = plot(47.6, -122.3, 0.8, false, "95_-245", 0);
+    const otherHero = plot(47.7, -122.4, 0.2, false, "95_-246", 1); // hero tier keeps a fill
 
-    selectSize(strong);
-    expect(fill(strong)).toBe(0); // the focused circle itself - satellite overlay is the fill now
-    expect((strong as unknown as { style: { color: string } }).style.color).toBe("#4a3a4d"); // purple ring
-    expect(fill(weak)).toBe(0); // ring only - no fill to composite into a blob
+    selectSize(selected);
+    expect(fill(selected)).toBe(0); // the focused circle itself - the ring carries it now
+    expect((selected as unknown as { style: { color: string } }).style.color).toBe("#4a3a4d"); // purple ring
+    expect(fill(otherHero)).toBe(0); // ring only while another region is selected
 
-    deselectSize(strong);
-    expect(fill(weak)).toBeCloseTo(0.15 + 0.45 * 0.2); // back to its score-scaled fill
-    expect((strong as unknown as { style: { color: string } }).style.color).toBe("#7a4326"); // rust again
+    deselectSize(selected);
+    expect(fill(otherHero)).toBeCloseTo(0.35); // hero resting fill (floor)
+    expect((selected as unknown as { style: { color: string } }).style.color).toBe("#7a4326"); // rust again
+  });
+
+  it("plots ranks 4-10 as rings with no resting fill", () => {
+    const mid = plot(47.6, -122.3, 0.5, false, "95_-245", 6);
+    expect(fill(mid)).toBe(0);
   });
 
   it("re-dims the rest when selection moves to another circle", () => {
