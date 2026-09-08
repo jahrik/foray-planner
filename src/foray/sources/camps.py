@@ -33,6 +33,7 @@ from typing import Any
 import httpx
 import psycopg
 
+from foray import cache
 from foray.cache import upsert_campsites
 from foray.config import CoverageRegion, Settings
 from foray.geo import KM_PER_DEG_LAT, haversine_km
@@ -353,7 +354,7 @@ def ingest_campgrounds(
         "camps: %s",
         f"listing {len(states)} states ({', '.join(states)})" if states else "no US state resolved - radius tiling",
     )
-    return run_area_ingest(
+    count = run_area_ingest(
         cfg,
         con,
         prefix="camps:ridb:",
@@ -363,3 +364,8 @@ def ingest_campgrounds(
         upsert=upsert_campsites,
         progress_cb=progress_cb,
     )
+    with cache.connection(con) as db:
+        pruned = cache.prune_campsites_outside_radius(db, "ridb", home.lat, home.lng, home.radius_km)
+    if pruned:
+        logger.info("camps: pruned %d ridb rows now outside the %.0f km home radius", pruned, home.radius_km)
+    return count

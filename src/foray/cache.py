@@ -862,6 +862,25 @@ def upsert_campsites(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -
     return upsert_rows(con, "campsites", columns, rows)
 
 
+def prune_campsites_outside_radius(
+    con: psycopg.Connection, source: str, lat: float, lng: float, radius_km: float
+) -> int:
+    """Delete ``source`` campsites outside ``radius_km`` of (``lat``, ``lng``). Returns rows deleted.
+
+    Campsite ingests only ever upsert, so shrinking the home radius (or moving home) leaves the
+    old wider area's rows behind forever (issue #306: 194 of 285 ridb rows were stale). A row
+    outside the current disk is stale by definition regardless of whether the last fetch was
+    complete, so this is safe to run unconditionally after every ingest.
+    """
+    result = con.execute(
+        "DELETE FROM campsites WHERE source = %s "
+        "AND (geom IS NULL OR NOT ST_DWithin(geom, ST_MakePoint(%s, %s)::geography, %s))",
+        [source, lng, lat, radius_km * 1000.0],
+    )
+    con.commit()
+    return result.rowcount
+
+
 def upsert_public_land(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
     """Upsert public-land polygons, refreshing existing rows in place. Returns rows attempted.
 
