@@ -97,6 +97,9 @@ def _parse_reported(payload: dict[str, Any]) -> list[tuple[Any, ...]]:
                 lng,
                 "osm",
                 f"https://www.openstreetmap.org/{etype}/{eid}",
+                None,  # reservable - OSM dispersed sites are first-come
+                None,  # fee_low
+                None,  # fee_high
             )
         )
     return rows

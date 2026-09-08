@@ -65,6 +65,10 @@ _FREE_MARKERS = ("no fee", "no charge", "free of charge", "fee: none", "$0", "$0
 
 _TAG = re.compile(r"<[^>]+>")
 _WHITESPACE = re.compile(r"\s+")
+# Dollar amounts in a fee blob, e.g. "$16", "$8.00", "$ 20". Amounts over this are almost
+# always a fine / deposit / annual-pass price, not a nightly campsite fee - ignore them.
+_DOLLARS = re.compile(r"\$\s?(\d{1,3}(?:\.\d{2})?)")
+_MAX_PLAUSIBLE_NIGHTLY_USD = 150.0
 
 
 def _clean_text(text: str | None) -> str | None:
@@ -75,12 +79,31 @@ def _clean_text(text: str | None) -> str | None:
     return stripped or None
 
 
+def _fee_range(fee: str | None) -> tuple[float | None, float | None]:
+    """(low, high) nightly USD parsed from a cleaned fee blob, or (None, None).
+
+    RIDB ships fees as prose ("Camping Fees are $16/vehicle... $2 per extra vehicle"), so this
+    is best-effort: pull the plausible-nightly dollar amounts and take their span. ``low ==
+    high`` when the blob names one price; both ``None`` when it names none.
+    """
+    amounts = sorted(
+        value for match in _DOLLARS.findall(fee or "") if (value := float(match)) <= _MAX_PLAUSIBLE_NIGHTLY_USD
+    )
+    if not amounts:
+        return None, None
+    return amounts[0], amounts[-1]
+
+
 def _free_from_fee(fee: str | None) -> bool | None:
-    """TRUE only when the fee text explicitly says no charge; otherwise unknown (None)."""
+    """TRUE when the fee text explicitly says no charge, or every amount it names is $0;
+    otherwise unknown (None) - never guessed as paid."""
     if not fee:
         return None
     text = fee.lower()
     if any(marker in text for marker in _FREE_MARKERS):
+        return True
+    low, high = _fee_range(fee)
+    if low == 0.0 and high == 0.0:
         return True
     return None
 
@@ -210,6 +233,8 @@ def _parse_facility(record: dict[str, Any]) -> tuple[Any, ...] | None:
     if lat == 0.0 and lng == 0.0:  # RIDB uses 0,0 as "no coordinates"
         return None
     fee = _clean_text(record.get("FacilityUseFeeDescription"))
+    fee_low, fee_high = _fee_range(fee)
+    reservable = record.get("Reservable")  # bool with full=true, absent otherwise
     return (
         f"ridb:{facility_id}",
         record.get("FacilityName") or f"Facility {facility_id}",
@@ -220,6 +245,9 @@ def _parse_facility(record: dict[str, Any]) -> tuple[Any, ...] | None:
         lng,
         "ridb",
         f"https://www.recreation.gov/camping/campgrounds/{facility_id}",
+        reservable if isinstance(reservable, bool) else None,
+        fee_low,
+        fee_high,
     )
 
 
@@ -281,7 +309,9 @@ def _query_scopes(lat: float, lng: float, radius_km: float, states: Sequence[str
     """(label, RIDB query params) pairs to page through - per-state when states resolved,
     otherwise the fallback radius tiling."""
     if states:
-        return [(code, {"state": code}) for code in states]
+        # full=true so each record carries `Reservable` (the radius fallback stays lean - a
+        # non-US home rarely hits it and doesn't get the attribute either way).
+        return [(code, {"state": code, "full": "true"}) for code in states]
     query_radius_mi = _QUERY_RADIUS_MI
     return [
         (f"{clat:.3f},{clng:.3f}", {"latitude": clat, "longitude": clng, "radius": query_radius_mi})

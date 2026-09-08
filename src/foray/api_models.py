@@ -211,6 +211,9 @@ class CampSite(BaseModel):
     distance_km: float
     source: str
     url: str
+    reservable: bool | None = None  # RIDB Reservable (issue #306)
+    fee_low: float | None = None  # nightly USD range parsed from the fee prose
+    fee_high: float | None = None
 
 
 class LandUnit(BaseModel):

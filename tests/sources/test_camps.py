@@ -11,6 +11,7 @@ from foray.config import CoverageRegion
 from foray.scoring import camps_near
 from foray.sources.camps import (
     _clean_text,
+    _fee_range,
     _free_from_fee,
     _parse_facility,
     _query_centers,
@@ -24,10 +25,35 @@ HOME_LAT, HOME_LNG = 47.6, -122.3
 def test_free_from_fee_only_asserts_on_explicit_signal() -> None:
     assert _free_from_fee("No fee for this site") is True
     assert _free_from_fee("$0.00 per night") is True
+    assert _free_from_fee("Fee: $0 per night, $0 per extra vehicle") is True  # every amount is $0
     # A described fee, or silence, is left unknown - never guessed as paid or free.
     assert _free_from_fee("$15 per night") is None
     assert _free_from_fee(None) is None
     assert _free_from_fee("") is None
+
+
+def test_fee_range_pulls_plausible_nightly_amounts() -> None:
+    assert _fee_range("Camping Fees are $16/vehicle, $2 per extra vehicle") == (2.0, 16.0)
+    assert _fee_range("$8 per single campsite; $16 per group site") == (8.0, 16.0)
+    assert _fee_range("$20.00 per night") == (20.0, 20.0)
+    assert _fee_range("Violations subject to a $500 fine") == (None, None)  # over the nightly cap
+    assert _fee_range(None) == (None, None)
+
+
+def test_parse_facility_reads_reservable_and_fee_range() -> None:
+    row = _parse_facility(
+        {
+            "FacilityID": "77",
+            "FacilityName": "Bedrock CG",
+            "FacilityLatitude": 44.0,
+            "FacilityLongitude": -122.5,
+            "Reservable": True,
+            "FacilityUseFeeDescription": "<p>$18 per night, $9 per extra vehicle</p>",
+        }
+    )
+    assert row is not None
+    assert row[9] is True  # reservable
+    assert (row[10], row[11]) == (9.0, 18.0)  # fee_low, fee_high
 
 
 def test_clean_text_strips_html_and_entities() -> None:
@@ -228,10 +254,10 @@ def test_camps_near_ranks_free_first_then_distance(con: psycopg.Connection) -> N
         con,
         [
             # (id, name, kind, fee, free, lat, lng, source, url)
-            ("ridb:1", "Paid Close", "campground", "$20", None, 47.61, -122.31, "ridb", "u1"),
-            ("ridb:2", "Free Far", "campground", "No fee", True, 47.9, -122.6, "ridb", "u2"),
-            ("ridb:3", "Free Close", "campground", "No fee", True, 47.62, -122.32, "ridb", "u3"),
-            ("ridb:4", "Way Out", "campground", None, None, 40.0, -122.0, "ridb", "u4"),
+            ("ridb:1", "Paid Close", "campground", "$20", None, 47.61, -122.31, "ridb", "u1", None, None, None),
+            ("ridb:2", "Free Far", "campground", "No fee", True, 47.9, -122.6, "ridb", "u2", None, None, None),
+            ("ridb:3", "Free Close", "campground", "No fee", True, 47.62, -122.32, "ridb", "u3", None, None, None),
+            ("ridb:4", "Way Out", "campground", None, None, 40.0, -122.0, "ridb", "u4", None, None, None),
         ],
     )
     sites = camps_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=100.0)
@@ -251,8 +277,8 @@ def test_camps_near_ranks_by_true_distance_not_rounded(con: psycopg.Connection) 
     upsert_campsites(
         con,
         [
-            ("ridb:far", "Far", "campground", None, None, 47.6200, -122.30, "ridb", "u"),
-            ("ridb:near", "Near", "campground", None, None, 47.6199, -122.30, "ridb", "u"),
+            ("ridb:far", "Far", "campground", None, None, 47.6200, -122.30, "ridb", "u", None, None, None),
+            ("ridb:near", "Near", "campground", None, None, 47.6199, -122.30, "ridb", "u", None, None, None),
         ],
     )
     sites = camps_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0)
@@ -264,9 +290,35 @@ def test_prune_campsites_outside_radius_drops_only_stale_ridb_rows(con: psycopg.
     upsert_campsites(
         con,
         [
-            ("ridb:near", "Near", "campground", None, None, 47.61, -122.31, "ridb", "u"),  # ~1 km
-            ("ridb:far", "Far", "campground", None, None, 40.0, -122.3, "ridb", "u"),  # ~800 km - stale
-            ("osm:x", "OSM Far", "reported", None, None, 40.0, -122.3, "osm", "u"),  # other source, untouched
+            ("ridb:near", "Near", "campground", None, None, 47.61, -122.31, "ridb", "u", None, None, None),  # ~1 km
+            (
+                "ridb:far",
+                "Far",
+                "campground",
+                None,
+                None,
+                40.0,
+                -122.3,
+                "ridb",
+                "u",
+                None,
+                None,
+                None,
+            ),  # ~800 km - stale
+            (
+                "osm:x",
+                "OSM Far",
+                "reported",
+                None,
+                None,
+                40.0,
+                -122.3,
+                "osm",
+                "u",
+                None,
+                None,
+                None,
+            ),  # other source, untouched
         ],
     )
     deleted = prune_campsites_outside_radius(con, "ridb", 47.6, -122.3, 100.0)
@@ -283,9 +335,9 @@ def test_camps_near_limit_caps_ranked_result(con: psycopg.Connection) -> None:
     upsert_campsites(
         con,
         [
-            ("ridb:1", "Paid Close", "campground", "$20", None, 47.61, -122.31, "ridb", "u1"),
-            ("ridb:2", "Free Far", "campground", "No fee", True, 47.9, -122.6, "ridb", "u2"),
-            ("ridb:3", "Free Close", "campground", "No fee", True, 47.62, -122.32, "ridb", "u3"),
+            ("ridb:1", "Paid Close", "campground", "$20", None, 47.61, -122.31, "ridb", "u1", None, None, None),
+            ("ridb:2", "Free Far", "campground", "No fee", True, 47.9, -122.6, "ridb", "u2", None, None, None),
+            ("ridb:3", "Free Close", "campground", "No fee", True, 47.62, -122.32, "ridb", "u3", None, None, None),
         ],
     )
     sites = camps_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=100.0, limit=2)

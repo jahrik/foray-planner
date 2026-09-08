@@ -388,8 +388,8 @@ def test_camps_limit_caps_the_results(client: TestClient, con: psycopg.Connectio
     upsert_campsites(
         con,
         [
-            ("ridb:1", "Close", "campground", None, None, HOME_LAT + 0.01, HOME_LNG, "ridb", "u1"),
-            ("ridb:2", "Far", "campground", None, None, HOME_LAT + 0.05, HOME_LNG, "ridb", "u2"),
+            ("ridb:1", "Close", "campground", None, None, HOME_LAT + 0.01, HOME_LNG, "ridb", "u1", None, None, None),
+            ("ridb:2", "Far", "campground", None, None, HOME_LAT + 0.05, HOME_LNG, "ridb", "u2", None, None, None),
         ],
     )
     response = client.get("/api/camps", params={"lat": HOME_LAT, "lng": HOME_LNG, "limit": 1})

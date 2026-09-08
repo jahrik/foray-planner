@@ -260,7 +260,7 @@ def test_trails_near_annotates_nearest_campsite(con: psycopg.Connection) -> None
     upsert_trails(con, [trail])
     upsert_campsites(
         con,
-        [("ridb:1", "Camp", "campground", None, True, 47.6, -122.3, "ridb", "http://x")],
+        [("ridb:1", "Camp", "campground", None, True, 47.6, -122.3, "ridb", "http://x", None, None, None)],
     )
     trails = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=30.0)
     assert trails[0].camp_distance_km is not None
@@ -299,7 +299,7 @@ def test_trails_near_skips_camp_distance_when_disabled(con: psycopg.Connection) 
     upsert_trails(con, [trail])
     upsert_campsites(
         con,
-        [("ridb:1", "Camp", "campground", None, True, 47.6, -122.3, "ridb", "http://x")],
+        [("ridb:1", "Camp", "campground", None, True, 47.6, -122.3, "ridb", "http://x", None, None, None)],
     )
     trails = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=30.0, with_camp_distance=False)
     assert trails[0].camp_distance_km is None  # LATERAL skipped even though a camp is in range

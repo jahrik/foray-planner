@@ -68,6 +68,11 @@ class CampSite:
     distance_km: float
     source: str
     url: str
+    # RIDB `Reservable` and the nightly-USD range parsed from the fee prose (issue #306).
+    # None for OSM dispersed sites and when nothing could be parsed.
+    reservable: bool | None = None
+    fee_low: float | None = None
+    fee_high: float | None = None
 
 
 @dataclass

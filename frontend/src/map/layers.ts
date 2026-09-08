@@ -85,7 +85,7 @@ export async function loadCamps(): Promise<void> {
 // `site.url` is server-constructed (recreation.gov / openstreetmap + id), so it's a safe href.
 function campPopup(site: CampSite): HTMLElement {
   const isOsm = site.source === "osm";
-  const detail = feeLabel(site.free === true, site.fee);
+  const detail = feeLabel(site.free === true, site.fee, site.fee_low, site.fee_high);
   return buildPopup({
     title: site.name,
     lines: [`${dist(site.distance_km)} · ${detail}`],

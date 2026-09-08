@@ -10,7 +10,7 @@ from foray.sources.ingest_base import run_area_ingest
 
 _CFG = Settings(home=Home(name="Home", lat=47.6, lng=-122.3, radius_km=50.0))
 
-_ROW = ("demo:1", "Camp", "reported", None, None, 47.61, -122.31, "demo", "https://example.test")
+_ROW = ("demo:1", "Camp", "reported", None, None, 47.61, -122.31, "demo", "https://example.test", None, None, None)
 
 
 def _fetch_one(**_kw: object) -> list[tuple[object, ...]]:

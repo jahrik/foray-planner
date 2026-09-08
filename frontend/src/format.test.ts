@@ -34,4 +34,10 @@ describe("feeLabel", () => {
     expect(feeLabel(false, undefined)).toBe("cost unknown");
     expect(feeLabel(false, "")).toBe("cost unknown");
   });
+
+  it("prefers the parsed nightly range and collapses prose to 'fee varies'", () => {
+    expect(feeLabel(false, "a long paragraph about fees", 12, 20)).toBe("$12–$20");
+    expect(feeLabel(false, null, 15, 15)).toBe("$15");
+    expect(feeLabel(false, "x".repeat(60))).toBe("fee varies");
+  });
 });

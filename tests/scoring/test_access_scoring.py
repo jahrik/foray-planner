@@ -45,7 +45,9 @@ def _rank(con: psycopg.Connection) -> list:
 
 def test_region_access_reports_nearest_trailhead_and_camp(con: psycopg.Connection) -> None:
     upsert_trails(con, [_trailhead(1, LAT + 0.01, LNG)])  # ~1 km N of the cell centre
-    upsert_campsites(con, [("ridb:1", "Camp", "campground", None, True, LAT, LNG + 0.05, "ridb", "u")])
+    upsert_campsites(
+        con, [("ridb:1", "Camp", "campground", None, True, LAT, LNG + 0.05, "ridb", "u", None, None, None)]
+    )
     access = region_access(con, [("r", LAT, LNG)])
     th_km, camp_km, camp_free = access["r"]
     assert th_km is not None and th_km < 2.0
@@ -64,7 +66,9 @@ def test_remote_region_with_no_access_is_penalised(con: psycopg.Connection) -> N
     baseline = _rank(con)[0].score
     # A trailhead and a camp far outside ACCESS_FAR_KM (~15 km) of the hotspot.
     upsert_trails(con, [_trailhead(9, LAT + 1.0, LNG + 1.0)])
-    upsert_campsites(con, [("ridb:9", "Far", "campground", None, None, LAT + 1.0, LNG + 1.0, "ridb", "u")])
+    upsert_campsites(
+        con, [("ridb:9", "Far", "campground", None, None, LAT + 1.0, LNG + 1.0, "ridb", "u", None, None, None)]
+    )
     penalised = _rank(con)[0]
     assert penalised.score < baseline
     assert penalised.trailhead_km is not None and penalised.trailhead_km > 15.0

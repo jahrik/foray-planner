@@ -54,7 +54,7 @@ def camps_near(
     # and preserves the module's SQL-injection discipline. Same pattern in the other near-* reads.
     sql: LiteralString = f"""
         WITH pt AS (SELECT {GEOG_POINT} AS g)
-        SELECT id, name, kind, fee, free, lat, lng, source, url,
+        SELECT id, name, kind, fee, free, lat, lng, source, url, reservable, fee_low, fee_high,
                ST_Distance(c.geom, pt.g) / 1000.0 AS dist_km
         FROM campsites c, pt
         WHERE c.geom IS NOT NULL AND ST_DWithin(c.geom, pt.g, %s)
@@ -64,7 +64,7 @@ def camps_near(
     # Keep the unrounded distance alongside each site so ranking is exact; distance_km is
     # only rounded for display and must not be the sort key (near-equal sites would tie).
     scored: list[tuple[bool, float, CampSite]] = []
-    for site_id, name, kind, fee, free, site_lat, site_lng, source, url, dist in rows:
+    for site_id, name, kind, fee, free, site_lat, site_lng, source, url, reservable, fee_low, fee_high, dist in rows:
         if free_only and not free:
             continue
         site = CampSite(
@@ -78,6 +78,9 @@ def camps_near(
             distance_km=round(dist, 1),
             source=source,
             url=url,
+            reservable=reservable,
+            fee_low=fee_low,
+            fee_high=fee_high,
         )
         scored.append((free is not True, dist, site))
     # Free sites first (True > None/False), then nearest by true distance.

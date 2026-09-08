@@ -16,10 +16,20 @@ export function escapeXml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-/** Human-readable cost label for a campsite: "free", the raw fee string, or "cost unknown"
- * when the source gave us neither. `isFree` is passed separately because some callers carry
- * the free flag on a different object than the fee text. */
-export function feeLabel(isFree: boolean, fee: string | null | undefined): string {
+/** Human-readable cost label for a campsite. Prefers the parsed nightly range
+ * (`feeLow`/`feeHigh`, issue #306); falls back to a short raw fee string, "fee varies" when
+ * the raw fee is a paragraph of prose (RIDB ships those), or "cost unknown". `isFree` is
+ * passed separately because some callers carry the free flag on a different object. */
+export function feeLabel(
+  isFree: boolean,
+  fee: string | null | undefined,
+  feeLow?: number | null,
+  feeHigh?: number | null,
+): string {
   if (isFree) return "free";
-  return fee ? fee : "cost unknown";
+  if (feeLow != null && feeHigh != null) {
+    return feeLow === feeHigh ? `$${feeLow}` : `$${feeLow}–$${feeHigh}`;
+  }
+  if (fee) return fee.length > 40 ? "fee varies" : fee;
+  return "cost unknown";
 }
