@@ -22,7 +22,7 @@ import { initPills, syncPillsForView } from "./ui/pills";
 import { OPEN_EVENT } from "./ui/pill";
 import { refreshCurrentView } from "./views/view-run";
 import { initMonths, runDestinations } from "./views/views";
-import { initRouteBar, renderActionBar } from "./views/shortlist";
+import { initRouteBar, renderActionBar, setShortlistChangeHook } from "./views/shortlist";
 
 // Wires a plan-tab Start/Destination field: unlike the header's home search (which persists the
 // choice via /api/location), a selected suggestion here just fills the input with resolved
@@ -161,6 +161,11 @@ async function main(): Promise<void> {
   // "Plan a route" on the shortlist action bar enters the Plan mode; runPlan() reads the
   // shortlisted region ids itself (views/plan.ts) and threads them as waypoints.
   initRouteBar(() => setPlanMode(true));
+  // Clearing (or toggling) the shortlist has to repaint the rendered cards' "+ Plan / ✓ In
+  // route" state - cheap re-render from the cached payload, no refetch.
+  setShortlistChangeHook(() => {
+    if (state.view === "destinations") void runDestinations({ reuseCache: true });
+  });
   // 'change' (not 'input') so a re-run only fires on blur/enter/stepper-click, not every
   // keystroke while typing a number.
   qs("#plan-stops").addEventListener("change", () => runPlan());
