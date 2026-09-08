@@ -13,3 +13,12 @@ export function refreshCurrentView(): void {
   else if (state.view === "alerts") runAlerts();
   else if (state.view === "plan") runPlan();
 }
+
+// Repaint the open panel from its last payload without hitting the network - for a purely
+// presentational change like the km/mi toggle (issue #301 F2). Falls back to a normal (fetching)
+// run when there's no cached payload yet.
+export function rerenderCurrentView(): void {
+  if (state.view === "destinations") void runDestinations({ reuseCache: true });
+  else if (state.view === "alerts") void runAlerts({ reuseCache: true });
+  else if (state.view === "plan") void runPlan({ reuseCache: true });
+}

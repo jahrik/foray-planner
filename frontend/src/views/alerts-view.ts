@@ -14,17 +14,25 @@ import { dist, displayName, errorDetail, fireBadges, qs, rainMeta, setStatus } f
 // was in flight, not just if a newer runAlerts() call superseded this one.
 const alertsGuard = createRunGuard("alerts");
 
-export async function runAlerts(): Promise<void> {
+// See views.ts lastRegions - reused to repaint on a units toggle without a re-fetch (#301 F2).
+let lastRegions: AlertRegion[] | null = null;
+
+export async function runAlerts({ reuseCache = false }: { reuseCache?: boolean } = {}): Promise<void> {
   const isCurrent = alertsGuard.begin();
   setStatus("Checking recent activity…");
   clearMarkers();
   let regions: AlertRegion[];
-  try {
-    regions = await getJson("/api/alerts");
-  } catch (error) {
-    if (!isCurrent()) return;
-    setStatus(errorDetail(error));
-    return;
+  if (reuseCache && lastRegions) {
+    regions = lastRegions;
+  } else {
+    try {
+      regions = await getJson("/api/alerts");
+    } catch (error) {
+      if (!isCurrent()) return;
+      setStatus(errorDetail(error));
+      return;
+    }
+    lastRegions = regions;
   }
   if (!isCurrent()) return;
   const panel = qs("#panel");

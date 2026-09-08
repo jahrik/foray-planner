@@ -103,10 +103,37 @@
               aria-expanded="false"
               aria-controls="panel"
             ></button>
-            <nav class="tabs">
-              <button data-view="destinations" class="active">Destinations</button>
-              <button data-view="alerts">Fruiting now</button>
-              <button data-view="plan">🗺️ Plan route</button>
+            <nav class="tabs" role="tablist" aria-label="Result views">
+              <button
+                id="tab-destinations"
+                data-view="destinations"
+                class="active"
+                role="tab"
+                aria-selected="true"
+                aria-controls="panel"
+              >
+                Destinations
+              </button>
+              <button
+                id="tab-alerts"
+                data-view="alerts"
+                role="tab"
+                aria-selected="false"
+                aria-controls="panel"
+                tabindex="-1"
+              >
+                Fruiting now
+              </button>
+              <button
+                id="tab-plan"
+                data-view="plan"
+                role="tab"
+                aria-selected="false"
+                aria-controls="panel"
+                tabindex="-1"
+              >
+                🗺️ Plan route
+              </button>
             </nav>
             <div class="dock-status">
               <span id="status" role="status" aria-live="polite"></span>
@@ -156,7 +183,7 @@
             <div id="sheet-summary" class="sheet-summary" aria-hidden="true"></div>
             <div class="contour-rule" aria-hidden="true"></div>
           </div>
-          <aside id="panel">
+          <aside id="panel" role="tabpanel" aria-labelledby="tab-destinations" tabindex="0">
             <p class="hint">Finding your best destination…</p>
           </aside>
           <button type="button" id="dock-close" class="dock-close" aria-label="Hide results panel">✕</button>

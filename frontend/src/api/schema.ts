@@ -253,6 +253,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/destinations/places": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Region Places
+         * @description Batch companion to ``/api/destinations/{region_id}/place`` (issue #301 F7): one request
+         *     for a whole result page's card titles instead of ~one per card. Returns only the regions
+         *     whose place name is already cached - the common case, since a grid cell's centroid never
+         *     moves. Uncached regions are omitted; the caller falls back to the per-region endpoint
+         *     (which does the throttled Nominatim round-trip) for whatever is left, so a cold cache is
+         *     no slower than before and a warm one collapses ~75 requests into 1.
+         */
+        get: operations["get_region_places_api_destinations_places_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/destinations/{region_id}/place": {
         parameters: {
             query?: never;
@@ -1376,6 +1401,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FireNear"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_region_places_api_destinations_places_get: {
+        parameters: {
+            query: {
+                /** @description comma-separated region ids */
+                region_ids: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: components["schemas"]["RegionPlace"];
+                    };
                 };
             };
             /** @description Validation Error */

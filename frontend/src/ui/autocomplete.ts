@@ -38,6 +38,31 @@ export function initAutocomplete<T>(config: AutocompleteConfig<T>): void {
   const debounceMs = config.debounceMs ?? 300;
   const filter = config.filter ?? (() => true);
 
+  // WAI-ARIA combobox wiring (issue #301 F6) - the input owns the popup listbox and points at
+  // the active option via aria-activedescendant while DOM focus stays in the input.
+  const optionId = (index: number): string => `${list.id || "ac"}-opt-${index}`;
+  input.setAttribute("role", "combobox");
+  input.setAttribute("aria-autocomplete", "list");
+  input.setAttribute("aria-expanded", "false");
+  if (list.id) input.setAttribute("aria-controls", list.id);
+  list.setAttribute("role", "listbox");
+
+  function setExpanded(open: boolean): void {
+    input.setAttribute("aria-expanded", String(open));
+    if (!open) input.removeAttribute("aria-activedescendant");
+  }
+
+  function setActive(index: number, items: NodeListOf<HTMLLIElement>): void {
+    activeIndex = index;
+    items.forEach((li, position) => {
+      const current = position === index;
+      li.classList.toggle("active", current);
+      li.setAttribute("aria-selected", String(current));
+    });
+    if (index >= 0 && items[index]) input.setAttribute("aria-activedescendant", items[index].id);
+    else input.removeAttribute("aria-activedescendant");
+  }
+
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let activeIndex = -1;
   let results: T[] = [];
@@ -48,6 +73,7 @@ export function initAutocomplete<T>(config: AutocompleteConfig<T>): void {
   function close(): void {
     list.classList.remove("open");
     activeIndex = -1;
+    setExpanded(false);
     generation += 1;
     if (debounceTimer) {
       clearTimeout(debounceTimer);
@@ -58,15 +84,20 @@ export function initAutocomplete<T>(config: AutocompleteConfig<T>): void {
   function render(): void {
     list.innerHTML = "";
     activeIndex = -1;
+    input.removeAttribute("aria-activedescendant");
     results = results.filter(filter);
     if (!results.length) {
       list.classList.remove("open");
+      setExpanded(false);
       return;
     }
     results.forEach((item, index) => {
       const li = document.createElement("li");
       li.textContent = label(item);
       li.dataset.index = String(index);
+      li.id = optionId(index);
+      li.setAttribute("role", "option");
+      li.setAttribute("aria-selected", "false");
       li.onmousedown = (event) => {
         event.preventDefault();
         close();
@@ -75,6 +106,7 @@ export function initAutocomplete<T>(config: AutocompleteConfig<T>): void {
       list.appendChild(li);
     });
     list.classList.add("open");
+    setExpanded(true);
   }
 
   input.addEventListener("input", () => {
@@ -99,12 +131,10 @@ export function initAutocomplete<T>(config: AutocompleteConfig<T>): void {
     if (!items.length || !list.classList.contains("open")) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      activeIndex = Math.min(activeIndex + 1, items.length - 1);
-      items.forEach((li, index) => li.classList.toggle("active", index === activeIndex));
+      setActive(Math.min(activeIndex + 1, items.length - 1), items);
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      activeIndex = Math.max(activeIndex - 1, 0);
-      items.forEach((li, index) => li.classList.toggle("active", index === activeIndex));
+      setActive(Math.max(activeIndex - 1, 0), items);
     } else if (event.key === "Enter" && activeIndex >= 0) {
       event.preventDefault();
       const item = results[activeIndex];
@@ -118,7 +148,10 @@ export function initAutocomplete<T>(config: AutocompleteConfig<T>): void {
   });
 
   input.addEventListener("blur", () => {
-    setTimeout(() => list.classList.remove("open"), 150);
+    setTimeout(() => {
+      list.classList.remove("open");
+      setExpanded(false);
+    }, 150);
   });
 
   form.addEventListener("submit", (event) => {

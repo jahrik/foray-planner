@@ -10,9 +10,16 @@ import { circleStyle } from "../map/markers";
 import { buildPopup } from "../map/popup";
 import { dist, displayName, errorDetail, inatUrl, monthsParam, MONTHS, qs, setStatus, state } from "../state";
 
-export async function runPlan(): Promise<void> {
+export async function runPlan({ reuseCache = false }: { reuseCache?: boolean } = {}): Promise<void> {
   setStatus("Planning route…");
   clearMarkers();
+
+  // Repaint from the last plan (state.planTrip) on a units toggle rather than re-planning -
+  // keeps the km/mi flip off the network (issue #301 F2).
+  if (reuseCache && state.planTrip) {
+    renderPlan(state.planTrip);
+    return;
+  }
 
   const stopsInput = Math.round((document.getElementById("plan-stops") as HTMLInputElement).valueAsNumber);
   const maxStops = Math.max(1, Math.min(20, Number.isNaN(stopsInput) ? 5 : stopsInput));
@@ -39,7 +46,10 @@ export async function runPlan(): Promise<void> {
     return;
   }
   state.planTrip = trip;
+  renderPlan(trip);
+}
 
+function renderPlan(trip: TripPlan): void {
   const panel = qs("#panel");
   if (!trip.stops.length) {
     const reason =

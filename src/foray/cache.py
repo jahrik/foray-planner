@@ -1050,6 +1050,20 @@ def load_region_place(con: psycopg.Connection, region_id: str) -> tuple[bool, st
     return True, row[0]
 
 
+def load_region_places(con: psycopg.Connection, region_ids: list[str]) -> dict[str, str | None]:
+    """Batch form of ``load_region_place`` for a whole result page's card titles (issue #301).
+    Returns one entry per region that has a cached lookup (``place_name`` may be ``None`` - a
+    lookup that ran and found nothing notable); regions with no attempt yet are simply absent,
+    so ``region_id in result`` is the ``found`` flag."""
+    if not region_ids:
+        return {}
+    rows = con.execute(
+        "SELECT region_id, place_name FROM region_places WHERE region_id = ANY(%s)",
+        [region_ids],
+    ).fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
 def save_region_place(con: psycopg.Connection, region_id: str, place_name: str | None) -> None:
     con.execute(
         "INSERT INTO region_places (region_id, place_name) VALUES (%s, %s) ON CONFLICT (region_id) DO NOTHING",
