@@ -10,9 +10,15 @@ export type View = "destinations" | "alerts" | "plan";
 
 export type Units = "km" | "mi";
 
+// Destinations sort (issue #301): "best" is the scored ranking (default); "active" floats
+// regions with recent observations; "nearest" is straight distance. Same cards, same map -
+// just the order, applied client-side to the fetched payload.
+export type Sort = "best" | "active" | "nearest";
+
 export interface State {
   months: Set<number>;
   view: View;
+  sort: Sort;
   home: Home | null;
   markers: L.CircleMarker[];
   campMarkers: L.CircleMarker[];
@@ -31,6 +37,7 @@ export interface State {
 export const state: State = {
   months: new Set(getMonths() ?? [CURRENT_MONTH]),
   view: "destinations",
+  sort: "best",
   home: null,
   markers: [],
   campMarkers: [],

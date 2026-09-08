@@ -3,6 +3,7 @@ import type { RegionPlace, RegionScore } from "../api/types";
 import { createCardSelection, createRunGuard } from "../ui/card-select";
 import { makeActivatable, speciesChip, stopLinkPropagation } from "../ui/card-dom";
 import { whySentence } from "../ui/why";
+import { sortRegions } from "./sort";
 import {
   loadCalendarInto,
   loadCampgroundsInto,
@@ -104,6 +105,7 @@ export async function runDestinations({ reuseCache = false }: { reuseCache?: boo
     lastRegions = regions;
   }
   if (!isCurrent()) return;
+  regions = sortRegions(regions, state.sort); // never mutates lastRegions - sortRegions copies
   const panel = qs("#panel");
   if (!regions.length) {
     panel.innerHTML =
