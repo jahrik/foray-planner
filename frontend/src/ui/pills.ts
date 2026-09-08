@@ -99,6 +99,18 @@ export function initPills(): void {
     },
   });
 
+  const aerialPill = createPill({
+    label: "Aerial",
+    render: () => (isChecked("show-aerial") ? "On" : "Off"),
+    active: () => isChecked("show-aerial"),
+    onToggle: (next) => {
+      const input = checkbox("show-aerial");
+      if (!input) return;
+      input.checked = next;
+      input.dispatchEvent(new Event("change"));
+    },
+  });
+
   const campEntries: [string, string][] = [
     ["show-camps", "Campgrounds"],
     ["show-dispersed", "Dispersed"],
@@ -111,14 +123,16 @@ export function initPills(): void {
     active: () => campEntries.some(([id]) => isChecked(id)),
   });
 
-  pills = [radiusPill, monthsPill, generaPill, landPill, firePill, campingPill];
+  pills = [radiusPill, monthsPill, generaPill, landPill, firePill, aerialPill, campingPill];
   pills.forEach((pill) => row.appendChild(pill.el));
 
   // A layer checkbox lives inside a pill popover now, so its own change handler (initLayerToggles)
   // no longer implies a refresh - update the pill labels whenever one flips.
-  ["show-fire", ...landEntries.map(([id]) => id), ...campEntries.map(([id]) => id)].forEach((id) => {
-    checkbox(id)?.addEventListener("change", refreshPills);
-  });
+  ["show-fire", "show-aerial", ...landEntries.map(([id]) => id), ...campEntries.map(([id]) => id)].forEach(
+    (id) => {
+      checkbox(id)?.addEventListener("change", refreshPills);
+    },
+  );
 
   setScopeChangeHook(refreshPills);
   syncPillsForView(state.view);

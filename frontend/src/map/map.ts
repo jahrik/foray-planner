@@ -388,6 +388,24 @@ export function satelliteLabelsUrl(regionId: string): string {
 let satelliteOverlay: L.ImageOverlay | null = null;
 let satelliteLabelsOverlay: L.ImageOverlay | null = null;
 
+// The aerial fill for the selected destination is opt-in now (issue #301): selecting a region
+// no longer drops a satellite photo over it by default - the "Aerial" layer toggle does. When
+// it's on and a region is already selected, flip the overlay straight on/off without needing a
+// re-select. selectedRegionMarker is the circle selectSize() last grew to its true footprint.
+let aerialEnabled = false;
+let selectedRegionMarker: L.Circle | null = null;
+
+export function setAerialEnabled(on: boolean): void {
+  aerialEnabled = on;
+  if (!map) return;
+  const info = selectedRegionMarker && sizing.get(selectedRegionMarker);
+  if (on && selectedRegionMarker && info) {
+    showSatelliteOverlay(selectedRegionMarker, info.regionId);
+  } else {
+    clearSatelliteOverlay();
+  }
+}
+
 // Fills the selected destination's true footprint with a satellite image plus its matching
 // roads/labels overlay (so streets and city names stay readable, not just the bare photo),
 // clipped to a circle in CSS (style.css's .sat-circle-overlay) rather than requested
@@ -440,7 +458,8 @@ export function selectSize(marker: L.Circle): void {
   marker.setRadius(info.trueRadius);
   marker.setStyle({ fillOpacity: 0, color: markerPalette().purple });
   setOthersFill(marker, true);
-  showSatelliteOverlay(marker, info.regionId);
+  selectedRegionMarker = marker;
+  if (aerialEnabled) showSatelliteOverlay(marker, info.regionId);
 }
 
 // Reverts a previously selected marker back to its score-scaled preview size/opacity - called
@@ -455,6 +474,8 @@ export function deselectSize(marker: L.Circle): void {
   marker.setRadius(info.scoreRadius);
   marker.setStyle({ fillOpacity: info.restFillOpacity, color: info.baseColor });
   setOthersFill(marker, false);
+  if (selectedRegionMarker === marker) selectedRegionMarker = null;
+  clearSatelliteOverlay();
 }
 
 export function clearMarkers(): void {
@@ -468,6 +489,7 @@ export function clearMarkers(): void {
   clearPlanRoute();
   clearPrecise();
   clearSatelliteOverlay();
+  selectedRegionMarker = null;
   state.focused = null;
 }
 
