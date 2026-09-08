@@ -188,6 +188,7 @@ async function main(): Promise<void> {
   loadFire();
   initTabs();
   initRadiusPresets();
+  initSort();
   // 'change' (not 'input') so a re-run only fires on blur/enter/stepper-click, not every
   // keystroke while typing a number.
   qs("#plan-stops").addEventListener("change", () => runPlan());
@@ -282,6 +283,21 @@ function geolocateHome(): Promise<Home | null> {
       { timeout: 8000, maximumAge: 0 },
     );
   });
+}
+
+// The Destinations sort control (issue #301) - a pill popover of Best overall / Active now /
+// Nearest. Client-side reorder of the fetched payload, so it repaints from cache with no
+// network round-trip; onScopeChange keeps the pill label in sync.
+function initSort(): void {
+  qs("#sort-options")
+    .querySelectorAll<HTMLButtonElement>("button[data-sort]")
+    .forEach((button) => {
+      button.onclick = () => {
+        state.sort = (button.dataset.sort as typeof state.sort) ?? "best";
+        onScopeChange();
+        if (state.view === "destinations") void runDestinations({ reuseCache: true });
+      };
+    });
 }
 
 function initRadiusPresets(): void {

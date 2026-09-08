@@ -8,8 +8,10 @@
 import { createPill, type Pill } from "./pill";
 import { selectedGenera } from "../genera";
 import { dist, MONTHS, qs, setScopeChangeHook, state, type View } from "../state";
+import { SORT_LABEL } from "../views/sort";
 
 let pills: Pill[] = [];
+let sortPill: Pill | null = null;
 let monthsPill: Pill | null = null;
 let campingPill: Pill | null = null;
 
@@ -47,12 +49,21 @@ export function refreshPills(): void {
 // Destinations: all pills except Camping. Fruiting now (alerts): no Months (that view has no
 // month param - a fixed trailing-weeks window). Plan route: adds Camping.
 export function syncPillsForView(view: View): void {
+  if (sortPill) sortPill.el.hidden = view !== "destinations";
   if (monthsPill) monthsPill.el.hidden = view === "alerts";
   if (campingPill) campingPill.el.hidden = view !== "plan";
 }
 
 export function initPills(): void {
   const row = qs("#pills");
+
+  sortPill = createPill({
+    label: "Sort",
+    render: () => SORT_LABEL[state.sort],
+    popover: qs("#sort-options"),
+    active: () => state.sort !== "best",
+    closeOnSelect: true, // single choice - pick one and it's done
+  });
 
   const radiusPill = createPill({
     label: "Radius",
@@ -123,7 +134,7 @@ export function initPills(): void {
     active: () => campEntries.some(([id]) => isChecked(id)),
   });
 
-  pills = [radiusPill, monthsPill, generaPill, landPill, firePill, aerialPill, campingPill];
+  pills = [sortPill, radiusPill, monthsPill, generaPill, landPill, firePill, aerialPill, campingPill];
   pills.forEach((pill) => row.appendChild(pill.el));
 
   // A layer checkbox lives inside a pill popover now, so its own change handler (initLayerToggles)
