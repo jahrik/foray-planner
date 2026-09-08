@@ -266,10 +266,25 @@ table.cal,
   color: var(--muted);
   font-size: var(--text-label);
 }
-.toggle-group {
+.toggle-group,
+.layer-group {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+/* The single "Layers" pill popover: stacked groups (Public land / Camping / Other), each a
+   small heading over its row of toggle chips. */
+.layer-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 190px;
+}
+.layer-heading {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: var(--text-label);
+  font-weight: 600;
 }
 .toggle-btn {
   cursor: pointer;
