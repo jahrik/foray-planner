@@ -313,6 +313,13 @@ def _trail_polylines(payload: dict[str, Any]) -> list[tuple[str, list[tuple[floa
     return lines
 
 
+def _cell(lat: float, lng: float) -> tuple[int, int]:
+    """Grid cell for a coordinate. ``math.floor`` (not ``int``, which truncates toward zero and
+    would double-width the cell straddling the equator / prime meridian) keeps cells uniform for
+    negative longitudes - i.e. everywhere in the US."""
+    return math.floor(lat / _LINK_CELL_DEG), math.floor(lng / _LINK_CELL_DEG)
+
+
 def _link_trailheads(payload: dict[str, Any]) -> dict[str, list[str]]:
     """Trailhead row id -> ids of the trails whose geometry passes within ``_LINK_SNAP_M``.
 
@@ -324,7 +331,7 @@ def _link_trailheads(payload: dict[str, Any]) -> dict[str, list[str]]:
     grid: dict[tuple[int, int], set[int]] = defaultdict(set)
     for index, (_id, coords) in enumerate(lines):
         for lat, lng in coords:
-            grid[(int(lat / _LINK_CELL_DEG), int(lng / _LINK_CELL_DEG))].add(index)
+            grid[_cell(lat, lng)].add(index)
 
     links: dict[str, list[str]] = {}
     for element in payload.get("elements", []):
@@ -334,7 +341,7 @@ def _link_trailheads(payload: dict[str, Any]) -> dict[str, list[str]]:
         if lat is None or lng is None:
             continue
         node = (float(lat), float(lng))
-        cell_lat, cell_lng = int(node[0] / _LINK_CELL_DEG), int(node[1] / _LINK_CELL_DEG)
+        cell_lat, cell_lng = _cell(*node)
         candidates: set[int] = set()
         for d_lat in (-1, 0, 1):
             for d_lng in (-1, 0, 1):
