@@ -680,15 +680,36 @@ main {
   border-color: var(--accent);
   background: var(--bg);
 }
+/* The top three carry the recommendation - a rust edge and a raised surface set them apart
+   from the "more regions" list without a second card component. */
+.rank.hero {
+  border-left: 3px solid var(--rust);
+  background: var(--paper-2);
+}
 .rank h3 {
   margin: 0 0 4px;
-  font-size: 15px;
+  font-size: var(--text-h3);
   display: flex;
   justify-content: space-between;
 }
+.rank.hero h3 {
+  font-size: var(--text-h2);
+}
+/* The plain-language answer - the first thing read on a card, so it leads in body size and
+   full ink, above the denser stat row the serious-forager audience still wants. */
+.why {
+  margin: 2px 0 6px;
+  font-size: var(--text-body);
+  line-height: 1.5;
+  color: var(--ink);
+  max-width: 62ch;
+}
+.why:empty {
+  display: none;
+}
 .rank .meta {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-data);
 }
 /* Fire annotations (issue #227) - informational, not a claimed closure. */
 .fire-warn,

@@ -2,6 +2,7 @@ import { getJson } from "../api/client";
 import type { RegionPlace, RegionScore } from "../api/types";
 import { createCardSelection, createRunGuard } from "../ui/card-select";
 import { makeActivatable, speciesChip, stopLinkPropagation } from "../ui/card-dom";
+import { whySentence } from "../ui/why";
 import {
   loadCalendarInto,
   loadCampgroundsInto,
@@ -133,9 +134,10 @@ export async function runDestinations({ reuseCache = false }: { reuseCache?: boo
       region.region_id,
     );
     const card = document.createElement("div");
-    card.className = "rank";
+    card.className = rank < 3 ? "rank hero" : "rank";
     card.innerHTML = `
       <h3><span class="num">#${rank + 1} · ${dist(region.distance_km)}</span></h3>
+      <p class="why">${whySentence(region)}</p>
       <div class="bar"><span style="width:${(region.score_norm * 100).toFixed(0)}%"></span></div>
       <div class="meta">score <span class="num">${region.score_norm.toFixed(2)}</span> · <span class="num">${region.n_species}</span> spp · ${region.recent_count ? `<span class="num">${region.recent_count}</span> recent` : "no recent obs"}${region.elevation_m != null ? ` · elev <span class="num">${elevationLabel(region.elevation_m)}</span>` : ""}${rainMeta(region)}</div>
       ${fireBadges(region.fire_nearby)}
