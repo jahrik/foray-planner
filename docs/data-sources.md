@@ -115,10 +115,11 @@ spots" value without the license problem. Do not add iOverlander or The Dyrt.
 
 ## Esri World Imagery + labels (satellite overlay)
 
-**Role:** Fills a selected destination's true footprint with a satellite image plus its matching
-roads/labels overlay (`showSatelliteOverlay`, `frontend/src/map/map.ts`) so the ground under the
-focused circle reads sharp and bold against the rest of the map, without losing the road/city
-names the OSM tile basemap would otherwise show there.
+**Role:** An opt-in layer (the Layers pill's "Aerial imagery" toggle, issue #301 - it was
+auto-on-select before). When on, selecting a destination fills its true footprint with a
+satellite image plus a matching roads/labels overlay (`showSatelliteOverlay`,
+`frontend/src/map/map.ts`) so the ground under the focused circle reads sharp and bold against
+the rest of the map, without losing the road/city names the basemap would otherwise show there.
 
 - **Server-side, cached forever per region** (`region_satellite` table, `sources/satellite.py`).
   The frontend's two `<img>` tags request `/api/destinations/{region_id}/satellite/{image,labels}`

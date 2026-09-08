@@ -46,7 +46,7 @@ All settings come from environment variables (prefix `FORAY_`, nested delimiter 
 | `FORAY_CELL_DEG` | `0.25` | Grid cell size in degrees; changing requires a full `foray refresh` |
 | `FORAY_INGEST__SINCE_YEAR` | `2015` | How far back to pull iNat observations |
 | `FORAY_INGEST__QUALITY_GRADE` | `research` | iNat quality filter |
-| `FORAY_INGEST__RECENT_WEEKS` | `4` | Trailing window for the "Fruiting now" live signal |
+| `FORAY_INGEST__RECENT_WEEKS` | `4` | Trailing window for the "Active now" sort / `/api/alerts` live signal |
 | `FORAY_COVERAGE` | (built-in: all 50 US states) | Coverage regions for state-level ingest (JSON array) |
 | `FORAY_COUNTRIES` | (built-in: United States) | Country-level regions for single-query observation ingest (JSON array) |
 | `FORAY_INGEST_INTERVAL_HOURS` | `24` | Scheduler: hours between observation ingests |
@@ -133,6 +133,8 @@ uv run foray backfill-elevation  # fill observations.elevation_m for the backlog
 uv run foray backfill-precip     # fill observations.precip_7d_mm/30d_mm from Open-Meteo's ERA5 archive (issue #226)
 uv run foray refresh-precip      # rebuild the recent-rain-per-destination layer (Open-Meteo forecast API)
 uv run foray fire                # refresh wildfire perimeters + burn scars + MTBS severity (NIFC/MTBS ArcGIS, issue #227)
+uv run foray genera-refresh      # sync the full Fungi genus catalog from iNat (fungi_genera)
+uv run foray backfill-satellite  # pre-fetch the Esri aerial/labels raster for every region (issue #293)
 uv run foray plan                # print a start->destination trip (auto-picks destination if omitted)
 uv run foray plan --destination "Bend, OR"  # plan to a named place (or "lat,lng")
 uv run foray serve               # start the FastAPI server (--host / --port to override)
@@ -178,7 +180,7 @@ Rerun `npm run gen:api` after changing any `/api/*` route signature.
 
 ## Scoring
 
-Three primitives drive all three views:
+Three primitives drive the ranking:
 
 | Primitive | What it measures |
 |---|---|
@@ -194,8 +196,15 @@ score = S species [ w_pheno x log1p(month_count) ]
       x (1 + log1p(recent_count))      <- recency boost
 ```
 
-Scores are normalized 0..1 against the top region. The calendar view fixes the region axis and
-shows per-month totals. The alerts view fixes species + recency, ignoring the month selection.
+Scores are normalized 0..1 against the top region. The "Best overall" sort uses this order;
+"Nearest" re-sorts by distance client-side; "Active now" swaps in `/api/alerts` entirely
+(species seen in the trailing weeks, month selection ignored). The Details view's Calendar tab
+fixes the region axis and shows per-month totals.
+
+**`pheno_trend`** (`scoring/trend.py`, issue #301): a coarse per-region label for the *top*
+genus - `peak` / `building` / `past-peak` / `off` - from where the selected months fall in that
+genus's monthly histogram for the region. Informational only; **not** an input to `score`. The
+frontend's card "why" sentence is the only consumer.
 
 ---
 
@@ -213,6 +222,7 @@ shows per-month totals. The alerts view fixes species + recency, ignoring the mo
 | `public_land` | `id` (`"{source}:{source_id}"`) | BLM/USFS ownership polygons - GeoJSON text + bbox columns |
 | `trails` | `id` (`"{source}:{osm_type}/{osm_id}"`) | OSM trails/routes/trailheads - GeoJSON text + bbox columns |
 | `fire_perimeters` | `id` (`"{source_key}:{feature_id}"`) | Active wildfire perimeters/points + recent burn scars (NIFC/MTBS, issue #227) |
+| `region_satellite` | `region_id` | Cached Esri aerial + labels rasters per region (issue #293) - stitched from tile pyramids, backfilled by `foray backfill-satellite` |
 | `ingest_log` | - | Per-run progress records for refresh stages |
 | `app_location` | `device_id` | Per-device "Set location" override |
 | `app_genera` | `(device_id, taxon_id)` | Per-device selected target genera |
