@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS trails (
     length_km   DOUBLE PRECISION,    -- path/route rows: great-circle length of the full polyline
     attrs       TEXT                 -- path/route rows: JSON of the OSM detail tags (surface,
                                      -- sac_scale, trail_visibility, network, operator, informal),
-                                     -- stored as text like `geojson` - the map/Details view read it
+                                     -- stored as text like `geojson` - the map/Details view reads it
 );
 
 -- Wildfire perimeters + points (issue #227). An active fire and a recent burn scar are the
