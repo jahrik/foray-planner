@@ -23,8 +23,6 @@ const MOBILE_MQ = "(max-width: 780px)";
 let sheetEl: HTMLElement;
 let handleEl: HTMLButtonElement;
 let panelEl: HTMLElement;
-let routeBarEl: HTMLElement;
-let dockCloseEl: HTMLElement;
 let mainEl: HTMLElement;
 
 let enabled = false;
@@ -221,10 +219,7 @@ function onPopstate(): void {
 function enable(): void {
   if (enabled) return;
   enabled = true;
-  // #panel and the route-bar both live in the desktop dock; the mobile sheet takes them over,
-  // route-bar pinned last so it sits at the sheet's bottom edge.
   if (panelEl.parentElement !== sheetEl) sheetEl.appendChild(panelEl);
-  if (routeBarEl.parentElement !== sheetEl) sheetEl.appendChild(routeBarEl);
   document.body.dataset.sheet = "on";
   current = "collapsed";
   sheetEl.dataset.detent = "collapsed";
@@ -244,9 +239,11 @@ function disable(): void {
   delete document.body.dataset.sheet;
   sheetEl.style.transform = "";
   sheetEl.style.transition = "";
-  // back to the desktop dock, in order: … #panel, #route-bar, #dock-close
-  if (panelEl.parentElement !== mainEl) mainEl.insertBefore(panelEl, dockCloseEl);
-  if (routeBarEl.parentElement !== mainEl) mainEl.insertBefore(routeBarEl, dockCloseEl);
+  // Back to the desktop dock, before #route-bar so the column order (panel, route-bar) holds
+  // after a mobile <-> desktop resize cycle.
+  if (panelEl.parentElement !== mainEl) {
+    mainEl.insertBefore(panelEl, document.getElementById("route-bar"));
+  }
   // Unwind the sheet-only history entry so a later Back press isn't silently consumed popping
   // stale sheet state after a resize/orientation switch to desktop.
   if (ownsHistoryEntry) {
@@ -260,8 +257,6 @@ export function initSheet(): void {
   sheetEl = qs("#sheet");
   handleEl = qs<HTMLButtonElement>("#sheet-handle");
   panelEl = qs("#panel");
-  routeBarEl = qs("#route-bar");
-  dockCloseEl = qs("#dock-close");
   // #panel's desktop home is the slide-out dock (issue #297); enable() moves it into #sheet
   // for the mobile bottom sheet and disable() moves it back here.
   mainEl = qs("#dock");
