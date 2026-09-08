@@ -48,6 +48,12 @@ class RegionScore:
     precip_recent_30d_mm: float | None = None
     # Nearby active fires (warnings) and recent burn scars (morel opportunities), issue #227.
     fire_nearby: list[FireNear] = field(default_factory=list)
+    # Nearest trailhead / campground to the region cell (issue #306), km. Feeds the ``access``
+    # multiplier on ``score`` and the "trailhead 1.2 km" clause in the card why-sentence.
+    # None until the trail / camp layer has been ingested for the area.
+    trailhead_km: float | None = None
+    camp_km: float | None = None
+    camp_is_free: bool | None = None
 
 
 @dataclass

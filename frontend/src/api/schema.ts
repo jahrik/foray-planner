@@ -848,6 +848,12 @@ export interface components {
              * @default []
              */
             fire_nearby: components["schemas"]["FireNear"][];
+            /** Trailhead Km */
+            trailhead_km?: number | null;
+            /** Camp Km */
+            camp_km?: number | null;
+            /** Camp Is Free */
+            camp_is_free?: boolean | null;
         };
         /**
          * SpeciesHit

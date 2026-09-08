@@ -32,7 +32,7 @@ from foray.geo import (
 )
 from foray.scoring._sql import genus_name_map, sql_in, taxon_filter
 from foray.scoring.models import FireNear, RegionScore, SpeciesHit
-from foray.scoring.queries import fire_near
+from foray.scoring.queries import fire_near, region_access
 from foray.scoring.regions import recent_counts, region_elevations, region_precip_obs
 from foray.scoring.trend import phenology_trend
 
@@ -47,6 +47,14 @@ BURN_SCAR_BOOST_YEAR1 = 1.6  # year-1 scar (heaviest burn-morel flush)
 BURN_SCAR_BOOST_YEAR2 = 1.25  # year-2 scar (still good)
 # High-severity scars are poor morel producers - low/moderate/unknown severity only.
 _BOOSTABLE_SEVERITY = {None, "low", "moderate"}
+
+# --- Access scoring inputs (issue #306) ---------------------------------------------------
+# "Park -> hike -> fungi" is the app's whole premise, so how reachable a hotspot is nudges its
+# score - same conservative, multiplicative, tune-later footing as fire / rain / elevation.
+ACCESS_NEAR_KM = 3.0  # a trailhead this close -> you can park and walk in -> small boost
+ACCESS_TRAILHEAD_BONUS = 1.08
+ACCESS_FAR_KM = 15.0  # no trailhead AND no campground within this -> hard to even get to -> penalty
+ACCESS_REMOTE_PENALTY = 0.85
 
 
 def _rank_candidates(
@@ -261,6 +269,37 @@ def _apply_fire(con: psycopg.Connection, results: list[RegionScore], *, taxon_id
     results.sort(key=lambda region: region.score, reverse=True)
 
 
+def _apply_access(con: psycopg.Connection, results: list[RegionScore]) -> None:
+    """Fold the trail/camp access signals (issue #306) into an already-ranked list, in place.
+
+    A hotspot with a trailhead within ``ACCESS_NEAR_KM`` gets a small boost; one with neither a
+    trailhead nor a campground within ``ACCESS_FAR_KM`` gets a penalty. Records the nearest
+    trailhead / campground distances on each region for the card why-sentence. Re-normalizes and
+    re-sorts. A no-op when the trail and camp caches are both empty for the area."""
+    if not results:
+        return
+    access = region_access(con, [(r.region_id, r.center_lat, r.center_lng) for r in results])
+    if not any(th is not None or camp is not None for th, camp, _ in access.values()):
+        return  # neither layer ingested for this area - don't penalise every region as "remote"
+    for region in results:
+        trailhead_km, camp_km, camp_is_free = access.get(region.region_id, (None, None, None))
+        region.trailhead_km = trailhead_km
+        region.camp_km = camp_km
+        region.camp_is_free = camp_is_free
+        near_trailhead = trailhead_km is not None and trailhead_km <= ACCESS_NEAR_KM
+        no_trailhead = trailhead_km is None or trailhead_km > ACCESS_FAR_KM
+        no_camp = camp_km is None or camp_km > ACCESS_FAR_KM
+        if no_trailhead and no_camp:
+            region.score *= ACCESS_REMOTE_PENALTY
+        elif near_trailhead:
+            region.score *= ACCESS_TRAILHEAD_BONUS
+
+    top_score = max((region.score for region in results), default=0.0)
+    for region in results:
+        region.score_norm = round(region.score / top_score, 4) if top_score else 0.0
+    results.sort(key=lambda region: region.score, reverse=True)
+
+
 def rank_destinations(
     con: psycopg.Connection,
     *,
@@ -294,6 +333,7 @@ def rank_destinations(
         keep=keep,
     )
     _apply_fire(con, results, taxon_ids=taxon_ids)
+    _apply_access(con, results)
     return results
 
 
@@ -349,4 +389,5 @@ def rank_destinations_corridor(
         keep=keep,
     )
     _apply_fire(con, results, taxon_ids=taxon_ids)
+    _apply_access(con, results)
     return results
