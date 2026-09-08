@@ -2,7 +2,9 @@
 
 The planner's question is "shortest walk from where I can park to where they're fruiting", so this
 module pulls the walkable network near home from OSM and caches it as ``trails`` rows the map and
-scoring read directly. One ODbL-licensed Overpass query gathers three element classes:
+scoring read directly. One ODbL-licensed Overpass request gathers three element classes (the
+way/node union and the route relations need separate ``out geom`` statements - see
+``_trails_query``):
 
 * **Paths** (``kind='path'``) - backcountry/trail ways (``highway=path``), cached as a
   ``LineString`` polyline. We deliberately *exclude* ``highway=footway``: it is dominated by urban
@@ -87,10 +89,15 @@ def _trails_query(lat: float, lng: float, radius_m: float) -> str:
         "[out:json][timeout:180];"
         "("
         f'way["highway"="path"]({around});'
-        f'relation["route"="hiking"]({around});'
         f'node["highway"="trailhead"]({around});'
         ");"
         "out geom tags;"
+        # Relations need their own `out geom`: inside a union `out geom` a route relation comes
+        # back with only `bounds` and no members, so `_parse_element` can never stitch it and
+        # `kind='route'` rows silently never appear (issue #306). A dedicated statement returns
+        # every member way with its geometry.
+        f'relation["route"="hiking"]({around});'
+        "out geom;"
     )
 
 
@@ -108,8 +115,10 @@ def _network_query(node_id: int, *, timeout_s: int = 25) -> str:
         f"[out:json][timeout:{timeout_s}];"
         f"node(id:{node_id});"
         'way(bn)["highway"]->.segs;'
-        '(.segs; rel(bw.segs)["route"="hiking"];);'
-        "out geom tags;"
+        ".segs out geom tags;"
+        # Its own `out geom` for the relation - a shared one drops members (issue #306).
+        'rel(bw.segs)["route"="hiking"];'
+        "out geom;"
     )
 
 
@@ -125,10 +134,13 @@ def _trails_query_bbox(min_lat: float, min_lng: float, max_lat: float, max_lng: 
         f"[out:json][timeout:{timeout_s}];"
         "("
         f'way["highway"="path"]{bbox};'
-        f'relation["route"="hiking"]{bbox};'
         f'node["highway"="trailhead"]{bbox};'
         ");"
         "out geom tags;"
+        # See `_trails_query`: a union `out geom` drops relation members, so route relations
+        # get their own statement (issue #306).
+        f'relation["route"="hiking"]{bbox};'
+        "out geom;"
     )
 
 
