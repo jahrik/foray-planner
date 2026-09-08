@@ -5,7 +5,7 @@
 import { currentTheme, setTiles, updateHome } from "../map/map";
 import { getLargeText, setLargeText, setTheme, setUnits } from "../prefs";
 import { qs, state, type Units } from "../state";
-import { refreshCurrentView } from "../views/view-run";
+import { rerenderCurrentView } from "../views/view-run";
 
 export function initTheme(): void {
   const toggle = qs<HTMLButtonElement>("#theme-toggle");
@@ -61,7 +61,8 @@ export function initUnits(): void {
     apply(next);
     // updateHome() (in apply) only repaints the search-bar readout. The destination / alert /
     // plan cards already on screen were rendered in the old unit and stay stale until the next
-    // scope change - re-run the open view so every distance / elevation / rainfall flips now.
-    refreshCurrentView();
+    // scope change - repaint the open view from its cached payload so every distance / elevation
+    // / rainfall flips now, without the toggle depending on a network round-trip (#301 F2).
+    rerenderCurrentView();
   };
 }

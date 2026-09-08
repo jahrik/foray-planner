@@ -14,6 +14,7 @@ from foray.api.deps import get_pool, get_state, region_center, require_idle
 from foray.api.state import AppState
 from foray.api_models import CampSite, FireNear, LandUnit, RegionPlace, Trail, TrailPath
 from foray.cache import load_region_place as db_load_region_place
+from foray.cache import load_region_places as db_load_region_places
 from foray.cache import load_region_satellite as db_load_region_satellite
 from foray.cache import save_region_place as db_save_region_place
 from foray.cache import save_region_satellite as db_save_region_satellite
@@ -105,6 +106,27 @@ def get_fire(
             conn, lat=center_lat, lng=center_lng, radius_km=radius_km, status=status, include_geometry=True
         )
     return [FireNear.model_validate(fire) for fire in fires]
+
+
+@router.get("/api/destinations/places")
+def get_region_places(
+    region_ids: str = Query(..., description="comma-separated region ids"),
+    state: AppState = Depends(get_state),
+    pool: ConnectionPool = Depends(get_pool),
+) -> dict[str, RegionPlace]:
+    """Batch companion to ``/api/destinations/{region_id}/place`` (issue #301 F7): one request
+    for a whole result page's card titles instead of ~one per card. Returns only the regions
+    whose place name is already cached - the common case, since a grid cell's centroid never
+    moves. Uncached regions are omitted; the caller falls back to the per-region endpoint
+    (which does the throttled Nominatim round-trip) for whatever is left, so a cold cache is
+    no slower than before and a warm one collapses ~75 requests into 1."""
+    require_idle(state)
+    ids = [part.strip() for part in region_ids.split(",") if part.strip()]
+    if not ids:
+        return {}
+    with pool.connection() as conn:
+        cached = db_load_region_places(conn, ids)
+    return {region_id: RegionPlace(place_name=name) for region_id, name in cached.items()}
 
 
 @router.get("/api/destinations/{region_id}/place")

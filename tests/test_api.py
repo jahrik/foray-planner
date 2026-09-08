@@ -521,6 +521,27 @@ def test_region_place_caches_a_negative_result(client: TestClient, monkeypatch: 
     assert len(calls) == 1
 
 
+def test_region_places_batch_returns_only_cached(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_notable_place_name(lat: float, lng: float, *, client: object = None) -> str:
+        return "Mt. Hood National Forest"
+
+    monkeypatch.setattr("foray.api.geocode.notable_place_name", fake_notable_place_name)
+    # Warm the cache for one region only.
+    client.get("/api/destinations/95_-245/place")
+
+    response = client.get("/api/destinations/places", params={"region_ids": "95_-245,99_-249"})
+
+    assert response.status_code == 200
+    # The uncached region is simply absent - the caller falls back to the per-region endpoint.
+    assert response.json() == {"95_-245": {"place_name": "Mt. Hood National Forest"}}
+
+
+def test_region_places_batch_empty_ids_is_empty(client: TestClient) -> None:
+    response = client.get("/api/destinations/places", params={"region_ids": " , "})
+    assert response.status_code == 200
+    assert response.json() == {}
+
+
 def test_plan_route(client: TestClient) -> None:
     response = client.get("/api/plan", params={"months": "4", "require_free_camp": "false", "max_stops": 1})
     assert response.status_code == 200

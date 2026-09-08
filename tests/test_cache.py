@@ -21,6 +21,7 @@ from foray.cache import (
     list_selected_genera,
     load_genera,
     load_region_place,
+    load_region_places,
     load_region_satellite,
     mark_revalidated,
     observation_ids_for_genus,
@@ -467,6 +468,21 @@ def test_save_region_place_keeps_first_result_on_reinsert(con: psycopg.Connectio
     save_region_place(con, "425_-1099", "Something Else")
 
     assert load_region_place(con, "425_-1099") == (True, "Mt. Hood National Forest")
+
+
+def test_load_region_places_batch_returns_only_resolved(con: psycopg.Connection) -> None:
+    save_region_place(con, "425_-1099", "Mt. Hood National Forest")
+    save_region_place(con, "426_-1099", None)  # looked up, nothing notable
+
+    result = load_region_places(con, ["425_-1099", "426_-1099", "999_-999"])
+
+    # Unresolved region is absent (so `region_id in result` is the "found" flag); a resolved
+    # negative is present with a None value.
+    assert result == {"425_-1099": "Mt. Hood National Forest", "426_-1099": None}
+
+
+def test_load_region_places_empty_input(con: psycopg.Connection) -> None:
+    assert load_region_places(con, []) == {}
 
 
 def test_load_region_satellite_missing_returns_none(con: psycopg.Connection) -> None:

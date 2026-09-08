@@ -74,7 +74,12 @@ const phenoTitle = (pct: number, monthCount: number, allMonths: boolean): string
 // one has started, rather than touching the panel or the map at all.
 const destinationsGuard = createRunGuard("destinations");
 
-export async function runDestinations(): Promise<void> {
+// Last successful /api/destinations payload, kept so a purely presentational change (the km/mi
+// toggle - issue #301 F2) can repaint the cards from it instead of re-fetching, which would
+// make the toggle depend on the network and briefly clear markers on a transient failure.
+let lastRegions: RegionScore[] | null = null;
+
+export async function runDestinations({ reuseCache = false }: { reuseCache?: boolean } = {}): Promise<void> {
   const isCurrent = destinationsGuard.begin();
   setStatus("Ranking…");
   clearMarkers();
@@ -82,15 +87,20 @@ export async function runDestinations(): Promise<void> {
   // there's no actual month restriction, so the phenology chip's %/tooltip need different wording.
   const allMonths = state.months.size === 0 || state.months.size === 12;
   let regions: RegionScore[];
-  try {
-    regions = await getJson("/api/destinations", { query: { months: monthsParam() } });
-  } catch (error) {
-    // Superseded either by a newer runDestinations() call or by the user switching away from
-    // the Destinations tab entirely while this fetch was in flight - either way, whoever owns
-    // #panel/the map now shouldn't have their state clobbered by a stale response.
-    if (!isCurrent()) return;
-    setStatus(errorDetail(error));
-    return;
+  if (reuseCache && lastRegions) {
+    regions = lastRegions;
+  } else {
+    try {
+      regions = await getJson("/api/destinations", { query: { months: monthsParam() } });
+    } catch (error) {
+      // Superseded either by a newer runDestinations() call or by the user switching away from
+      // the Destinations tab entirely while this fetch was in flight - either way, whoever owns
+      // #panel/the map now shouldn't have their state clobbered by a stale response.
+      if (!isCurrent()) return;
+      setStatus(errorDetail(error));
+      return;
+    }
+    lastRegions = regions;
   }
   if (!isCurrent()) return;
   const panel = qs("#panel");
@@ -298,26 +308,43 @@ export async function runDestinations(): Promise<void> {
   }
 
   // Card titles start as rank + distance only; each card's notable-place name (issue #206)
-  // loads afterward, one region at a time rather than all N in parallel - Nominatim's usage
-  // policy caps requests at ~1/s (the backend throttles too, see geocode._throttle, but no
-  // sense firing a burst of requests this run will just make the backend queue up anyway).
-  // Cached regions (region_places) resolve near-instantly, so this only visibly staggers on a
-  // cold cache. Fire-and-forget: runDestinations() itself doesn't wait on card titles.
+  // loads afterward. One batch request pulls every title already cached server-side (the
+  // common case - a grid cell's centroid never moves, so region_places fills in fast); only
+  // the uncached remainder falls back to the per-region endpoint, still one at a time because
+  // that path does the throttled Nominatim round-trip (~1/s, see geocode._throttle). So a cold
+  // cache is no slower than the old per-card loop and a warm one is a single request (#301 F7).
+  // Fire-and-forget: runDestinations() itself doesn't wait on card titles.
   void (async () => {
-    for (const { region, rank, numSpan } of titleTargets) {
+    const pending = new Map(titleTargets.map((target) => [target.region.region_id, target]));
+    const setTitle = (target: (typeof titleTargets)[number], placeName: string): void => {
+      target.numSpan.textContent = `#${target.rank + 1} · ${placeName} · ${dist(target.region.distance_km)}`;
+    };
+    try {
+      const places = await getJson("/api/destinations/places", {
+        query: { region_ids: [...pending.keys()].join(",") },
+      });
+      if (!isCurrent()) return;
+      for (const [regionId, place] of Object.entries(places)) {
+        const target = pending.get(regionId);
+        if (!target) continue;
+        if (place.place_name) setTitle(target, place.place_name);
+        pending.delete(regionId); // cached (a null place_name means "nothing notable" - don't re-query)
+      }
+    } catch {
+      // batch failed - fall through and resolve everything the per-region way
+    }
+    for (const target of pending.values()) {
       if (!isCurrent()) return;
       let place: RegionPlace;
       try {
         place = await getJson("/api/destinations/{region_id}/place", {
-          path: { region_id: region.region_id },
+          path: { region_id: target.region.region_id },
         });
       } catch {
         continue; // best-effort - leave this card's title as rank + distance
       }
       if (!isCurrent()) return;
-      if (place.place_name) {
-        numSpan.textContent = `#${rank + 1} · ${place.place_name} · ${dist(region.distance_km)}`;
-      }
+      if (place.place_name) setTitle(target, place.place_name);
     }
   })();
 }

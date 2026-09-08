@@ -39,10 +39,40 @@ function initPlanPlaceField(inputId: string, listId: string, formId: string): vo
 }
 
 function initTabs(): void {
-  document.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((button) => {
+  const tabs = [...document.querySelectorAll<HTMLButtonElement>(".tabs button")];
+  const panel = qs("#panel");
+
+  const activate = (button: HTMLButtonElement, moveFocus: boolean): void => {
+    tabs.forEach((other) => {
+      const selected = other === button;
+      other.classList.toggle("active", selected);
+      other.setAttribute("aria-selected", String(selected));
+      other.tabIndex = selected ? 0 : -1; // roving tabindex - one stop for the whole tablist
+    });
+    panel.setAttribute("aria-labelledby", button.id);
+    if (moveFocus) button.focus();
+  };
+
+  tabs.forEach((button, index) => {
+    // Left/Right (and Home/End) move between tabs per the WAI-ARIA tabs pattern; the browser's
+    // native click still fires on Enter/Space, which runs the onclick below.
+    button.addEventListener("keydown", (event) => {
+      const keys: Record<string, number> = {
+        ArrowLeft: (index - 1 + tabs.length) % tabs.length,
+        ArrowRight: (index + 1) % tabs.length,
+        Home: 0,
+        End: tabs.length - 1,
+      };
+      const target = keys[event.key];
+      if (target === undefined) return;
+      const next = tabs[target];
+      if (!next) return;
+      event.preventDefault();
+      next.focus(); // activate() runs with moveFocus:false from onclick, so move focus here
+      next.click();
+    });
     button.onclick = () => {
-      document.querySelectorAll(".tabs button").forEach((other) => other.classList.remove("active"));
-      button.classList.add("active");
+      activate(button, false);
       state.view = (button.dataset.view as typeof state.view) ?? "destinations";
 
       // Plan-route fields are a query form, not map filters (issue #297) - shown in the dock /
