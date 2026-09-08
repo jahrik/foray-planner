@@ -104,17 +104,27 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
 - `src/foray/scoring/` package (was one `scoring.py`; its `__init__.py` re-exports the public
   surface so `from foray.scoring import ...` and `foray.scoring.<name>` keep working):
   - `models.py` - the result dataclasses (`SpeciesHit`, `RegionScore`, `CampSite`, `LandUnit`,
-    `Trail`, `TrailPath`, `Stop`, `TripPlan`); mirrored by `api_models.py`.
+    `Trail`, `TrailPath`, `Stop`, `TripPlan`); mirrored by `api_models.py`. `RegionScore` carries
+    `pheno_trend` (see `trend.py`).
   - `regions.py` - `build_phenology` (materializes `regions` + `phenology`) plus the
     materialized-table helpers (`region_elevations`, `region_precip_obs`, ...).
   - `ranking.py` - `rank_destinations` / `rank_destinations_corridor` (fix months -> rank
     regions).
+  - `trend.py` - `phenology_trend`: for each ranked region's **top** genus, classifies where the
+    selected months sit in that genus's local season - `peak` / `building` / `past-peak` / `off`,
+    from its month-by-month observation histogram for the region. Coarse, informational only - it
+    is **not** an input to the score; the frontend's card "why" sentence uses it (issue #301).
   - `queries.py` - the point-and-radius read repository: `camps_near`, `land_near`,
     `trails_near`, `get_trail`, `nearest_trail`, `place_calendar`, `recent_observations`,
     `alerts` (includes `place_guess` / `uri` / `obscured` per obs), `precise_observations`.
   - `planner.py` - `plan_route` (start -> destination corridor trip: stops along the
     straight-line buffer, each annotated with a nearby camp *and* trail, ordered by progress;
     auto-picks a destination when the caller doesn't - see "no real road routing yet" below).
+    Optional `waypoints` (ordered region ids, from the frontend's "+ Plan" shortlist, issue #301)
+    are threaded in as **required** stops - never dropped for score, a missing free camp, or an
+    over-long leg; the corridor widens to include every pick and, with no explicit destination,
+    the trip runs to the farthest waypoint. `GET /api/plan?waypoints=` bounds-checks each id's
+    implied cell centre before the corridor math.
   - `_sql.py` - the SQL fragments shared by the three query modules (grid binning
     `BINNED`, the decoy-aware center expressions, the `taxon_id` / `IN (...)` helpers,
     `genus_name_map`).
@@ -141,8 +151,9 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
 - `src/foray/logging_config.py` - `setup_logging(level)` (env `FORAY_LOG_LEVEL`, default INFO),
   called by both the CLI group callback and `create_app`.
 - `src/foray/cli.py` - Click CLI: `foray ingest | camps | land | dispersed | trails | refresh |
-  revalidate | resync | backfill-elevation | backfill-precip | refresh-precip | fire | plan |
-  serve | openapi`. `ingest --all-regions` is what the scheduler runs. `backfill-elevation` fills
+  revalidate | resync | genera-refresh | backfill-elevation | backfill-precip | refresh-precip |
+  backfill-satellite | fire | plan | serve | openapi`. `ingest --all-regions` is what the
+  scheduler runs. `backfill-elevation` fills
   `observations.elevation_m` for the backlog (ingest enriches new rows inline via Open-Meteo);
   destination cards show the region's mean. `backfill-precip` does the same for
   `observations.precip_7d_mm` / `precip_30d_mm` (antecedent rainfall, issue #226, ERA5 archive);
@@ -164,43 +175,74 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   rate-limits it), and `FORAY_PRECIP_INTERVAL_HOURS` (default 24 - rain changes far faster than
   the 168h layers), and `FORAY_FIRE_INTERVAL_HOURS` (default 24 - perimeter data updates ~daily).
 - `frontend/` - the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern
-  (issue #242 Part 2 broke the big files up and grouped them into `src/{map,ui,views}/`
-  subfolders). Roughly: `src/state.ts` (shared `State`, `qs()`/`setStatus()` helpers),
-  `src/prefs.ts` (the 3 persisted `localStorage` prefs), `src/map/map.ts` (Leaflet init,
-  theme/tile switching, marker palette, `clear*()` helpers, `showSatelliteOverlay` - see below),
-  `src/map/layers.ts` (camps/land/trails/precise fetch + render), `src/map/popup.ts` /
-  `src/map/markers.ts` / `src/map/layer-lifecycle.ts` (map primitives), `src/map/sheet.ts`
-  (mobile bottom sheet), `src/views/views.ts` + `src/views/alerts-view.ts` +
-  `src/views/destination-tabs.ts` (the destinations + alerts panels and the per-card detail
-  tabs), `src/views/plan.ts` (route planning UI + GPX/JSON export), `src/views/view-run.ts`
-  (`refreshCurrentView` - the single "re-run the open panel" owner), `src/ui/card-select.ts` /
-  `src/ui/card-dom.ts` / `src/ui/lazy-panel.ts` / `src/ui/autocomplete.ts` (shared UI
-  primitives), `src/ui/ui-prefs.ts` + `src/ui/layer-toggles.ts` (header toggle wiring),
-  `src/refresh.ts` (SSE refresh + set-location), and `src/main.ts` (DOM wiring/orchestration).
-  `src/api/` holds the typed client (`openapi-fetch`, in `client.ts`: `getJson` / `postJson` /
-  `deleteJson` throw an `ApiError` on non-2xx, and `openRefreshStream` is the typed SSE reader
-  for `/api/refresh/stream`) + `schema.ts` generated from the backend's OpenAPI via
-  `openapi-typescript` - `npm run gen:api` regenerates both; CI fails if that produces a diff,
-  so `schema.ts` never drifts from the actual API. Every API call goes through `client.ts` - no
-  raw `fetch` (place-search autocomplete is `GET /api/location/search`, proxied server-side,
-  issue #145). Vitest covers the pure helpers (`*.test.ts` beside the source); `npm test` runs
-  in `just frontend`. `GET /api/coverage` exists on the backend (coverage regions + their
-  last-ingest freshness) but has no frontend consumer yet. Builds into `../src/foray/web/dist`. A
-  **light/dark theme toggle** is `data-theme`-driven with a `localStorage` preference (default
-  **dark**); the basemap is always OSM raster tiles, CSS-inverted (`invert() hue-rotate()`) for
-  dark mode rather than a separate dark tileset - see `map.ts`'s `TILE_URL` comment for why.
-  Selecting a destination (`selectSize` in `map.ts`) fills its true footprint with an Esri World
-  Imagery raster plus a matching transparent roads/labels overlay (`showSatelliteOverlay`, its
-  own Leaflet pane between the tile and vector overlay panes so the circle's ring/markers/trails
-  still draw on top, clipped to a circle in CSS rather than requested pre-clipped). The frontend
-  just requests `/api/destinations/{region_id}/satellite/{image,labels}`; the backend
-  (`sources/satellite.py`, `region_satellite` table, `foray backfill-satellite`) stitches both
-  rasters from Esri's real XYZ tile pyramids rather than the dynamic `MapServer/export` renderer
-  - see docs/data-sources.md and the **ArcGIS/Esri fetches** convention below for why that
-  distinction matters. Fetched once per region and never re-requested on zoom (Leaflet re-scales
-  the one raster for free). In `views.ts`, selection also kicks off all four detail-tab fetches
-  (Calendar/Photos/Trails/Campgrounds) in the background via their existing `createLazyLoader`s -
-  a tab click after that just reveals already-loaded content.
+  into `src/{map,ui,views,api}/` subfolders. The #301 redesign reshaped the UI into one
+  answer-first flow (no tabs); the pieces:
+  - `src/tokens.css` - the visual identity (issue #301): a spore-print colour palette
+    (`--rust` / `--purple` / `--moss` / `--flush` reserved for recency / `--spore` for
+    verified-location pins) and a ~1.25 modular type scale. Legacy token names
+    (`--bg`/`--panel`/`--accent`/...) are remapped onto it so `style.css` reskins without a
+    sweep; large-text mode scales the `--text-*` tokens here. Fraunces (display) + IBM Plex Sans
+    (body/data) are self-hosted via `@fontsource-variable`, bundled into the build, no CDN.
+  - `src/state.ts` - the one flat `state` object; its `State` type is `MapState & ScopeState &
+    UiState` (Leaflet handles / scoping inputs / display prefs). `View` is `"destinations" |
+    "plan"`. Plus `qs()` / `setStatus()` / the scope-change hook and small formatters.
+  - `src/prefs.ts` - the persisted `localStorage` prefs (theme / units / text-size / months /
+    genera).
+  - `src/views/views.ts` - the ranked-list flow. `runDestinations()` fetches `/api/destinations`
+    and, when `state.sort === "active"`, delegates to `runActiveNow()` (the old "Fruiting now"
+    tab: fetches `/api/alerts`, same card shell). `buildResultCard` (in `ui/card-dom.ts`) is the
+    one card template both branches render through; `addCard()` plots the marker + wires
+    select/Details/shortlist; `collapsibleRankList()` keeps the top 3 as hero cards and collapses
+    the rest behind "Show N more regions". `sort.ts` holds the `Sort` labels/order.
+  - `src/views/details.ts` - the Details view (per-region Calendar / Photos / Trails /
+    Campgrounds tabs, full ARIA tab pattern), swapped into `#panel` from a card's "Details"
+    button; a back button restores the list from cache. `destination-tabs.ts` holds the four tab
+    loaders (`createLazyLoader`-guarded).
+  - `src/views/shortlist.ts` - the route shortlist. "+ Plan" on a card adds a region id; the
+    `#route-bar` at the panel's foot ("Plan a road trip" / "N spots picked") enters Plan mode,
+    and `views/plan.ts`'s `runPlan()` sends the picks as `/api/plan?waypoints=`.
+  - `src/views/plan.ts` - the route-planning UI (form + `TripPlan` render + GPX/JSON export).
+    `src/views/view-run.ts` - `refreshCurrentView` / `rerenderCurrentView`, the single
+    "re-run the open panel" owner (now just `plan` vs. everything-else).
+  - `src/ui/why.ts` - `whySentence`: the plain-language line leading each card, synthesised from
+    the `/api/destinations` payload alone (top genus + its `pheno_trend` phrase, in-window record
+    count, recent-rain state, a burn-scar / active-fire clause when relevant) - no extra fetch.
+  - `src/ui/pills.ts` - the filter-pill row: **Sort / Radius / Months / Genera / Layers** (5
+    pills; issue #301 folded the 8 old land/camp/fire/aerial toggles into one "Layers" popover).
+    `src/ui/pill.ts` is the popover primitive. `src/ui/ui-prefs.ts` wires the search-bar `⋮`
+    menu (units / theme / text-size). `src/ui/card-select.ts` / `card-dom.ts` / `lazy-panel.ts`
+    / `autocomplete.ts` - shared UI primitives.
+  - `src/map/map.ts` - Leaflet init, theme/tile switching, `markerPalette()` (reads `tokens.css`
+    at runtime, memoised per theme), the marker hierarchy in `plot()` (top-3 = filled circle +
+    rank numeral, next-7 = ring, 11+ = dim moss dot), `selectSize`/`deselectSize`, `clear*()`,
+    and the opt-in aerial overlay (`setAerialEnabled` / `showSatelliteOverlay`). Light mode's
+    basemap is Esri's World Light Gray Canvas (a quiet cartographic base); dark mode is OSM
+    raster CSS-inverted (`invert() hue-rotate()`) - the source swaps on theme change, attribution
+    is theme-aware. `src/map/layers.ts` (camps/land/fire/precise fetch + render), `src/map/sheet.ts`
+    (mobile bottom sheet), `popup.ts` / `markers.ts` / `layer-lifecycle.ts` (primitives).
+  - `src/api/` - the typed client (`openapi-fetch`, `client.ts`: `getJson` / `postJson` /
+    `deleteJson` throw `ApiError` on non-2xx, `openRefreshStream` is the typed SSE reader) +
+    `schema.ts` generated from the backend OpenAPI via `openapi-typescript`. `npm run gen:api`
+    regenerates it; CI fails on a diff, so it never drifts. Every call goes through `client.ts` -
+    no raw `fetch` (place-search autocomplete is `GET /api/location/search`, proxied server-side,
+    issue #145).
+  - `src/refresh.ts` (SSE refresh + set-location), `src/main.ts` (DOM wiring/orchestration).
+
+  Vitest covers the pure helpers + the DOM builders (`*.test.ts` beside the source); `npm test`
+  runs in `just frontend`. `GET /api/coverage` exists on the backend but has no frontend consumer
+  yet. Builds into `../src/foray/web/dist`. Theme is `data-theme`-driven with a `localStorage`
+  preference (default **dark**), set before first paint by `public/theme-init.js` (external, so
+  the CSP can stay `script-src 'self'`).
+
+  **Aerial imagery** is opt-in now (the Layers pill's "Aerial imagery" toggle; it was
+  auto-on-select before #301). When on, selecting a destination fills its true footprint with an
+  Esri World Imagery raster plus a matching roads/labels overlay (`showSatelliteOverlay`, its own
+  Leaflet pane between the tile and vector panes so the ring/markers/trails still draw on top,
+  CSS-clipped to a circle). The frontend requests
+  `/api/destinations/{region_id}/satellite/{image,labels}`; the backend (`sources/satellite.py`,
+  `region_satellite` table, `foray backfill-satellite`) stitches both rasters from Esri's real
+  XYZ tile pyramids, not the dynamic `MapServer/export` renderer - see docs/data-sources.md and
+  the **Map imagery** convention below. Fetched once per region, never re-requested on zoom.
 
 ## Conventions
 
