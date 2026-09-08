@@ -6,7 +6,7 @@ import httpx
 import psycopg
 import pytest
 
-from foray.cache import upsert_campsites
+from foray.cache import prune_campsites_outside_radius, upsert_campsites
 from foray.config import CoverageRegion
 from foray.scoring import camps_near
 from foray.sources.camps import (
@@ -258,6 +258,21 @@ def test_camps_near_ranks_by_true_distance_not_rounded(con: psycopg.Connection) 
     sites = camps_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0)
     assert sites[0].distance_km == sites[1].distance_km == 2.2  # tie once rounded
     assert [site.name for site in sites] == ["Near", "Far"]  # ordered by true distance
+
+
+def test_prune_campsites_outside_radius_drops_only_stale_ridb_rows(con: psycopg.Connection) -> None:
+    upsert_campsites(
+        con,
+        [
+            ("ridb:near", "Near", "campground", None, None, 47.61, -122.31, "ridb", "u"),  # ~1 km
+            ("ridb:far", "Far", "campground", None, None, 40.0, -122.3, "ridb", "u"),  # ~800 km - stale
+            ("osm:x", "OSM Far", "reported", None, None, 40.0, -122.3, "osm", "u"),  # other source, untouched
+        ],
+    )
+    deleted = prune_campsites_outside_radius(con, "ridb", 47.6, -122.3, 100.0)
+    assert deleted == 1
+    ids = {row[0] for row in con.execute("SELECT id FROM campsites").fetchall()}
+    assert ids == {"ridb:near", "osm:x"}
 
 
 def test_camps_near_no_rows_ingested_returns_empty(con: psycopg.Connection) -> None:
