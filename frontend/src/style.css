@@ -1401,11 +1401,9 @@ table.cal .heat {
 :root[data-text-size="large"] .toggle-btn span {
   font-size: 14px;
 }
-:root[data-text-size="large"] .rank h3 {
-  font-size: 18px;
-}
-:root[data-text-size="large"] .rank .meta,
-:root[data-text-size="large"] #status,
+/* .rank h3 / .rank .meta / #status size off the --text-* scale, which tokens.css already bumps
+   in this mode - a fixed px here would undercut it. Only the plan-view stat lines (token-less)
+   still need a nudge. */
 :root[data-text-size="large"] .plan-summary,
 :root[data-text-size="large"] .stop-drive,
 :root[data-text-size="large"] .stop-camp,
