@@ -359,11 +359,13 @@ export async function runDestinations({ reuseCache = false }: { reuseCache?: boo
 // the same card shell as the scored list. No months param (the endpoint uses a fixed
 // trailing-weeks window) and no score bar; the card leads with the last-seen line and the
 // per-hit observation chips instead.
-const activeGuard = createRunGuard("destinations");
 let lastActive: AlertRegion[] | null = null;
 
 async function runActiveNow({ reuseCache = false }: { reuseCache?: boolean }): Promise<void> {
-  const isCurrent = activeGuard.begin();
+  // Same guard object as the scored branch - switching the sort mid-fetch has to invalidate
+  // whichever branch was in flight, or a stale response overwrites the freshly rendered one
+  // (Copilot review).
+  const isCurrent = destinationsGuard.begin();
   setStatus("Checking recent activity…");
   clearMarkers();
 
