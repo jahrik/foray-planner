@@ -23,6 +23,7 @@ from foray.api.deps import (
 )
 from foray.api.state import AppState
 from foray.api_models import TripPlan
+from foray.geo import grid_cell_center
 from foray.sources import geocode
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,12 @@ def plan(
         picked_waypoints = [part.strip() for part in waypoints.split(",") if part.strip()]
         if len(picked_waypoints) > 10 or any(not re.fullmatch(r"-?\d+_-?\d+", w) for w in picked_waypoints):
             raise HTTPException(422, "waypoints must be up to 10 comma-separated region ids")
+        # Bound-check the implied cell center: an out-of-range grid index passes the shape regex
+        # but would blow up the corridor bbox (and grid_cells_in_bbox) in rank_destinations_corridor.
+        for waypoint in picked_waypoints:
+            way_lat, way_lng = grid_cell_center(waypoint, cfg.cell_deg)
+            if not (-90.0 <= way_lat <= 90.0 and -180.0 <= way_lng <= 180.0):
+                raise HTTPException(422, f"waypoint {waypoint!r} is outside valid coordinates")
 
     def resolve_point(query: str) -> tuple[float, float]:
         try:
