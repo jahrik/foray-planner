@@ -246,10 +246,14 @@ export async function loadCampgroundsInto(
     const button = document.createElement("button");
     button.type = "button";
     button.className = "chip";
-    const feeText = feeLabel(site.free === true, site.fee);
-    button.textContent = `${site.name} · ${dist(site.distance_km)} · ${feeText}`;
+    const feeText = feeLabel(site.free === true, site.fee, site.fee_low, site.fee_high);
+    const resv =
+      site.reservable === true ? " · reservable" : site.reservable === false ? " · first-come" : "";
+    button.textContent = `${site.name} · ${dist(site.distance_km)} · ${feeText}${resv}`;
     const marker = plotCardCamp(site, () => selectRow(site, button, marker));
-    marker.bindPopup(`<b>${escapeHtml(site.name)}</b><br>${dist(site.distance_km)} · ${escapeHtml(feeText)}`);
+    marker.bindPopup(
+      `<b>${escapeHtml(site.name)}</b><br>${dist(site.distance_km)} · ${escapeHtml(feeText)}${escapeHtml(resv)}`,
+    );
     button.onclick = (e) => {
       e.stopPropagation();
       selectRow(site, button, marker);

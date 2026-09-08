@@ -596,6 +596,12 @@ export interface components {
             source: string;
             /** Url */
             url: string;
+            /** Reservable */
+            reservable?: boolean | null;
+            /** Fee Low */
+            fee_low?: number | null;
+            /** Fee High */
+            fee_high?: number | null;
         };
         /** ConfigResponse */
         ConfigResponse: {

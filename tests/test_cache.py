@@ -388,7 +388,20 @@ def test_latest_obs_date_ignores_other_tokens(con: psycopg.Connection) -> None:
     assert latest_obs_date(con, 111, _HOME_LAT, _HOME_LNG, radius_km=150) is None
 
 
-_CAMPSITE_ROW = ("osm:way/1", "Old Name", "reported", None, None, 47.6, -122.3, "osm", "https://example.com/1")
+_CAMPSITE_ROW = (
+    "osm:way/1",
+    "Old Name",
+    "reported",
+    None,
+    None,
+    47.6,
+    -122.3,
+    "osm",
+    "https://example.com/1",
+    None,
+    None,
+    None,
+)
 
 
 def test_upsert_rows_empty_is_a_noop(con: psycopg.Connection) -> None:

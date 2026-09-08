@@ -63,10 +63,23 @@ def _seed(con: psycopg.Connection) -> None:
     upsert_campsites(
         con,
         [
-            ("osm:1", "Free NEAR", "dispersed", None, True, NEAR[0], NEAR[1], "osm", "u"),
-            ("osm:2", "Free MID", "dispersed", None, True, MID[0], MID[1], "osm", "u"),
-            ("ridb:3", "Paid FAR", "campground", "$20", None, FAR[0], FAR[1], "ridb", "u"),
-            ("osm:4", "Free OFF_CORRIDOR", "dispersed", None, True, OFF_CORRIDOR[0], OFF_CORRIDOR[1], "osm", "u"),
+            ("osm:1", "Free NEAR", "dispersed", None, True, NEAR[0], NEAR[1], "osm", "u", None, None, None),
+            ("osm:2", "Free MID", "dispersed", None, True, MID[0], MID[1], "osm", "u", None, None, None),
+            ("ridb:3", "Paid FAR", "campground", "$20", None, FAR[0], FAR[1], "ridb", "u", None, None, None),
+            (
+                "osm:4",
+                "Free OFF_CORRIDOR",
+                "dispersed",
+                None,
+                True,
+                OFF_CORRIDOR[0],
+                OFF_CORRIDOR[1],
+                "osm",
+                "u",
+                None,
+                None,
+                None,
+            ),
         ],
     )
 

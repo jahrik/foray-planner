@@ -64,7 +64,10 @@ CREATE TABLE IF NOT EXISTS campsites (
     lat         DOUBLE PRECISION,
     lng         DOUBLE PRECISION,
     source      TEXT,                -- "ridb", "osm"
-    url         TEXT
+    url         TEXT,
+    reservable  BOOLEAN,             -- RIDB `Reservable` (needs full=true); NULL for OSM / unknown
+    fee_low     DOUBLE PRECISION,    -- nightly USD parsed from the fee prose (issue #306), low/high
+    fee_high    DOUBLE PRECISION     -- of the plausible amounts named; NULL when none parse
 );
 
 -- Public-land ownership polygons (BLM Surface Management Agency + USFS admin forest
@@ -474,6 +477,12 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # view and relevance score read - stored as text like `geojson`. Both additive.
     (29, "ALTER TABLE trails ADD COLUMN IF NOT EXISTS length_km DOUBLE PRECISION"),
     (30, "ALTER TABLE trails ADD COLUMN IF NOT EXISTS attrs TEXT"),
+    # --- Campground attributes (issue #306) --------------------------------------------
+    # `reservable` from RIDB's full=true listing; `fee_low`/`fee_high` parsed from the fee
+    # prose so the "free camp" filter and a fee range are trustworthy. All additive.
+    (31, "ALTER TABLE campsites ADD COLUMN IF NOT EXISTS reservable BOOLEAN"),
+    (32, "ALTER TABLE campsites ADD COLUMN IF NOT EXISTS fee_low DOUBLE PRECISION"),
+    (33, "ALTER TABLE campsites ADD COLUMN IF NOT EXISTS fee_high DOUBLE PRECISION"),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]
@@ -867,9 +876,22 @@ def mark_revalidated(con: psycopg.Connection, ids: Sequence[int]) -> None:
 def upsert_campsites(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
     """Upsert campsite tuples, refreshing existing rows in place. Returns rows attempted.
 
-    Each tuple is (id, name, kind, fee, free, lat, lng, source, url).
+    Each tuple is (id, name, kind, fee, free, lat, lng, source, url, reservable, fee_low, fee_high).
     """
-    columns: tuple[LiteralString, ...] = ("id", "name", "kind", "fee", "free", "lat", "lng", "source", "url")
+    columns: tuple[LiteralString, ...] = (
+        "id",
+        "name",
+        "kind",
+        "fee",
+        "free",
+        "lat",
+        "lng",
+        "source",
+        "url",
+        "reservable",
+        "fee_low",
+        "fee_high",
+    )
     return upsert_rows(con, "campsites", columns, rows)
 
 
