@@ -42,7 +42,7 @@ export function whySentence(region: RegionScore): string {
   const active = fires.find((entry) => entry.status === "active");
   const scar = fires.find((entry) => entry.status === "historical");
   if (active) fire = ` Active fire ${dist(active.distance_km)} away, check access.`;
-  else if (scar) fire = ` Burn scar ${dist(scar.distance_km)} away, morel ground.`;
+  else if (scar) fire = ` Recent burn scar ${dist(scar.distance_km)} away.`;
 
   return `${genus} ${trend}: ${records}.${rain}${fire}`;
 }
