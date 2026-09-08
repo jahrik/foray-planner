@@ -91,10 +91,10 @@
 
         <!-- On mobile #sheet is promoted to a fixed, draggable bottom sheet over a full-screen
              map (issue #229) and #panel moves inside it; on desktop #sheet is
-             `display: contents`, so .tabs / #plan-row / .contour-rule flow as children of #dock
-             above #panel and the whole dock is the Google-Maps-style slide-out (issue #297). -->
+             `display: contents`, so #plan-back / #plan-row / .contour-rule flow as children of
+             #dock above #panel and the whole dock is the Google-Maps-style slide-out (#297). -->
         <div id="dock" class="dock">
-          <div id="sheet" role="region" aria-label="Destinations panel">
+          <div id="sheet" role="region" aria-label="Results panel">
             <button
               type="button"
               id="sheet-handle"
@@ -103,28 +103,9 @@
               aria-expanded="false"
               aria-controls="panel"
             ></button>
-            <nav class="tabs" role="tablist" aria-label="Result views">
-              <button
-                id="tab-destinations"
-                data-view="destinations"
-                class="active"
-                role="tab"
-                aria-selected="true"
-                aria-controls="panel"
-              >
-                Destinations
-              </button>
-              <button
-                id="tab-plan"
-                data-view="plan"
-                role="tab"
-                aria-selected="false"
-                aria-controls="panel"
-                tabindex="-1"
-              >
-                🗺️ Plan route
-              </button>
-            </nav>
+            <!-- Plan route is entered from the shortlist action bar (#route-bar), not a tab;
+                 this button backs out of it to the results list (issue #301). -->
+            <button type="button" id="plan-back" class="details-back" hidden>← Back to results</button>
             <div class="dock-status">
               <span id="status" role="status" aria-live="polite"></span>
               <progress
@@ -173,14 +154,15 @@
             <div id="sheet-summary" class="sheet-summary" aria-hidden="true"></div>
             <div class="contour-rule" aria-hidden="true"></div>
           </div>
-          <aside id="panel" role="tabpanel" aria-labelledby="tab-destinations" tabindex="0">
+          <aside id="panel" role="region" aria-label="Results" tabindex="0">
             <p class="hint">Finding your best destination…</p>
           </aside>
-          <!-- Route shortlist action bar (issue #301): appears once "+ Plan" has added a region;
-               "Plan a route" opens the plan form seeded with those regions as waypoints. -->
+          <!-- Route shortlist action bar (issue #301): the entry point to Plan mode. "+ Plan" on
+               a card adds waypoints; "Plan a route" opens the plan form seeded with them (or
+               auto-picks stops when none are chosen). Hidden while Plan mode is already open. -->
           <div id="route-bar" class="route-bar" hidden>
-            <span class="route-bar-count">0 spots</span>
-            <button type="button" class="route-bar-clear">Clear</button>
+            <span class="route-bar-count">Plan a road trip</span>
+            <button type="button" class="route-bar-clear" hidden>Clear</button>
             <button type="button" class="route-bar-go">Plan a route</button>
           </div>
           <button type="button" id="dock-close" class="dock-close" aria-label="Hide results panel">✕</button>

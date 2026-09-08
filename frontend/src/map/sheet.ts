@@ -156,7 +156,7 @@ function onPointerDown(event: PointerEvent): void {
   if (!enabled) return;
   if (event.pointerType === "mouse" && event.button !== 0) return;
   didDrag = false;
-  const fromHeader = (event.target as HTMLElement).closest("#sheet-handle, .tabs, #sheet-summary");
+  const fromHeader = (event.target as HTMLElement).closest("#sheet-handle, .dock-status, #sheet-summary");
   if (!fromHeader && panelEl.scrollTop > 0) return; // scrolled list keeps the drag
   armed = fromHeader ? "header" : "panel";
   startPointerY = lastPointerY = event.clientY;
