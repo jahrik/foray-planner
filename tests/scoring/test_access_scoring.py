@@ -64,11 +64,19 @@ def test_close_trailhead_boosts_the_region(con: psycopg.Connection) -> None:
 
 def test_remote_region_with_no_access_is_penalised(con: psycopg.Connection) -> None:
     baseline = _rank(con)[0].score
-    # A trailhead and a camp far outside ACCESS_FAR_KM (~15 km) of the hotspot.
-    upsert_trails(con, [_trailhead(9, LAT + 1.0, LNG + 1.0)])
-    upsert_campsites(
-        con, [("ridb:9", "Far", "campground", None, None, LAT + 1.0, LNG + 1.0, "ridb", "u", None, None, None)]
-    )
+    # A trailhead and a camp ~28 km N of the hotspot - mapped, but past ACCESS_FAR_KM (15 km).
+    upsert_trails(con, [_trailhead(9, LAT + 0.25, LNG)])
+    upsert_campsites(con, [("ridb:9", "Far", "campground", None, None, LAT + 0.25, LNG, "ridb", "u", None, None, None)])
     penalised = _rank(con)[0]
     assert penalised.score < baseline
-    assert penalised.trailhead_km is not None and penalised.trailhead_km > 15.0
+    assert penalised.trailhead_km is not None and 15.0 < penalised.trailhead_km < 45.0
+
+
+def test_unmapped_area_is_left_alone_not_penalised(con: psycopg.Connection) -> None:
+    baseline = _rank(con)[0].score
+    # Only far-away cache rows (>_ACCESS_SEARCH_KM) - the ranked region has no data near it, so
+    # its score must not move (Copilot review, PR #307).
+    upsert_trails(con, [_trailhead(9, LAT + 1.0, LNG + 1.0)])
+    unchanged = _rank(con)[0]
+    assert unchanged.score == baseline
+    assert unchanged.trailhead_km is None
