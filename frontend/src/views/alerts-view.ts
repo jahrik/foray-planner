@@ -43,9 +43,9 @@ export async function runAlerts({ reuseCache = false }: { reuseCache?: boolean }
   }
   panel.innerHTML = "<h3 style='margin-top:0'>Fruiting now / recently</h3>";
   const cardSelection = createCardSelection(panel);
-  regions.forEach((region) => {
+  regions.forEach((region, rank) => {
     const weight = Math.min(1, region.total / 10);
-    const marker = plot(region.center_lat, region.center_lng, weight, true, region.region_id);
+    const marker = plot(region.center_lat, region.center_lng, weight, true, region.region_id, rank);
     const card = document.createElement("div");
     card.className = "rank";
 

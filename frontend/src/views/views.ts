@@ -132,6 +132,7 @@ export async function runDestinations({ reuseCache = false }: { reuseCache?: boo
       region.score_norm,
       region.recent_count > 0,
       region.region_id,
+      rank,
     );
     const card = document.createElement("div");
     card.className = rank < 3 ? "rank hero" : "rank";
