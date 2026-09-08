@@ -38,9 +38,66 @@ interface CardSpec {
 }
 
 interface CardContext {
-  rankList: HTMLElement;
   cardSelection: ReturnType<typeof createCardSelection>;
   restoreList: () => void;
+  // Where a card goes: the hero column for the top few, the collapsed tail for the rest.
+  place: (card: HTMLElement, rank: number) => void;
+  // Expands the collapsed tail if `card` is in it - so selecting a low-rank region from its map
+  // marker still scrolls its card into view.
+  revealCard: (card: HTMLElement) => void;
+}
+
+// Splits the ranked list after the top `heroCount`: the rest collapse behind a "Show N more"
+// toggle so the shortlist stays scannable (issue #301). Rebuilds #panel and returns the
+// CardContext bits that depend on the split. Exported for its unit test.
+export function collapsibleRankList(
+  panel: HTMLElement,
+  heroCount = 3,
+): {
+  container: HTMLElement;
+  place: CardContext["place"];
+  revealCard: CardContext["revealCard"];
+  finalize: (total: number) => void;
+} {
+  panel.innerHTML = `
+    <div id="rank-list">
+      <button type="button" id="more-regions" class="more-regions" hidden aria-expanded="false"></button>
+      <div id="rank-list-more" hidden></div>
+    </div>`;
+  const container = qs("#rank-list");
+  const moreButton = qs<HTMLButtonElement>("#more-regions");
+  const moreList = qs("#rank-list-more");
+  let open = false;
+
+  const setOpen = (next: boolean, total: number): void => {
+    open = next;
+    moreList.hidden = !open;
+    const hidden = total - heroCount;
+    moreButton.textContent = open ? "Show fewer" : `Show ${hidden} more region${hidden === 1 ? "" : "s"}`;
+    moreButton.setAttribute("aria-expanded", String(open));
+  };
+
+  return {
+    container,
+    place: (card, rank) => {
+      if (rank < heroCount) container.insertBefore(card, moreButton);
+      else moreList.appendChild(card);
+    },
+    revealCard: (card) => {
+      if (!open && moreList.contains(card)) {
+        open = true;
+        moreList.hidden = false;
+        moreButton.setAttribute("aria-expanded", "true");
+        moreButton.textContent = "Show fewer";
+      }
+    },
+    finalize: (total) => {
+      if (total <= heroCount) return;
+      moreButton.hidden = false;
+      moreButton.onclick = () => setOpen(!open, total);
+      setOpen(false, total);
+    },
+  };
 }
 
 // Plots one region's marker, builds its card through the shared builder (ui/card-dom), and
@@ -58,6 +115,7 @@ function addCard(
       snapTo("full");
       focusOnMap(spec.lat, spec.lng, 9);
       focusRegion(spec.lat, spec.lng);
+      ctx.revealCard(cardEl);
       ctx.cardSelection.select(cardEl, marker);
     },
     onDetails: (cardEl, numEl) => {
@@ -74,9 +132,10 @@ function addCard(
       focusOnMap(spec.lat, spec.lng, map.getZoom()); // offset clear of the sheet
     }
     focusRegion(spec.lat, spec.lng);
+    ctx.revealCard(card);
     ctx.cardSelection.select(card, marker);
   });
-  ctx.rankList.appendChild(card);
+  ctx.place(card, rank);
   return { marker, titleNum };
 }
 
@@ -168,14 +227,13 @@ export async function runDestinations({ reuseCache = false }: { reuseCache?: boo
     setStatus("");
     return;
   }
-  // The panel is just the ranked list of summary cards now - each region's detail tabs open in
-  // the Details view (openDetails), reached from a card's "Details" button, so selecting a
-  // region no longer expands a nested tab strip inside its card.
-  panel.innerHTML = `<div id="rank-list"></div>`;
-  const rankList = qs("#rank-list");
+  // The panel is the ranked list of summary cards: top 3 as hero cards, the rest collapsed
+  // behind a "Show N more" toggle. Each region's detail tabs open in the Details view
+  // (openDetails) from a card's "Details" button - no nested tab strips.
+  const list = collapsibleRankList(panel);
   // Only one region's marker shows its true real-world size at a time; selecting a new one
   // reverts whichever marker held that spot back to its score-scaled preview size.
-  const cardSelection = createCardSelection(rankList);
+  const cardSelection = createCardSelection(list.container);
   // Card titles start as rank + distance; the notable-place name (issue #206) is filled in
   // afterward through each card's own .num node - see the batch lookup at the end.
   const titleTargets: { region: RegionScore; rank: number; numSpan: HTMLElement }[] = [];
@@ -197,7 +255,12 @@ export async function runDestinations({ reuseCache = false }: { reuseCache?: boo
   const restoreList = (): void => {
     void runDestinations({ reuseCache: true });
   };
-  const ctx: CardContext = { rankList, cardSelection, restoreList };
+  const ctx: CardContext = {
+    cardSelection,
+    restoreList,
+    place: list.place,
+    revealCard: list.revealCard,
+  };
 
   const markers = regions.map((region, rank) => {
     const metaHtml =
@@ -236,13 +299,14 @@ export async function runDestinations({ reuseCache = false }: { reuseCache?: boo
     titleTargets.push({ region, rank, numSpan: titleNum });
     return marker;
   });
+  list.finalize(regions.length);
   setStatus(`${regions.length} regions`);
 
   // No auto-zoom/pan on results - the map stays wherever the user has it. The (already
   // server-sorted) top result is auto-selected (focus + highlighted card) like a click on #1.
   const top = regions[0];
   const topMarker = markers[0];
-  const topCard = rankList.querySelector<HTMLElement>(".rank");
+  const topCard = list.container.querySelector<HTMLElement>(".rank");
   if (top && topMarker && topCard) {
     focusRegion(top.center_lat, top.center_lng);
     cardSelection.selectInitial(topCard, topMarker);
@@ -326,13 +390,17 @@ async function runActiveNow({ reuseCache = false }: { reuseCache?: boolean }): P
     return;
   }
 
-  panel.innerHTML = `<div id="rank-list"></div>`;
-  const rankList = qs("#rank-list");
-  const cardSelection = createCardSelection(rankList);
+  const list = collapsibleRankList(panel);
+  const cardSelection = createCardSelection(list.container);
   const restoreList = (): void => {
     void runActiveNow({ reuseCache: true });
   };
-  const ctx: CardContext = { rankList, cardSelection, restoreList };
+  const ctx: CardContext = {
+    cardSelection,
+    restoreList,
+    place: list.place,
+    revealCard: list.revealCard,
+  };
 
   const renderHits = (region: AlertRegion, showAll: boolean): string =>
     region.species
@@ -382,10 +450,11 @@ async function runActiveNow({ reuseCache = false }: { reuseCache?: boolean }): P
     );
     return marker;
   });
+  list.finalize(regions.length);
   setStatus(`${regions.length} active regions`);
 
   const top = regions[0];
-  const topCard = rankList.querySelector<HTMLElement>(".rank");
+  const topCard = list.container.querySelector<HTMLElement>(".rank");
   if (top && markers[0] && topCard) {
     focusRegion(top.center_lat, top.center_lng);
     cardSelection.selectInitial(topCard, markers[0]);

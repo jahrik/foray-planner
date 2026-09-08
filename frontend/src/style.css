@@ -839,6 +839,36 @@ a.chip:hover {
 
 /* Card action row (issue #301): "Details" opens the Details view, "+ Plan" adds the region to
    the route shortlist. Kept quiet - an outline button pair below the card's content. */
+/* "Show N more regions" - the collapsed tail after the top 3 (issue #301). Full-width, quiet,
+   with a rotating disclosure caret. */
+.more-regions {
+  display: block;
+  width: 100%;
+  margin: 4px 0 10px;
+  padding: 8px 10px;
+  border: 1px dashed var(--edge);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--text-data);
+  font-weight: 600;
+  cursor: pointer;
+}
+.more-regions:hover {
+  border-color: var(--rust);
+  color: var(--ink);
+}
+.more-regions::before {
+  content: "▸ ";
+}
+.more-regions[aria-expanded="true"]::before {
+  content: "▾ ";
+}
+#rank-list-more[hidden] {
+  display: none;
+}
+
 .card-actions {
   display: flex;
   gap: 6px;
