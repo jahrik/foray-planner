@@ -104,6 +104,9 @@ class RegionScore(BaseModel):
     # Mean ground elevation of the region's observations, metres (issue #36). None until at
     # least one observation in the region has been elevation-enriched.
     elevation_m: int | None = None
+    # Where the selected months sit in the top genus's local season (issue #301):
+    # 'peak' | 'building' | 'past-peak' | 'off'. None when there's no histogram to classify.
+    pheno_trend: str | None = None
     # Antecedent rainfall (issue #226): decoy-excluded mean over the region's precip-enriched
     # observations (mm over the 7 / 30 days before each was observed). None until enriched.
     precip_obs_7d_mm: float | None = None

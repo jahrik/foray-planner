@@ -34,6 +34,7 @@ from foray.scoring._sql import genus_name_map, sql_in, taxon_filter
 from foray.scoring.models import FireNear, RegionScore, SpeciesHit
 from foray.scoring.queries import fire_near
 from foray.scoring.regions import recent_counts, region_elevations, region_precip_obs
+from foray.scoring.trend import phenology_trend
 
 # --- Fire scoring inputs (issue #227) -------------------------------------------------------
 # Conservative starting weights - the plan is to eyeball real fire numbers on the map for a few
@@ -105,6 +106,24 @@ def _rank_candidates(
         [*taxon_ids, region_ids, *taxon_ids, region_ids, *months],
     ).fetchall()
 
+    # Month-by-month histogram per (region, genus), for the phenology-trend label (issue #301).
+    # Same candidate-cell scoping as the scan above, so it stays a few-hundred-row aggregate.
+    monthly: dict[tuple[str, int], dict[int, int]] = {}
+    month_rows = con.execute(
+        cast(
+            LiteralString,
+            f"""
+            SELECT region_id, taxon_id, month, sum(cnt)::bigint
+            FROM phenology
+            WHERE {taxon_filter(taxon_ids)} AND region_id = ANY(%s)
+            GROUP BY region_id, taxon_id, month
+            """,
+        ),
+        [*taxon_ids, region_ids],
+    ).fetchall()
+    for region_id, taxon_id, month, cnt in month_rows:
+        monthly.setdefault((region_id, taxon_id), {})[month] = cnt
+
     genera = genus_name_map(con, {row[3] for row in rows})
     recent = recent_counts(
         con,
@@ -142,6 +161,8 @@ def _rank_candidates(
         # Diversity bonus (more choice species in season) + live recency boost.
         raw = agg["score"] * (1 + 0.1 * (n_species - 1)) * (1 + math.log1p(recent_count))
         agg["species"].sort(key=lambda hit: hit.month_count, reverse=True)
+        top_hit = agg["species"][0]
+        trend = phenology_trend(monthly.get((region_id, top_hit.taxon_id), {}), months)
         results.append(
             RegionScore(
                 region_id=region_id,
@@ -154,6 +175,7 @@ def _rank_candidates(
                 recent_count=recent_count,
                 species=agg["species"],
                 elevation_m=elevations.get(region_id),
+                pheno_trend=trend,
                 precip_obs_7d_mm=precip_obs.get(region_id, {}).get("precip_obs_7d_mm"),
                 precip_obs_30d_mm=precip_obs.get(region_id, {}).get("precip_obs_30d_mm"),
                 precip_recent_7d_mm=recent_rain.get(region_id, {}).get("precip_7d_mm"),

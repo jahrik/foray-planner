@@ -34,6 +34,10 @@ class RegionScore:
     recent_count: int
     species: list[SpeciesHit]
     elevation_m: int | None = None
+    # Where the selected months sit in the top genus's local season (issue #301):
+    # 'peak' | 'building' | 'past-peak' | 'off'. None when there's no histogram to
+    # classify. Informational only - not an input to ``score``. See scoring/trend.py.
+    pheno_trend: str | None = None
     # Antecedent-rainfall means over the region's enriched observations (issue #226), mm.
     precip_obs_7d_mm: float | None = None
     precip_obs_30d_mm: float | None = None
