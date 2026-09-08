@@ -151,6 +151,39 @@ def test_max_drive_km_reports_unreachable_stops(con: psycopg.Connection) -> None
     assert trip.skipped_unreachable == 1
 
 
+def test_waypoints_force_an_off_corridor_region_into_the_itinerary(con: psycopg.Connection) -> None:
+    # OFF_CORRIDOR is excluded by every other test; as a hand-picked waypoint it must appear,
+    # and the corridor widens to reach it.
+    off_region = _region_id(*OFF_CORRIDOR)
+    trip = plan_route(con, **_kwargs(require_free_camp=False, waypoints=[off_region]))
+    assert off_region in {s.region_id for s in trip.stops}
+
+
+def test_waypoints_survive_require_free_camp_and_max_stops(con: psycopg.Connection) -> None:
+    far_region = _region_id(*FAR)  # paid camp only, and lowest score
+    trip = plan_route(
+        con,
+        **_kwargs(require_free_camp=True, max_stops=1, waypoints=[far_region]),
+    )
+    assert far_region in {s.region_id for s in trip.stops}
+
+
+def test_waypoints_pick_farthest_as_destination_when_none_given(con: psycopg.Connection) -> None:
+    mid_region, far_region = _region_id(*MID), _region_id(*FAR)
+    trip = plan_route(
+        con,
+        **_kwargs(
+            destination_lat=None,
+            destination_lng=None,
+            require_free_camp=False,
+            waypoints=[mid_region, far_region],
+        ),
+    )
+    assert trip.auto_destination is True
+    assert trip.destination_name == far_region
+    assert {mid_region, far_region} <= {s.region_id for s in trip.stops}
+
+
 def test_empty_when_no_data_returns_empty_plan(con: psycopg.Connection) -> None:
     # A month with no activity yields no candidates and an empty (not error) plan.
     trip = plan_route(con, **_kwargs(months=[1]))
