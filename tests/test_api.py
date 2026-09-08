@@ -583,6 +583,18 @@ def test_plan_route_bad_destination_is_404(client: TestClient, monkeypatch: pyte
     assert response.status_code == 404
 
 
+def test_plan_route_rejects_malformed_waypoints(client: TestClient) -> None:
+    assert client.get("/api/plan", params={"waypoints": "not-a-region"}).status_code == 422
+
+
+def test_plan_route_rejects_out_of_range_waypoint(client: TestClient) -> None:
+    # Shape-valid ("ilat_ilng") but the implied cell center is way past the poles - must not
+    # reach the corridor bbox math.
+    response = client.get("/api/plan", params={"waypoints": "9999999_9999999"})
+    assert response.status_code == 422
+    assert "valid coordinates" in response.text
+
+
 def test_plan_route_geocode_network_failure_is_502_without_leaking_detail(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
