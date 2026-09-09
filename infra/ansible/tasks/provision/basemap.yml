@@ -1,0 +1,67 @@
+---
+# Create and configure the DO Space + CDN endpoint that serve the Protomaps PMTiles vector
+# basemap (the app's only base layer - there is no raster fallback). Cheap and idempotent, so
+# it runs with every provision. The archive itself is built + uploaded separately by
+# foray:build-basemap-once.
+#
+# Opt-in: without a Spaces access key (DO_SPACES_KEY / DO_SPACES_SECRET, generated under
+# API -> Spaces Keys - separate from DO_API_TOKEN) there is nothing to authenticate the bucket
+# data plane with, so provisioning skips it rather than failing. The map has no base layer
+# until it's configured.
+- name: Skip basemap Space provisioning if no Spaces key is configured
+  ansible.builtin.debug:
+    msg: >-
+      DO_SPACES_KEY / DO_SPACES_SECRET not set - skipping the basemap Space + CDN
+      (see infra/ansible/AGENTS.md). The map has no base layer until this is configured.
+  when: foray_spaces_access_key_id | length == 0
+
+- name: Provision the basemap Space + CDN
+  when: foray_spaces_access_key_id | length > 0
+  # The amazon.aws / community.aws S3 modules all take the same Spaces S3-compatible endpoint +
+  # credentials; set them once here rather than on every task.
+  module_defaults:
+    amazon.aws.s3_bucket: &spaces_s3
+      endpoint_url: "https://{{ foray_basemap_region }}.digitaloceanspaces.com"
+      access_key: "{{ foray_spaces_access_key_id }}"
+      secret_key: "{{ foray_spaces_secret_access_key }}"
+      region: "{{ foray_basemap_region }}"
+    community.aws.s3_cors: *spaces_s3
+  block:
+    - name: Create the basemap Space
+      digitalocean.cloud.space:
+        state: present
+        name: "{{ foray_basemap_space_name }}"
+        region: "{{ foray_basemap_region }}"
+        aws_access_key_id: "{{ foray_spaces_access_key_id }}"
+        aws_secret_access_key: "{{ foray_spaces_secret_access_key }}"
+
+    - name: Put a public-read policy on the archive key
+      amazon.aws.s3_bucket:
+        name: "{{ foray_basemap_space_name }}"
+        state: present
+        sig_v4: true
+        policy: "{{ lookup('ansible.builtin.template', 'basemap_bucket_policy.json.j2') }}"
+
+    - name: Put the CORS rule on the Space (ranged GETs from the app origin)
+      community.aws.s3_cors:
+        name: "{{ foray_basemap_space_name }}"
+        state: present
+        rules:
+          - allowed_origins: "{{ foray_basemap_allowed_origins }}"
+            allowed_methods: [GET, HEAD]
+            allowed_headers: [Range, If-Match, If-None-Match]
+            expose_headers: [Content-Range, Content-Length, ETag, Accept-Ranges]
+            max_age_seconds: 3600
+
+    - name: Create the CDN endpoint over the Space
+      digitalocean.cloud.cdn_endpoints:
+        token: "{{ foray_do_token }}"
+        state: present
+        origin: "{{ foray_basemap_space_name }}.{{ foray_basemap_region }}.digitaloceanspaces.com"
+        ttl: "{{ foray_basemap_cdn_ttl | int }}"
+
+    - name: Report the basemap URL to configure
+      ansible.builtin.debug:
+        msg: >-
+          Basemap CDN URL: {{ foray_basemap_cdn_url }} - this is what FORAY_BASEMAP_URL
+          resolves to. Run `just ansible build-basemap-once` to populate it, then redeploy.

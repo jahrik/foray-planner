@@ -112,9 +112,50 @@ argument_specs:
       foray_basemap_url:
         type: str
         description: >
-          URL of the Protomaps PMTiles vector basemap archive (DO Spaces + CDN).
-          Empty leaves the map with no base layer. Read from FORAY_BASEMAP_URL env var.
+          URL of the Protomaps PMTiles vector basemap archive (the map's only base layer).
+          FORAY_BASEMAP_URL wins; otherwise defaults to the computed CDN URL once the Spaces
+          key is set, else empty (map has no base layer).
         default: ""
+      foray_spaces_access_key_id:
+        type: str
+        description: DO Spaces access key id (API -> Spaces Keys, separate from DO_API_TOKEN); read from DO_SPACES_KEY. Empty skips basemap Space provisioning.
+        default: ""
+      foray_spaces_secret_access_key:
+        type: str
+        description: DO Spaces secret access key; read from DO_SPACES_SECRET.
+        default: ""
+      foray_basemap_space_name:
+        type: str
+        description: Name of the DO Space that holds the basemap archive
+        default: foray-basemap
+      foray_basemap_region:
+        type: str
+        description: DO region for the basemap Space (defaults to foray_do_region)
+        default: "{{ foray_do_region }}"
+      foray_basemap_object_key:
+        type: str
+        description: Object key of the PMTiles archive in the Space
+        default: us.pmtiles
+      foray_basemap_bbox:
+        type: str
+        description: "min_lon,min_lat,max_lon,max_lat the archive covers (CONUS default)"
+        default: "-125,24,-66,50"
+      foray_basemap_cdn_ttl:
+        type: str
+        description: CDN edge cache TTL in seconds, also the archive's Cache-Control max-age
+        default: "86400"
+      foray_basemap_source:
+        type: str
+        description: Planet build to slice from; empty auto-picks the latest build.protomaps.com daily
+        default: ""
+      foray_pmtiles_version:
+        type: str
+        description: github.com/protomaps/go-pmtiles CLI version used for the extract
+        default: "1.31.2"
+      foray_basemap_workdir:
+        type: str
+        description: Control-node directory for the pmtiles CLI and the extract output
+        default: "{{ lookup('ansible.builtin.env', 'HOME') }}/.cache/foray-basemap"
       foray_ingest_cron_hour:
         type: str
         description: Hour (UTC) for daily observation ingest cron

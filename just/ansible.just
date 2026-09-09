@@ -31,6 +31,20 @@ provision:
         -e foray_do_ssh_key_name=$FORAY_SSH_KEY_NAME \
         -e '{"foray_ssh_allowed_ips": ["'"$FORAY_SSH_ALLOWED_IPS"'"]}'
 
+# One-off: build the US PMTiles vector basemap archive and upload it to the DO Space. Slices a
+# bbox out of Protomaps' daily planet build (via HTTP range requests, not a full download),
+# ~15-40 GB into ~/.cache/foray-basemap on THIS machine, then uploads it. `provision` must have
+# created the Space + CDN first. Needs DO_API_TOKEN plus a Spaces access key (API -> Spaces
+# Keys, separate from the API token) as DO_SPACES_KEY / DO_SPACES_SECRET. Re-run monthly to
+# refresh; the object key is stable and the CDN cache is purged at the end.
+[doc('Build + upload the US PMTiles vector basemap to DO Spaces (needs DO_SPACES_KEY/SECRET)')]
+[group('deploy-once')]
+build-basemap-once:
+    @test -n "${DO_API_TOKEN:-}" || (echo "ERROR: DO_API_TOKEN not set" && exit 1)
+    @test -n "${DO_SPACES_KEY:-}" || (echo "ERROR: DO_SPACES_KEY not set (API -> Spaces Keys)" && exit 1)
+    @test -n "${DO_SPACES_SECRET:-}" || (echo "ERROR: DO_SPACES_SECRET not set" && exit 1)
+    cd {{ ansible_dir }} && uv run ansible-playbook site.yml --tags foray:build-basemap-once
+
 # Shared runner for the tag-driven, droplet-IP playbooks below (needs FORAY_DROPLET_IP).
 [private]
 _playbook tag *extra:

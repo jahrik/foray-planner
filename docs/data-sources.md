@@ -222,21 +222,29 @@ vector base lets us style forest roads / trails / highways distinctly, declutter
 `maxZoom: 14` ceiling, and get a real dark style instead of a CSS `invert()` hack.
 
 - **Archive:** one PMTiles file (a single-file archive of Mapbox Vector Tiles, addressed by
-  z/x/y over HTTP range requests) covering the US, built by `scripts/build_basemap_pmtiles.sh`
-  (`pmtiles extract` slicing a US bbox out of Protomaps' daily planet build). ~15-40 GB - too
-  big for the droplet root disk, so it lives on DigitalOcean Spaces + CDN as one static object.
-- **Config:** `FORAY_BASEMAP_URL` (the CDN URL of the archive). Empty by default -> the frontend
-  keeps the raster basemap, so this stays dark until the bucket is populated. Surfaced to the
-  SPA in `GET /api/config` as `basemap_url`.
+  z/x/y over HTTP range requests) covering CONUS. ~15-40 GB - too big for the droplet root
+  disk, so it lives in a DigitalOcean Space fronted by the Spaces CDN as one static object.
+- **Build (Ansible):**
+  - `just ansible provision` (`tasks/provision/basemap.yml`) creates the Space + CDN endpoint
+    and sets a public-read bucket policy + a CORS rule for ranged GETs from the app origin.
+    Skipped when `DO_SPACES_KEY` / `DO_SPACES_SECRET` (a Spaces access key, separate from
+    `DO_API_TOKEN`) are unset.
+  - `just ansible build-basemap-once` (`tasks/provision/build_basemap_once.yml`) fetches the
+    `pmtiles` CLI, `pmtiles extract`s `foray_basemap_bbox` from the most recent
+    `build.protomaps.com/<date>.pmtiles` (range requests, not a full planet download), uploads
+    it via `files/basemap_space.py` (boto3), and purges the CDN key. Runs on the control node,
+    not the droplet. Re-run monthly to refresh - the object key is stable.
+- **Config:** `FORAY_BASEMAP_URL` if set, else the computed CDN URL once the Spaces key is
+  configured, else empty (no base layer). Surfaced to the SPA in `GET /api/config` as
+  `basemap_url`; the ansible var is `foray_basemap_url`.
 - **Frontend:** `frontend/src/map/basemap.ts`, code-split (the MapLibre GL stack is ~280 kB
-  gzip) so it only loads when a URL is configured. Registers the `pmtiles://` protocol,
-  builds a MapLibre style from `protomaps-themes-base` (light/dark), swaps the style on theme
-  change. The `#map.vector-basemap` class scopes off the dark-mode invert filter.
+  gzip) so it loads in parallel with first paint. Registers the `pmtiles://` protocol, builds a
+  MapLibre style from `protomaps-themes-base` (light/dark), swaps the style on theme change.
 - **Glyphs + sprites:** from `https://protomaps.github.io/basemaps-assets` (a few MB of
   font/icon data, not the tiles). Self-hosting these alongside the archive is a later step.
-- **CSP:** `_content_security_policy()` in `api/security.py` adds `worker-src 'self' blob:`
-  (MapLibre workers), `blob:` to `img-src`, `https://protomaps.github.io` to `connect-src` /
-  `img-src`, and the configured `FORAY_BASEMAP_URL` origin to `connect-src`.
+- **CSP:** `_content_security_policy(basemap_url)` in `api/security.py` adds `worker-src 'self'
+  blob:` (MapLibre workers), `blob:` to `img-src`, `https://protomaps.github.io` to
+  `connect-src` / `img-src`, and the configured basemap host to `connect-src`.
 - **Attribution:** "© OpenStreetMap · © Protomaps", added to the Leaflet attribution control on
   mount.
 

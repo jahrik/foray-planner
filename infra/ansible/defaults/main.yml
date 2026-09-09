@@ -107,10 +107,43 @@ foray_geom_once_sleep: "0.2"
 foray_do_firewall_name: foray-planner-fw
 foray_ssh_allowed_ips: []
 
-# URL of the Protomaps PMTiles vector basemap archive on DO Spaces + CDN. Empty -> the map has
-# no base layer. Built + uploaded out-of-band by scripts/build_basemap_pmtiles.sh; this just
-# points the running app at it.
-foray_basemap_url: "{{ lookup('ansible.builtin.env', 'FORAY_BASEMAP_URL', default='') }}"
+# Protomaps PMTiles vector basemap (the map's only base layer - the app ships no raster
+# fallback). The archive is a single static object in a DO Space fronted by the Spaces CDN.
+#
+#   provision (foray:provision)          - create the Space + CDN endpoint, set CORS + a
+#                                          public-read bucket policy. Skipped when the Spaces
+#                                          keys below are unset.
+#   build    (foray:build-basemap-once)  - `pmtiles extract` a US bbox from Protomaps' daily
+#                                          planet build and upload it. Runs on localhost, not
+#                                          the droplet (the extract is 15-40 GB).
+#
+# The Space data plane (create bucket, upload) needs a *Spaces access key*, which is separate
+# from DO_API_TOKEN - generate one under API -> Spaces Keys and pass it as DO_SPACES_KEY /
+# DO_SPACES_SECRET. DO_API_TOKEN is still used for the CDN endpoint + cache purge.
+foray_spaces_access_key_id: "{{ lookup('ansible.builtin.env', 'DO_SPACES_KEY', default='') }}"
+foray_spaces_secret_access_key: "{{ lookup('ansible.builtin.env', 'DO_SPACES_SECRET', default='') }}"
+foray_basemap_space_name: foray-basemap
+foray_basemap_region: "{{ foray_do_region }}"
+foray_basemap_object_key: us.pmtiles
+# Origins allowed to range-GET the archive cross-origin (the app + the vite dev server).
+foray_basemap_allowed_origins:
+  - "https://{{ foray_domain }}"
+  - "http://localhost:5173"
+# CONUS + a margin: min_lon,min_lat,max_lon,max_lat.
+foray_basemap_bbox: "-125,24,-66,50"
+foray_basemap_cdn_ttl: "86400"
+# Blank -> the build task auto-picks the most recent https://build.protomaps.com/<date>.pmtiles
+# that resolves. Set to a specific archive URL or local path to override.
+foray_basemap_source: ""
+foray_pmtiles_version: "1.31.2"  # github.com/protomaps/go-pmtiles CLI, used for the extract
+foray_basemap_workdir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.cache/foray-basemap"
+foray_basemap_cdn_url: "https://{{ foray_basemap_space_name }}.{{ foray_basemap_region }}.cdn.digitaloceanspaces.com/{{ foray_basemap_object_key }}"
+# FORAY_BASEMAP_URL wins if set; otherwise default to the computed CDN URL once Spaces keys are
+# configured (before that, blank -> the map has no base layer, which is the intended pre-setup
+# state).
+foray_basemap_url: >-
+  {{ lookup('ansible.builtin.env', 'FORAY_BASEMAP_URL', default='')
+     or (foray_basemap_cdn_url if (foray_spaces_access_key_id | length > 0) else '') }}
 
 # DO monitoring alert policies (issue #84) — unset skips creation entirely (see
 # tasks/provision/monitoring.yml). Thresholds mirror the values DO's own dashboard suggests;

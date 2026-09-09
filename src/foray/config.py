@@ -68,9 +68,9 @@ class Settings(BaseSettings):
 
     home: Home = Field(default_factory=Home)
     cell_deg: float = Field(gt=0, le=10, default=_DEFAULT_CELL_DEG)
-    # URL of a Protomaps PMTiles vector basemap archive (a self-hosted US extract on DO Spaces
-    # + CDN - see scripts/build_basemap_pmtiles.sh and docs/data-sources.md). Empty -> the
-    # frontend keeps the raster tile basemap, so this stays dark until the bucket is populated.
+    # URL of the Protomaps PMTiles vector basemap archive (a self-hosted US extract on DO Spaces
+    # + CDN, built + uploaded by the `foray:build-basemap-once` Ansible task - see
+    # docs/data-sources.md). The map has no raster fallback, so empty means no base layer.
     basemap_url: str = ""
     ingest: Ingest = Ingest()
     # Sub-national regions (US states today) - the granularity trails ingest chunks by, since
