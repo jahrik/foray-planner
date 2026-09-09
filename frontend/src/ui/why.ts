@@ -44,11 +44,12 @@ export function whySentence(region: RegionScore): string {
   if (active) fire = ` Active fire ${dist(active.distance_km)} away, check access.`;
   else if (scar) fire = ` Recent burn scar ${dist(scar.distance_km)} away.`;
 
-  // "Park -> hike" access (issue #306) - only worth saying when a trailhead is genuinely close.
+  // "Park -> hike" access (issue #306) - only worth saying when a trailhead is genuinely close
+  // (~5 km / 3 mi); farther than that it's not a "walk in from the car" story.
   let access = "";
-  if (region.trailhead_km != null && region.trailhead_km <= 10) {
+  if (region.trailhead_km != null && region.trailhead_km <= 5) {
     access =
-      region.camp_is_free && region.camp_km != null && region.camp_km <= 15
+      region.camp_is_free && region.camp_km != null && region.camp_km <= 10
         ? ` Trailhead ${dist(region.trailhead_km)}, free camp ${dist(region.camp_km)}.`
         : ` Trailhead ${dist(region.trailhead_km)}.`;
   }

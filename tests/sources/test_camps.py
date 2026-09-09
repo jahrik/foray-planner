@@ -36,9 +36,12 @@ def test_free_from_fee_only_asserts_on_explicit_signal() -> None:
 
 
 def test_fee_range_pulls_plausible_nightly_amounts() -> None:
-    assert _fee_range("Camping Fees are $16/vehicle, $2 per extra vehicle") == (2.0, 16.0)
+    # the "$2 per extra vehicle" is an add-on, not the site fee
+    assert _fee_range("Camping Fees are $16/vehicle, $2 per extra vehicle") == (16.0, 16.0)
     assert _fee_range("$8 per single campsite; $16 per group site") == (8.0, 16.0)
     assert _fee_range("$20.00 per night") == (20.0, 20.0)
+    assert _fee_range("Day-Use: No Fee. Camping: $8/night. $5 extra vehicle.") == (8.0, 8.0)
+    assert _fee_range("$8/night. Senior discount $4.") == (8.0, 8.0)
     assert _fee_range("Violations subject to a $500 fine") == (None, None)  # over the nightly cap
     assert _fee_range(None) == (None, None)
 
@@ -51,12 +54,12 @@ def test_parse_facility_reads_reservable_and_fee_range() -> None:
             "FacilityLatitude": 44.0,
             "FacilityLongitude": -122.5,
             "Reservable": True,
-            "FacilityUseFeeDescription": "<p>$18 per night, $9 per extra vehicle</p>",
+            "FacilityUseFeeDescription": "<p>Standard site $18/night, premium site $24/night, $9 per extra vehicle</p>",
         }
     )
     assert row is not None
     assert row[9] is True  # reservable
-    assert (row[10], row[11]) == (9.0, 18.0)  # fee_low, fee_high
+    assert (row[10], row[11]) == (18.0, 24.0)  # fee_low, fee_high (extra-vehicle add-on excluded)
 
 
 def test_clean_text_strips_html_and_entities() -> None:

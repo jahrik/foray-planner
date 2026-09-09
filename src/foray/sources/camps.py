@@ -69,6 +69,14 @@ _WHITESPACE = re.compile(r"\s+")
 # always a fine / deposit / annual-pass price, not a nightly campsite fee - ignore them.
 _DOLLARS = re.compile(r"\$\s?(\d{1,3}(?:\.\d{2})?)")
 _MAX_PLAUSIBLE_NIGHTLY_USD = 150.0
+# An amount whose trailing context mentions one of these isn't the base per-night site fee -
+# it's an add-on / discount / non-camping line. Checked against the ~30 chars after the "$N".
+_NON_NIGHTLY_CONTEXT = re.compile(
+    r"extra\s+(vehicle|car)|additional\s+(vehicle|car)|per\s+extra|day[\s-]?use|senior|golden\s+age"
+    r"|access\s+pass|annual\s+pass|interagency|reservation\s+fee|booking\s+fee|deposit|cancellation"
+    r"|dump\s+station|firewood|shower|pet\s+fee",
+    re.IGNORECASE,
+)
 
 
 def _clean_text(text: str | None) -> str | None:
@@ -80,14 +88,30 @@ def _clean_text(text: str | None) -> str | None:
 
 
 def _fee_range(fee: str | None) -> tuple[float | None, float | None]:
-    """(low, high) nightly USD parsed from a cleaned fee blob, or (None, None).
+    """(low, high) per-night USD parsed from a cleaned fee blob, or (None, None).
 
     RIDB ships fees as prose ("Camping Fees are $16/vehicle... $2 per extra vehicle"), so this
-    is best-effort: pull the plausible-nightly dollar amounts and take their span. ``low ==
-    high`` when the blob names one price; both ``None`` when it names none.
+    is best-effort: pull the dollar amounts, drop the ones whose trailing context marks them as
+    an add-on / discount / non-camping line (extra vehicle, day use, senior, deposit, ...), and
+    take the span of what's left. ``low == high`` when one price survives; both ``None`` when
+    none do.
     """
+    text = fee or ""
+
+    def is_nightly(match: re.Match[str]) -> bool:
+        # Context = the ~25 chars before the amount ("Senior discount $4") plus its trailing text
+        # up to the next "$" / ";" / ". " ("$5 per extra vehicle"), so a neighbouring add-on
+        # clause disqualifies only its own amount, not the site fee beside it.
+        head = text[max(0, match.start() - 25) : match.start()]
+        tail = text[match.end() :]
+        stops = [pos for pos in (tail.find("$"), tail.find(";"), tail.find(". ")) if pos != -1]
+        context = head + " " + tail[: min(min(stops, default=len(tail)), 30)]
+        return not _NON_NIGHTLY_CONTEXT.search(context)
+
     amounts = sorted(
-        value for match in _DOLLARS.findall(fee or "") if (value := float(match)) <= _MAX_PLAUSIBLE_NIGHTLY_USD
+        value
+        for match in _DOLLARS.finditer(text)
+        if (value := float(match.group(1))) <= _MAX_PLAUSIBLE_NIGHTLY_USD and is_nightly(match)
     )
     if not amounts:
         return None, None
