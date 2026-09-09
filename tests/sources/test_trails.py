@@ -174,6 +174,36 @@ def test_parse_trails_links_a_trailhead_to_the_path_it_sits_on() -> None:
     assert rows["osm:way/2"][8] is None  # non-trailhead rows carry no connects
 
 
+def test_parse_trails_links_a_trailhead_to_the_whole_named_trail() -> None:
+    # OSM splits "Ridge Trail" into ways 2 and 3; the node touches only way 2, but the link
+    # covers both so selecting it draws the whole trail (issue #306).
+    payload = {
+        "elements": [
+            {"type": "node", "id": 1, "lat": 47.600, "lon": -122.300, "tags": {"highway": "trailhead"}},
+            {
+                "type": "way",
+                "id": 2,
+                "tags": {"highway": "path", "name": "Ridge Trail"},
+                "geometry": [{"lat": 47.600, "lon": -122.300}, {"lat": 47.602, "lon": -122.298}],
+            },
+            {
+                "type": "way",
+                "id": 3,
+                "tags": {"highway": "path", "name": "Ridge Trail"},  # far segment, same name
+                "geometry": [{"lat": 47.640, "lon": -122.260}, {"lat": 47.650, "lon": -122.250}],
+            },
+            {
+                "type": "way",
+                "id": 4,
+                "tags": {"highway": "path", "name": "Other Trail"},  # different name, not linked
+                "geometry": [{"lat": 47.601, "lon": -122.300}, {"lat": 47.603, "lon": -122.298}],
+            },
+        ]
+    }
+    rows = {row[0]: row for row in _parse_trails(payload)}
+    assert rows["osm:node/1"][8] == ["osm:way/2", "osm:way/3"]
+
+
 def test_sample_thins_to_cap_keeping_endpoints() -> None:
     coords = [(float(index), 0.0) for index in range(200)]
     thinned = _sample(coords, 60)

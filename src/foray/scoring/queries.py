@@ -277,14 +277,14 @@ def trails_near(
     # any is a route so ``relevance`` / ``longest`` can rank on it - only joined when sorting on it.
     if sort == "nearest":
         lead_join: LiteralString = ""
-        lead_select: LiteralString = "NULL::double precision AS best_len, NULL::boolean AS has_route"
+        lead_select: LiteralString = "NULL::double precision AS lead_len, NULL::boolean AS has_route"
     else:
         lead_join = """
         LEFT JOIN LATERAL (
-            SELECT max(ct.length_km) AS best_len, bool_or(ct.kind = 'route') AS has_route
+            SELECT sum(ct.length_km) AS lead_len, bool_or(ct.kind = 'route') AS has_route
             FROM trails ct WHERE t.connects IS NOT NULL AND ct.id = ANY(t.connects)
         ) lead ON true"""
-        lead_select = "lead.best_len, lead.has_route"
+        lead_select = "lead.lead_len, lead.has_route"
     # Foraging-relevance term: count target-genus observations hugging the trail line. Only for a
     # relevance sort with a genus filter - "all genera" would just count every fungus everywhere.
     if sort == "relevance" and taxon_ids:

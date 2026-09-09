@@ -333,6 +333,19 @@ def _link_trailheads(payload: dict[str, Any]) -> dict[str, list[str]]:
         for lat, lng in coords:
             grid[_cell(lat, lng)].add(index)
 
+    # OSM splits one real trail into many `highway=path` ways; group them by name so a trailhead
+    # that touches one segment links to the whole "Wonderland Trail", not the 200 m stub by the
+    # parking lot (issue #306). Route relations already come as one row and are left alone.
+    kin: dict[str, set[str]] = defaultdict(set)
+    id_name: dict[str, str] = {}
+    for element in payload.get("elements", []):
+        if element.get("type") == "way" and element.get("id") is not None:
+            name = (element.get("tags") or {}).get("name")
+            if name:
+                way_id = f"osm:way/{element['id']}"
+                kin[name].add(way_id)
+                id_name[way_id] = name
+
     links: dict[str, list[str]] = {}
     for element in payload.get("elements", []):
         if element.get("type") != "node" or (element.get("tags") or {}).get("highway") != "trailhead":
@@ -347,8 +360,11 @@ def _link_trailheads(payload: dict[str, Any]) -> dict[str, list[str]]:
             for d_lng in (-1, 0, 1):
                 candidates |= grid.get((cell_lat + d_lat, cell_lng + d_lng), set())
         hits = {lines[index][0] for index in candidates if _point_polyline_m(node, lines[index][1]) <= _LINK_SNAP_M}
-        if hits:
-            links[f"osm:node/{element['id']}"] = sorted(hits)
+        expanded = set(hits)
+        for hit in hits:
+            expanded |= kin.get(id_name.get(hit, ""), set())
+        if expanded:
+            links[f"osm:node/{element['id']}"] = sorted(expanded)
     return links
 
 
