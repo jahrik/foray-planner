@@ -311,12 +311,13 @@ def trails_near(
 
     def significant(row: Sequence[Any]) -> bool:
         name, row_kind = row[1], row[2]
-        return (
-            (name is not None and not name.endswith("(OSM)"))
-            or row_kind == "route"
-            or bool(row[13])
-            or lead_length(row) >= _SIGNIFICANT_LENGTH_KM
-        )
+        named = name is not None and not name.endswith("(OSM)")
+        if row_kind == "trailhead":
+            # An unnamed trailhead ("Trailhead (OSM) - 16 mi") is a useless list row whatever it
+            # connects to - it needs a real name, or to lead to a named route.
+            return named or bool(row[13])
+        # A path / route earns its row by being named, being a route, or running far enough.
+        return named or row_kind == "route" or lead_length(row) >= _SIGNIFICANT_LENGTH_KM
 
     def relevance(row: Sequence[Any]) -> float:
         return lead_length(row) + (_ROUTE_RELEVANCE_BONUS if (row[13] or row[2] == "route") else 0.0)
