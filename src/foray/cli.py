@@ -154,7 +154,7 @@ def trails_cmd(ctx: click.Context, all_coverage: bool, force: bool) -> None:
     if all_coverage and not cfg.coverage:
         raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
     if force and not all_coverage:
-        raise click.UsageError("--force only applies to --all (the home-radius ingest always re-fetches).")
+        raise click.UsageError("--force only applies to --all (it re-pulls versioned coverage-region markers).")
     con = connect()
     try:
         if all_coverage:

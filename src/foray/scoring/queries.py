@@ -219,15 +219,29 @@ _ROAD_LENGTH_WEIGHT = 1.0
 # A forest road closed to motor vehicles but open on foot is prime foraging - walk-in, less
 # picked - so being gated is a positive signal here, not the access penalty it looks like.
 _WALK_IN_RELEVANCE_BONUS = 2.0
-_WALK_IN_BLOCKED = frozenset({"no", "private", "permit", "permissive", "customers", "forestry"})
+# Values of ``motor_vehicle`` / ``access`` that keep the general public from *driving* in.
+_CLOSED_TO_PUBLIC = frozenset({"no", "private", "permit", "forestry", "agricultural", "delivery", "military"})
+# ``foot`` values that positively grant walking access (needed to override a blanket ``access=*``,
+# which by OSM convention closes every mode including foot).
+_FOOT_ALLOWED = frozenset({"yes", "permissive", "designated", "official", "customers", "permit"})
+_FOOT_DENIED = frozenset({"no", "private"})
 
 
 def _walk_in(attrs: dict[str, str] | None) -> bool:
-    """True for a road that bars motor vehicles (``motor_vehicle``/``access``) but not foot travel."""
+    """True for a forest road the public can't *drive* but can still walk.
+
+    ``motor_vehicle`` restricts only vehicles, so a ``motor_vehicle=no`` road is walk-in unless
+    ``foot`` explicitly denies it. A blanket ``access=*`` closes every mode by OSM convention, so
+    that only counts as walk-in when ``foot`` is explicitly re-granted.
+    """
     if not attrs:
         return False
-    closed_to_cars = attrs.get("motor_vehicle") in _WALK_IN_BLOCKED or attrs.get("access") in _WALK_IN_BLOCKED
-    return closed_to_cars and attrs.get("foot") not in {"no", "private"}
+    foot = attrs.get("foot")
+    if foot in _FOOT_DENIED:
+        return False
+    if attrs.get("access") in _CLOSED_TO_PUBLIC:
+        return foot in _FOOT_ALLOWED
+    return attrs.get("motor_vehicle") in _CLOSED_TO_PUBLIC
 
 
 def trails_near(
