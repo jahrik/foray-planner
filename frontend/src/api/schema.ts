@@ -950,6 +950,11 @@ export interface components {
             attrs?: {
                 [key: string]: string;
             } | null;
+            /**
+             * Walk In
+             * @default false
+             */
+            walk_in: boolean;
             /** Geometry */
             geometry?: {
                 [key: string]: unknown;
