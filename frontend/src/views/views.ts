@@ -1,3 +1,5 @@
+import type { LeafletMouseEvent } from "leaflet";
+
 import { getJson } from "../api/client";
 import type { AlertRegion, RegionPlace, RegionScore } from "../api/types";
 import { escapeHtml } from "../format";
@@ -10,7 +12,7 @@ import { inShortlist, toggleShortlist } from "./shortlist";
 import { focusRegion } from "../map/layers";
 import { setMonths } from "../prefs";
 import { focusOnMap, sheetEnabled, snapTo } from "../map/sheet";
-import { clearMarkers, map, plot } from "../map/map";
+import { clearMarkers, inspectRoadAt, map, plot } from "../map/map";
 import {
   dist,
   displayName,
@@ -126,7 +128,11 @@ function addCard(
     onPlan: () => toggleShortlist(spec.regionId),
     isPlanned: () => inShortlist(spec.regionId),
   });
-  marker.on("click", () => {
+  marker.on("click", (event: LeafletMouseEvent) => {
+    // A hero circle's translucent fill covers a lot of map; a click that actually landed on a
+    // road/trail line under it should inspect the way, not select the region (the circle
+    // swallows the event so the map handler never gets its own shot). See inspectRoadAt.
+    if (inspectRoadAt(event.latlng)) return;
     if (sheetEnabled()) {
       snapTo("half"); // a map-pin tap raises the sheet to its middle detent
       focusOnMap(spec.lat, spec.lng, map.getZoom()); // offset clear of the sheet
