@@ -129,6 +129,10 @@ class Trail:
     # on trailhead rows and pre-#306 caches.
     length_km: float | None = None
     attrs: dict[str, str] | None = None
+    # ``kind='road'`` rows: the forest road bars motor vehicles but not foot travel (gate,
+    # ``motor_vehicle=no``, ...). Walk-in ground is less picked, so the UI badges it and the
+    # relevance sort treats it as a plus - see ``queries._walk_in``.
+    walk_in: bool = False
 
 
 @dataclass

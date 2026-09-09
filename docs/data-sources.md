@@ -75,12 +75,21 @@ hiking routes, trailheads).
     union - without it, `kind='route'` rows silently never appear.
   - **Preload link:** at ingest, each trailhead node is snapped (≤35 m, point-to-segment) onto
     the trail polylines in the payload and the matched trail ids are stored in `trails.connects`
-    - expanded to every way sharing that trail's name. Selecting a trailhead then draws the
-    whole named trail straight from cache; a live per-selection Overpass query is only the
-    fallback for an unlinked trailhead, and its result is written back to `connects`.
+    - expanded to every way sharing that feature's `name`, or its `ref`+`operator` for an
+    unnamed forest road (OSM splits `FR 300` into dozens of ref-only segments). Selecting a
+    trailhead then draws the whole named trail / whole numbered road straight from cache; a live
+    per-selection Overpass query is only the fallback for an unlinked trailhead, and its result
+    is written back to `connects`.
   - **`length_km` / `attrs`:** great-circle length of the full polyline, and the kept OSM detail
     tags (`highway`, `surface`, `tracktype`, `smoothness`, `4wd_only`, `sac_scale`,
-    `trail_visibility`, `network`, `operator`, `informal`, `access`, `motor_vehicle`, `ref`).
+    `trail_visibility`, `network`, `operator`, `informal`, `access`, `motor_vehicle`, `foot`,
+    `ref`).
+  - **Re-ingest:** `foray trails --all --force` clears the per-region `trails:place:*` markers
+    so a widened query (e.g. the forest-road tags) re-pulls coverage instead of skipping.
+  - **Road ranking:** `trails_near(sort="relevance")` re-weights `kind='road'` rows so
+    target-genus obs-density along the line dominates (length is log-damped), and a road gated
+    to motor vehicles but open on foot (`Trail.walk_in`) gets a bonus - walk-in ground is less
+    picked.
   - Informational only - links the OSM element page, makes no legal-access claim.
 - **License:** [ODbL](https://opendatacommons.org/licenses/odbl/) - data must be attributed
   and any derivative databases shared under ODbL

@@ -50,7 +50,7 @@ import httpx
 import psycopg
 
 from foray import scoring
-from foray.cache import connection, is_ingested, record_ingest, upsert_trails
+from foray.cache import connection, forget_ingest, is_ingested, record_ingest, upsert_trails
 from foray.config import CoverageRegion, Settings
 from foray.geo import haversine_km
 from foray.sources import overpass
@@ -208,8 +208,9 @@ def _trail_url(etype: str, eid: int) -> str:
 
 # Detail tags kept per path/road/route row. `highway`/`tracktype`/`surface`/`smoothness`/
 # `4wd_only` describe what you're walking or driving; `access`/`motor_vehicle` whether a forest
-# road is gated (walk-in - prime foraging); `ref` the road number (FR 300) even when `name` is
-# set. The card renders these ("FR 300 - dirt - drivable" vs "Ridge Trail - footpath").
+# road is gated (walk-in - prime foraging, and a positive term in the road relevance sort - see
+# `scoring.queries._walk_in`); `ref` the road number (FR 300) even when `name` is set. The card
+# renders these ("FR 300 - dirt - drivable" vs "Ridge Trail - footpath").
 _ATTR_TAGS = (
     "highway",
     "surface",
@@ -223,6 +224,7 @@ _ATTR_TAGS = (
     "informal",
     "access",
     "motor_vehicle",
+    "foot",
     "ref",
 )
 
@@ -372,6 +374,25 @@ def _cell(lat: float, lng: float) -> tuple[int, int]:
     return math.floor(lat / _LINK_CELL_DEG), math.floor(lng / _LINK_CELL_DEG)
 
 
+def _group_key(tags: dict[str, Any]) -> str | None:
+    """The label the OSM way segments of one real trail or road share, so a trailhead touching
+    one segment links to the whole feature (issue #306).
+
+    A named way groups by ``name``. An unnamed forest road groups by its ``ref`` + ``operator``:
+    OSM splits a long ``FR 300`` into dozens of separate ways, each unnamed but each carrying
+    ``ref=FR 300`` - without this they'd be dozens of 0.5 km rows instead of one 20 km road,
+    which also breaks the length-driven relevance sort. Returns None for a way that carries
+    neither, which stays an ungrouped single segment.
+    """
+    name = tags.get("name")
+    if name:
+        return str(name)
+    ref = tags.get("ref")
+    if ref and _is_road(tags):
+        return f"ref:{ref}\x1f{tags.get('operator') or ''}"
+    return None
+
+
 def _link_trailheads(payload: dict[str, Any]) -> dict[str, list[str]]:
     """Trailhead row id -> ids of the trails whose geometry passes within ``_LINK_SNAP_M``.
 
@@ -385,18 +406,19 @@ def _link_trailheads(payload: dict[str, Any]) -> dict[str, list[str]]:
         for lat, lng in coords:
             grid[_cell(lat, lng)].add(index)
 
-    # OSM splits one real trail into many `highway=path` ways; group them by name so a trailhead
-    # that touches one segment links to the whole "Wonderland Trail", not the 200 m stub by the
+    # OSM splits one real trail or forest road into many ways; group them (by name, or by
+    # ref+operator for an unnamed forest road - see `_group_key`) so a trailhead that touches one
+    # segment links to the whole "Wonderland Trail" / whole "FR 300", not the 200 m stub by the
     # parking lot (issue #306). Route relations already come as one row and are left alone.
     kin: dict[str, set[str]] = defaultdict(set)
-    id_name: dict[str, str] = {}
+    id_group: dict[str, str] = {}
     for element in payload.get("elements", []):
         if element.get("type") == "way" and element.get("id") is not None:
-            name = (element.get("tags") or {}).get("name")
-            if name:
+            group = _group_key(element.get("tags") or {})
+            if group:
                 way_id = f"osm:way/{element['id']}"
-                kin[name].add(way_id)
-                id_name[way_id] = name
+                kin[group].add(way_id)
+                id_group[way_id] = group
 
     links: dict[str, list[str]] = {}
     for element in payload.get("elements", []):
@@ -414,7 +436,7 @@ def _link_trailheads(payload: dict[str, Any]) -> dict[str, list[str]]:
         hits = {lines[index][0] for index in candidates if _point_polyline_m(node, lines[index][1]) <= _LINK_SNAP_M}
         expanded = set(hits)
         for hit in hits:
-            expanded |= kin.get(id_name.get(hit, ""), set())
+            expanded |= kin.get(id_group.get(hit, ""), set())
         if expanded:
             links[f"osm:node/{element['id']}"] = sorted(expanded)
     return links
@@ -695,6 +717,7 @@ def ingest_trails_region(
     *,
     client: httpx.Client | None = None,
     progress_cb: Callable[[str, float], None] | None = None,
+    force: bool = False,
 ) -> int:
     """Ingest the OSM trail network for one coverage region (state) into ``trails``.
 
@@ -705,13 +728,17 @@ def ingest_trails_region(
     large enough to OOM a small droplet before it's even parsed. The returned/logged count is
     rows upserted, not distinct trails - a route spanning a tile boundary gets upserted (and
     counted) once per tile it touches, though it's the same row each time (id is the primary
-    key). One-shot per region: skips once ``trails:place:{place_id}`` is in ``ingest_log``.
+    key). One-shot per region: skips once ``trails:place:{place_id}`` is in ``ingest_log``, unless
+    ``force`` clears that marker first (``foray trails --force`` - for re-pulling coverage after
+    the Overpass query widens, e.g. the forest-road tags).
     """
     if region.bbox is None:
         raise ValueError(f"{region.name} has no bbox configured for trails ingest")
     key = f"trails:place:{region.place_id}"
     with connection(con) as database:
-        if is_ingested(database, key):
+        if force and forget_ingest(database, key):
+            logger.info("trails: --force cleared the ingest marker for %s, re-fetching", region.name)
+        if not force and is_ingested(database, key):
             logger.info("trails: %s already ingested, skipping", region.name)
             if progress_cb:
                 progress_cb(f"Trails already cached for {region.name}, skipping…", 100.0)
