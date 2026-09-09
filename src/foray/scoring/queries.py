@@ -382,15 +382,15 @@ def trails_near(
             # unnamed trailhead never makes the list (it's still drawn on the map).
             return named
         # A path / route / road earns its row by being named, being a route, or running far
-        # enough - a long unnamed forest road (FR 300 split into ref-only segments) counts on
-        # length, same as any path.
+        # enough - a ref-only forest road (ingest sets its name to the ref, e.g. "FR 300") is
+        # already "named" here; a genuinely unnamed one still counts on length, same as any path.
         return named or row_kind == "route" or lead_length(row) >= _SIGNIFICANT_LENGTH_KM
 
     def relevance(row: Sequence[Any]) -> float:
         row_kind = row[2]
-        attrs = json.loads(row[9]) if row[9] else None
         route_bonus = _ROUTE_RELEVANCE_BONUS if (row[13] or row_kind == "route") else 0.0
         if row_kind == "road":
+            attrs = json.loads(row[9]) if row[9] else None
             obs_bonus = _ROAD_OBS_RELEVANCE_WEIGHT * math.log1p(row[14] or 0)
             length_term = _ROAD_LENGTH_WEIGHT * math.log1p(lead_length(row))
             walk_in_bonus = _WALK_IN_RELEVANCE_BONUS if _walk_in(attrs) else 0.0
