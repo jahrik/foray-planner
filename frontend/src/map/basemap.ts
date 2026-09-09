@@ -11,11 +11,19 @@
 // Glyphs and sprites come from Protomaps' small static assets site (a few MB, not the tiles);
 // self-hosting those alongside the archive is a later step.
 import L from "leaflet";
-import { addProtocol } from "maplibre-gl";
+import { addProtocol, setWorkerUrl } from "maplibre-gl";
+// v6 ships the GL web worker as a sibling ESM module whose URL MapLibre derives from
+// import.meta.url - a bundler can't rewrite that, so under Vite we must point MapLibre at the
+// worker chunk once before the first map or it 404s and the style never loads (a blank base,
+// no console error). ?worker&url routes the file through Vite's worker pipeline so the emitted
+// chunk keeps its maplibre-gl-shared.mjs sibling; a plain ?url would drop it.
+import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 // MapLibre's own stylesheet positions the GL canvas/controls inside its container; without it
 // the basemap can lay out wrong even mounted through the Leaflet plugin.
 import "maplibre-gl/dist/maplibre-gl.css";
 import "@maplibre/maplibre-gl-leaflet";
+
+setWorkerUrl(workerUrl);
 import { Protocol } from "pmtiles";
 import layers from "protomaps-themes-base";
 import type { StyleSpecification } from "@maplibre/maplibre-gl-style-spec";
