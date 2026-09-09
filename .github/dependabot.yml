@@ -26,6 +26,14 @@ updates:
       frontend-dependencies:
         patterns:
           - "*"
+    ignore:
+      # maplibre-gl must stay on v5. v6 externalises its web worker as a separate
+      # maplibre-gl-worker.mjs resolved from import.meta.url; Vite never emits it, so the
+      # worker 404s at runtime and the vector basemap paints only its background - with no
+      # build error, so a v6 bump passes CI while shipping a broken map. Revisit if the
+      # Leaflet plugin / Vite gain a supported way to bundle the v6 worker.
+      - dependency-name: maplibre-gl
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: docker
     directory: /
