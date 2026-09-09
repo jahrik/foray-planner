@@ -110,6 +110,23 @@ def test_get_config(client: TestClient) -> None:
     assert body["home"]["name"] == "Home"
     assert body["cell_deg"] == CELL
     assert body["refreshing"] is False
+    assert body["basemap_url"] == ""  # no vector basemap configured in the test settings
+
+
+def test_security_headers_csp_locks_down_origins(client: TestClient) -> None:
+    csp = client.get("/api/config").headers["Content-Security-Policy"]
+    assert "default-src 'self'" in csp
+    assert "worker-src 'self' blob:" in csp  # MapLibre GL workers
+    assert "https://protomaps.github.io" in csp  # vector basemap glyphs / sprites
+    assert "connect-src 'self' https://nominatim.openstreetmap.org" in csp
+
+
+def test_security_headers_csp_whitelists_a_configured_basemap_host() -> None:
+    from foray.api.security import _content_security_policy
+
+    csp = _content_security_policy("https://cdn.example.com/basemaps/us.pmtiles?v=1")
+    assert "https://cdn.example.com" in csp.split("connect-src", 1)[1].split(";", 1)[0]
+    assert "us.pmtiles" not in csp  # only the origin, not the path
 
 
 def test_get_genera_searches_by_scientific_or_common_name(client: TestClient, con: psycopg.Connection) -> None:

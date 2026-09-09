@@ -14,6 +14,7 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 | `foray_app_image` | Container image (default: ghcr.io/jahrik/foray-planner:latest) |
 | `foray_ridb_api_key` | Recreation.gov API key (optional) |
 | `foray_alert_email` | DO monitoring alert recipient (from `FORAY_ALERT_EMAIL` env); unset skips alert policy creation (issue #84) |
+| `foray_basemap_url` | Protomaps PMTiles vector basemap URL (from `FORAY_BASEMAP_URL` env); unset leaves the map with no base layer |
 
 ## Key Files
 

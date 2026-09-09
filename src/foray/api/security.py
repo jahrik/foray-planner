@@ -4,31 +4,61 @@ from __future__ import annotations
 
 import ipaddress
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, Response
 
-# Public-facing app serving an HTML+JS frontend - locked down to what the frontend actually
-# needs (Leaflet bundled as 'self'; connect-src/script-src third-party origins limited to
-# Nominatim; img-src additionally allows OSM + Esri gray-canvas tiles and iNaturalist's photo hosts) so an XSS bug
-# can't exfiltrate to or load script from anywhere else. style-src needs 'unsafe-inline' because
-# the frontend sets `style="..."` attributes directly (map legend swatches, score bars, phenology
-# heatmap cells) - much lower risk than script injection, so that's an accepted gap. The selected
-# destination's satellite fill (map.ts showSatelliteOverlay) is 'self' only - it's proxied and
-# cached through our own /api/destinations/{region_id}/satellite/* routes (sources/satellite.py)
-# rather than the browser hitting Esri directly, so no arcgisonline.com entry is needed here.
-_CONTENT_SECURITY_POLICY = (
-    "default-src 'self'; "
-    "script-src 'self'; "
-    "style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' https://*.tile.openstreetmap.org https://server.arcgisonline.com "
-    "https://static.inaturalist.org https://inaturalist-open-data.s3.amazonaws.com data:; "
-    "connect-src 'self' https://nominatim.openstreetmap.org; "
-    "font-src 'self'; "
-    "object-src 'none'; "
-    "base-uri 'self'; "
-    "form-action 'self'; "
-    "frame-ancestors 'none'"
-)
+from foray.config import Settings
+
+# Protomaps' static assets site hosts the vector basemap's glyphs + sprites - a few MB of
+# font/icon data, not the tiles themselves (those are the self-hosted PMTiles archive at
+# cfg.basemap_url). Self-hosting the glyph/sprite assets alongside the archive is a later step.
+_PROTOMAPS_ASSETS = "https://protomaps.github.io"
+
+
+def _origin(url: str) -> str:
+    """The ``scheme://host[:port]`` of ``url``, or ``""`` if it has no host (relative / blank)."""
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
+
+
+def _content_security_policy(basemap_url: str = "") -> str:
+    """Public-facing app serving an HTML+JS frontend - locked to exactly what the frontend needs.
+
+    Leaflet + MapLibre GL are bundled as 'self'. script-src/connect-src third-party origins are
+    limited to Nominatim (geocode autocomplete) and, for the vector basemap, Protomaps' asset
+    site plus the configured PMTiles host. style-src needs 'unsafe-inline' because the frontend
+    sets ``style="..."`` attributes directly (legend swatches, score bars, phenology cells) -
+    much lower risk than script injection, an accepted gap. worker-src / ``blob:`` in img-src
+    are for MapLibre GL's web workers and canvas/sprite blobs. The selected destination's
+    satellite fill is 'self' only - proxied through our own routes (sources/satellite.py).
+    """
+    connect = ["'self'", "https://nominatim.openstreetmap.org", _PROTOMAPS_ASSETS]
+    img = [
+        "'self'",
+        "https://static.inaturalist.org",
+        "https://inaturalist-open-data.s3.amazonaws.com",
+        _PROTOMAPS_ASSETS,
+        "data:",
+        "blob:",
+    ]
+    basemap_origin = _origin(basemap_url)
+    if basemap_origin and basemap_origin not in connect:
+        connect.append(basemap_origin)
+    return (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "worker-src 'self' blob:; "
+        f"img-src {' '.join(img)}; "
+        f"connect-src {' '.join(connect)}; "
+        "font-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
+    )
+
 
 # Issue #82: only route accepting a body is POST /api/location (LocationBody - a few KB
 # realistic max). Cloudflare's free-plan edge cap is 100MB with no app-level backstop
@@ -59,12 +89,15 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def install_middleware(app: FastAPI) -> None:
+def install_middleware(app: FastAPI, cfg: Settings | None = None) -> None:
     """Register the body-size cap and the security-header pass, inner layer first.
 
     ``limit_body_size`` is registered before ``security_headers`` so it ends up the inner
     layer - a 413 from it still gets the security headers applied on the way back out.
+    The CSP is built once here so a configured ``basemap_url`` host is whitelisted in
+    ``connect-src``.
     """
+    csp = _content_security_policy((cfg or Settings()).basemap_url)
 
     @app.middleware("http")
     async def limit_body_size(request: Request, call_next: Any) -> Response:
@@ -89,7 +122,7 @@ def install_middleware(app: FastAPI) -> None:
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Any) -> Response:
         response = await call_next(request)
-        response.headers["Content-Security-Policy"] = _CONTENT_SECURITY_POLICY
+        response.headers["Content-Security-Policy"] = csp
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"

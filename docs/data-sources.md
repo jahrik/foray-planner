@@ -209,6 +209,39 @@ the rest of the map, without losing the road/city names the basemap would otherw
 
 ---
 
+## Protomaps PMTiles vector basemap
+
+**Role:** The map's only base layer. A self-hosted Protomaps PMTiles archive rendered by MapLibre
+GL, mounted inside the existing Leaflet map via `@maplibre/maplibre-gl-leaflet`. Not scored -
+it's cartography. This replaced the old raster basemap (Esri "World Light Gray Canvas" in light
+mode, `tile.openstreetmap.org` CSS-inverted in dark) outright: there is no raster fallback, so
+`FORAY_BASEMAP_URL` must be set or the map renders overlays with no base underneath.
+
+**Why vector:** the raster base baked every road and label into pixels we could only draw over. A
+vector base lets us style forest roads / trails / highways distinctly, declutter labels, drop the
+`maxZoom: 14` ceiling, and get a real dark style instead of a CSS `invert()` hack.
+
+- **Archive:** one PMTiles file (a single-file archive of Mapbox Vector Tiles, addressed by
+  z/x/y over HTTP range requests) covering the US, built by `scripts/build_basemap_pmtiles.sh`
+  (`pmtiles extract` slicing a US bbox out of Protomaps' daily planet build). ~15-40 GB - too
+  big for the droplet root disk, so it lives on DigitalOcean Spaces + CDN as one static object.
+- **Config:** `FORAY_BASEMAP_URL` (the CDN URL of the archive). Empty by default -> the frontend
+  keeps the raster basemap, so this stays dark until the bucket is populated. Surfaced to the
+  SPA in `GET /api/config` as `basemap_url`.
+- **Frontend:** `frontend/src/map/basemap.ts`, code-split (the MapLibre GL stack is ~280 kB
+  gzip) so it only loads when a URL is configured. Registers the `pmtiles://` protocol,
+  builds a MapLibre style from `protomaps-themes-base` (light/dark), swaps the style on theme
+  change. The `#map.vector-basemap` class scopes off the dark-mode invert filter.
+- **Glyphs + sprites:** from `https://protomaps.github.io/basemaps-assets` (a few MB of
+  font/icon data, not the tiles). Self-hosting these alongside the archive is a later step.
+- **CSP:** `_content_security_policy()` in `api/security.py` adds `worker-src 'self' blob:`
+  (MapLibre workers), `blob:` to `img-src`, `https://protomaps.github.io` to `connect-src` /
+  `img-src`, and the configured `FORAY_BASEMAP_URL` origin to `connect-src`.
+- **Attribution:** "© OpenStreetMap · © Protomaps", added to the Leaflet attribution control on
+  mount.
+
+---
+
 ## OpenStreetMap Nominatim (geocoding)
 
 **Role:** Resolves place-name strings typed in the location bar to lat/lng coordinates.

@@ -31,4 +31,5 @@ def get_config(
         recent_weeks=cfg.recent_weeks,
         refreshing=state.refreshing,
         last_error=state.last_error,
+        basemap_url=cfg.basemap_url,
     )

@@ -615,6 +615,11 @@ export interface components {
             refreshing: boolean;
             /** Last Error */
             last_error: string | null;
+            /**
+             * Basemap Url
+             * @default
+             */
+            basemap_url: string;
         };
         /** CoverageRegionResponse */
         CoverageRegionResponse: {

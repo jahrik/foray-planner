@@ -109,6 +109,12 @@ argument_specs:
         type: str
         description: Default search radius in km
         default: "150"
+      foray_basemap_url:
+        type: str
+        description: >
+          URL of the Protomaps PMTiles vector basemap archive (DO Spaces + CDN).
+          Empty leaves the map with no base layer. Read from FORAY_BASEMAP_URL env var.
+        default: ""
       foray_ingest_cron_hour:
         type: str
         description: Hour (UTC) for daily observation ingest cron
