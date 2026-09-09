@@ -580,9 +580,13 @@ export function clearTrailheadMarkers(): void {
 }
 
 export function plotTrailhead(lat: number, lng: number, name: string, onSelect: () => void): L.Marker {
+  // textContent, not a bare string: Leaflet renders a string tooltip as innerHTML and the name
+  // is external OSM data (same guard as plotCardCamp).
+  const tooltip = document.createElement("span");
+  tooltip.textContent = name;
   const marker = L.marker([lat, lng], { icon: trailheadIcon(false), bubblingMouseEvents: false })
     .addTo(map)
-    .bindTooltip(name, { direction: "top", offset: [0, -22] });
+    .bindTooltip(tooltip, { direction: "top", offset: [0, -22] });
   marker.on("click", onSelect);
   state.trailheadMarkers.push(marker);
   return marker;
