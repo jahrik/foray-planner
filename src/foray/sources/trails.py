@@ -2,15 +2,19 @@
 
 The planner's question is "shortest walk from where I can park to where they're fruiting", so this
 module pulls the walkable network near home from OSM and caches it as ``trails`` rows the map and
-scoring read directly. One ODbL-licensed Overpass request gathers three element classes (the
+scoring read directly. One ODbL-licensed Overpass request gathers four kinds of feature (the
 way/node union and the route relations need separate ``out geom`` statements - see
 ``_trails_query``):
 
-* **Paths** (``kind='path'``) - backcountry/trail ways (``highway=path``), cached as a
-  ``LineString`` polyline. We deliberately *exclude* ``highway=footway``: it is dominated by urban
-  sidewalks (measured ~6x the row count over a wide radius - e.g. 44.7k vs 7.4k ways at 200 km),
-  which is noise for a mushroom-trail planner and heavy enough to time the full-radius query out
-  on public Overpass. ``highway=path`` is the tag that actually maps forest trails.
+* **Paths** (``kind='path'``) - backcountry/trail ways (``highway=path`` / ``bridleway``), cached
+  as a ``LineString`` polyline. We deliberately *exclude* ``highway=footway``: it is dominated by
+  urban sidewalks (measured ~6x the row count over a wide radius - e.g. 44.7k vs 7.4k ways at
+  200 km), which is noise for a mushroom-trail planner and heavy enough to time the full-radius
+  query out on public Overpass.
+* **Forest roads** (``kind='road'``) - old logging / forest-service roads (``highway=track``, and
+  ``highway=service`` with ``service=forestry``), cached as a ``LineString``. These are a primary
+  mushroom-foraging surface - you drive or walk them through habitat - so they are ingested as a
+  first-class, separately filterable kind, not folded into paths.
 * **Hiking routes** (``kind='route'``) - named long trails (``route=hiking`` relations), cached as
   a ``MultiLineString`` stitched from their member ways.
 * **Trailheads** (``kind='trailhead'``) - where you actually start walking (``highway=trailhead``
@@ -66,6 +70,34 @@ _MAX_POINTS_PER_LINE = 60
 # are upserted and discarded before the next tile starts; see ``ingest_trails_region``.
 _TILE_DEG = 2.0
 
+# Way classes we ingest, by the ``kind`` they become. Trails are foot/horse ways; roads are the
+# old logging / forest-service roads foragers actually walk and drive (issue: forest roads are a
+# primary foraging surface). Everything else - paved public roads, and ``footway`` (~6x the row
+# count, mostly urban sidewalks) - is the vector basemap's job to draw, not ours to score on.
+_TRAIL_HIGHWAYS = ("path", "bridleway")
+_ROAD_HIGHWAYS = ("track",)
+_ROAD_HIGHWAY_SET = frozenset(_ROAD_HIGHWAYS)
+
+
+def _is_road(tags: dict[str, Any]) -> bool:
+    """A forest / logging road (``highway=track``, or ``highway=service`` + ``service=forestry``)
+    rather than a foot/horse trail - cached as ``kind='road'`` so it stays separately queryable
+    from trails without a second table."""
+    highway = tags.get("highway")
+    return highway in _ROAD_HIGHWAY_SET or (highway == "service" and tags.get("service") == "forestry")
+
+
+def _way_selectors(region_filter: str) -> str:
+    """The ``way[...]`` clauses (trails + forest roads) for a region filter fragment - shared by
+    the home-disk and bbox queries so both ingest the same classes."""
+    trail_alt = "|".join(_TRAIL_HIGHWAYS)
+    road_alt = "|".join(_ROAD_HIGHWAYS)
+    return (
+        f'way["highway"~"^({trail_alt})$"]{region_filter};'
+        f'way["highway"~"^({road_alt})$"]{region_filter};'
+        f'way["highway"="service"]["service"="forestry"]{region_filter};'
+    )
+
 
 def _tile_bboxes(
     min_lat: float, min_lng: float, max_lat: float, max_lng: float, tile_deg: float = _TILE_DEG
@@ -87,20 +119,20 @@ def _tile_bboxes(
 
 
 def _trails_query(lat: float, lng: float, radius_m: float) -> str:
-    """Overpass QL for walkable paths, hiking routes, and trailheads within the home disk."""
-    around = overpass.around(lat, lng, radius_m)
+    """Overpass QL for trails, forest roads, hiking routes, and trailheads within the home disk."""
+    region = f"({overpass.around(lat, lng, radius_m)})"
     return (
         "[out:json][timeout:180];"
         "("
-        f'way["highway"="path"]({around});'
-        f'node["highway"="trailhead"]({around});'
+        f"{_way_selectors(region)}"
+        f'node["highway"="trailhead"]{region};'
         ");"
         "out geom tags;"
         # Relations need their own `out geom`: inside a union `out geom` a route relation comes
         # back with only `bounds` and no members, so `_parse_element` can never stitch it and
         # `kind='route'` rows silently never appear (issue #306). A dedicated statement returns
         # every member way with its geometry.
-        f'relation["route"="hiking"]({around});'
+        f'relation["route"="hiking"]{region};'
         "out geom;"
     )
 
@@ -127,23 +159,23 @@ def _network_query(node_id: int, *, timeout_s: int = 25) -> str:
 
 
 def _trails_query_bbox(min_lat: float, min_lng: float, max_lat: float, max_lng: float, *, timeout_s: int = 300) -> str:
-    """Overpass QL for the same three element classes within a state-sized bbox.
+    """Overpass QL for the same element classes as ``_trails_query`` within a state-sized bbox.
 
     A whole state (rather than a home-radius circle) is large enough that the query needs a
     longer server-side timeout - Overpass rejects a query outright if its own [timeout:N] is
     exceeded, so this defaults higher than the home-radius query's 180s.
     """
-    bbox = overpass.bbox(min_lat, min_lng, max_lat, max_lng)
+    region = overpass.bbox(min_lat, min_lng, max_lat, max_lng)
     return (
         f"[out:json][timeout:{timeout_s}];"
         "("
-        f'way["highway"="path"]{bbox};'
-        f'node["highway"="trailhead"]{bbox};'
+        f"{_way_selectors(region)}"
+        f'node["highway"="trailhead"]{region};'
         ");"
         "out geom tags;"
         # See `_trails_query`: a union `out geom` drops relation members, so route relations
         # get their own statement (issue #306).
-        f'relation["route"="hiking"]{bbox};'
+        f'relation["route"="hiking"]{region};'
         "out geom;"
     )
 
@@ -174,11 +206,29 @@ def _trail_url(etype: str, eid: int) -> str:
     return f"https://www.openstreetmap.org/{etype}/{eid}"
 
 
-_ATTR_TAGS = ("surface", "sac_scale", "trail_visibility", "network", "operator", "informal")
+# Detail tags kept per path/road/route row. `highway`/`tracktype`/`surface`/`smoothness`/
+# `4wd_only` describe what you're walking or driving; `access`/`motor_vehicle` whether a forest
+# road is gated (walk-in - prime foraging); `ref` the road number (FR 300) even when `name` is
+# set. The card renders these ("FR 300 - dirt - drivable" vs "Ridge Trail - footpath").
+_ATTR_TAGS = (
+    "highway",
+    "surface",
+    "tracktype",
+    "smoothness",
+    "4wd_only",
+    "sac_scale",
+    "trail_visibility",
+    "network",
+    "operator",
+    "informal",
+    "access",
+    "motor_vehicle",
+    "ref",
+)
 
 
 def _attrs(tags: dict[str, Any]) -> dict[str, str] | None:
-    """The OSM detail tags worth keeping for a path/route row, or None if it carries none."""
+    """The OSM detail tags worth keeping for a path/road/route row, or None if it carries none."""
     picked = {tag: str(tags[tag]) for tag in _ATTR_TAGS if tags.get(tag)}
     return picked or None
 
@@ -256,8 +306,10 @@ def _parse_element(element: dict[str, Any]) -> tuple[Any, ...] | None:
         coords = _line_coords(element.get("geometry") or [])
         if not coords:
             return None
-        name = tags.get("name") or tags.get("ref") or "Trail (OSM)"
-        return _row("way", int(eid), name, "path", [coords], attrs=_attrs(tags))
+        kind = "road" if _is_road(tags) else "path"
+        fallback = "Forest road (OSM)" if kind == "road" else "Trail (OSM)"
+        name = tags.get("name") or tags.get("ref") or fallback
+        return _row("way", int(eid), name, kind, [coords], attrs=_attrs(tags))
     if etype == "relation":
         # `out geom` returns each way member with its own `geometry`; stitch them into one route.
         lines = [
@@ -387,9 +439,10 @@ def _parse_trails(payload: dict[str, Any]) -> list[tuple[Any, ...]]:
     rows = list(by_id.values())
     counts = Counter(row[2] for row in rows)
     logger.info(
-        "trails: parsed %d rows (%d path, %d route, %d trailhead; %d trailheads linked)",
+        "trails: parsed %d rows (%d path, %d road, %d route, %d trailhead; %d trailheads linked)",
         len(rows),
         counts["path"],
+        counts["road"],
         counts["route"],
         counts["trailhead"],
         len(links),
@@ -514,7 +567,7 @@ def trailhead_network(node_id: int, *, client: httpx.Client | None = None) -> di
     return {"name": name or "Trail (OSM)", "kind": kind, "geometry": geometry, "rows": rows}
 
 
-_SYNTHETIC_NAMES = {"Trail (OSM)", "Hiking route (OSM)", "Trailhead (OSM)"}
+_SYNTHETIC_NAMES = {"Trail (OSM)", "Forest road (OSM)", "Hiking route (OSM)", "Trailhead (OSM)"}
 
 
 def _merge_connected(trailhead: scoring.Trail, parts: Sequence[scoring.Trail]) -> scoring.Trail | None:

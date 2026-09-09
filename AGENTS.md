@@ -51,8 +51,9 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
 - `src/foray/sources/http.py` - shared HTTP plumbing for the external-data modules: `USER_AGENT`,
   `Throttle` (process-wide request pacer), `retry_after_seconds` (`Retry-After` parsing +
   capped backoff), and `SOURCE_ERRORS` (the "log + degrade to empty" exception tuple).
-- `src/foray/sources/overpass.py` - shared OSM Overpass client (endpoint, `around()`/`bbox()` filter
-  fragments, `post()` with 429/504 backoff) used by `sources/dispersed.py` and `sources/trails.py`.
+- `src/foray/sources/overpass.py` - shared OSM Overpass client (`ENDPOINTS` list with failover,
+  `around()`/`bbox()` filter fragments, `post()` with 429/504 backoff then next-mirror) used by
+  `sources/dispersed.py` and `sources/trails.py`. `FORAY_OVERPASS_URLS` overrides the list.
 - `src/foray/cache.py` - Postgres schema (tables created eagerly on every `connect()`) +
   idempotent upserts (`ON CONFLICT`), ingest log. `connect()` takes no DSN by default - reads
   the standard `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` env vars.
@@ -90,9 +91,11 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   within public land, inferred as likely dispersed sites - was scoped but never implemented; see
   issue #110.)
 - `src/foray/sources/trails.py` - trail layer from OSM **Overpass** (httpx, no key). One ODbL request
-  pulls backcountry paths (`highway=path` -> `kind='path'`; `footway` **excluded** - mostly urban
-  sidewalks), named hiking routes (`route=hiking` relations -> `kind='route'`, member ways stitched),
-  and trailheads (`highway=trailhead` nodes -> `kind='trailhead'`, Point). The route clause needs
+  pulls backcountry paths (`highway=path`/`bridleway` -> `kind='path'`; `footway` **excluded** -
+  mostly urban sidewalks), forest / logging roads (`highway=track`, and `highway=service` +
+  `service=forestry` -> `kind='road'` - a primary foraging surface, kept separately queryable),
+  named hiking routes (`route=hiking` relations -> `kind='route'`, member ways stitched), and
+  trailheads (`highway=trailhead` nodes -> `kind='trailhead'`, Point). The route clause needs
   its **own** `out geom;` - inside a union `out geom` drops relation members. At ingest each
   trailhead is snapped (<=35 m) onto the payload's trail polylines and the matched ids (expanded to
   every same-named segment) stored in `trails.connects`, so `resolve_trail_network` draws the whole

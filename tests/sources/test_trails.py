@@ -90,12 +90,69 @@ def test_parse_element_derives_length_km_and_keeps_detail_tags() -> None:
     )
     assert row is not None
     assert 1.0 < row[9] < 1.3  # length_km, great-circle over the full polyline
-    assert json.loads(row[10]) == {"surface": "dirt", "sac_scale": "mountain_hiking", "informal": "yes"}
+    assert json.loads(row[10]) == {
+        "highway": "path",
+        "surface": "dirt",
+        "sac_scale": "mountain_hiking",
+        "informal": "yes",
+    }
 
     bare = _parse_element(
         {"type": "way", "id": 2, "tags": {"highway": "path"}, "geometry": [{"lat": 47.6, "lon": -122.3}]}
     )
-    assert bare is not None and bare[9] is None and bare[10] is None  # single vertex, no detail tags
+    # single vertex -> no length; `highway` is always kept so attrs is never fully empty now
+    assert bare is not None and bare[9] is None and json.loads(bare[10]) == {"highway": "path"}
+
+
+def test_parse_element_classifies_a_forest_road_and_keeps_road_tags() -> None:
+    track = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "track", "ref": "FR 300", "tracktype": "grade3", "access": "yes"},
+            "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.29}],
+        }
+    )
+    assert track is not None
+    assert track[2] == "road"
+    assert track[1] == "FR 300"  # ref stands in for a missing name
+    assert json.loads(track[10]) == {"highway": "track", "ref": "FR 300", "tracktype": "grade3", "access": "yes"}
+
+    forestry_service = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "service", "service": "forestry"},
+            "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.29}],
+        }
+    )
+    assert forestry_service is not None
+    assert forestry_service[2] == "road"
+    assert forestry_service[1] == "Forest road (OSM)"  # unnamed -> road-specific fallback
+
+    # `service=forestry` is the qualifier - a plain service way (never asked for by the query,
+    # but defensive) is not treated as a forest road
+    plain_service = _parse_element(
+        {
+            "type": "way",
+            "id": 3,
+            "tags": {"highway": "service"},
+            "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.29}],
+        }
+    )
+    assert plain_service is not None and plain_service[2] == "path"
+
+
+def test_parse_element_classifies_a_bridleway_as_a_path() -> None:
+    row = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "bridleway", "name": "Horse Loop"},
+            "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.29}],
+        }
+    )
+    assert row is not None and row[2] == "path"
 
 
 def test_parse_element_reads_a_trailhead_node() -> None:
@@ -673,6 +730,21 @@ def test_nearest_trail_returns_none_outside_max_km(con: psycopg.Connection) -> N
     assert nearest_trail(con, lat=HOME_LAT, lng=HOME_LNG, max_km=2.0) is None
 
 
+def test_nearest_trail_includes_forest_roads(con: psycopg.Connection) -> None:
+    road = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "track", "ref": "FR 12"},
+            "geometry": [{"lat": 47.601, "lon": -122.301}, {"lat": 47.602, "lon": -122.302}],
+        }
+    )
+    assert road is not None and road[2] == "road"
+    upsert_trails(con, [road])
+    found = nearest_trail(con, lat=HOME_LAT, lng=HOME_LNG, max_km=2.0)
+    assert found is not None and found.name == "FR 12" and found.kind == "road"
+
+
 def test_network_query_filters_on_the_trailhead_node_and_highway_ways() -> None:
     query = _network_query(123)
     assert "node(id:123);" in query
@@ -692,6 +764,18 @@ def test_trails_query_fetches_relations_in_a_separate_out_statement() -> None:
         assert query.index('relation["route"="hiking"]') > query.index(");")
         _, _, after_relation = query.partition('relation["route"="hiking"]')
         assert after_relation.rstrip().endswith("out geom;")
+
+
+def test_trails_query_fetches_trails_forest_roads_and_trailheads() -> None:
+    for query in (
+        _trails_query(HOME_LAT, HOME_LNG, 5000),
+        _trails_query_bbox(47.0, -123.0, 48.0, -122.0),
+    ):
+        assert 'way["highway"~"^(path|bridleway)$"]' in query
+        assert 'way["highway"~"^(track)$"]' in query
+        assert 'way["highway"="service"]["service"="forestry"]' in query
+        assert 'node["highway"="trailhead"]' in query
+        assert '"footway"' not in query  # deliberately excluded (sidewalk noise)
 
 
 def test_parse_trailhead_id_extracts_the_numeric_node_id() -> None:
