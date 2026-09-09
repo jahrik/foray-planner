@@ -36,10 +36,11 @@
         aws_secret_access_key: "{{ foray_spaces_secret_access_key }}"
 
     - name: Put a public-read policy on the archive key
+      # amazon.aws >= 9 signs with SigV4 by default (the old `sig_v4` option was removed), which
+      # is what the DO Spaces endpoint needs.
       amazon.aws.s3_bucket:
         name: "{{ foray_basemap_space_name }}"
         state: present
-        sig_v4: true
         policy: "{{ lookup('ansible.builtin.template', 'basemap_bucket_policy.json.j2') }}"
 
     - name: Put the CORS rule on the Space (ranged GETs from the app origin)
