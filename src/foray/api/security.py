@@ -22,7 +22,7 @@ def _origin(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
 
 
-def _content_security_policy(basemap_url: str = "") -> str:
+def _content_security_policy(basemap_url: str = "", terrain_url: str = "") -> str:
     """Public-facing app serving an HTML+JS frontend - locked to exactly what the frontend needs.
 
     Leaflet is bundled as 'self'. script-src/connect-src third-party origins are limited to
@@ -36,21 +36,35 @@ def _content_security_policy(basemap_url: str = "") -> str:
     (canvas/sprite blobs), Protomaps' asset site for glyphs/sprites, and the PMTiles host in
     connect-src. With no basemap configured none of that is pulled, so it is left out.
 
-    The blob:/asset allowances are gated on ``basemap_url`` being set at all, not on it having a
-    parseable origin - a same-origin relative ``basemap_url`` still mounts MapLibre and still
-    needs them. The PMTiles host only joins connect-src when the URL has one ('self' already
-    covers the relative case).
+    ``terrain_url`` is the Terrarium DEM tile template that drives the hillshade + contour
+    lines (AWS Open Data's elevation-tiles-prod by default). Its host joins connect-src
+    (MapLibre + maplibre-contour fetch the tiles) and img-src (raster-dem tiles decode through
+    the image path); the contour worker is covered by the same ``worker-src blob:``.
+
+    The blob:/asset allowances are gated on a basemap or terrain URL being set at all, not on
+    it having a parseable origin - a same-origin relative URL still mounts MapLibre and still
+    needs them. A tile/PMTiles host only joins connect-src/img-src when the URL has one ('self'
+    already covers the relative case).
     """
     connect = ["'self'", "https://nominatim.openstreetmap.org"]
     img = ["'self'", "https://static.inaturalist.org", "https://inaturalist-open-data.s3.amazonaws.com", "data:"]
     worker = "worker-src 'self'; "
-    if basemap_url:
+    if basemap_url or terrain_url:
         worker = "worker-src 'self' blob:; "
-        img += ["blob:", _PROTOMAPS_ASSETS]
+        img += ["blob:"]
+    if basemap_url:
+        img += [_PROTOMAPS_ASSETS]
         connect += [_PROTOMAPS_ASSETS]
         basemap_origin = _origin(basemap_url)
         if basemap_origin and basemap_origin not in connect:
             connect.append(basemap_origin)
+    if terrain_url:
+        terrain_origin = _origin(terrain_url)
+        if terrain_origin:
+            if terrain_origin not in connect:
+                connect.append(terrain_origin)
+            if terrain_origin not in img:
+                img.append(terrain_origin)
     return (
         "default-src 'self'; "
         "script-src 'self'; "
@@ -100,10 +114,11 @@ def install_middleware(app: FastAPI, cfg: Settings | None = None) -> None:
 
     ``limit_body_size`` is registered before ``security_headers`` so it ends up the inner
     layer - a 413 from it still gets the security headers applied on the way back out.
-    The CSP is built once here so a configured ``basemap_url`` host is whitelisted in
-    ``connect-src``.
+    The CSP is built once here so a configured ``basemap_url`` / ``terrain_url`` host is
+    whitelisted in ``connect-src``.
     """
-    csp = _content_security_policy((cfg or Settings()).basemap_url)
+    settings = cfg or Settings()
+    csp = _content_security_policy(settings.basemap_url, settings.terrain_url)
 
     @app.middleware("http")
     async def limit_body_size(request: Request, call_next: Any) -> Response:

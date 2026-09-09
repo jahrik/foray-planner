@@ -620,6 +620,11 @@ export interface components {
              * @default
              */
             basemap_url: string;
+            /**
+             * Terrain Url
+             * @default
+             */
+            terrain_url: string;
         };
         /** CoverageRegionResponse */
         CoverageRegionResponse: {

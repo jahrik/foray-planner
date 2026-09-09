@@ -116,6 +116,13 @@ argument_specs:
           FORAY_BASEMAP_URL wins; otherwise defaults to the computed CDN URL once the Spaces
           key is set, else empty (map has no base layer).
         default: ""
+      foray_terrain_url:
+        type: str
+        description: >
+          Terrarium DEM tile URL template (drives hillshade + contours). Defaults to AWS Open
+          Data's elevation-tiles-prod; set FORAY_TERRAIN_URL to override (self-hosted archive,
+          or "" to drop hillshade).
+        default: "https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png"
       foray_spaces_access_key_id:
         type: str
         description: DO Spaces access key id (API -> Spaces Keys, separate from DO_API_TOKEN); read from DO_SPACES_KEY. Empty skips basemap Space provisioning.

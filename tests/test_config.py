@@ -28,6 +28,21 @@ def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert cfg.recent_weeks == 2
 
 
+def test_basemap_and_terrain_urls_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FORAY_BASEMAP_URL", "https://cdn.example.com/us.pmtiles")
+    monkeypatch.setenv("FORAY_TERRAIN_URL", "https://cdn.example.com/custom/{z}/{x}/{y}.png")
+    cfg = Settings()
+    assert cfg.basemap_url == "https://cdn.example.com/us.pmtiles"
+    assert cfg.terrain_url == "https://cdn.example.com/custom/{z}/{x}/{y}.png"
+
+
+def test_terrain_url_defaults_to_aws_open_data() -> None:
+    # Unset (no env, no .env key) -> the AWS Open Data Terrarium tiles, not empty.
+    assert Settings(_env_file=None).terrain_url == (
+        "https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png"
+    )
+
+
 def test_settings_coverage_inline_json_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
         "FORAY_COVERAGE",

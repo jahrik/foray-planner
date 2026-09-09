@@ -243,7 +243,9 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
     `basemap-theme.ts` contrast pass and `basemap-roads.ts` forest-road/trail styling on top;
     code-split, see docs/data-sources.md), real light/dark cartography that swaps on theme
     change; no raster fallback - the server must send a `basemap_url` (`FORAY_BASEMAP_URL`) or
-    the map has overlays but no base.
+    the map has overlays but no base. `/api/config` also carries a `terrain_url` (Terrarium DEM
+    tiles, defaulting to AWS Open Data's `elevation-tiles-prod`) for the hillshade + contour
+    layers.
     `src/map/layers.ts` (camps/land/fire/precise fetch + render), `src/map/sheet.ts`
     (mobile bottom sheet), `popup.ts` / `markers.ts` / `layer-lifecycle.ts` (primitives).
   - `src/api/` - the typed client (`openapi-fetch`, `client.ts`: `getJson` / `postJson` /

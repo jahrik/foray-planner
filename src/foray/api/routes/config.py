@@ -32,4 +32,5 @@ def get_config(
         refreshing=state.refreshing,
         last_error=state.last_error,
         basemap_url=cfg.basemap_url,
+        terrain_url=cfg.terrain_url,
     )
