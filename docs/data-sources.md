@@ -225,15 +225,17 @@ vector base lets us style forest roads / trails / highways distinctly, declutter
   z/x/y over HTTP range requests) covering CONUS. ~15-40 GB - too big for the droplet root
   disk, so it lives in a DigitalOcean Space fronted by the Spaces CDN as one static object.
 - **Build (Ansible):**
-  - `just ansible provision` (`tasks/provision/basemap.yml`) creates the Space + CDN endpoint
-    and sets a public-read bucket policy + a CORS rule for ranged GETs from the app origin.
-    Skipped when `DO_SPACES_KEY` / `DO_SPACES_SECRET` (a Spaces access key, separate from
+  - `just ansible provision` (`tasks/provision/basemap.yml`) creates the Space
+    (`digitalocean.cloud.space`) + CDN endpoint (`digitalocean.cloud.cdn_endpoints`), a
+    public-read bucket policy (`amazon.aws.s3_bucket`), and a CORS rule for ranged GETs
+    (`community.aws.s3_cors`) - the S3 modules pointed at the Spaces `endpoint_url`. Skipped
+    when `DO_SPACES_KEY` / `DO_SPACES_SECRET` (a Spaces access key, separate from
     `DO_API_TOKEN`) are unset.
   - `just ansible build-basemap-once` (`tasks/provision/build_basemap_once.yml`) fetches the
     `pmtiles` CLI, `pmtiles extract`s `foray_basemap_bbox` from the most recent
     `build.protomaps.com/<date>.pmtiles` (range requests, not a full planet download), uploads
-    it via `files/basemap_space.py` (boto3), and purges the CDN key. Runs on the control node,
-    not the droplet. Re-run monthly to refresh - the object key is stable.
+    it with `amazon.aws.s3_object`, and purges the CDN key. Runs on the control node, not the
+    droplet. Re-run monthly to refresh - the object key is stable.
 - **Config:** `FORAY_BASEMAP_URL` if set, else the computed CDN URL once the Spaces key is
   configured, else empty (no base layer). Surfaced to the SPA in `GET /api/config` as
   `basemap_url`; the ansible var is `foray_basemap_url`.

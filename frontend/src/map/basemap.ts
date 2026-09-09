@@ -52,8 +52,8 @@ export function mountVectorBasemap(map: L.Map, url: string, theme: "dark" | "lig
   return glLayer;
 }
 
-/** Swap the vector style for a theme change (light <-> dark). No-op if the vector basemap is
- * not mounted (raster fallback path). */
+/** Swap the vector style for a theme change (light <-> dark). No-op if the basemap has not
+ * been mounted yet (no basemap_url configured). */
 export function setVectorBasemapTheme(url: string, theme: "dark" | "light"): void {
   glLayer?.getMaplibreMap().setStyle(buildStyle(url, theme));
 }

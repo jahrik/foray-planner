@@ -55,6 +55,10 @@ def cfg(con: psycopg.Connection) -> Settings:
         home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=200),
         cell_deg=CELL,
         ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=8),
+        # Pin empty so a FORAY_BASEMAP_URL in the developer's local .env doesn't leak in and
+        # flip the CSP / config assertions; the configured-host path is covered by calling
+        # _content_security_policy() directly.
+        basemap_url="",
     )
 
 
@@ -114,19 +118,25 @@ def test_get_config(client: TestClient) -> None:
 
 
 def test_security_headers_csp_locks_down_origins(client: TestClient) -> None:
+    # No basemap configured in the test settings, so none of the vector-basemap allowances apply.
     csp = client.get("/api/config").headers["Content-Security-Policy"]
     assert "default-src 'self'" in csp
-    assert "worker-src 'self' blob:" in csp  # MapLibre GL workers
-    assert "https://protomaps.github.io" in csp  # vector basemap glyphs / sprites
-    assert "connect-src 'self' https://nominatim.openstreetmap.org" in csp
+    assert "connect-src 'self' https://nominatim.openstreetmap.org;" in csp
+    assert "worker-src 'self';" in csp
+    assert "protomaps.github.io" not in csp
+    assert "blob:" not in csp
 
 
-def test_security_headers_csp_whitelists_a_configured_basemap_host() -> None:
+def test_security_headers_csp_opens_up_for_a_configured_basemap_host() -> None:
     from foray.api.security import _content_security_policy
 
     csp = _content_security_policy("https://cdn.example.com/basemaps/us.pmtiles?v=1")
-    assert "https://cdn.example.com" in csp.split("connect-src", 1)[1].split(";", 1)[0]
+    connect = csp.split("connect-src", 1)[1].split(";", 1)[0]
+    assert "https://cdn.example.com" in connect
+    assert "https://protomaps.github.io" in connect
     assert "us.pmtiles" not in csp  # only the origin, not the path
+    assert "worker-src 'self' blob:;" in csp
+    assert "blob:" in csp.split("img-src", 1)[1].split(";", 1)[0]
 
 
 def test_get_genera_searches_by_scientific_or_common_name(client: TestClient, con: psycopg.Connection) -> None:
