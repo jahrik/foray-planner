@@ -101,6 +101,13 @@ def test_refresh_with_unknown_target_errors(env_config, calls) -> None:
     assert calls == []
 
 
+def test_trails_force_requires_all(env_config, calls) -> None:
+    result = CliRunner().invoke(cli, ["trails", "--force"])
+    assert result.exit_code != 0
+    assert "--force only applies to --all" in result.output
+    assert calls == []
+
+
 class _CloseTrackingConnection:
     """Proxies to a real connection but only records close() calls rather than actually
     closing it - the wrapped connection is the shared session-scoped test fixture, which

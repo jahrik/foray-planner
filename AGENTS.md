@@ -98,10 +98,13 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   trailheads (`highway=trailhead` nodes -> `kind='trailhead'`, Point). The route clause needs
   its **own** `out geom;` - inside a union `out geom` drops relation members. At ingest each
   trailhead is snapped (<=35 m) onto the payload's trail polylines and the matched ids (expanded to
-  every same-named segment) stored in `trails.connects`, so `resolve_trail_network` draws the whole
-  named trail from cache; a live per-selection query is the fallback and its result is written back.
-  Also derived at parse: `length_km` and `attrs` (surface/sac_scale/trail_visibility/network/
-  operator/informal). Geometry cached as GeoJSON *text* + `geom` GIST + a representative center.
+  every segment sharing a `_group_key` - `name`, or `ref`+`operator` for an unnamed forest road)
+  stored in `trails.connects`, so `resolve_trail_network` draws the whole named trail / whole
+  numbered road from cache; a live per-selection query is the fallback and its result is written
+  back. Also derived at parse: `length_km` and `attrs` (highway/surface/tracktype/access/
+  motor_vehicle/foot/ref/...). Geometry cached as GeoJSON *text* + `geom` GIST + a representative
+  center. `foray trails --all --force` clears the `trails:place:*` markers to re-pull coverage
+  after the query widens (`ingest_trails_region(force=True)` -> `cache.forget_ingest`).
 - `src/foray/sources/fire.py` - wildfire perimeters + burn scars from NIFC / MTBS ArcGIS
   (httpx, no key, issue #227), cloned from `land.py`. One table `fire_perimeters`, split by
   `source_key` into two refresh lanes: `wfigs_active` (fast, **replace semantics** -
@@ -129,8 +132,10 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
     is **not** an input to the score; the frontend's card "why" sentence uses it (issue #301).
   - `queries.py` - the point-and-radius read repository: `camps_near`, `land_near`,
     `trails_near` (`sort=nearest|relevance|longest`; relevance = named-route + connected length +
-    log-scaled target-genus obs within 500 m of the line; `significant_only` hides unnamed OSM
-    stubs), `get_trail`, `connected_trails`, `nearest_trail`, `region_access`, `place_calendar`,
+    log-scaled target-genus obs within 500 m of the line, and for `kind='road'` re-weighted so
+    obs-density dominates + a gated-but-walkable road (`_walk_in`, surfaced as `Trail.walk_in`)
+    scores a bonus; `significant_only` hides unnamed OSM stubs), `get_trail`, `connected_trails`,
+    `nearest_trail`, `region_access`, `place_calendar`,
     `recent_observations`, `alerts` (includes `place_guess` / `uri` / `obscured` per obs),
     `precise_observations`.
   - `planner.py` - `plan_route` (start -> destination corridor trip: stops along the
