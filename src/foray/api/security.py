@@ -35,16 +35,21 @@ def _content_security_policy(basemap_url: str = "") -> str:
     its needs are added: ``worker-src blob:`` (GL web workers), ``blob:`` in img-src
     (canvas/sprite blobs), Protomaps' asset site for glyphs/sprites, and the PMTiles host in
     connect-src. With no basemap configured none of that is pulled, so it is left out.
+
+    The blob:/asset allowances are gated on ``basemap_url`` being set at all, not on it having a
+    parseable origin - a same-origin relative ``basemap_url`` still mounts MapLibre and still
+    needs them. The PMTiles host only joins connect-src when the URL has one ('self' already
+    covers the relative case).
     """
     connect = ["'self'", "https://nominatim.openstreetmap.org"]
     img = ["'self'", "https://static.inaturalist.org", "https://inaturalist-open-data.s3.amazonaws.com", "data:"]
     worker = "worker-src 'self'; "
-    basemap_origin = _origin(basemap_url)
-    if basemap_origin:
+    if basemap_url:
         worker = "worker-src 'self' blob:; "
         img += ["blob:", _PROTOMAPS_ASSETS]
         connect += [_PROTOMAPS_ASSETS]
-        if basemap_origin not in connect:
+        basemap_origin = _origin(basemap_url)
+        if basemap_origin and basemap_origin not in connect:
             connect.append(basemap_origin)
     return (
         "default-src 'self'; "

@@ -112,7 +112,11 @@ const DIM_DOT_RADIUS_M = 900; // fixed ground radius for the rank-11+ dots
 let vectorMounting = false;
 export function setTiles(): void {
   if (!map || !state.basemapUrl) return;
-  void applyVectorBasemap(currentTheme());
+  // Detached on purpose (the GL stack loads async), so swallow-and-log any rejection - a failed
+  // basemap chunk load or mount shouldn't surface as an unhandled promise rejection.
+  applyVectorBasemap(currentTheme()).catch((error) => {
+    console.error("vector basemap failed to load", error);
+  });
 }
 
 async function applyVectorBasemap(theme: "dark" | "light"): Promise<void> {
