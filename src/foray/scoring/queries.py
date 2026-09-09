@@ -210,6 +210,24 @@ _ROUTE_RELEVANCE_BONUS = 3.0  # a trailhead whose trail is a named route sorts w
 # handful of finds matters but a hotspot doesn't swamp length/route entirely.
 _OBS_RELEVANCE_RADIUS_M = 500
 _OBS_RELEVANCE_WEIGHT = 2.5
+# For ``kind='road'`` obs-density *is* the ranking: an old forest road is worth walking because
+# the mushrooms fruit along it, not because it is long or named. So roads get a much heavier obs
+# weight and their length is log-damped (a 20 km road with no finds shouldn't outrank a 2 km one
+# that runs through a hotspot).
+_ROAD_OBS_RELEVANCE_WEIGHT = 6.0
+_ROAD_LENGTH_WEIGHT = 1.0
+# A forest road closed to motor vehicles but open on foot is prime foraging - walk-in, less
+# picked - so being gated is a positive signal here, not the access penalty it looks like.
+_WALK_IN_RELEVANCE_BONUS = 2.0
+_WALK_IN_BLOCKED = frozenset({"no", "private", "permit", "permissive", "customers", "forestry"})
+
+
+def _walk_in(attrs: dict[str, str] | None) -> bool:
+    """True for a road that bars motor vehicles (``motor_vehicle``/``access``) but not foot travel."""
+    if not attrs:
+        return False
+    closed_to_cars = attrs.get("motor_vehicle") in _WALK_IN_BLOCKED or attrs.get("access") in _WALK_IN_BLOCKED
+    return closed_to_cars and attrs.get("foot") not in {"no", "private"}
 
 
 def trails_near(
@@ -230,7 +248,10 @@ def trails_near(
 
     ``sort`` orders the result: ``"nearest"`` (default, unchanged) by point-to-trail distance;
     ``"relevance"`` by a trail-prominence score (part of a named route, then the length of the
-    trail the row leads to) with distance as the tiebreak; ``"longest"`` by that length.
+    trail the row leads to, then target-genus observations hugging the line) with distance as the
+    tiebreak; ``"longest"`` by that length. For ``kind='road'`` rows the relevance score is
+    re-weighted (see ``_ROAD_OBS_RELEVANCE_WEIGHT``): obs-density dominates, length is log-damped,
+    and a gated-but-walkable road (``_walk_in``) gets a bonus.
     ``relevance`` / ``longest`` can't use the KNN pre-limit, so they fetch every trail in the
     radius (hard-capped) then sort. ``significant_only`` drops rows that are an unnamed
     sub-0.5 km stub with no route - the OSM connector noise the Details list shouldn't show.
@@ -346,11 +367,20 @@ def trails_near(
             # "Trailhead (OSM) - 16 mi" tells the user nothing whatever it connects to, so an
             # unnamed trailhead never makes the list (it's still drawn on the map).
             return named
-        # A path / route earns its row by being named, being a route, or running far enough.
+        # A path / route / road earns its row by being named, being a route, or running far
+        # enough - a long unnamed forest road (FR 300 split into ref-only segments) counts on
+        # length, same as any path.
         return named or row_kind == "route" or lead_length(row) >= _SIGNIFICANT_LENGTH_KM
 
     def relevance(row: Sequence[Any]) -> float:
-        route_bonus = _ROUTE_RELEVANCE_BONUS if (row[13] or row[2] == "route") else 0.0
+        row_kind = row[2]
+        attrs = json.loads(row[9]) if row[9] else None
+        route_bonus = _ROUTE_RELEVANCE_BONUS if (row[13] or row_kind == "route") else 0.0
+        if row_kind == "road":
+            obs_bonus = _ROAD_OBS_RELEVANCE_WEIGHT * math.log1p(row[14] or 0)
+            length_term = _ROAD_LENGTH_WEIGHT * math.log1p(lead_length(row))
+            walk_in_bonus = _WALK_IN_RELEVANCE_BONUS if _walk_in(attrs) else 0.0
+            return length_term + route_bonus + obs_bonus + walk_in_bonus
         obs_bonus = _OBS_RELEVANCE_WEIGHT * math.log1p(row[14] or 0)
         return lead_length(row) + route_bonus + obs_bonus
 
@@ -375,6 +405,7 @@ def _base_trail(row: Sequence[Any], *, distance_km: float, camp_distance_km: flo
     """Build a ``Trail`` from the standard 10-column prefix
     ``(id, name, kind, source, url, center_lat, center_lng, geojson, length_km, attrs)``."""
     tid, name, kind, source, url, clat, clng, geojson, length_km, attrs = row[:10]
+    parsed_attrs = json.loads(attrs) if attrs else None
     return Trail(
         id=tid,
         name=name,
@@ -387,7 +418,8 @@ def _base_trail(row: Sequence[Any], *, distance_km: float, camp_distance_km: flo
         camp_distance_km=round(camp_distance_km, 1) if camp_distance_km is not None else None,
         geometry=json.loads(geojson) if geojson else None,
         length_km=length_km,
-        attrs=json.loads(attrs) if attrs else None,
+        attrs=parsed_attrs,
+        walk_in=kind == "road" and _walk_in(parsed_attrs),
     )
 
 
@@ -401,6 +433,7 @@ def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
     if row is None:
         return None
     trail_id_, name, kind, source, url, clat, clng, geojson, connects, length_km, attrs = row
+    parsed_attrs = json.loads(attrs) if attrs else None
     return Trail(
         id=trail_id_,
         name=name,
@@ -414,7 +447,8 @@ def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
         geometry=json.loads(geojson),
         connects=connects,
         length_km=length_km,
-        attrs=json.loads(attrs) if attrs else None,
+        attrs=parsed_attrs,
+        walk_in=kind == "road" and _walk_in(parsed_attrs),
     )
 
 

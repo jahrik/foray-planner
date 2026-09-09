@@ -83,7 +83,8 @@ def test_parse_element_derives_length_km_and_keeps_detail_tags() -> None:
                 "surface": "dirt",
                 "sac_scale": "mountain_hiking",
                 "informal": "yes",
-                "foot": "yes",  # not in _ATTR_TAGS - dropped
+                "foot": "yes",
+                "wikipedia": "en:Ridge Trail",  # not in _ATTR_TAGS - dropped
             },
             "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.30}],  # ~1.1 km
         }
@@ -95,6 +96,7 @@ def test_parse_element_derives_length_km_and_keeps_detail_tags() -> None:
         "surface": "dirt",
         "sac_scale": "mountain_hiking",
         "informal": "yes",
+        "foot": "yes",
     }
 
     bare = _parse_element(
@@ -259,6 +261,38 @@ def test_parse_trails_links_a_trailhead_to_the_whole_named_trail() -> None:
     }
     rows = {row[0]: row for row in _parse_trails(payload)}
     assert rows["osm:node/1"][8] == ["osm:way/2", "osm:way/3"]
+
+
+def test_parse_trails_links_a_trailhead_to_a_whole_unnamed_forest_road_by_ref() -> None:
+    # OSM splits "FR 300" into unnamed `highway=track` segments that share only `ref` + `operator`.
+    # The node touches segment 2; the link should still cover the far segment 3 (same ref+operator)
+    # but not segment 4 (different ref).
+    payload = {
+        "elements": [
+            {"type": "node", "id": 1, "lat": 47.600, "lon": -122.300, "tags": {"highway": "trailhead"}},
+            {
+                "type": "way",
+                "id": 2,
+                "tags": {"highway": "track", "ref": "FR 300", "operator": "US Forest Service"},
+                "geometry": [{"lat": 47.600, "lon": -122.300}, {"lat": 47.602, "lon": -122.298}],
+            },
+            {
+                "type": "way",
+                "id": 3,
+                "tags": {"highway": "track", "ref": "FR 300", "operator": "US Forest Service"},
+                "geometry": [{"lat": 47.640, "lon": -122.260}, {"lat": 47.650, "lon": -122.250}],
+            },
+            {
+                "type": "way",
+                "id": 4,
+                "tags": {"highway": "track", "ref": "FR 12", "operator": "US Forest Service"},
+                "geometry": [{"lat": 47.601, "lon": -122.300}, {"lat": 47.603, "lon": -122.298}],
+            },
+        ]
+    }
+    rows = {row[0]: row for row in _parse_trails(payload)}
+    assert rows["osm:node/1"][8] == ["osm:way/2", "osm:way/3"]
+    assert rows["osm:way/2"][2] == "road"
 
 
 def test_sample_thins_to_cap_keeping_endpoints() -> None:
@@ -515,6 +549,65 @@ def test_trails_near_obs_density_lifts_a_trail_through_a_hotspot(con: psycopg.Co
     assert [t.name for t in no_genus[:2]] == ["Quiet", "Popular"]  # equal prominence -> nearer first
 
 
+def test_trails_near_road_relevance_ranks_obs_density_over_length(con: psycopg.Connection) -> None:
+    # A long forest road with no finds vs a short one running through a hotspot: for kind='road'
+    # the relevance sort is obs-first, so the short road with finds wins (a plain path sort would
+    # rank the long one higher on length).
+    long_empty = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "track", "name": "Long Road"},
+            "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.75, "lon": -122.30}],
+        }
+    )
+    short_hot = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "track", "name": "Hot Road"},
+            "geometry": [{"lat": 47.601, "lon": -122.31}, {"lat": 47.606, "lon": -122.31}],
+        }
+    )
+    assert long_empty is not None and short_hot is not None
+    upsert_trails(con, [long_empty, short_hot])
+    with con.cursor() as cur:
+        cur.execute("INSERT INTO fungi_genera (taxon_id, name) VALUES (48701, 'Boletus')")
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade)"
+            " VALUES (%s, 48701, %s, %s, '2022-09-15', 9, 'research')",
+            [(i, 47.603, -122.31) for i in range(1, 7)],  # 6 finds on "Hot Road"
+        )
+    ranked = trails_near(
+        con, lat=HOME_LAT, lng=HOME_LNG, radius_km=80.0, kind="road", sort="relevance", taxon_ids=[48701]
+    )
+    assert [t.name for t in ranked] == ["Hot Road", "Long Road"]
+
+
+def test_trails_near_flags_a_walk_in_road(con: psycopg.Connection) -> None:
+    gated = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "track", "name": "Gated Road", "motor_vehicle": "no", "foot": "yes"},
+            "geometry": [{"lat": 47.601, "lon": -122.30}, {"lat": 47.606, "lon": -122.30}],
+        }
+    )
+    drivable = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "track", "name": "Open Road"},
+            "geometry": [{"lat": 47.601, "lon": -122.32}, {"lat": 47.606, "lon": -122.32}],
+        }
+    )
+    assert gated is not None and drivable is not None
+    upsert_trails(con, [gated, drivable])
+    by_name = {t.name: t for t in trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, kind="road")}
+    assert by_name["Gated Road"].walk_in is True
+    assert by_name["Open Road"].walk_in is False
+
+
 def test_trails_near_dedupes_same_named_trailheads(con: psycopg.Connection) -> None:
     def th(node: int, lat: float) -> tuple[object, ...]:
         point = f'{{"type":"Point","coordinates":[-122.30,{lat}]}}'
@@ -619,6 +712,8 @@ def test_ingest_trails_region_upserts_and_records_ingest(con: psycopg.Connection
     # Second call skips before ever opening a client - if it didn't, this would try (and fail)
     # to reach the real Overpass API, since no client is passed here.
     assert ingest_trails_region(region, con) == 0
+    # ...unless forced: `foray trails --all --force` re-fetches after the query widens.
+    assert ingest_trails_region(region, con, client=client, force=True) == expected_tiles
 
 
 def test_ingest_trails_region_does_not_mark_ingested_when_a_tile_fails(con: psycopg.Connection) -> None:

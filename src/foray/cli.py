@@ -141,18 +141,25 @@ def dispersed_cmd(ctx: click.Context) -> None:
 
 @cli.command("trails")
 @click.option("--all", "all_coverage", is_flag=True, help="Ingest trails for every configured coverage region.")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Re-fetch coverage regions even if already ingested (use after the Overpass query widens).",
+)
 @click.pass_context
-def trails_cmd(ctx: click.Context, all_coverage: bool) -> None:
-    """Ingest OSM trails (paths, hiking routes, trailheads) near home, or --all."""
+def trails_cmd(ctx: click.Context, all_coverage: bool, force: bool) -> None:
+    """Ingest OSM trails (paths, forest roads, hiking routes, trailheads) near home, or --all."""
     cfg = ctx.obj["cfg"]
     if all_coverage and not cfg.coverage:
         raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
+    if force and not all_coverage:
+        raise click.UsageError("--force only applies to --all (the home-radius ingest always re-fetches).")
     con = connect()
     try:
         if all_coverage:
             for region in cfg.coverage:
                 click.echo(f"Ingesting trails for {region.name}…")
-                count = ingest_trails_region(region, con)
+                count = ingest_trails_region(region, con, force=force)
                 click.echo(f"  cached {count} trails")
         else:
             count = ingest_trails(cfg, con)
