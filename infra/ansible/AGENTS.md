@@ -14,7 +14,9 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 | `foray_app_image` | Container image (default: ghcr.io/jahrik/foray-planner:latest) |
 | `foray_ridb_api_key` | Recreation.gov API key (optional) |
 | `foray_alert_email` | DO monitoring alert recipient (from `FORAY_ALERT_EMAIL` env); unset skips alert policy creation (issue #84) |
-| `foray_basemap_url` | Protomaps PMTiles vector basemap URL (from `FORAY_BASEMAP_URL` env); unset leaves the map with no base layer |
+| `foray_spaces_access_key_id` / `foray_spaces_secret_access_key` | DO Spaces access key (from `DO_SPACES_KEY` / `DO_SPACES_SECRET`, generated under API -> Spaces Keys, separate from the API token). Needed for the basemap Space; unset skips it |
+| `foray_basemap_url` | Vector basemap archive URL (from `FORAY_BASEMAP_URL` env, else the computed CDN URL once the Spaces key is set, else empty = no base layer) |
+| `foray_basemap_space_name` / `foray_basemap_object_key` / `foray_basemap_bbox` | Space name, archive key, and CONUS bbox for the PMTiles archive |
 
 ## Key Files
 
@@ -22,17 +24,20 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 |---|---|
 | `site.yml` | Main playbook (provision + deploy) |
 | `defaults/main.yml` | All tuneable variables |
-| `tasks/provision/` | DO resource creation (database, droplet, firewall, monitoring alert policies) |
+| `tasks/provision/` | DO resource creation (database, droplet, firewall, monitoring, basemap Space + CDN) |
+| `tasks/provision/build_basemap_once.yml` | `foray:build-basemap-once` - extract the US PMTiles archive and upload it to the Space (runs on localhost) |
 | `tasks/deploy/` | App deployment + cron setup |
 | `templates/foray.env.j2` | Runtime env file (secrets loaded from DO managed DB) |
 | `meta/argument_specs.yml` | Variable documentation and types |
 
 ## Conventions
 
-- All modules use FQCN (`ansible.builtin.*`, `community.docker.*`, `digitalocean.cloud.*`)
+- All modules use FQCN (`ansible.builtin.*`, `community.docker.*`, `digitalocean.cloud.*`,
+  `amazon.aws.*` / `community.aws.*` for the Spaces S3 data plane via `endpoint_url`)
 - Variables prefixed with `foray_`
-- Tags: `foray`, `foray:provision`, `foray:deploy`, `foray:cron`, `foray:resize` (opt-in only,
-  behind `never` - resizes the droplet to `foray_do_droplet_size`, power-cycling it)
+- Tags: `foray`, `foray:provision`, `foray:deploy`, `foray:cron`; opt-in tags behind `never`:
+  `foray:resize` (resizes the droplet, power-cycling it), `foray:build-basemap-once` (builds +
+  uploads the vector basemap archive), and the `foray:*-once` data-warm tasks
 - Secrets read from environment at runtime, never committed
 - Test with molecule: `uv run molecule test`
 

@@ -6,3 +6,10 @@ collections:
     version: ">=3.4.0"
   - name: community.general
     version: ">=9.0.0"
+  # S3 data-plane modules for the DO Space that hosts the vector basemap archive (bucket
+  # policy, CORS, object upload) - digitalocean.cloud only covers the bucket + CDN endpoint.
+  # Pointed at the Spaces S3-compatible endpoint via endpoint_url.
+  - name: amazon.aws
+    version: ">=9.0.0"
+  - name: community.aws
+    version: ">=9.0.0"

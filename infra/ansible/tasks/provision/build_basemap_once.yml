@@ -1,0 +1,138 @@
+---
+# One-off: build the US PMTiles vector basemap archive and upload it to the DO Space.
+#
+# `pmtiles extract` slices a bbox out of Protomaps' daily planet build, reading it over HTTP
+# range requests - it does NOT download the whole planet, only the tiles in the bbox. The
+# output (~15-40 GB for CONUS) lands in foray_basemap_workdir on the control node, so this runs
+# on localhost, never the droplet (whose root disk is full). Re-run monthly to refresh; the
+# object key is stable and the CDN cache is purged at the end.
+#
+# Opt-in (foray:build-basemap-once + never). Needs DO_SPACES_KEY / DO_SPACES_SECRET (bucket
+# data plane) and DO_API_TOKEN (CDN cache purge). `just ansible provision` must have created
+# the Space + CDN first.
+- name: Fail fast if the Spaces key is not configured
+  ansible.builtin.fail:
+    msg: >-
+      DO_SPACES_KEY / DO_SPACES_SECRET not set - generate a Spaces access key under
+      API -> Spaces Keys and export it, then run `just ansible provision`.
+  when: foray_spaces_access_key_id | length == 0
+
+- name: Ensure the basemap work directory exists
+  ansible.builtin.file:
+    path: "{{ foray_basemap_workdir }}"
+    state: directory
+    mode: "0755"
+
+- name: Check free disk space in the work directory
+  ansible.builtin.command:
+    cmd: "df -B1 --output=avail {{ foray_basemap_workdir }}"
+  register: foray_basemap_df
+  changed_when: false
+
+- name: Fail fast if there is not room for the extract
+  vars:
+    foray_basemap_free_gb: "{{ (foray_basemap_df.stdout_lines[1] | trim | int) / (1024**3) }}"
+  ansible.builtin.fail:
+    msg: >-
+      Only {{ foray_basemap_free_gb | float | round(1) }} GB free at {{ foray_basemap_workdir }} -
+      a CONUS extract needs ~40 GB. Free space or point foray_basemap_workdir elsewhere.
+  when: foray_basemap_free_gb | float < 45
+
+- name: Fetch the pmtiles CLI
+  ansible.builtin.unarchive:
+    src: "https://github.com/protomaps/go-pmtiles/releases/download/v{{ foray_pmtiles_version }}/go-pmtiles_{{ foray_pmtiles_version }}_Linux_x86_64.tar.gz"
+    dest: "{{ foray_basemap_workdir }}"
+    remote_src: true
+    creates: "{{ foray_basemap_workdir }}/pmtiles"
+    mode: "0755"
+
+- name: Resolve the planet build to slice from
+  when: foray_basemap_source | length == 0
+  block:
+    # Yesterday back 5 days - today's build often is not published until midday UTC. The
+    # localhost play runs with gather_facts:false, so there is no ansible_date_time; now() is.
+    - name: Probe the last few daily planet builds
+      ansible.builtin.uri:
+        url: "https://build.protomaps.com/{{ '%Y%m%d' | strftime((now(true).timestamp() | int) - (item | int * 86400)) }}.pmtiles"
+        method: HEAD
+        status_code: [200, 404]
+      loop: "{{ range(1, 6) | list }}"
+      register: foray_basemap_probe
+      changed_when: false
+
+    - name: Pick the most recent build that resolves
+      ansible.builtin.set_fact:
+        foray_basemap_resolved_source: >-
+          {{ (foray_basemap_probe.results | selectattr('status', 'equalto', 200)
+              | map(attribute='url') | list | first) | default('') }}
+
+    - name: Fail if no recent planet build resolved
+      ansible.builtin.fail:
+        msg: "No https://build.protomaps.com/<date>.pmtiles resolved in the last 5 days - set foray_basemap_source."
+      when: foray_basemap_resolved_source | length == 0
+
+- name: Settle on the source archive
+  ansible.builtin.set_fact:
+    foray_basemap_effective_source: "{{ foray_basemap_source if (foray_basemap_source | length > 0) else foray_basemap_resolved_source }}"
+
+- name: Extract the bbox (pulls only the bbox tiles, but still takes a while)
+  ansible.builtin.command:
+    argv:
+      - "{{ foray_basemap_workdir }}/pmtiles"
+      - extract
+      - "{{ foray_basemap_effective_source }}"
+      - "{{ foray_basemap_workdir }}/{{ foray_basemap_object_key }}"
+      - "--bbox={{ foray_basemap_bbox }}"
+    creates: "{{ foray_basemap_workdir }}/{{ foray_basemap_object_key }}"
+  async: 14400
+  poll: 30
+
+- name: Show the extracted archive
+  ansible.builtin.command:
+    argv:
+      - "{{ foray_basemap_workdir }}/pmtiles"
+      - show
+      - "{{ foray_basemap_workdir }}/{{ foray_basemap_object_key }}"
+  changed_when: false
+
+- name: Upload the archive to the Space
+  amazon.aws.s3_object:
+    endpoint_url: "https://{{ foray_basemap_region }}.digitaloceanspaces.com"
+    access_key: "{{ foray_spaces_access_key_id }}"
+    secret_key: "{{ foray_spaces_secret_access_key }}"
+    region: "{{ foray_basemap_region }}"
+    sig_v4: true
+    bucket: "{{ foray_basemap_space_name }}"
+    object: "{{ foray_basemap_object_key }}"
+    src: "{{ foray_basemap_workdir }}/{{ foray_basemap_object_key }}"
+    mode: put
+    overwrite: different
+    permission: [public-read]
+    headers:
+      Cache-Control: "public, max-age={{ foray_basemap_cdn_ttl }}"
+      Content-Type: application/octet-stream
+
+- name: Look up the CDN endpoint id
+  digitalocean.cloud.cdn_endpoints_info:
+    token: "{{ foray_do_token }}"
+  register: foray_basemap_cdn_info
+
+- name: Purge the archive from the CDN cache
+  ansible.builtin.uri:
+    url: "https://api.digitalocean.com/v2/cdn/endpoints/{{ item.id }}/cache"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ foray_do_token }}"
+    body_format: json
+    body:
+      files: ["{{ foray_basemap_object_key }}"]
+    status_code: [204]
+  loop: "{{ foray_basemap_cdn_info.cdn_endpoints | default([]) | selectattr('origin', 'search', foray_basemap_space_name) | list }}"
+  loop_control:
+    label: "{{ item.origin | default(item.id) }}"
+
+- name: Done
+  ansible.builtin.debug:
+    msg: >-
+      Basemap uploaded. FORAY_BASEMAP_URL resolves to {{ foray_basemap_cdn_url }} - redeploy
+      (`just ansible deploy`) so the app picks it up.
