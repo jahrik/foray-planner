@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import httpx
 import pytest
 
 from foray.sources import overpass
+
+Handler = Callable[[httpx.Request], httpx.Response]
 
 ENDPOINTS = (
     "https://primary.example/api/interpreter",
@@ -21,7 +25,7 @@ def _no_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("foray.sources.overpass.time.sleep", lambda _seconds: None)
 
 
-def _client(handler) -> httpx.Client:  # type: ignore[no-untyped-def]
+def _client(handler: Handler) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
@@ -87,6 +91,18 @@ def test_post_raises_the_last_error_when_every_endpoint_fails() -> None:
 
     with pytest.raises(httpx.HTTPStatusError):
         overpass.post(_client(handler), "q", attempts=1, endpoints=ENDPOINTS)
+
+
+def test_post_raises_a_4xx_immediately_without_trying_the_mirrors() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.host)
+        return httpx.Response(400, text="bad query")
+
+    with pytest.raises(httpx.HTTPStatusError):
+        overpass.post(_client(handler), "q", attempts=1, endpoints=ENDPOINTS)
+    assert seen == ["primary.example"]  # a malformed query fails the same on every mirror
 
 
 def test_configured_endpoints_defaults_then_honours_the_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
