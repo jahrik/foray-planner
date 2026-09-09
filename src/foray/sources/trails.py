@@ -70,6 +70,14 @@ _MAX_POINTS_PER_LINE = 60
 # are upserted and discarded before the next tile starts; see ``ingest_trails_region``.
 _TILE_DEG = 2.0
 
+# Bump when the Overpass query in `_way_selectors` / `_trails_query_bbox` changes what it pulls.
+# `ingest_trails_region` keys its one-shot `ingest_log` marker on this, so a region ingested
+# under an older query no longer matches and the weekly `refresh --with trails --all` cron
+# re-pulls it automatically - no manual re-ingest, same idea as `cache._MIGRATIONS`.
+#   1 - highway=path + trailheads + route=hiking relations
+#   2 - adds highway=track / service=forestry (kind='road') and highway=bridleway
+_TRAILS_QUERY_VERSION = 2
+
 # Way classes we ingest, by the ``kind`` they become. Trails are foot/horse ways; roads are the
 # old logging / forest-service roads foragers actually walk and drive (issue: forest roads are a
 # primary foraging surface). Everything else - paved public roads, and ``footway`` (~6x the row
@@ -728,18 +736,23 @@ def ingest_trails_region(
     large enough to OOM a small droplet before it's even parsed. The returned/logged count is
     rows upserted, not distinct trails - a route spanning a tile boundary gets upserted (and
     counted) once per tile it touches, though it's the same row each time (id is the primary
-    key). One-shot per region: skips once ``trails:place:{place_id}`` is in ``ingest_log``, unless
-    ``force`` clears that marker first (``foray trails --force`` - for re-pulling coverage after
-    the Overpass query widens, e.g. the forest-road tags).
+    key).
+
+    One-shot per region: the ``ingest_log`` marker is ``trails:place:{place_id}:q{version}``
+    where ``version`` is ``_TRAILS_QUERY_VERSION``. Widening the Overpass query bumps that
+    constant, so every region's marker stops matching and the next ``refresh --with trails
+    --all`` cron re-pulls it - no manual step. ``force`` additionally re-pulls without a version
+    bump (OSM data drift, debugging one region); superseded-version markers are pruned on a
+    successful run.
     """
     if region.bbox is None:
         raise ValueError(f"{region.name} has no bbox configured for trails ingest")
-    key = f"trails:place:{region.place_id}"
+    key = f"trails:place:{region.place_id}:q{_TRAILS_QUERY_VERSION}"
     with connection(con) as database:
         if force and forget_ingest(database, key):
             logger.info("trails: --force cleared the ingest marker for %s, re-fetching", region.name)
         if not force and is_ingested(database, key):
-            logger.info("trails: %s already ingested, skipping", region.name)
+            logger.info("trails: %s already ingested at query v%d, skipping", region.name, _TRAILS_QUERY_VERSION)
             if progress_cb:
                 progress_cb(f"Trails already cached for {region.name}, skipping…", 100.0)
             return 0
@@ -779,5 +792,11 @@ def ingest_trails_region(
             logger.warning("trails: %s only partially ingested (%d rows) - not recording as done", region.name, total)
         else:
             record_ingest(database, key, total)
+            # Drop this region's markers from older query versions (and the pre-versioning
+            # `trails:place:{id}` key) so ingest_log doesn't accrete a stale row per bump.
+            database.execute(
+                "DELETE FROM ingest_log WHERE (key LIKE %s OR key = %s) AND key <> %s",
+                [f"trails:place:{region.place_id}:q%", f"trails:place:{region.place_id}", key],
+            )
         logger.info("trails: cached %d trails in %s", total, region.name)
         return total
