@@ -142,12 +142,15 @@ foray_basemap_source: ""
 foray_pmtiles_version: "1.31.2"  # github.com/protomaps/go-pmtiles CLI, used for the extract
 foray_basemap_workdir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.cache/foray-basemap"
 foray_basemap_cdn_url: "https://{{ foray_basemap_space_name }}.{{ foray_basemap_region }}.cdn.digitaloceanspaces.com/{{ foray_basemap_object_key }}"
-# FORAY_BASEMAP_URL wins if set; otherwise default to the computed CDN URL once Spaces keys are
-# configured (before that, blank -> the map has no base layer, which is the intended pre-setup
-# state).
+# FORAY_BASEMAP_URL wins if set; otherwise default to the computed CDN URL once BOTH Spaces
+# credentials are configured - the same condition provision/build check, so the fallback only
+# points at the archive when the archive could actually have been created (before that, blank ->
+# the map has no base layer, which is the intended pre-setup state).
 foray_basemap_url: >-
   {{ lookup('ansible.builtin.env', 'FORAY_BASEMAP_URL', default='')
-     or (foray_basemap_cdn_url if (foray_spaces_access_key_id | length > 0) else '') }}
+     or (foray_basemap_cdn_url
+         if (foray_spaces_access_key_id | length > 0 and foray_spaces_secret_access_key | length > 0)
+         else '') }}
 
 # DO monitoring alert policies (issue #84) — unset skips creation entirely (see
 # tasks/provision/monitoring.yml). Thresholds mirror the values DO's own dashboard suggests;
