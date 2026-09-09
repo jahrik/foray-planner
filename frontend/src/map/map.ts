@@ -47,6 +47,9 @@ export const HOME_DOT_STYLE = circleStyle({
 // frontend a `basemap_url` in /api/config (FORAY_BASEMAP_URL) or the map has no base layer.
 const DATA_ATTRIBUTION = "observations © iNaturalist · elevation &amp; weather © Open-Meteo";
 const VECTOR_ATTRIBUTION = `© OpenStreetMap · © Protomaps · ${DATA_ATTRIBUTION}`;
+// Shown only when a terrain layer is active (hillshade/contours from the DEM tiles).
+const TERRAIN_ATTRIBUTION =
+  'terrain <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md">© Tilezen / Mapzen, USGS, NASA</a>';
 let tileTheme: "dark" | "light" | null = null;
 
 export let map: L.Map;
@@ -124,19 +127,20 @@ async function applyVectorBasemap(theme: "dark" | "light"): Promise<void> {
   if (!map || !state.basemapUrl) return;
   if (basemap.hasVectorBasemap()) {
     if (tileTheme === theme) return; // already showing the right style
-    basemap.setVectorBasemapTheme(state.basemapUrl, theme);
+    basemap.setVectorBasemapTheme(state.basemapUrl, state.terrainUrl, theme);
     tileTheme = theme;
     return;
   }
   if (vectorMounting) return;
   vectorMounting = true;
   try {
-    basemap.mountVectorBasemap(map, state.basemapUrl, theme);
+    basemap.mountVectorBasemap(map, state.basemapUrl, state.terrainUrl, theme);
   } catch (error) {
     vectorMounting = false; // let a later setTiles() retry
     throw error;
   }
   map.attributionControl.addAttribution(VECTOR_ATTRIBUTION);
+  if (state.terrainUrl) map.attributionControl.addAttribution(TERRAIN_ATTRIBUTION);
   tileTheme = theme;
   // Adding a layer / attribution rebuilds the attribution control's innerHTML (Leaflet
   // _update), wiping the ⓘ toggle - re-decorate so a live theme switch doesn't leave the
@@ -447,6 +451,14 @@ export function setAerialEnabled(on: boolean): void {
   } else {
     clearSatelliteOverlay();
   }
+}
+
+// The Layers-pill "Contours" toggle. The hillshade is always on with the vector basemap; only
+// the contour lines + elevation labels flip. Deferred like the basemap import so the GL stack
+// stays out of the entry bundle.
+export function setContoursEnabled(on: boolean): void {
+  if (!state.terrainUrl) return;
+  void import("./basemap").then((basemap) => basemap.setContoursVisible(on));
 }
 
 // Fills the selected destination's true footprint with a satellite image plus its matching

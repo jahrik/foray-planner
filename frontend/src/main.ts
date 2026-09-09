@@ -123,6 +123,7 @@ async function main(): Promise<void> {
   state.home = config.home;
   state.cellDeg = config.cell_deg;
   state.basemapUrl = config.basemap_url ?? "";
+  state.terrainUrl = config.terrain_url ?? "";
   initTheme();
   initUnits();
   initTextSize();

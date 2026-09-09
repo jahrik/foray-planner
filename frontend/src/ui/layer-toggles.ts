@@ -4,7 +4,7 @@
 // Part 2d).
 
 import { loadCamps, loadFire, loadLand } from "../map/layers";
-import { setAerialEnabled } from "../map/map";
+import { setAerialEnabled, setContoursEnabled } from "../map/map";
 import { cancelRefresh, startRefresh } from "../refresh";
 import { qs } from "../state";
 
@@ -54,4 +54,7 @@ export function initLayerToggles(): void {
   // Aerial imagery for the selected destination - no fetch here, map.ts shows/hides the cached
   // overlay for whatever region is currently selected (sources/satellite.py serves it).
   qs("#show-aerial").onchange = (e) => setAerialEnabled((e.target as HTMLInputElement).checked);
+  // Contour lines off the DEM tiles - no fetch here either, map.ts flips the layer visibility
+  // on the vector basemap (the hillshade underneath it is always on).
+  qs("#show-contours").onchange = (e) => setContoursEnabled((e.target as HTMLInputElement).checked);
 }
