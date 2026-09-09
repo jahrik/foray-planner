@@ -107,6 +107,11 @@ foray_geom_once_sleep: "0.2"
 foray_do_firewall_name: foray-planner-fw
 foray_ssh_allowed_ips: []
 
+# URL of the Protomaps PMTiles vector basemap archive on DO Spaces + CDN. Empty -> the map has
+# no base layer. Built + uploaded out-of-band by scripts/build_basemap_pmtiles.sh; this just
+# points the running app at it.
+foray_basemap_url: "{{ lookup('ansible.builtin.env', 'FORAY_BASEMAP_URL', default='') }}"
+
 # DO monitoring alert policies (issue #84) — unset skips creation entirely (see
 # tasks/provision/monitoring.yml). Thresholds mirror the values DO's own dashboard suggests;
 # disk is the one that matters most here (past ENOSPC incident).

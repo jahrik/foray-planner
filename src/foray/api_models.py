@@ -30,6 +30,8 @@ class ConfigResponse(BaseModel):
     recent_weeks: int
     refreshing: bool
     last_error: str | None
+    # Empty string when no vector basemap is configured (frontend falls back to raster tiles).
+    basemap_url: str = ""
 
 
 class GenusResult(BaseModel):

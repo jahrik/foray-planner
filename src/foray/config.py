@@ -68,6 +68,10 @@ class Settings(BaseSettings):
 
     home: Home = Field(default_factory=Home)
     cell_deg: float = Field(gt=0, le=10, default=_DEFAULT_CELL_DEG)
+    # URL of a Protomaps PMTiles vector basemap archive (a self-hosted US extract on DO Spaces
+    # + CDN - see scripts/build_basemap_pmtiles.sh and docs/data-sources.md). Empty -> the
+    # frontend keeps the raster tile basemap, so this stays dark until the bucket is populated.
+    basemap_url: str = ""
     ingest: Ingest = Ingest()
     # Sub-national regions (US states today) - the granularity trails ingest chunks by, since
     # Overpass can't handle a whole-country query in one request.

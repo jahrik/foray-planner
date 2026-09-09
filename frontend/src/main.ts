@@ -122,6 +122,7 @@ async function main(): Promise<void> {
   const config = await getJson("/api/config");
   state.home = config.home;
   state.cellDeg = config.cell_deg;
+  state.basemapUrl = config.basemap_url ?? "";
   initTheme();
   initUnits();
   initTextSize();

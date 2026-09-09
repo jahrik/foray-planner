@@ -241,7 +241,9 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
     and the opt-in aerial overlay (`setAerialEnabled` / `showSatelliteOverlay`). Light mode's
     basemap is Esri's World Light Gray Canvas (a quiet cartographic base); dark mode is OSM
     raster CSS-inverted (`invert() hue-rotate()`) - the source swaps on theme change, attribution
-    is theme-aware. `src/map/layers.ts` (camps/land/fire/precise fetch + render), `src/map/sheet.ts`
+    is theme-aware. When `FORAY_BASEMAP_URL` is set, `src/map/basemap.ts` (code-split MapLibre GL
+    + Protomaps PMTiles, see docs/data-sources.md) replaces the raster basemap instead.
+    `src/map/layers.ts` (camps/land/fire/precise fetch + render), `src/map/sheet.ts`
     (mobile bottom sheet), `popup.ts` / `markers.ts` / `layer-lifecycle.ts` (primitives).
   - `src/api/` - the typed client (`openapi-fetch`, `client.ts`: `getJson` / `postJson` /
     `deleteJson` throw `ApiError` on non-2xx, `openRefreshStream` is the typed SSE reader) +

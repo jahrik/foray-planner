@@ -104,7 +104,7 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
     app.state.pool = pool
 
     app.add_middleware(GZipMiddleware, minimum_size=1000)
-    install_middleware(app)
+    install_middleware(app, cfg)
 
     if (DIST / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=str(DIST / "assets")), name="assets")

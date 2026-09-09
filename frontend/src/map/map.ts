@@ -41,24 +41,12 @@ export const HOME_DOT_STYLE = circleStyle({
   fillOpacity: 1,
 });
 
-// Base tiles by theme (issue #301). Light mode gets Esri's World Light Gray Canvas - a quiet
-// grey cartographic base that recedes behind the region/overlay layers, the whole point of the
-// redesign's map (CARTO Positron would be the obvious pick but its keyless CDN now watermarks
-// every tile). Dark mode keeps standard OSM inverted via CSS (`invert() hue-rotate()` in
-// style.css): grey "dark canvas" rasters render minor labels (peaks, lakes, wilderness
-// boundaries) in very low-contrast grey by design and no CSS filter fixes that, whereas
-// inverting OSM's high-contrast dark-on-light labels keeps everything from city names down to
-// trail/forest labels legible. So the source swaps on theme change, not just the filter.
-const OSM_TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-const GRAY_CANVAS_TILE_URL =
-  "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
+// The basemap is a self-hosted Protomaps PMTiles archive rendered by MapLibre GL, mounted
+// inside Leaflet via ./basemap. Its light/dark styles are real cartography (no CSS invert()
+// hack), swapped on theme change. There is no raster fallback: the server must hand the
+// frontend a `basemap_url` in /api/config (FORAY_BASEMAP_URL) or the map has no base layer.
 const DATA_ATTRIBUTION = "observations © iNaturalist · elevation &amp; weather © Open-Meteo";
-// "Tiles © Esri" only belongs on the light base - dark mode serves OSM tiles, no Esri request.
-const tileAttribution = (theme: "dark" | "light"): string =>
-  theme === "light"
-    ? `© OpenStreetMap · Tiles © Esri · ${DATA_ATTRIBUTION}`
-    : `© OpenStreetMap · ${DATA_ATTRIBUTION}`;
-let tileLayer: L.TileLayer | null = null;
+const VECTOR_ATTRIBUTION = `© OpenStreetMap · © Protomaps · ${DATA_ATTRIBUTION}`;
 let tileTheme: "dark" | "light" | null = null;
 
 export let map: L.Map;
@@ -113,19 +101,37 @@ const HERO_RANK_MAX = 2;
 const PROMINENT_RANK_MAX = 9;
 const DIM_DOT_RADIUS_M = 900; // fixed ground radius for the rank-11+ dots
 
+// Mount the MapLibre GL vector basemap, or swap its style on a later theme change. Named
+// setTiles() because ui-prefs.ts's theme toggle calls it after flipping data-theme. A no-op
+// when the server sent no basemap_url - the map then has overlays but no base layer.
+//
+// The MapLibre GL stack (~280 kB gzip) lives in the code-split ./basemap chunk, loaded here so
+// it fetches in parallel with the first render rather than bloating the entry bundle.
+// `vectorMounting` guards the async gap so initMap() + an immediate theme toggle can't mount
+// twice.
+let vectorMounting = false;
 export function setTiles(): void {
-  if (!map) return; // map not built yet; initMap lays the first tiles for the current theme
-  const theme = currentTheme();
-  if (tileLayer && tileTheme === theme) return; // already showing the right base
-  if (tileLayer) map.removeLayer(tileLayer);
-  // Esri's gray canvas has no {s} placeholder, so the default 'abc' subdomains are simply
-  // unused for it; OSM uses them.
-  const url = theme === "light" ? GRAY_CANVAS_TILE_URL : OSM_TILE_URL;
-  tileLayer = L.tileLayer(url, { attribution: tileAttribution(theme), maxZoom: 14 }).addTo(map);
-  tileLayer.setZIndex(0); // stay under every overlay pane
+  if (!map || !state.basemapUrl) return;
+  void applyVectorBasemap(currentTheme());
+}
+
+async function applyVectorBasemap(theme: "dark" | "light"): Promise<void> {
+  const basemap = await import("./basemap");
+  if (!map || !state.basemapUrl) return;
+  if (basemap.hasVectorBasemap()) {
+    if (tileTheme === theme) return; // already showing the right style
+    basemap.setVectorBasemapTheme(state.basemapUrl, theme);
+    tileTheme = theme;
+    return;
+  }
+  if (vectorMounting) return;
+  vectorMounting = true;
+  basemap.mountVectorBasemap(map, state.basemapUrl, theme);
+  map.attributionControl.addAttribution(VECTOR_ATTRIBUTION);
   tileTheme = theme;
-  // Adding the layer rebuilds the attribution control's innerHTML (Leaflet _update), wiping the
-  // ⓘ toggle - re-decorate so a live theme switch doesn't leave the credits fully expanded.
+  // Adding a layer / attribution rebuilds the attribution control's innerHTML (Leaflet
+  // _update), wiping the ⓘ toggle - re-decorate so a live theme switch doesn't leave the
+  // credits fully expanded.
   decorateAttribution(map);
 }
 
