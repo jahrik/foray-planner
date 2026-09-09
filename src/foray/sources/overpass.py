@@ -8,9 +8,10 @@ POST.
 Endpoint resilience: ``overpass-api.de`` is the primary (biggest instance, best for the
 state-sized bbox tiles ``trails`` sends), but it has bad days - and from some networks it is
 simply unroutable while the mirrors are fine. ``post`` walks :data:`ENDPOINTS` in order,
-moving to the next host on a connection failure or an exhausted 429/504 retry, and only
-raises once every host is spent. Override the list with ``FORAY_OVERPASS_URLS`` (comma
-separated) - e.g. to pin a single instance or add a self-hosted one.
+moving to the next host on a connection failure, a 429, or a 5xx (a 4xx is raised straight
+away - a mirror would reject a malformed query too), and only raises once every host is
+spent. Override the list with ``FORAY_OVERPASS_URLS`` (comma separated) - e.g. to pin a
+single instance or add a self-hosted one.
 """
 
 from __future__ import annotations
@@ -88,10 +89,11 @@ def post(
 ) -> dict[str, Any]:
     """POST an Overpass QL query, failing over across :data:`ENDPOINTS`.
 
-    Each host gets ``attempts`` tries with 429/504 backoff (:func:`_post_one`); a connection
-    failure or an exhausted retry moves to the next host. Raises the last ``httpx.HTTPError``
-    if every host fails, or ``ValueError`` if a 200 body isn't JSON - callers treat both as
-    "source unavailable, skip".
+    Each host gets ``attempts`` tries with 429/504 backoff (:func:`_post_one`). A connection
+    failure, a 429, or a 5xx then moves to the next host; a 4xx (a malformed query, a 403) is
+    raised straight away, since a mirror would answer it the same way. Raises the last
+    ``httpx.HTTPError`` if every host fails, or ``ValueError`` if a 200 body isn't JSON -
+    callers treat both as "source unavailable, skip".
     """
     if attempts < 1:
         raise ValueError(f"attempts must be >= 1, got {attempts}")
@@ -102,9 +104,13 @@ def post(
     for index, url in enumerate(hosts):
         try:
             return _post_one(client, url, query, attempts=attempts, base_delay=base_delay)
-        except httpx.HTTPError as error:
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 429 and error.response.status_code < 500:
+                raise
             last_error = error
-            if index + 1 < len(hosts):
-                logger.warning("overpass: %s failed (%s) - trying next mirror", url, error)
+        except httpx.TransportError as error:
+            last_error = error
+        if index + 1 < len(hosts):
+            logger.warning("overpass: %s failed (%s) - trying next mirror", url, last_error)
     assert last_error is not None
     raise last_error
