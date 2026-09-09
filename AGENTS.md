@@ -77,21 +77,28 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   misidentifications too rare within their genus for `revalidate`'s ratio to flag. Both share
   the actual re-check/purge/reassign logic (`_recheck_ids`).
 - `src/foray/sources/camps.py` - developed-campground ingest from the Recreation.gov **RIDB API**
-  (httpx, key from env `RIDB_API_KEY`). Tiles the home radius into <=50-mi query circles,
-  dedupes facilities, clips to the true radius with `haversine_km`. Skipped (no-op) when the
-  key is unset, so the iNat refresh still works. `free` is only asserted on an explicit
-  no-fee signal - never guessed.
+  (httpx, key from env `RIDB_API_KEY`). Pages `facilities?state=XX&full=true` for every state the
+  home disk reaches, clips to the true radius with `haversine_km` (RIDB's point+radius search
+  under-returns ~2/3; radius tiling is a non-US fallback). `Reservable` + a best-effort `fee_low`
+  /`fee_high` parsed from the fee prose (add-ons/discounts dropped). Skipped (no-op) when the key
+  is unset. `free` only on an explicit no-fee signal *and* no positive fee amount - never guessed.
+  `prune_campsites_outside_radius` clears stale out-of-radius rows after each ingest.
 - `src/foray/sources/dispersed.py` - dispersed-camping layer from OSM **Overpass** (httpx, no key).
   One ODbL signal, cached as `campsites` (`kind='reported'` - `tourism=camp_site`/`camp_pitch`,
   `backcountry=yes`). `free=TRUE` only on an explicit no-fee tag, never guessed; the *legality*
   caveat rides on `kind`+UI label, never asserted. (A `public_land`-proxy signal - unmapped roads
   within public land, inferred as likely dispersed sites - was scoped but never implemented; see
   issue #110.)
-- `src/foray/sources/trails.py` - trail layer from OSM **Overpass** (httpx, no key). One ODbL query pulls
-  backcountry paths (`highway=path` -> `kind='path'`, LineString; `footway` is **excluded** - it's
-  mostly urban sidewalks), named hiking routes (`route=hiking` relations -> `kind='route'`,
-  MultiLineString), and trailheads (`highway=trailhead` nodes -> `kind='trailhead'`, Point).
-  Geometry is cached as GeoJSON *text* + bbox + a representative center in `trails`.
+- `src/foray/sources/trails.py` - trail layer from OSM **Overpass** (httpx, no key). One ODbL request
+  pulls backcountry paths (`highway=path` -> `kind='path'`; `footway` **excluded** - mostly urban
+  sidewalks), named hiking routes (`route=hiking` relations -> `kind='route'`, member ways stitched),
+  and trailheads (`highway=trailhead` nodes -> `kind='trailhead'`, Point). The route clause needs
+  its **own** `out geom;` - inside a union `out geom` drops relation members. At ingest each
+  trailhead is snapped (<=35 m) onto the payload's trail polylines and the matched ids (expanded to
+  every same-named segment) stored in `trails.connects`, so `resolve_trail_network` draws the whole
+  named trail from cache; a live per-selection query is the fallback and its result is written back.
+  Also derived at parse: `length_km` and `attrs` (surface/sac_scale/trail_visibility/network/
+  operator/informal). Geometry cached as GeoJSON *text* + `geom` GIST + a representative center.
 - `src/foray/sources/fire.py` - wildfire perimeters + burn scars from NIFC / MTBS ArcGIS
   (httpx, no key, issue #227), cloned from `land.py`. One table `fire_perimeters`, split by
   `source_key` into two refresh lanes: `wfigs_active` (fast, **replace semantics** -
@@ -109,14 +116,20 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   - `regions.py` - `build_phenology` (materializes `regions` + `phenology`) plus the
     materialized-table helpers (`region_elevations`, `region_precip_obs`, ...).
   - `ranking.py` - `rank_destinations` / `rank_destinations_corridor` (fix months -> rank
-    regions).
+    regions). After the phenology rank, multiplicative adjusters fold in fire (`_apply_fire`)
+    and trail/camp **access** (`_apply_access`, issue #306): a trailhead within 3 km boosts,
+    no trailhead *and* no camp within 15 km penalises, `None` (nothing cached within 45 km)
+    means "unknown" and is left alone. Distances land on `RegionScore.trailhead_km`/`camp_km`.
   - `trend.py` - `phenology_trend`: for each ranked region's **top** genus, classifies where the
     selected months sit in that genus's local season - `peak` / `building` / `past-peak` / `off`,
     from its month-by-month observation histogram for the region. Coarse, informational only - it
     is **not** an input to the score; the frontend's card "why" sentence uses it (issue #301).
   - `queries.py` - the point-and-radius read repository: `camps_near`, `land_near`,
-    `trails_near`, `get_trail`, `nearest_trail`, `place_calendar`, `recent_observations`,
-    `alerts` (includes `place_guess` / `uri` / `obscured` per obs), `precise_observations`.
+    `trails_near` (`sort=nearest|relevance|longest`; relevance = named-route + connected length +
+    log-scaled target-genus obs within 500 m of the line; `significant_only` hides unnamed OSM
+    stubs), `get_trail`, `connected_trails`, `nearest_trail`, `region_access`, `place_calendar`,
+    `recent_observations`, `alerts` (includes `place_guess` / `uri` / `obscured` per obs),
+    `precise_observations`.
   - `planner.py` - `plan_route` (start -> destination corridor trip: stops along the
     straight-line buffer, each annotated with a nearby camp *and* trail, ordered by progress;
     auto-picks a destination when the caller doesn't - see "no real road routing yet" below).
