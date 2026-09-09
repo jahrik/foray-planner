@@ -32,10 +32,13 @@ cards; **"Show N more regions"** opens the rest of the ranked list in place.
 
 Each card: rank + distance (the title backfills with a notable place name - national
 park/forest, protected area, or nearest settlement - once it's looked up), the "why"
-sentence (top genus + where the season sits for it, recent rain, a nearby-fire note),
-a score bar, a stat line (score, species count, recent-observation count, mean ground
-elevation, recent rainfall), genus chips linking to iNaturalist, and two actions:
-**Details** and **+ Plan**.
+sentence (top genus + where the season sits for it, recent rain, a nearby-fire note,
+and a nearby trailhead / free camp when one is close), a score bar, a stat line
+(score, species count, recent-observation count, mean ground elevation, recent
+rainfall), genus chips linking to iNaturalist, and two actions: **Details** and
+**+ Plan**. The score is phenology-first, then nudged by nearby wildfire, burn
+scars, and how reachable the spot is (a close trailhead helps; nowhere to park or
+camp within range hurts).
 
 **Markers** read by rank rather than all looking alike:
 
@@ -60,8 +63,11 @@ results"** returns to the list:
 - **Photos** - thumbnails from the region's most recent observations. Only photos with
   a redisplayable Creative Commons license show a thumbnail (with attribution);
   everything else still lists with a link back to its iNat page.
-- **Trails** - nearby hiking paths, named routes, and trailheads.
-- **Campgrounds** - nearby developed campgrounds from Recreation.gov.
+- **Trails** - trailheads near the hotspot, ranked by the trail they lead to (a named
+  route, its length, and how many target-genus finds hug the line) rather than raw
+  proximity. Selecting one draws the whole named trail on the map.
+- **Campgrounds** - nearby developed campgrounds from Recreation.gov, with a parsed
+  nightly fee range and whether they're reservable.
 
 ### Active now - what's been spotted recently?
 

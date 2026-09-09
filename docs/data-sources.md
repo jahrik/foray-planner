@@ -28,29 +28,55 @@ scoring.
 
 ## Recreation.gov RIDB API
 
-**Role:** Official developed campground data - names, locations, fees.
+**Role:** Official developed campground data - names, locations, fees, reservability.
 
 - **Key:** Free API key from [ridb.recreation.gov](https://ridb.recreation.gov/landing).
   Set as `RIDB_API_KEY` in your environment or `.env` file. If unset, camps ingest is a
   silent no-op and everything else still works.
-- **Tiling:** The home radius is tiled into ≤50-mile query circles to work within the API's
-  per-query radius limit. Facilities are deduped by ID and clipped to the true radius with
-  the haversine formula.
-- **`free` flag:** Only set `TRUE` on an explicit no-fee signal from the API response.
-  Never guessed from missing data.
+- **Per-state listing:** The primary path pages `facilities?state=XX&activity=CAMPING&full=true`
+  for every state the home disk reaches (from `FORAY_COVERAGE` bboxes), then clips each
+  facility to the true radius with the haversine formula. RIDB's point+radius search silently
+  returns only ~1/3 of the developed campgrounds actually present (it matches on the facility's
+  own coordinate, often unset), so it's kept only as a fallback for a non-US home. `full=true`
+  gives `Reservable` on each record.
+- **Fees:** RIDB ships fees as prose ("Camping: $16/vehicle... $2 per extra vehicle"), parsed
+  best-effort into `fee_low`/`fee_high` - amounts qualified as add-ons / discounts / non-camping
+  (extra vehicle, day use, senior, deposit) are dropped.
+- **`free` flag:** Only set `TRUE` on an explicit no-fee signal *and* no positive fee amount
+  anywhere in the blob. Never guessed from missing data.
+- **Pruning:** Camp ingests only upsert, so a shrunk radius / moved home would strand old rows;
+  `prune_campsites_outside_radius` clears `source='ridb'` rows outside the current disk after
+  every ingest.
 - **Terms:** Government data, free for use with attribution.
 
 ---
 
 ## OpenStreetMap / Overpass API
 
-**Role:** Reported dispersed-camping sites.
+**Role:** Reported dispersed-camping sites, and the trail network (paths, named hiking routes,
+trailheads).
 
 - **Client:** httpx (no key required)
 - **Endpoint:** [Overpass API](https://overpass-api.de) - `https://overpass-api.de/api/interpreter`
 - **Rate limit:** Polite: sleep between requests; 429 responses respect the `Retry-After` header
-- **What we fetch:**
+- **Dispersed camping (`sources/dispersed.py`):**
   - `tourism=camp_site`, `tourism=camp_pitch`, `backcountry=yes` → `kind='reported'` campsites
+- **Trails (`sources/trails.py`):**
+  - `highway=path` ways → `kind='path'` (we exclude `highway=footway` - ~6x the rows, mostly
+    urban sidewalks, and heavy enough to time the query out)
+  - `route=hiking` relations → `kind='route'`, member ways stitched into a MultiLineString
+  - `highway=trailhead` nodes → `kind='trailhead'` (a `Point`)
+  - **Query quirk:** inside a `(...)` union, Overpass's `out geom` returns a relation with only
+    `bounds` and no members, so the route clause gets its own `out geom;` after the way/node
+    union - without it, `kind='route'` rows silently never appear.
+  - **Preload link:** at ingest, each trailhead node is snapped (≤35 m, point-to-segment) onto
+    the trail polylines in the payload and the matched trail ids are stored in `trails.connects`
+    - expanded to every way sharing that trail's name. Selecting a trailhead then draws the
+    whole named trail straight from cache; a live per-selection Overpass query is only the
+    fallback for an unlinked trailhead, and its result is written back to `connects`.
+  - **`length_km` / `attrs`:** great-circle length of the full polyline, and the kept OSM detail
+    tags (`surface`, `sac_scale`, `trail_visibility`, `network`, `operator`, `informal`).
+  - Informational only - links the OSM element page, makes no legal-access claim.
 - **License:** [ODbL](https://opendatacommons.org/licenses/odbl/) - data must be attributed
   and any derivative databases shared under ODbL
 - **Attribution required:** "© OpenStreetMap contributors" in any UI showing this data
