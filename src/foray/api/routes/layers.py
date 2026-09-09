@@ -17,6 +17,7 @@ from foray.api.deps import (
     region_center,
     require_idle,
     resolve_device_id,
+    set_device_cookie,
 )
 from foray.api.state import AppState
 from foray.api_models import CampSite, FireNear, LandUnit, RegionPlace, Trail, TrailPath
@@ -261,6 +262,7 @@ def get_region_satellite_labels(
 @router.get("/api/trails")
 def get_trails(
     request: Request,
+    response: Response,
     region_id: str | None = Query(None),
     lat: float | None = Query(None),
     lng: float | None = Query(None),
@@ -292,7 +294,9 @@ def get_trails(
         center_lat, center_lng = lat, lng
     else:
         raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
-    device_id, _is_new = resolve_device_id(request)
+    device_id, is_new = resolve_device_id(request)
+    if is_new:
+        set_device_cookie(request, response, device_id)
     with pool.connection() as conn:
         found = scoring.trails_near(
             conn,
