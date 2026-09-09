@@ -390,6 +390,54 @@ def test_trails_near_significant_only_drops_the_stub_trailhead(con: psycopg.Conn
     assert {"Route TH", "Long Path TH"} <= {t.name for t in kept}
 
 
+def test_trails_near_obs_density_lifts_a_trail_through_a_hotspot(con: psycopg.Connection) -> None:
+    # Two named paths in range: "Popular" a bit farther, "Quiet" closer. Seed target-genus
+    # research-grade observations right on "Popular"; with a genus filter the relevance sort
+    # puts it first, without one it falls back to distance/length.
+    paths = [
+        _parse_element(
+            {
+                "type": "way",
+                "id": 1,
+                "tags": {"highway": "path", "name": "Popular"},
+                "geometry": [{"lat": 47.610, "lon": -122.30}, {"lat": 47.615, "lon": -122.30}],
+            }
+        ),
+        _parse_element(
+            {
+                "type": "way",
+                "id": 2,
+                "tags": {"highway": "path", "name": "Quiet"},
+                "geometry": [{"lat": 47.601, "lon": -122.30}, {"lat": 47.606, "lon": -122.30}],
+            }
+        ),
+    ]
+    assert all(path is not None for path in paths)
+    upsert_trails(con, [path for path in paths if path is not None])
+    with con.cursor() as cur:
+        cur.execute("INSERT INTO fungi_genera (taxon_id, name) VALUES (48701, 'Boletus')")
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade)"
+            " VALUES (%s, 48701, %s, %s, '2022-09-15', 9, 'research')",
+            [(i, 47.612, -122.30) for i in range(1, 9)],  # 8 finds on "Popular"
+        )
+
+    with_genus = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, sort="relevance", taxon_ids=[48701])
+    assert [t.name for t in with_genus[:2]] == ["Popular", "Quiet"]
+    no_genus = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, sort="relevance")
+    assert [t.name for t in no_genus[:2]] == ["Quiet", "Popular"]  # equal prominence -> nearer first
+
+
+def test_trails_near_dedupes_same_named_trailheads(con: psycopg.Connection) -> None:
+    def th(node: int, lat: float) -> tuple[object, ...]:
+        point = f'{{"type":"Point","coordinates":[-122.30,{lat}]}}'
+        return (f"osm:node/{node}", "Beaver Pond", "trailhead", "osm", "u", lat, -122.30, point, None, None, None)
+
+    upsert_trails(con, [th(1, 47.61), th(2, 47.62), th(3, 47.63)])
+    result = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, kind="trailhead")
+    assert [t.name for t in result] == ["Beaver Pond"]  # three nodes, one row
+
+
 def test_ingest_trails_upserts_into_cache(con: psycopg.Connection) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -737,6 +785,14 @@ def test_resolve_trail_network_uses_live_topology_when_available(con: psycopg.Co
     assert result.authoritative is True
     assert result.trail.name == "Real Trail"
     assert result.trail.kind == "path"
+
+    # The live lookup was written back: the way is now cached and the trailhead links to it, so
+    # a second call needs no network (issue #306).
+    stored = con.execute("SELECT connects FROM trails WHERE id = 'osm:node/1'").fetchone()
+    assert stored is not None and stored[0] == ["osm:way/10"]
+    boom = httpx.Client(transport=httpx.MockTransport(lambda _r: (_ for _ in ()).throw(AssertionError("live call"))))
+    again = resolve_trail_network(con, "osm:node/1", client=boom)
+    assert again is not None and again.trail.name == "Real Trail"
 
 
 def test_resolve_trail_network_falls_back_to_nearest_cached_trail(con: psycopg.Connection) -> None:

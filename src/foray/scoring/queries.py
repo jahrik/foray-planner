@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any, Literal, LiteralString, cast
@@ -204,6 +205,11 @@ TrailSort = Literal["nearest", "relevance", "longest"]
 # connector stubs (issue #306). Synthetic names all end in "(OSM)".
 _SIGNIFICANT_LENGTH_KM = 0.5
 _ROUTE_RELEVANCE_BONUS = 3.0  # a trailhead whose trail is a named route sorts well above a spur
+# Target-genus observations within this of the trail line push it up the relevance sort - a
+# trail that runs through where the mushrooms are is the point (issue #306). Log-scaled so a
+# handful of finds matters but a hotspot doesn't swamp length/route entirely.
+_OBS_RELEVANCE_RADIUS_M = 500
+_OBS_RELEVANCE_WEIGHT = 2.5
 
 
 def trails_near(
@@ -216,6 +222,7 @@ def trails_near(
     limit: int | None = None,
     sort: TrailSort = "nearest",
     significant_only: bool = False,
+    taxon_ids: list[int] | None = None,
     with_camp_distance: bool = True,
     with_geometry: bool = True,
 ) -> list[Trail]:
@@ -247,12 +254,11 @@ def trails_near(
     The ``/api/trails`` list only shows names + distances and fetches real geometry per row via
     ``/api/trails/network``, so shipping every LineString there is megabytes of unused payload.
     """
-    params: list[Any] = [lng, lat, radius_km * 1000.0]
+    # params are appended in the order their %s appears in the final SQL: GEOG_POINT (CTE) ->
+    # obs_join (FROM) -> radius (WHERE) -> kind (WHERE) -> limit (ORDER BY).
+    params: list[Any] = [lng, lat]
     geojson_select: LiteralString = "t.geojson" if with_geometry else "NULL::text"
-    kind_filter: LiteralString = ""
-    if kind is not None:
-        kind_filter = "AND t.kind = %s"
-        params.append(kind)
+    kind_filter: LiteralString = "AND t.kind = %s" if kind is not None else ""
     if with_camp_distance:
         camp_select: LiteralString = "camp.d / 1000.0 AS camp_km"
         camp_join: LiteralString = """
@@ -279,6 +285,28 @@ def trails_near(
             FROM trails ct WHERE t.connects IS NOT NULL AND ct.id = ANY(t.connects)
         ) lead ON true"""
         lead_select = "lead.best_len, lead.has_route"
+    # Foraging-relevance term: count target-genus observations hugging the trail line. Only for a
+    # relevance sort with a genus filter - "all genera" would just count every fungus everywhere.
+    if sort == "relevance" and taxon_ids:
+        obs_join: LiteralString = cast(
+            LiteralString,
+            f"""
+        LEFT JOIN LATERAL (
+            SELECT count(*) AS n FROM observations o
+            WHERE o.geom IS NOT NULL AND ST_DWithin(o.geom, t.geom, {_OBS_RELEVANCE_RADIUS_M})
+              AND o.quality_grade = 'research' AND {taxon_filter(taxon_ids, "o.taxon_id")}
+        ) obs ON true""",
+        )
+        obs_select: LiteralString = "obs.n"
+        params.extend(taxon_ids)
+    else:
+        obs_join = ""
+        obs_select = "0::bigint"
+
+    params.append(radius_km * 1000.0)
+    if kind is not None:
+        params.append(kind)
+
     order_limit: LiteralString = ""
     if sort == "nearest" and limit is not None:
         # geography `<->` is true spherical distance in PostGIS >= 2.2 (same as ST_Distance,
@@ -296,16 +324,18 @@ def trails_near(
                t.length_km, t.attrs,
                ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km,
                {camp_select},
-               {lead_select}
-        FROM trails t, pt{camp_join}{lead_join}
+               {lead_select},
+               {obs_select} AS obs_n
+        FROM trails t, pt{camp_join}{lead_join}{obs_join}
         WHERE t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s) {kind_filter}
         {order_limit}
         """
     rows = con.execute(sql, params).fetchall()
 
     # row layout: [8] this row's own length_km, [9] attrs, [10] unrounded distance, [11] camp
-    # distance, [12] best connected length, [13] connects-a-route flag. Prominence is the lead
-    # trail's length (for a trailhead) or the row's own (for a path), plus a route bonus.
+    # distance, [12] best connected length, [13] connects-a-route flag, [14] target-genus obs
+    # count near the line. Prominence is the lead trail's length (for a trailhead) or the row's
+    # own (for a path), plus a route bonus, plus a log-scaled foraging-density term.
     def lead_length(row: Sequence[Any]) -> float:
         return row[12] if row[12] is not None else (row[8] or 0.0)
 
@@ -313,14 +343,16 @@ def trails_near(
         name, row_kind = row[1], row[2]
         named = name is not None and not name.endswith("(OSM)")
         if row_kind == "trailhead":
-            # An unnamed trailhead ("Trailhead (OSM) - 16 mi") is a useless list row whatever it
-            # connects to - it needs a real name, or to lead to a named route.
-            return named or bool(row[13])
+            # "Trailhead (OSM) - 16 mi" tells the user nothing whatever it connects to, so an
+            # unnamed trailhead never makes the list (it's still drawn on the map).
+            return named
         # A path / route earns its row by being named, being a route, or running far enough.
         return named or row_kind == "route" or lead_length(row) >= _SIGNIFICANT_LENGTH_KM
 
     def relevance(row: Sequence[Any]) -> float:
-        return lead_length(row) + (_ROUTE_RELEVANCE_BONUS if (row[13] or row[2] == "route") else 0.0)
+        route_bonus = _ROUTE_RELEVANCE_BONUS if (row[13] or row[2] == "route") else 0.0
+        obs_bonus = _OBS_RELEVANCE_WEIGHT * math.log1p(row[14] or 0)
+        return lead_length(row) + route_bonus + obs_bonus
 
     candidates = [row for row in rows if not significant_only or significant(row)]
     if sort == "relevance":
@@ -330,6 +362,11 @@ def trails_near(
     else:
         # Rank on the unrounded distance so near-ties keep their true order (matches ``camps_near``).
         candidates.sort(key=lambda row: row[10])
+    if kind == "trailhead":
+        # Several nodes often share a trailhead name (different access points to one park); keep
+        # only the best-ranked of each so the list isn't three "Beaver Pond Natural Area" rows.
+        seen: set[str] = set()
+        candidates = [row for row in candidates if not (row[1] in seen or seen.add(row[1]))]
     trails = [_base_trail(row, distance_km=row[10], camp_distance_km=row[11]) for row in candidates]
     return trails[:limit] if limit is not None else trails
 
