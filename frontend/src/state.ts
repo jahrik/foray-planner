@@ -41,6 +41,9 @@ interface ScopeState {
   // URL of the Protomaps PMTiles vector basemap, from /api/config. Empty -> the map has no
   // base layer (there is no raster fallback). Set once on load, before initMap.
   basemapUrl: string;
+  // Terrarium DEM tile URL template ({z}/{x}/{y}), from /api/config - drives the hillshade +
+  // contours. Empty -> no terrain layer. Set once on load, before initMap.
+  terrainUrl: string;
 }
 
 /** How results are shown: which view, sort order, unit system, and the last plan payload. */
@@ -70,6 +73,7 @@ export const state: State = {
   focused: null,
   cellDeg: 0.25, // overwritten from /api/config once it loads; matches the backend default
   basemapUrl: "", // overwritten from /api/config; empty means no base layer
+  terrainUrl: "", // overwritten from /api/config; empty means no hillshade/contours
   units: getUnits(),
 };
 

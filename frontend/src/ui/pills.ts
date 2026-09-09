@@ -95,6 +95,7 @@ export function initPills(): void {
     "free-camps",
     "show-fire",
     "show-aerial",
+    "show-contours",
   ];
   const layersPill = createPill({
     label: "Layers",
