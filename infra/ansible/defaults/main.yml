@@ -125,9 +125,13 @@ foray_spaces_secret_access_key: "{{ lookup('ansible.builtin.env', 'DO_SPACES_SEC
 foray_basemap_space_name: foray-basemap
 foray_basemap_region: "{{ foray_do_region }}"
 foray_basemap_object_key: us.pmtiles
-# Origins allowed to range-GET the archive cross-origin (the app + the vite dev server).
+# Origins allowed to range-GET the archive cross-origin: prod, the local docker site, and the
+# vite dev server. The archive is public-read open map data, so CORS here only lets a browser
+# on these origins fetch() the bytes it could already curl - no exposure from the localhost
+# entries (see docs/data-sources.md, "Local dev").
 foray_basemap_allowed_origins:
   - "https://{{ foray_domain }}"
+  - "http://localhost:8000"
   - "http://localhost:5173"
 # CONUS + a margin: min_lon,min_lat,max_lon,max_lat.
 foray_basemap_bbox: "-125,24,-66,50"

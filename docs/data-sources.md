@@ -239,6 +239,13 @@ vector base lets us style forest roads / trails / highways distinctly, declutter
 - **Config:** `FORAY_BASEMAP_URL` if set, else the computed CDN URL once the Spaces key is
   configured, else empty (no base layer). Surfaced to the SPA in `GET /api/config` as
   `basemap_url`; the ansible var is `foray_basemap_url`.
+- **Local dev:** point `FORAY_BASEMAP_URL` at the same deployed CDN archive
+  (`https://<space>.<region>.cdn.digitaloceanspaces.com/us.pmtiles`). `http://localhost:8000`
+  (the docker site) and `http://localhost:5173` (vite) are both in `foray_basemap_allowed_origins`,
+  so the browser's ranged `fetch()` is allowed. The archive is public-read open map data, so
+  those localhost CORS entries expose nothing a `curl` couldn't already get. An offline /
+  smaller `pmtiles extract` served same-origin from `frontend/public/` is the alternative (see
+  `.env.example`).
 - **Frontend:** `frontend/src/map/basemap.ts`, code-split (the MapLibre GL stack is ~280 kB
   gzip) so it loads in parallel with first paint. Registers the `pmtiles://` protocol, builds a
   MapLibre style from `protomaps-themes-base` (light/dark), swaps the style on theme change.
