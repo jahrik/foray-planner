@@ -489,7 +489,7 @@ def region_access(
 
 
 def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: float = 2.0) -> Trail | None:
-    """Nearest cached path/route to (``lat``, ``lng``), or None if nothing is within ``max_km``.
+    """Nearest cached path/road/route to (``lat``, ``lng``), or None if nothing is within ``max_km``.
 
     Fallback for ``trails.resolve_trail_network`` (issue: "draw the real trail on trailhead
     selection") when OSM has no topological link between a trailhead node and any way/relation -
@@ -502,7 +502,7 @@ def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: fl
         SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
                t.length_km, t.attrs, ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km
         FROM trails t, pt
-        WHERE t.kind IN ('path', 'route')
+        WHERE t.kind IN ('path', 'road', 'route')
           AND t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s)
         ORDER BY t.geom <-> pt.g
         LIMIT 1

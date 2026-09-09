@@ -53,17 +53,21 @@ scoring.
 
 ## OpenStreetMap / Overpass API
 
-**Role:** Reported dispersed-camping sites, and the trail network (paths, named hiking routes,
-trailheads).
+**Role:** Reported dispersed-camping sites, and the trail network (paths, forest roads, named
+hiking routes, trailheads).
 
 - **Client:** httpx (no key required)
-- **Endpoint:** [Overpass API](https://overpass-api.de) - `https://overpass-api.de/api/interpreter`
+- **Endpoints:** `overpass-api.de` (primary), then public mirrors `overpass.kumi.systems` and
+  `overpass.private.coffee` on connection failure or an exhausted 429/504 retry. Override with
+  `FORAY_OVERPASS_URLS` (comma-separated).
 - **Rate limit:** Polite: sleep between requests; 429 responses respect the `Retry-After` header
 - **Dispersed camping (`sources/dispersed.py`):**
   - `tourism=camp_site`, `tourism=camp_pitch`, `backcountry=yes` → `kind='reported'` campsites
 - **Trails (`sources/trails.py`):**
-  - `highway=path` ways → `kind='path'` (we exclude `highway=footway` - ~6x the rows, mostly
-    urban sidewalks, and heavy enough to time the query out)
+  - `highway=path` / `highway=bridleway` ways → `kind='path'` (we exclude `highway=footway` -
+    ~6x the rows, mostly urban sidewalks, and heavy enough to time the query out)
+  - `highway=track`, and `highway=service` + `service=forestry` → `kind='road'` - old logging /
+    forest-service roads, a primary foraging surface, kept separately queryable from trails
   - `route=hiking` relations → `kind='route'`, member ways stitched into a MultiLineString
   - `highway=trailhead` nodes → `kind='trailhead'` (a `Point`)
   - **Query quirk:** inside a `(...)` union, Overpass's `out geom` returns a relation with only
@@ -75,7 +79,8 @@ trailheads).
     whole named trail straight from cache; a live per-selection Overpass query is only the
     fallback for an unlinked trailhead, and its result is written back to `connects`.
   - **`length_km` / `attrs`:** great-circle length of the full polyline, and the kept OSM detail
-    tags (`surface`, `sac_scale`, `trail_visibility`, `network`, `operator`, `informal`).
+    tags (`highway`, `surface`, `tracktype`, `smoothness`, `4wd_only`, `sac_scale`,
+    `trail_visibility`, `network`, `operator`, `informal`, `access`, `motor_vehicle`, `ref`).
   - Informational only - links the OSM element page, makes no legal-access claim.
 - **License:** [ODbL](https://opendatacommons.org/licenses/odbl/) - data must be attributed
   and any derivative databases shared under ODbL
