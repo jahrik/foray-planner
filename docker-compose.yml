@@ -12,6 +12,12 @@ x-postgres-env: &postgres-env
 x-ridb-env: &ridb-env
   RIDB_API_KEY: ${RIDB_API_KEY:-}
 
+# Vector basemap archive URL (PMTiles). Empty by default -> the map has no base layer; set
+# FORAY_BASEMAP_URL in .env to a locally-served extract to preview the vector basemap. Prod
+# gets this from Ansible (infra/ansible/, foray_basemap_url).
+x-basemap-env: &basemap-env
+  FORAY_BASEMAP_URL: ${FORAY_BASEMAP_URL:-}
+
 x-runtime-build: &runtime-build
   context: .
   target: runtime
@@ -47,7 +53,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      <<: [*postgres-env, *ridb-env]
+      <<: [*postgres-env, *ridb-env, *basemap-env]
     depends_on:
       <<: *depends-postgres
     command: ["foray", "serve", "--host", "0.0.0.0", "--port", "8000"]

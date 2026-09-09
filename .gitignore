@@ -41,3 +41,6 @@ infra/ansible/.ansible/
 verify-*.png
 redesign-*.png
 *.playwright-mcp
+
+# Local vector-basemap test extracts - never commit (see docs/data-sources.md)
+frontend/public/*.pmtiles
