@@ -24,7 +24,7 @@
     "@maplibre/maplibre-gl-leaflet": "^0.1.4",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
-    "maplibre-gl": "^6.8.0",
+    "maplibre-gl": "^5.24.0",
     "openapi-fetch": "^0.17.0",
     "pmtiles": "^4.5.0",
     "protomaps-themes-base": "^4.5.0"
