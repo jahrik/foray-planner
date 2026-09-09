@@ -84,8 +84,10 @@ hiking routes, trailheads).
     tags (`highway`, `surface`, `tracktype`, `smoothness`, `4wd_only`, `sac_scale`,
     `trail_visibility`, `network`, `operator`, `informal`, `access`, `motor_vehicle`, `foot`,
     `ref`).
-  - **Re-ingest:** `foray trails --all --force` clears the per-region `trails:place:*` markers
-    so a widened query (e.g. the forest-road tags) re-pulls coverage instead of skipping.
+  - **Re-ingest:** the per-region one-shot marker is `trails:place:{id}:q{_TRAILS_QUERY_VERSION}`.
+    Widening the Overpass query bumps that constant, so the weekly `refresh --with trails --all`
+    cron re-pulls every region automatically (superseded markers pruned on success) - no manual
+    step. `foray trails --all --force` is a manual re-pull without a bump (OSM data drift).
   - **Road ranking:** `trails_near(sort="relevance")` re-weights `kind='road'` rows so
     target-genus obs-density along the line dominates (length is log-damped), and a road gated
     to motor vehicles but open on foot (`Trail.walk_in`) gets a bonus - walk-in ground is less
