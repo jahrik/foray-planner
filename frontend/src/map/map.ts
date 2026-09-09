@@ -248,7 +248,12 @@ export function initMap(home: Home): void {
   // Zoom control bottom-right (issue #297): the Google-Maps-style slide-out dock and the
   // floating search bar / pill row all sit over the top-left, so the default top-left zoom
   // buttons would be covered.
-  map = L.map("map", { zoomControl: false }).setView([home.lat, home.lng], 7);
+  // maxZoom must be set on the map itself: the vector basemap layer (L.maplibreGL) carries no
+  // zoom range, and without one Leaflet's getBoundsZoom throws "Map has no maxZoom specified"
+  // the first time anything fits bounds with padding (destination framing, plan route), which
+  // aborts marker/overlay rendering. The old raster tileLayer used to supply maxZoom: 14; the
+  // PMTiles archive is z0-15 and MapLibre overzooms cleanly past that.
+  map = L.map("map", { zoomControl: false, minZoom: 2, maxZoom: 19 }).setView([home.lat, home.lng], 7);
   L.control.zoom({ position: "bottomright" }).addTo(map);
   setTiles();
   decorateAttribution(map);
