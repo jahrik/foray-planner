@@ -25,31 +25,32 @@ def _origin(url: str) -> str:
 def _content_security_policy(basemap_url: str = "") -> str:
     """Public-facing app serving an HTML+JS frontend - locked to exactly what the frontend needs.
 
-    Leaflet + MapLibre GL are bundled as 'self'. script-src/connect-src third-party origins are
-    limited to Nominatim (geocode autocomplete) and, for the vector basemap, Protomaps' asset
-    site plus the configured PMTiles host. style-src needs 'unsafe-inline' because the frontend
-    sets ``style="..."`` attributes directly (legend swatches, score bars, phenology cells) -
-    much lower risk than script injection, an accepted gap. worker-src / ``blob:`` in img-src
-    are for MapLibre GL's web workers and canvas/sprite blobs. The selected destination's
-    satellite fill is 'self' only - proxied through our own routes (sources/satellite.py).
+    Leaflet is bundled as 'self'. script-src/connect-src third-party origins are limited to
+    Nominatim (geocode autocomplete). style-src needs 'unsafe-inline' because the frontend sets
+    ``style="..."`` attributes directly (legend swatches, score bars, phenology cells) - much
+    lower risk than script injection, an accepted gap. The selected destination's satellite
+    fill is 'self' only - proxied through our own routes (sources/satellite.py).
+
+    When ``basemap_url`` is set the vector basemap (MapLibre GL + Protomaps PMTiles) loads, so
+    its needs are added: ``worker-src blob:`` (GL web workers), ``blob:`` in img-src
+    (canvas/sprite blobs), Protomaps' asset site for glyphs/sprites, and the PMTiles host in
+    connect-src. With no basemap configured none of that is pulled, so it is left out.
     """
-    connect = ["'self'", "https://nominatim.openstreetmap.org", _PROTOMAPS_ASSETS]
-    img = [
-        "'self'",
-        "https://static.inaturalist.org",
-        "https://inaturalist-open-data.s3.amazonaws.com",
-        _PROTOMAPS_ASSETS,
-        "data:",
-        "blob:",
-    ]
+    connect = ["'self'", "https://nominatim.openstreetmap.org"]
+    img = ["'self'", "https://static.inaturalist.org", "https://inaturalist-open-data.s3.amazonaws.com", "data:"]
+    worker = "worker-src 'self'; "
     basemap_origin = _origin(basemap_url)
-    if basemap_origin and basemap_origin not in connect:
-        connect.append(basemap_origin)
+    if basemap_origin:
+        worker = "worker-src 'self' blob:; "
+        img += ["blob:", _PROTOMAPS_ASSETS]
+        connect += [_PROTOMAPS_ASSETS]
+        if basemap_origin not in connect:
+            connect.append(basemap_origin)
     return (
         "default-src 'self'; "
         "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
-        "worker-src 'self' blob:; "
+        f"{worker}"
         f"img-src {' '.join(img)}; "
         f"connect-src {' '.join(connect)}; "
         "font-src 'self'; "

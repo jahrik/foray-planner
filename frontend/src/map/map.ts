@@ -108,7 +108,7 @@ const DIM_DOT_RADIUS_M = 900; // fixed ground radius for the rank-11+ dots
 // The MapLibre GL stack (~280 kB gzip) lives in the code-split ./basemap chunk, loaded here so
 // it fetches in parallel with the first render rather than bloating the entry bundle.
 // `vectorMounting` guards the async gap so initMap() + an immediate theme toggle can't mount
-// twice.
+// twice; it's cleared again if the mount throws so a later call can retry.
 let vectorMounting = false;
 export function setTiles(): void {
   if (!map || !state.basemapUrl) return;
@@ -126,7 +126,12 @@ async function applyVectorBasemap(theme: "dark" | "light"): Promise<void> {
   }
   if (vectorMounting) return;
   vectorMounting = true;
-  basemap.mountVectorBasemap(map, state.basemapUrl, theme);
+  try {
+    basemap.mountVectorBasemap(map, state.basemapUrl, theme);
+  } catch (error) {
+    vectorMounting = false; // let a later setTiles() retry
+    throw error;
+  }
   map.attributionControl.addAttribution(VECTOR_ATTRIBUTION);
   tileTheme = theme;
   // Adding a layer / attribution rebuilds the attribution control's innerHTML (Leaflet

@@ -38,8 +38,8 @@ interface ScopeState {
   home: Home | null;
   months: Set<number>;
   cellDeg: number;
-  // URL of the Protomaps PMTiles vector basemap, from /api/config. Empty -> the raster tile
-  // basemap (map.ts setTiles). Set once on load, before initMap.
+  // URL of the Protomaps PMTiles vector basemap, from /api/config. Empty -> the map has no
+  // base layer (there is no raster fallback). Set once on load, before initMap.
   basemapUrl: string;
 }
 
@@ -69,7 +69,7 @@ export const state: State = {
   planTrip: null,
   focused: null,
   cellDeg: 0.25, // overwritten from /api/config once it loads; matches the backend default
-  basemapUrl: "", // overwritten from /api/config; empty means raster basemap
+  basemapUrl: "", // overwritten from /api/config; empty means no base layer
   units: getUnits(),
 };
 

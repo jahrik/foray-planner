@@ -30,7 +30,8 @@ class ConfigResponse(BaseModel):
     recent_weeks: int
     refreshing: bool
     last_error: str | None
-    # Empty string when no vector basemap is configured (frontend falls back to raster tiles).
+    # Empty when no vector basemap is configured; the map then has no base layer (there is no
+    # raster fallback).
     basemap_url: str = ""
 
 
