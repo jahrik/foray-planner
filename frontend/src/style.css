@@ -1029,6 +1029,12 @@ table.cal .heat {
   flex-direction: column;
   gap: 10px;
 }
+/* The class sets display:flex, so the bare [hidden] attribute (UA display:none) loses when the
+   Details view switches away from the Photos tab - the panel stays visible under the new tab's
+   content. Same fix as .details-back / .route-bar above. */
+.rank-photos[hidden] {
+  display: none;
+}
 .obs-photo {
   font-size: 12px;
 }
