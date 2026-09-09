@@ -907,7 +907,7 @@ def prune_campsites_outside_radius(
     """
     result = con.execute(
         "DELETE FROM campsites WHERE source = %s "
-        "AND (geom IS NULL OR NOT ST_DWithin(geom, ST_MakePoint(%s, %s)::geography, %s))",
+        "AND (geom IS NULL OR NOT ST_DWithin(geom, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s))",
         [source, lng, lat, radius_km * 1000.0],
     )
     con.commit()
