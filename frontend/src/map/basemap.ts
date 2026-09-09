@@ -12,6 +12,7 @@
 // self-hosting those alongside the archive is a later step.
 import type { StyleSpecification } from "@maplibre/maplibre-gl-style-spec";
 import L from "leaflet";
+import type { Map as MaplibreMap } from "maplibre-gl";
 import { addProtocol, setWorkerUrl } from "maplibre-gl";
 // v6 ships the GL web worker as a sibling ESM module whose URL MapLibre derives from
 // import.meta.url - a bundler can't rewrite that, so under Vite we must point MapLibre at the
@@ -129,6 +130,12 @@ export function setVectorBasemapTheme(url: string, terrainUrl: string, theme: "d
 
 export function hasVectorBasemap(): boolean {
   return glLayer !== null;
+}
+
+/** The underlying MapLibre GL map, for read-only queries like `queryRenderedFeatures`
+ * (click-to-inspect in map.ts). `null` until the vector basemap is mounted. */
+export function getGlMap(): MaplibreMap | null {
+  return glLayer?.getMaplibreMap() ?? null;
 }
 
 /** Show or hide the contour lines + elevation labels (the Layers-pill "Contours" toggle).

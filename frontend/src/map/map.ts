@@ -4,6 +4,8 @@ import "leaflet.markercluster";
 import type { CampSite, Home } from "../api/types";
 import { clearLayer, clearLayerList } from "./layer-lifecycle";
 import { circleStyle } from "./markers";
+import { buildPopup } from "./popup";
+import { pickRoadFeature, roadLineLayerIds, roadPopupSpec } from "./road-inspect";
 import { dist, onScopeChange, qs, state } from "../state";
 
 // Marker palette. Destination + recency markers now read their colour from tokens.css at
@@ -113,6 +115,9 @@ const DIM_DOT_RADIUS_M = 900; // fixed ground radius for the rank-11+ dots
 // `vectorMounting` guards the async gap so initMap() + an immediate theme toggle can't mount
 // twice; it's cleared again if the mount throws so a later call can retry.
 let vectorMounting = false;
+// Held after the first load so the synchronous map-click handler can reach getGlMap() for
+// click-to-inspect without another dynamic import.
+let basemapModule: typeof import("./basemap") | null = null;
 export function setTiles(): void {
   if (!map || !state.basemapUrl) return;
   // Detached on purpose (the GL stack loads async), so swallow-and-log any rejection - a failed
@@ -124,6 +129,7 @@ export function setTiles(): void {
 
 async function applyVectorBasemap(theme: "dark" | "light"): Promise<void> {
   const basemap = await import("./basemap");
+  basemapModule = basemap;
   if (!map || !state.basemapUrl) return;
   if (basemap.hasVectorBasemap()) {
     if (tileTheme === theme) return; // already showing the right style
@@ -146,6 +152,15 @@ async function applyVectorBasemap(theme: "dark" | "light"): Promise<void> {
   // _update), wiping the ⓘ toggle - re-decorate so a live theme switch doesn't leave the
   // credits fully expanded.
   decorateAttribution(map);
+  // maplibre-gl-leaflet folds the GL style's own source attribution into the Leaflet control
+  // on the GL 'load' event - async, after this runs - and that _update wipes the ⓘ toggle
+  // again, leaving the full credit slab expanded (covers the map on mobile). Re-collapse it
+  // once the style is in.
+  const gl = basemap.getGlMap();
+  if (gl) {
+    if (gl.loaded()) decorateAttribution(map);
+    else gl.once("load", () => decorateAttribution(map));
+  }
 }
 
 // A plain DOM block below the map (not a Leaflet map-overlay control) - on small screens an
@@ -280,8 +295,32 @@ export function initMap(home: Home): void {
   // for it. Markers/polygons set `bubblingMouseEvents: false` so clicking one (to open its
   // popup) doesn't also fire this and stomp the location.
   map.on("click", (e: L.LeafletMouseEvent) => {
+    if (inspectRoad(e.latlng)) return; // hit a road/trail on the vector base - show its tags, don't move home
     onMapClick?.(e.latlng.lat, e.latlng.lng);
   });
+}
+
+// Click-to-inspect: if the tap landed on a rendered road/trail, open a popup of its OSM tags
+// (read straight off the vector tile - no API call) and report the hit so the caller skips the
+// set-home behaviour. A miss, or no vector basemap, returns false and the click falls through.
+function inspectRoad(latlng: L.LatLng): boolean {
+  const gl = basemapModule?.getGlMap();
+  if (!gl) return false;
+  const layerIds = roadLineLayerIds(gl.getStyle().layers);
+  if (layerIds.length === 0) return false;
+  const point = gl.project([latlng.lng, latlng.lat]);
+  // a few px of slop so a thin forest-road line is still an easy tap target
+  const box: [[number, number], [number, number]] = [
+    [point.x - 5, point.y - 5],
+    [point.x + 5, point.y + 5],
+  ];
+  const feature = pickRoadFeature(gl.queryRenderedFeatures(box, { layers: layerIds }));
+  if (!feature) return false;
+  L.popup()
+    .setLatLng(latlng)
+    .setContent(buildPopup(roadPopupSpec(feature.properties ?? {}, latlng.lat, latlng.lng)))
+    .openOn(map);
+  return true;
 }
 
 let onMapClick: ((lat: number, lng: number) => void) | null = null;
