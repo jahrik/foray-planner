@@ -6,7 +6,7 @@
 import { loadCamps, loadFire, loadLand } from "../map/layers";
 import { setAerialEnabled, setContoursEnabled } from "../map/map";
 import { cancelRefresh, startRefresh } from "../refresh";
-import { qs } from "../state";
+import { qs, state } from "../state";
 
 export function initLayerToggles(): void {
   let currentRefreshTarget: string | null = null;
@@ -55,6 +55,10 @@ export function initLayerToggles(): void {
   // overlay for whatever region is currently selected (sources/satellite.py serves it).
   qs("#show-aerial").onchange = (e) => setAerialEnabled((e.target as HTMLInputElement).checked);
   // Contour lines off the DEM tiles - no fetch here either, map.ts flips the layer visibility
-  // on the vector basemap (the hillshade underneath it is always on).
-  qs("#show-contours").onchange = (e) => setContoursEnabled((e.target as HTMLInputElement).checked);
+  // on the vector basemap (the hillshade underneath it is always on). Hidden outright when
+  // there is no terrain configured, so it never shows in the Layers pill's on-count.
+  const contours = qs("#show-contours");
+  contours.onchange = (e) => setContoursEnabled((e.target as HTMLInputElement).checked);
+  const contoursRow = contours.closest("label");
+  if (contoursRow) contoursRow.hidden = !state.terrainUrl;
 }

@@ -455,9 +455,18 @@ export function setAerialEnabled(on: boolean): void {
 
 // The Layers-pill "Contours" toggle. The hillshade is always on with the vector basemap; only
 // the contour lines + elevation labels flip. Deferred like the basemap import so the GL stack
-// stays out of the entry bundle.
+// stays out of the entry bundle. The toggle is hidden when there is no terrain (initLayerToggles),
+// but guard here too so a stale checked box can't leave the Layers pill counting a layer that
+// can never render.
 export function setContoursEnabled(on: boolean): void {
-  if (!state.terrainUrl) return;
+  if (!state.basemapUrl || !state.terrainUrl) {
+    const box = qs("#show-contours") as HTMLInputElement;
+    if (box.checked) {
+      box.checked = false;
+      box.dispatchEvent(new Event("change"));
+    }
+    return;
+  }
   void import("./basemap").then((basemap) => basemap.setContoursVisible(on));
 }
 
