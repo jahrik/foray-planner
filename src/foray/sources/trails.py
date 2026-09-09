@@ -388,9 +388,10 @@ def _group_key(tags: dict[str, Any]) -> str | None:
 
     A named way groups by ``name``. An unnamed forest road groups by its ``ref`` + ``operator``:
     OSM splits a long ``FR 300`` into dozens of separate ways, each unnamed but each carrying
-    ``ref=FR 300`` - without this they'd be dozens of 0.5 km rows instead of one 20 km road,
-    which also breaks the length-driven relevance sort. Returns None for a way that carries
-    neither, which stays an ungrouped single segment.
+    ``ref=FR 300`` - without this a trailhead touching one segment would link to just that
+    ~0.5 km piece instead of the whole road. This only widens the ``connects`` expansion in
+    ``_link_trailheads``; the cache still stores one row per OSM way. Returns None for a way
+    that carries neither, which stays an ungrouped single segment.
     """
     name = tags.get("name")
     if name:
