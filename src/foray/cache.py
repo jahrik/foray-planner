@@ -1064,9 +1064,10 @@ def is_ingested(con: psycopg.Connection, key: str) -> bool:
 
 
 def forget_ingest(con: psycopg.Connection, key: str) -> int:
-    """Drop one ``ingest_log`` key so a one-shot ingest (e.g. ``trails:place:<id>``) re-runs on
-    its next pass. Returns the number of rows removed (0 or 1). Used by ``foray trails --force``
-    to re-pull a coverage region after the query has widened."""
+    """Drop one ``ingest_log`` key so a one-shot ingest re-runs on its next pass. Returns the
+    number of rows removed (0 or 1). The key must be the exact stored value (e.g.
+    ``trails:place:12345:q2``, the versioned marker ``ingest_trails_region`` writes) - this does
+    no prefix matching. Used by ``foray trails --force`` to re-pull a single coverage region."""
     result = con.execute("DELETE FROM ingest_log WHERE key = %s", [key])
     return result.rowcount
 

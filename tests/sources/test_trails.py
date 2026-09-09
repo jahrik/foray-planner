@@ -602,11 +602,32 @@ def test_trails_near_flags_a_walk_in_road(con: psycopg.Connection) -> None:
             "geometry": [{"lat": 47.601, "lon": -122.32}, {"lat": 47.606, "lon": -122.32}],
         }
     )
-    assert gated is not None and drivable is not None
-    upsert_trails(con, [gated, drivable])
+    # `access=no` closes every mode (incl. foot) by OSM convention - not walk-in without an
+    # explicit `foot` re-grant.
+    fully_closed = _parse_element(
+        {
+            "type": "way",
+            "id": 3,
+            "tags": {"highway": "track", "name": "Closed Road", "access": "no"},
+            "geometry": [{"lat": 47.601, "lon": -122.34}, {"lat": 47.606, "lon": -122.34}],
+        }
+    )
+    closed_but_walkable = _parse_element(
+        {
+            "type": "way",
+            "id": 4,
+            "tags": {"highway": "track", "name": "Foot OK Road", "access": "private", "foot": "permissive"},
+            "geometry": [{"lat": 47.601, "lon": -122.36}, {"lat": 47.606, "lon": -122.36}],
+        }
+    )
+    roads = [gated, drivable, fully_closed, closed_but_walkable]
+    assert all(road is not None for road in roads)
+    upsert_trails(con, [road for road in roads if road is not None])
     by_name = {t.name: t for t in trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, kind="road")}
     assert by_name["Gated Road"].walk_in is True
     assert by_name["Open Road"].walk_in is False
+    assert by_name["Closed Road"].walk_in is False
+    assert by_name["Foot OK Road"].walk_in is True
 
 
 def test_trails_near_dedupes_same_named_trailheads(con: psycopg.Connection) -> None:
