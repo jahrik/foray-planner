@@ -295,7 +295,7 @@ export function initMap(home: Home): void {
   // for it. Markers/polygons set `bubblingMouseEvents: false` so clicking one (to open its
   // popup) doesn't also fire this and stomp the location.
   map.on("click", (e: L.LeafletMouseEvent) => {
-    if (inspectRoad(e.latlng)) return; // hit a road/trail on the vector base - show its tags, don't move home
+    if (inspectRoadAt(e.latlng)) return; // hit a road/trail on the vector base - show its tags, don't move home
     onMapClick?.(e.latlng.lat, e.latlng.lng);
   });
 }
@@ -303,7 +303,12 @@ export function initMap(home: Home): void {
 // Click-to-inspect: if the tap landed on a rendered road/trail, open a popup of its OSM tags
 // (read straight off the vector tile - no API call) and report the hit so the caller skips the
 // set-home behaviour. A miss, or no vector basemap, returns false and the click falls through.
-function inspectRoad(latlng: L.LatLng): boolean {
+//
+// Exported because the destination-region circles set `bubblingMouseEvents: false` (their own
+// click selects the region and must not also stomp the home location), so a click on a road
+// that runs under a hero circle's translucent fill never reaches the map handler above - the
+// circle's own handler (views.ts) calls this first so a road line still wins.
+export function inspectRoadAt(latlng: L.LatLng): boolean {
   const gl = basemapModule?.getGlMap();
   if (!gl) return false;
   const layerIds = roadLineLayerIds(gl.getStyle().layers);
