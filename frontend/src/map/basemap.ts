@@ -10,6 +10,7 @@
 // requests, so the whole US basemap is one static object behind a CDN with no tile server.
 // Glyphs and sprites come from Protomaps' small static assets site (a few MB, not the tiles);
 // self-hosting those alongside the archive is a later step.
+import type { StyleSpecification } from "@maplibre/maplibre-gl-style-spec";
 import L from "leaflet";
 import { addProtocol, setWorkerUrl } from "maplibre-gl";
 // v6 ships the GL web worker as a sibling ESM module whose URL MapLibre derives from
@@ -22,11 +23,11 @@ import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 // the basemap can lay out wrong even mounted through the Leaflet plugin.
 import "maplibre-gl/dist/maplibre-gl.css";
 import "@maplibre/maplibre-gl-leaflet";
+import { Protocol } from "pmtiles";
+import { applyForayRoadStyle } from "./basemap-roads";
+import { themedBaseLayers } from "./basemap-theme";
 
 setWorkerUrl(workerUrl);
-import { Protocol } from "pmtiles";
-import layers from "protomaps-themes-base";
-import type { StyleSpecification } from "@maplibre/maplibre-gl-style-spec";
 
 const ASSETS = "https://protomaps.github.io/basemaps-assets";
 const ATTRIBUTION =
@@ -47,7 +48,7 @@ function buildStyle(url: string, theme: "dark" | "light"): StyleSpecification {
         attribution: ATTRIBUTION,
       },
     },
-    layers: layers("protomaps", theme, "en"),
+    layers: applyForayRoadStyle(themedBaseLayers(theme), theme),
   } as StyleSpecification;
 }
 
