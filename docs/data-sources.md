@@ -249,6 +249,17 @@ vector base lets us style forest roads / trails / highways distinctly, declutter
 - **Frontend:** `frontend/src/map/basemap.ts`, code-split (the MapLibre GL stack is ~280 kB
   gzip) so it loads in parallel with first paint. Registers the `pmtiles://` protocol, builds a
   MapLibre style from `protomaps-themes-base` (light/dark), swaps the style on theme change.
+  `maplibre-gl` is pinned to v6 with the Vite worker set via `setWorkerUrl(...?worker&url)` -
+  see the comment in `basemap.ts` (a bare v6 bump 404s the worker silently).
+- **Contrast pass:** `frontend/src/map/basemap-theme.ts` lifts the stock `dark` theme out of
+  its ~15% luminance band (water was barely off the background, forest near-black, roads a hair
+  above the land) - navy water, real dark greens, a legible road hierarchy and labels. `light`
+  is left as the stock theme.
+- **Road styling:** `frontend/src/map/basemap-roads.ts` splits the base theme's single dim
+  `roads_other` layer, using the OSM `highway=` value Protomaps keeps in `kind_detail`, into a
+  cased ochre "forest roads" layer (`highway=track`) and a cased green "trails" layer
+  (footway/path/bridleway/steps/cycleway), each with its own line-following label. Protomaps'
+  tiles carry no track/path geometry below ~z13, so these are a zoom-in feature.
 - **Glyphs + sprites:** from `https://protomaps.github.io/basemaps-assets` (a few MB of
   font/icon data, not the tiles). Self-hosting these alongside the archive is a later step.
 - **CSP:** `_content_security_policy(basemap_url)` in `api/security.py` adds `worker-src 'self'

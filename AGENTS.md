@@ -238,11 +238,12 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   - `src/map/map.ts` - Leaflet init, theme/tile switching, `markerPalette()` (reads `tokens.css`
     at runtime, memoised per theme), the marker hierarchy in `plot()` (top-3 = filled circle +
     rank numeral, next-7 = ring, 11+ = dim moss dot), `selectSize`/`deselectSize`, `clear*()`,
-    and the opt-in aerial overlay (`setAerialEnabled` / `showSatelliteOverlay`). Light mode's
-    basemap is Esri's World Light Gray Canvas (a quiet cartographic base); dark mode is OSM
-    raster CSS-inverted (`invert() hue-rotate()`) - the source swaps on theme change, attribution
-    is theme-aware. When `FORAY_BASEMAP_URL` is set, `src/map/basemap.ts` (code-split MapLibre GL
-    + Protomaps PMTiles, see docs/data-sources.md) replaces the raster basemap instead.
+    and the opt-in aerial overlay (`setAerialEnabled` / `showSatelliteOverlay`). The base layer
+    is a Protomaps PMTiles vector map rendered by MapLibre GL (`src/map/basemap.ts`, with the
+    `basemap-theme.ts` contrast pass and `basemap-roads.ts` forest-road/trail styling on top;
+    code-split, see docs/data-sources.md), real light/dark cartography that swaps on theme
+    change; no raster fallback - the server must send a `basemap_url` (`FORAY_BASEMAP_URL`) or
+    the map has overlays but no base.
     `src/map/layers.ts` (camps/land/fire/precise fetch + render), `src/map/sheet.ts`
     (mobile bottom sheet), `popup.ts` / `markers.ts` / `layer-lifecycle.ts` (primitives).
   - `src/api/` - the typed client (`openapi-fetch`, `client.ts`: `getJson` / `postJson` /
@@ -284,8 +285,9 @@ the general rule, not an Esri-specific one - it applies to any future imagery/ba
 provider, not just ArcGIS. Every serious map provider (Esri, Mapbox, OSM, Google) actually
 distributes imagery as a "tile pyramid": the world pre-rendered once at each zoom level, chopped
 into a grid of small images addressed by `{z}/{x}/{y}`, pre-rendered and CDN-cached - this is
-what `L.tileLayer` (the OSM basemap in `map.ts`) is *built around*, and what every slippy map
-client expects. Most providers *also* expose a "flexible" dynamic-render endpoint (Esri's
+what `L.tileLayer` (the aerial overlay in `layers.ts`) and the PMTiles vector base are both
+*built around*, and what every slippy map client expects. Most providers *also* expose a
+"flexible" dynamic-render endpoint (Esri's
 `MapServer/export`: give it any bbox/size, it renders an image on the spot) that looks like the
 simpler integration - one call instead of tile-grid math - but isn't: it does real work per
 request instead of handing back something already computed, so it's slow (25-45s per call for
