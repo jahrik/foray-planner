@@ -154,6 +154,10 @@ jobs:
           FORAY_TLS_CERT: ${{ secrets.FORAY_TLS_CERT }}
           FORAY_TLS_KEY: ${{ secrets.FORAY_TLS_KEY }}
           RIDB_API_KEY: ${{ secrets.RIDB_API_KEY }}
+          # The vector basemap's PMTiles archive URL (the Spaces CDN object). Not secret - it's
+          # a public-read open-map-data URL - so it's a repo/environment variable, not a secret.
+          # Unset -> foray_basemap_url resolves empty and the map ships with no base layer.
+          FORAY_BASEMAP_URL: ${{ vars.FORAY_BASEMAP_URL }}
         run: |
           uv run ansible-playbook site.yml --tags foray:deploy \
             -i inventory/hosts.yml \
