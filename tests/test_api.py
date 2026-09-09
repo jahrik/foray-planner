@@ -55,10 +55,11 @@ def cfg(con: psycopg.Connection) -> Settings:
         home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=200),
         cell_deg=CELL,
         ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=8),
-        # Pin empty so a FORAY_BASEMAP_URL in the developer's local .env doesn't leak in and
-        # flip the CSP / config assertions; the configured-host path is covered by calling
-        # _content_security_policy() directly.
+        # Pin empty so a FORAY_BASEMAP_URL / FORAY_TERRAIN_URL in the developer's local .env
+        # doesn't leak in and flip the CSP / config assertions; the configured-host paths are
+        # covered by calling _content_security_policy() directly.
         basemap_url="",
+        terrain_url="",
     )
 
 
@@ -114,7 +115,8 @@ def test_get_config(client: TestClient) -> None:
     assert body["home"]["name"] == "Home"
     assert body["cell_deg"] == CELL
     assert body["refreshing"] is False
-    assert body["basemap_url"] == ""  # no vector basemap configured in the test settings
+    assert body["basemap_url"] == ""  # both pinned off in the test settings (fixture above)
+    assert body["terrain_url"] == ""
 
 
 def test_security_headers_csp_locks_down_origins(client: TestClient) -> None:
@@ -148,6 +150,36 @@ def test_security_headers_csp_opens_up_for_a_same_origin_basemap() -> None:
     assert "worker-src 'self' blob:;" in csp
     assert "https://protomaps.github.io" in csp.split("connect-src", 1)[1].split(";", 1)[0]
     assert "blob:" in csp.split("img-src", 1)[1].split(";", 1)[0]
+
+
+def test_security_headers_csp_opens_up_for_a_configured_terrain_host() -> None:
+    from foray.api.security import _content_security_policy
+
+    # The DEM tile host joins both connect-src (MapLibre + maplibre-contour fetch the tiles) and
+    # img-src (raster-dem tiles decode through the image path); the contour worker needs
+    # worker-src blob:.
+    csp = _content_security_policy(
+        "https://cdn.example.com/basemaps/us.pmtiles",
+        "https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png",
+    )
+    connect = csp.split("connect-src", 1)[1].split(";", 1)[0]
+    img = csp.split("img-src", 1)[1].split(";", 1)[0]
+    assert "https://elevation-tiles-prod.s3.amazonaws.com" in connect
+    assert "https://elevation-tiles-prod.s3.amazonaws.com" in img
+    assert "/terrarium/" not in csp  # only the origin, not the path
+    assert "worker-src 'self' blob:;" in csp
+
+
+def test_security_headers_csp_terrain_only_still_adds_worker_and_blob() -> None:
+    from foray.api.security import _content_security_policy
+
+    # Terrain configured without a vector basemap still mounts MapLibre + the contour worker.
+    csp = _content_security_policy("", "https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png")
+    assert "worker-src 'self' blob:;" in csp
+    assert "blob:" in csp.split("img-src", 1)[1].split(";", 1)[0]
+    assert "https://elevation-tiles-prod.s3.amazonaws.com" in csp.split("connect-src", 1)[1].split(";", 1)[0]
+    # No basemap, so the Protomaps asset host is still absent.
+    assert "protomaps.github.io" not in csp
 
 
 def test_get_genera_searches_by_scientific_or_common_name(client: TestClient, con: psycopg.Connection) -> None:

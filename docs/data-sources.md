@@ -270,6 +270,40 @@ vector base lets us style forest roads / trails / highways distinctly, declutter
 
 ---
 
+## Terrain (DEM hillshade + contours)
+
+**Role:** Relief shading + contour lines under the vector basemap, so a forager can read the
+landform - aspect (north-facing slopes hold moisture longer), drainages, creek bottoms, benches.
+Not scored - cartography.
+
+**Source:** [AWS Open Data `elevation-tiles-prod`](https://registry.opendata.aws/terrain-tiles/) -
+Terrarium-encoded raster DEM tiles (RGB channels encode ground elevation), the Tilezen/Joerd
+composite: USGS 3DEP ~10 m over the continental US, SRTM 30 m elsewhere, served to ~z15. Free,
+no key, CORS-open. `https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png`.
+
+**Why not self-hosted:** unlike the vector basemap, a raster DEM pyramid does not compress and
+there is no `pmtiles extract` shortcut for it, so self-hosting a CONUS archive is far more infra
+(a build toolchain, a second Space, a ~20 GB working set) than the vector basemap was - for a
+*lower*-resolution result if built from the ~90 m Copernicus GLO-90 tiles we already cache for
+elevation. The AWS tiles give sharper relief with no infra. Switching back later is a one-line
+URL change (`FORAY_TERRAIN_URL`).
+
+- **Config:** `foray_terrain_url` / `FORAY_TERRAIN_URL` - the tile URL template. Defaults to the
+  AWS set; override with a self-hosted URL. Unset or empty falls back to the default in a
+  deploy; an empty `FORAY_TERRAIN_URL` in a local `.env` drops the layer. Surfaced to the SPA in
+  `GET /api/config` as `terrain_url`.
+- **Frontend (next PR):** a `raster-dem` source (`encoding: "terrarium"`, `maxzoom: 15`) + a
+  `hillshade` layer spliced under the landcover fills (on by default) and `maplibre-contour`-
+  derived contour lines + metre labels (behind a Layers-pill "Contours" checkbox, off by
+  default). 2D hillshade only - no MapLibre 3D terrain, which fights the Leaflet 2D pane sync.
+- **CSP:** `_content_security_policy(basemap_url, terrain_url)` adds the terrain tile host to
+  `connect-src` (MapLibre + `maplibre-contour` fetch the tiles) and `img-src` (raster-dem tile
+  decode); the contour worker is covered by the same `worker-src 'self' blob:`.
+- **Attribution:** per the terrain-tiles dataset - USGS / NASA (SRTM) / NASADEM etc. via the
+  Tilezen attribution string, added to the Leaflet attribution control.
+
+---
+
 ## OpenStreetMap Nominatim (geocoding)
 
 **Role:** Resolves place-name strings typed in the location bar to lat/lng coordinates.

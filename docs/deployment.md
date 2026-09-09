@@ -232,6 +232,7 @@ just ansible deploy
 | `foray:deploy` | Pull image, restart container |
 | `foray:cron` | Update cron schedules |
 | `foray:ingest-once` | Manual/opt-in full data ingest (`just ansible ingest-once`) - not part of `foray:deploy` or the `foray` umbrella; the daily `foray-ingest` cron job already keeps data fresh, so this only exists for warming a fresh droplet's data immediately instead of waiting for the next cron run. **Run this only after the first `foray:deploy`** - it depends on the env file that deploy renders (`/opt/foray-planner/foray.env`) and fails fast with a clear message if that hasn't happened yet. |
+| `foray:build-basemap-once` | Manual/opt-in (`just ansible build-basemap-once`) - `pmtiles extract` a CONUS bbox from Protomaps' daily planet build and upload it to the basemap Space. Runs on the control node (the extract is ~15-40 GB), not the droplet. Needs `DO_SPACES_KEY` / `DO_SPACES_SECRET`. Re-run monthly to refresh. |
 | `foray:backfill-elevation-dem-once` | Manual/opt-in one-pass elevation backfill (`just ansible backfill-elevation-dem-once`) - samples local Copernicus GLO-90 tiles on the droplet to clear the whole elevation backlog at once, instead of the hourly `foray-backfill-elevation` cron trickling through Open-Meteo's ~10k/day free tier. Downloads ~5 GB of tiles, then removes them. Set-based `COPY` + `UPDATE ... FROM` writes with `--sleep` pacing and a short `lock_timeout` so the live site keeps serving; `--no-rebuild` (daily ingest rematerializes phenology). Safe to re-run to finish a partial pass. Same env-file dependency and fail-fast as `foray:ingest-once`, plus a free-disk precheck. |
 | `foray:backfill-satellite-once` | Manual/opt-in one-off satellite-fill backfill (`just ansible backfill-satellite-once`, issue #293) - runs `foray backfill-satellite` on the droplet. Esri's tile CDN throttles a wide fan-out, so the run paces itself + retries and takes tens of minutes at national scale; the task fails (non-zero exit) if failures dominate, so re-run until clean. A plain run only fetches regions still missing from `region_satellite`; pass `-e foray_satellite_backfill_args=--refresh` to `TRUNCATE` the table first and re-fetch every region (needed after a change to what a region's raster should contain - bbox, zoom, tile sources, compositing in `sources/satellite.py`). Browsers pick up changed rasters within a day (`Cache-Control: max-age=86400`, not `immutable`). Same env-file dependency and fail-fast as `foray:ingest-once`. |
 | `foray:firewall-allow-runner` / `foray:firewall-revoke-runner` | CI-internal only - adds/removes the GitHub Actions runner's own IP from the live SSH firewall rule around an automated `foray:deploy` run (see below). Not something an operator runs directly. |
@@ -318,6 +319,12 @@ These are GitHub UI / DigitalOcean steps that can't be made by a code change:
    | `FORAY_DROPLET_IP` | The droplet's public IP |
    | `FORAY_TLS_CERT` / `FORAY_TLS_KEY` | Contents (not paths) of the Cloudflare Origin CA cert/key - the CI equivalent of the local `FORAY_TLS_CERT_PATH`/`FORAY_TLS_KEY_PATH` files |
    | `RIDB_API_KEY` | Optional, same as the local `.env` value |
+   | `FORAY_BASEMAP_URL` | Optional - the vector basemap PMTiles CDN URL (`https://<space>.<region>.cdn.digitaloceanspaces.com/us.pmtiles`). Unset -> the map ships with no base layer. |
+   | `FORAY_TERRAIN_URL` | Optional - override the Terrarium DEM tile source for hillshade + contours. Unset -> AWS Open Data's `elevation-tiles-prod`. |
+
+   The basemap archive build (`just ansible build-basemap-once`) runs from an operator's
+   machine, not CI - it needs `DO_SPACES_KEY` / `DO_SPACES_SECRET` (a Spaces access key,
+   generated under **API → Spaces Keys**, separate from `DO_API_TOKEN`) exported locally.
 
 ---
 

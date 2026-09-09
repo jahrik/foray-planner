@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     # + CDN, built + uploaded by the `foray:build-basemap-once` Ansible task - see
     # docs/data-sources.md). The map has no raster fallback, so empty means no base layer.
     basemap_url: str = ""
+    # Terrarium-encoded DEM tile URL template ({z}/{x}/{y}) - the source for the map's hillshade
+    # + contour lines. Defaults to AWS Open Data's elevation-tiles-prod (3DEP ~10 m over CONUS,
+    # free, no key, CORS-open). FORAY_TERRAIN_URL overrides it with a self-hosted URL; an empty
+    # FORAY_TERRAIN_URL (a local .env) drops the terrain layer. See docs/data-sources.md.
+    terrain_url: str = "https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png"
     ingest: Ingest = Ingest()
     # Sub-national regions (US states today) - the granularity trails ingest chunks by, since
     # Overpass can't handle a whole-country query in one request.

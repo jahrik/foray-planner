@@ -158,6 +158,10 @@ jobs:
           # of the production environment config; unset -> foray_basemap_url resolves empty and
           # the map ships with no base layer.
           FORAY_BASEMAP_URL: ${{ secrets.FORAY_BASEMAP_URL }}
+          # Optional override for the Terrarium DEM tile source (hillshade + contours). Unset or
+          # empty -> foray_terrain_url falls back to its default (AWS Open Data's
+          # elevation-tiles-prod). Set it to a self-hosted tile URL to override.
+          FORAY_TERRAIN_URL: ${{ secrets.FORAY_TERRAIN_URL }}
         run: |
           uv run ansible-playbook site.yml --tags foray:deploy \
             -i inventory/hosts.yml \

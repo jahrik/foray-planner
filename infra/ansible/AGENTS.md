@@ -17,6 +17,7 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 | `foray_spaces_access_key_id` / `foray_spaces_secret_access_key` | DO Spaces access key (from `DO_SPACES_KEY` / `DO_SPACES_SECRET`, generated under API -> Spaces Keys, separate from the API token). Needed for the basemap Space; unset skips it |
 | `foray_basemap_url` | Vector basemap archive URL (from `FORAY_BASEMAP_URL` env, else the computed CDN URL once the Spaces key is set, else empty = no base layer) |
 | `foray_basemap_space_name` / `foray_basemap_object_key` / `foray_basemap_bbox` | Space name, archive key, and CONUS bbox for the PMTiles archive |
+| `foray_terrain_url` | Terrarium DEM tile URL template for hillshade + contours (from `FORAY_TERRAIN_URL` env, else AWS Open Data's `elevation-tiles-prod`) |
 
 ## Key Files
 

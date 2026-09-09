@@ -152,6 +152,18 @@ foray_basemap_url: >-
          if (foray_spaces_access_key_id | length > 0 and foray_spaces_secret_access_key | length > 0)
          else '') }}
 
+# Terrain DEM tiles - Terrarium-encoded raster elevation, the source for the map's hillshade +
+# contour lines. Points at AWS Open Data's `elevation-tiles-prod` set (3DEP ~10 m over CONUS,
+# SRTM elsewhere; free, no key, CORS-open) rather than a self-hosted archive - a raster DEM
+# pyramid does not compress and there is no pmtiles-extract shortcut for it, so self-hosting
+# would be far more infra than the vector basemap for a lower-resolution result. Set
+# FORAY_TERRAIN_URL to a self-hosted tile URL to override. (An unset OR empty env var falls
+# back to the AWS default - the `or` guards against CI passing the secret through as an empty
+# string, same pattern as foray_basemap_url.)
+foray_terrain_url: >-
+  {{ lookup('ansible.builtin.env', 'FORAY_TERRAIN_URL', default='')
+     or 'https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png' }}
+
 # DO monitoring alert policies (issue #84) — unset skips creation entirely (see
 # tasks/provision/monitoring.yml). Thresholds mirror the values DO's own dashboard suggests;
 # disk is the one that matters most here (past ENOSPC incident).

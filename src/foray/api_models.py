@@ -33,6 +33,9 @@ class ConfigResponse(BaseModel):
     # Empty when no vector basemap is configured; the map then has no base layer (there is no
     # raster fallback).
     basemap_url: str = ""
+    # Terrarium DEM tile URL template ({z}/{x}/{y}) for the hillshade + contour layers; empty
+    # when terrain is disabled.
+    terrain_url: str = ""
 
 
 class GenusResult(BaseModel):
