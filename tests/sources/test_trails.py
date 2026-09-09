@@ -8,10 +8,11 @@ import httpx
 import psycopg
 import pytest
 
-from foray.cache import is_ingested, upsert_campsites, upsert_trails
+from foray.cache import is_ingested, record_ingest, upsert_campsites, upsert_trails
 from foray.config import CoverageRegion, Home, Ingest, Settings
 from foray.scoring import get_trail, nearest_trail, trails_near
 from foray.sources.trails import (
+    _TRAILS_QUERY_VERSION,
     _network_query,
     _parse_element,
     _parse_trailhead_id,
@@ -708,12 +709,43 @@ def test_ingest_trails_region_upserts_and_records_ingest(con: psycopg.Connection
     count = ingest_trails_region(region, con, client=client)
     assert count == expected_tiles
     assert con.execute("SELECT count(*) FROM trails").fetchone() == (1,)
-    assert is_ingested(con, "trails:place:46")
+    assert is_ingested(con, f"trails:place:46:q{_TRAILS_QUERY_VERSION}")
     # Second call skips before ever opening a client - if it didn't, this would try (and fail)
     # to reach the real Overpass API, since no client is passed here.
     assert ingest_trails_region(region, con) == 0
-    # ...unless forced: `foray trails --all --force` re-fetches after the query widens.
+    # ...unless forced: re-fetches without a query-version bump (OSM drift / debugging).
     assert ingest_trails_region(region, con, client=client, force=True) == expected_tiles
+
+
+def test_ingest_trails_region_re_pulls_a_region_ingested_under_an_older_query_version(
+    con: psycopg.Connection,
+) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "elements": [
+                    {
+                        "type": "way",
+                        "id": 7,
+                        "tags": {"highway": "track", "ref": "FR 10"},
+                        "geometry": [{"lat": 47.61, "lon": -122.31}, {"lat": 47.62, "lon": -122.30}],
+                    }
+                ]
+            },
+        )
+
+    region = CoverageRegion(name="Washington", place_id=46, bbox=(-124.8, 45.5, -116.9, 49.0))
+    # Simulate a prior ingest under an older query: the pre-versioning key and a stale q1 marker.
+    record_ingest(con, "trails:place:46", 5)
+    record_ingest(con, "trails:place:46:q1", 5)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    count = ingest_trails_region(region, con, client=client)
+    assert count > 0  # the stale markers didn't match the current key, so it re-pulled
+    assert is_ingested(con, f"trails:place:46:q{_TRAILS_QUERY_VERSION}")
+    assert not is_ingested(con, "trails:place:46")  # superseded markers pruned on success
+    assert not is_ingested(con, "trails:place:46:q1")
 
 
 def test_ingest_trails_region_does_not_mark_ingested_when_a_tile_fails(con: psycopg.Connection) -> None:
@@ -746,7 +778,7 @@ def test_ingest_trails_region_does_not_mark_ingested_when_a_tile_fails(con: psyc
     count = ingest_trails_region(region, con, client=client)
     assert count == 1  # only the one tile that succeeded
     assert con.execute("SELECT count(*) FROM trails").fetchone() == (1,)  # its row is still cached
-    assert not is_ingested(con, "trails:place:46")  # not marked done - a retry should fill the gaps
+    assert not is_ingested(con, f"trails:place:46:q{_TRAILS_QUERY_VERSION}")  # not done - a retry fills the gaps
 
 
 def test_trails_near_filters_by_kind_and_caps_with_limit(con: psycopg.Connection) -> None:

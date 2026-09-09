@@ -103,8 +103,10 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   numbered road from cache; a live per-selection query is the fallback and its result is written
   back. Also derived at parse: `length_km` and `attrs` (highway/surface/tracktype/access/
   motor_vehicle/foot/ref/...). Geometry cached as GeoJSON *text* + `geom` GIST + a representative
-  center. `foray trails --all --force` clears the `trails:place:*` markers to re-pull coverage
-  after the query widens (`ingest_trails_region(force=True)` -> `cache.forget_ingest`).
+  center. The per-region one-shot marker is keyed `trails:place:{id}:q{_TRAILS_QUERY_VERSION}` -
+  bump that constant when the Overpass query changes and the weekly `refresh --with trails --all`
+  cron re-pulls every region on its own (superseded markers pruned on success). `--force` is a
+  manual re-pull without a version bump (OSM drift / debugging one region).
 - `src/foray/sources/fire.py` - wildfire perimeters + burn scars from NIFC / MTBS ArcGIS
   (httpx, no key, issue #227), cloned from `land.py`. One table `fire_perimeters`, split by
   `source_key` into two refresh lanes: `wfigs_active` (fast, **replace semantics** -

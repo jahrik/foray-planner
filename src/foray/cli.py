@@ -144,7 +144,8 @@ def dispersed_cmd(ctx: click.Context) -> None:
 @click.option(
     "--force",
     is_flag=True,
-    help="Re-fetch coverage regions even if already ingested (use after the Overpass query widens).",
+    help="Re-fetch coverage regions even if already ingested at the current query version "
+    "(for OSM data drift or debugging - a query change re-pulls on its own via _TRAILS_QUERY_VERSION).",
 )
 @click.pass_context
 def trails_cmd(ctx: click.Context, all_coverage: bool, force: bool) -> None:
