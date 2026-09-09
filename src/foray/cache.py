@@ -1063,6 +1063,14 @@ def is_ingested(con: psycopg.Connection, key: str) -> bool:
     return row is not None
 
 
+def forget_ingest(con: psycopg.Connection, key: str) -> int:
+    """Drop one ``ingest_log`` key so a one-shot ingest (e.g. ``trails:place:<id>``) re-runs on
+    its next pass. Returns the number of rows removed (0 or 1). Used by ``foray trails --force``
+    to re-pull a coverage region after the query has widened."""
+    result = con.execute("DELETE FROM ingest_log WHERE key = %s", [key])
+    return result.rowcount
+
+
 def is_area_covered(con: psycopg.Connection, prefix: str, lat: float, lng: float, radius_km: float) -> bool:
     """Check if any previously ingested disk (matching prefix) fully contains the requested disk."""
     rows = con.execute(

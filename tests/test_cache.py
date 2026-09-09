@@ -15,6 +15,7 @@ from foray.cache import (
     connection,
     copy_upsert,
     delete_observations,
+    forget_ingest,
     genus_taxon_ids,
     is_ingested,
     latest_obs_date,
@@ -334,6 +335,14 @@ def test_is_ingested_true_after_record_ingest(con: psycopg.Connection) -> None:
     record_ingest(con, key, 42, lat=_HOME_LAT, lng=_HOME_LNG, radius_km=150)
 
     assert is_ingested(con, key) is True
+
+
+def test_forget_ingest_removes_the_key_so_it_re_runs(con: psycopg.Connection) -> None:
+    key = "trails:place:46"
+    record_ingest(con, key, 10)
+    assert forget_ingest(con, key) == 1
+    assert is_ingested(con, key) is False
+    assert forget_ingest(con, key) == 0  # already gone, no-op
 
 
 def test_latest_obs_date_none_when_nothing_ingested(con: psycopg.Connection) -> None:
