@@ -789,21 +789,26 @@ a.chip:hover {
 }
 
 /* Trailhead marker (map.ts's plotTrailhead) - a destination card's Trails tab list, plotted on
-   the map. Leaflet's default divIcon box (white bg/border) is cleared so only the emoji shows. */
+   the map. Leaflet's default divIcon box (white bg/border) is cleared so only the signpost SVG
+   shows. Active (its list chip is selected): scales up from the post base so the foot stays
+   pinned to the trailhead point. */
 .leaflet-div-icon.trailhead-icon {
   background: transparent;
   border: none;
 }
 .trailhead-marker {
-  font-size: 18px;
-  line-height: 20px;
-  text-align: center;
   cursor: pointer;
-  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
+  line-height: 0;
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.45));
+  transition: transform 0.12s ease;
+}
+.trailhead-marker svg {
+  display: block;
 }
 .trailhead-marker.active {
-  filter: drop-shadow(0 0 4px var(--accent));
-  transform: scale(1.2);
+  filter: drop-shadow(0 0 5px var(--accent));
+  transform: scale(1.25);
+  transform-origin: 50% 92%;
 }
 /* Permanent rank numeral on the top-3 destination markers (map.ts plot). No box, no arrow -
    just the numeral sitting in the circle, in the display face to match the shortlist cards. */

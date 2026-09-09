@@ -551,17 +551,27 @@ export function setFireLayer(layer: L.GeoJSON): void {
   state.fireLayer = layer;
 }
 
-// Hiking-boot marker for a destination card's Trails tab trailhead list (views.ts) - only the
+// Signpost marker for a destination card's Trails tab trailhead list (views.ts) - only the
 // currently open card's trailheads are on the map at once (plotTrailhead clears the previous
 // set first), same "one destination's detail at a time" approach as camps/land. Clicking a
 // marker selects that trailhead's real trail (layers.ts's selectTrailhead), same as clicking
-// its matching list chip; setTrailheadActive keeps the two in visual sync.
+// its matching list chip; setTrailheadActive keeps the two in visual sync. Drawn in the same
+// TRAIL red as the selected trail line, with a dark keyline so it holds up on either basemap.
+const TRAILHEAD_SVG = [
+  `<svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">`,
+  `<path d="M12 3.5v18" stroke="${HOME_RING}" stroke-width="3.4" stroke-linecap="round"/>`,
+  `<path d="M12 3.5v18" stroke="${TRAIL}" stroke-width="1.8" stroke-linecap="round"/>`,
+  `<path d="M12 5.2h8l3 2.6-3 2.6h-8z" fill="${TRAIL}" stroke="${HOME_RING}" stroke-width="1.1" stroke-linejoin="round"/>`,
+  `<path d="M12 12.4H5l-3 2.5 3 2.5h7z" fill="${TRAIL}" stroke="${HOME_RING}" stroke-width="1.1" stroke-linejoin="round"/>`,
+  `</svg>`,
+].join("");
+
 function trailheadIcon(active: boolean): L.DivIcon {
   return L.divIcon({
-    html: `<div class="trailhead-marker${active ? " active" : ""}">🥾</div>`,
+    html: `<div class="trailhead-marker${active ? " active" : ""}">${TRAILHEAD_SVG}</div>`,
     className: "trailhead-icon",
-    iconSize: [22, 22],
-    iconAnchor: [11, 20],
+    iconSize: [24, 24],
+    iconAnchor: [12, 22],
   });
 }
 
@@ -572,7 +582,7 @@ export function clearTrailheadMarkers(): void {
 export function plotTrailhead(lat: number, lng: number, name: string, onSelect: () => void): L.Marker {
   const marker = L.marker([lat, lng], { icon: trailheadIcon(false), bubblingMouseEvents: false })
     .addTo(map)
-    .bindTooltip(name, { direction: "top", offset: [0, -18] });
+    .bindTooltip(name, { direction: "top", offset: [0, -22] });
   marker.on("click", onSelect);
   state.trailheadMarkers.push(marker);
   return marker;
