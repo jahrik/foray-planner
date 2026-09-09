@@ -139,6 +139,17 @@ def test_security_headers_csp_opens_up_for_a_configured_basemap_host() -> None:
     assert "blob:" in csp.split("img-src", 1)[1].split(";", 1)[0]
 
 
+def test_security_headers_csp_opens_up_for_a_same_origin_basemap() -> None:
+    from foray.api.security import _content_security_policy
+
+    # A relative basemap_url still mounts MapLibre, so it still needs the blob:/asset
+    # allowances - only the connect-src origin is skipped ('self' already covers it).
+    csp = _content_security_policy("/basemap/us.pmtiles")
+    assert "worker-src 'self' blob:;" in csp
+    assert "https://protomaps.github.io" in csp.split("connect-src", 1)[1].split(";", 1)[0]
+    assert "blob:" in csp.split("img-src", 1)[1].split(";", 1)[0]
+
+
 def test_get_genera_searches_by_scientific_or_common_name(client: TestClient, con: psycopg.Connection) -> None:
     upsert_fungi_genera(
         con,

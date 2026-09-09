@@ -12,6 +12,9 @@
 // self-hosting those alongside the archive is a later step.
 import L from "leaflet";
 import { addProtocol } from "maplibre-gl";
+// MapLibre's own stylesheet positions the GL canvas/controls inside its container; without it
+// the basemap can lay out wrong even mounted through the Leaflet plugin.
+import "maplibre-gl/dist/maplibre-gl.css";
 import "@maplibre/maplibre-gl-leaflet";
 import { Protocol } from "pmtiles";
 import layers from "protomaps-themes-base";
