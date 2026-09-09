@@ -464,6 +464,7 @@ def trailhead_network(node_id: int, *, client: httpx.Client | None = None) -> di
             client.close()
 
     lines: list[list[tuple[float, float]]] = []
+    rows: list[tuple[Any, ...]] = []
     name = None
     kind = "path"
     for element in payload.get("elements", []):
@@ -481,6 +482,10 @@ def trailhead_network(node_id: int, *, client: httpx.Client | None = None) -> di
             )
             name = tags.get("name") or tags.get("ref") or name
             kind = "route"
+        # A proper cache row for each way/route, so resolve_trail_network can persist the link
+        # (issue #306): the next selection of this trailhead reads from cache, not Overpass.
+        if element.get("type") in ("way", "relation") and (row := _parse_element(element)) is not None:
+            rows.append(row)
     if not lines:
         return None
 
@@ -490,7 +495,7 @@ def trailhead_network(node_id: int, *, client: httpx.Client | None = None) -> di
         if len(thinned) == 1
         else {"type": "MultiLineString", "coordinates": [_to_lnglat(line) for line in thinned]}
     )
-    return {"name": name or "Trail (OSM)", "kind": kind, "geometry": geometry}
+    return {"name": name or "Trail (OSM)", "kind": kind, "geometry": geometry, "rows": rows}
 
 
 _SYNTHETIC_NAMES = {"Trail (OSM)", "Hiking route (OSM)", "Trailhead (OSM)"}
@@ -547,12 +552,35 @@ def resolve_trail_network(
     node_id = _parse_trailhead_id(trailhead_id)
     live = trailhead_network(node_id, client=client)
     if live is not None:
+        _persist_resolved_link(con, trailhead, node_id, live["rows"])
         trail = dataclasses.replace(trailhead, name=live["name"], kind=live["kind"], geometry=live["geometry"])
         return scoring.TrailPath(trail=trail, authoritative=True)
     nearest = scoring.nearest_trail(con, lat=trailhead.center_lat, lng=trailhead.center_lng)
     if nearest is None:
         return None
     return scoring.TrailPath(trail=nearest, authoritative=False)
+
+
+def _persist_resolved_link(
+    con: psycopg.Connection, trailhead: scoring.Trail, node_id: int, trail_rows: Sequence[tuple[Any, ...]]
+) -> None:
+    """Write a live-resolved trailhead->trail link into the cache so the next selection is
+    instant (issue #306). Best-effort: a DB hiccup here must not fail the selection, which
+    already has its geometry."""
+    if not trail_rows:
+        return
+    try:
+        upsert_trails(con, trail_rows)
+        connects = sorted({row[0] for row in trail_rows})
+        point = (trailhead.center_lat, trailhead.center_lng)
+        row = _row("node", node_id, trailhead.name, "trailhead", [[point]], connects=connects)
+        if row is not None:
+            upsert_trails(con, [row])
+        con.commit()
+        logger.info("trails: cached resolved link for %s -> %d trail(s)", trailhead.id, len(connects))
+    except psycopg.Error as error:
+        logger.warning("trails: could not persist resolved link for %s (%s)", trailhead.id, error)
+        con.rollback()
 
 
 def fetch_trails_bbox(

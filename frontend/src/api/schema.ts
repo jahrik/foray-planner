@@ -359,8 +359,9 @@ export interface paths {
          *
          *     ``kind``/``limit`` scope this to e.g. just the nearest 20 trailheads for a destination
          *     card's Trails tab, instead of every path/route/trailhead in the radius. ``sort`` is
-         *     ``nearest`` (default), ``relevance`` (named-route / longer trail first), or ``longest``;
-         *     ``significant_only`` drops the unnamed OSM connector stubs.
+         *     ``nearest`` (default), ``relevance`` (named-route / longer trail / target-genus finds along
+         *     the line first), or ``longest``; ``significant_only`` drops the unnamed OSM connector stubs.
+         *     ``species`` scopes the relevance obs-density term to the device's selected genera.
          *
          *     Geometry is omitted (``with_geometry=False``): this feeds a name + distance row list, and
          *     selecting a row draws the real trail by fetching ``/api/trails/network`` for that one id.
@@ -1574,6 +1575,7 @@ export interface operations {
                 limit?: number | null;
                 sort?: "nearest" | "relevance" | "longest";
                 significant_only?: boolean;
+                species?: string;
             };
             header?: never;
             path?: never;

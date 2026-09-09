@@ -6,11 +6,18 @@ import logging
 import threading
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from psycopg_pool import ConnectionPool
 
 from foray import scoring
-from foray.api.deps import get_pool, get_state, region_center, require_idle
+from foray.api.deps import (
+    get_pool,
+    get_state,
+    parse_species,
+    region_center,
+    require_idle,
+    resolve_device_id,
+)
 from foray.api.state import AppState
 from foray.api_models import CampSite, FireNear, LandUnit, RegionPlace, Trail, TrailPath
 from foray.cache import load_region_place as db_load_region_place
@@ -253,6 +260,7 @@ def get_region_satellite_labels(
 
 @router.get("/api/trails")
 def get_trails(
+    request: Request,
     region_id: str | None = Query(None),
     lat: float | None = Query(None),
     lng: float | None = Query(None),
@@ -261,6 +269,7 @@ def get_trails(
     limit: int | None = Query(None, gt=0),
     sort: scoring.TrailSort = "nearest",
     significant_only: bool = False,
+    species: str = Query("all"),
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
 ) -> list[Trail]:
@@ -268,8 +277,9 @@ def get_trails(
 
     ``kind``/``limit`` scope this to e.g. just the nearest 20 trailheads for a destination
     card's Trails tab, instead of every path/route/trailhead in the radius. ``sort`` is
-    ``nearest`` (default), ``relevance`` (named-route / longer trail first), or ``longest``;
-    ``significant_only`` drops the unnamed OSM connector stubs.
+    ``nearest`` (default), ``relevance`` (named-route / longer trail / target-genus finds along
+    the line first), or ``longest``; ``significant_only`` drops the unnamed OSM connector stubs.
+    ``species`` scopes the relevance obs-density term to the device's selected genera.
 
     Geometry is omitted (``with_geometry=False``): this feeds a name + distance row list, and
     selecting a row draws the real trail by fetching ``/api/trails/network`` for that one id.
@@ -282,6 +292,7 @@ def get_trails(
         center_lat, center_lng = lat, lng
     else:
         raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
+    device_id, _is_new = resolve_device_id(request)
     with pool.connection() as conn:
         found = scoring.trails_near(
             conn,
@@ -292,6 +303,7 @@ def get_trails(
             limit=limit,
             sort=sort,
             significant_only=significant_only,
+            taxon_ids=parse_species(species, conn, device_id) or None,
             with_geometry=False,
         )
     return [Trail.model_validate(trail) for trail in found]
