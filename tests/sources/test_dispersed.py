@@ -6,12 +6,16 @@ import httpx
 import psycopg
 import pytest
 
-from foray.config import Home, Ingest, Settings
+from foray.cache import is_ingested
+from foray.config import CoverageRegion, Home, Ingest, Settings
 from foray.scoring import camps_near
 from foray.sources.dispersed import (
+    _DISPERSED_COVERAGE_VERSION,
     _parse_reported,
+    _reported_query_bbox,
     fetch_reported_campsites,
     ingest_dispersed,
+    ingest_dispersed_coverage,
 )
 
 HOME_LAT, HOME_LNG = 47.6, -122.3
@@ -129,3 +133,46 @@ def test_ingest_dispersed_upserts_reported_sites(con: psycopg.Connection, monkey
     assert [site.name for site in sites] == ["Riverside"]
     assert sites[0].kind == "reported"
     assert sites[0].free is True
+
+
+def test_reported_query_bbox_uses_a_south_west_north_east_filter() -> None:
+    query = _reported_query_bbox(41.0, -124.0, 42.0, -123.0)
+    assert "(41.0,-124.0,42.0,-123.0)" in query
+    assert '["tourism"="camp_site"]' in query and '["backcountry"="yes"]' in query
+
+
+def test_ingest_dispersed_coverage_tiles_the_envelope_and_is_one_shot(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("foray.sources.overpass.time.sleep", lambda _seconds: None)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "elements": [
+                    {"type": "node", "id": 1, "lat": 41.3, "lon": -124.0, "tags": {"tourism": "camp_site"}},
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    cfg = Settings(
+        coverage=[CoverageRegion(name="Redwoods", place_id=5, bbox=(-124.5, 41.0, -123.5, 42.0))],
+        cell_deg=0.5,
+        ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=4),
+    )
+
+    total = ingest_dispersed_coverage(cfg, con, client=client)
+    assert total >= 1
+    assert len(calls) >= 1  # tiled the 1x1 deg envelope
+    assert is_ingested(con, f"dispersed:coverage:v{_DISPERSED_COVERAGE_VERSION}")
+    sites = camps_near(con, lat=41.3, lng=-124.0, radius_km=50.0)
+    assert [s.kind for s in sites] == ["reported"]
+
+    # Second run is a no-op (marker already present).
+    calls.clear()
+    assert ingest_dispersed_coverage(cfg, con, client=client) == 0
+    assert calls == []

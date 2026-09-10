@@ -9,12 +9,11 @@ import psycopg
 import pytest
 
 from foray.cache import is_ingested, upsert_public_land
-from foray.config import CoverageRegion, Settings
+from foray.config import CoverageRegion, Settings, coverage_envelope
 from foray.scoring import land_near
 from foray.sources.land import (
     LandSource,
     _bounds,
-    _coverage_envelope,
     _envelope,
     _get,
     _parse_feature,
@@ -220,12 +219,12 @@ def test_coverage_envelope_unions_region_bboxes() -> None:
         CoverageRegion(name="B", place_id=2, bbox=(-121.0, 41.0, -116.0, 46.0)),
         CoverageRegion(name="No bbox", place_id=3),
     ]
-    assert _coverage_envelope(regions) == (-124.0, 41.0, -116.0, 49.0)
+    assert coverage_envelope(regions) == (-124.0, 41.0, -116.0, 49.0)
 
 
 def test_coverage_envelope_raises_when_nothing_has_a_bbox() -> None:
     with pytest.raises(ValueError, match="bbox"):
-        _coverage_envelope([CoverageRegion(name="No bbox", place_id=1)])
+        coverage_envelope([CoverageRegion(name="No bbox", place_id=1)])
 
 
 def test_ingest_public_land_coverage_upserts_and_records_ingest(con: psycopg.Connection) -> None:

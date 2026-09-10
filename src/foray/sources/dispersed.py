@@ -24,27 +24,36 @@ from typing import Any
 import httpx
 import psycopg
 
+from foray import cache
 from foray.cache import upsert_campsites
-from foray.config import Settings
+from foray.config import Settings, coverage_envelope
 from foray.sources import overpass
 from foray.sources.http import SOURCE_ERRORS
 from foray.sources.ingest_base import run_area_ingest
+from foray.sources.trails import _tile_bboxes
 
 logger = logging.getLogger(__name__)
+
+# Bump when the Overpass selector set below changes: the marker ``dispersed:coverage:v{N}``
+# stops matching and the next ``refresh --with dispersed --all`` cron re-pulls every tile
+# (issue #306 workstream B, same self-heal as trails).
+_DISPERSED_COVERAGE_VERSION = 1
+
+_SELECTORS = ('nwr["tourism"="camp_site"]', 'nwr["tourism"="camp_pitch"]', 'nwr["backcountry"="yes"]')
 
 
 def _reported_query(lat: float, lng: float, radius_m: float) -> str:
     """Overpass QL for OSM-tagged campable places within the home disk."""
-    around = overpass.around(lat, lng, radius_m)
-    return (
-        "[out:json][timeout:120];"
-        "("
-        f'nwr["tourism"="camp_site"]({around});'
-        f'nwr["tourism"="camp_pitch"]({around});'
-        f'nwr["backcountry"="yes"]({around});'
-        ");"
-        "out center tags;"
-    )
+    region = f"({overpass.around(lat, lng, radius_m)})"
+    body = "".join(f"{selector}{region};" for selector in _SELECTORS)
+    return f"[out:json][timeout:120];({body});out center tags;"
+
+
+def _reported_query_bbox(min_lat: float, min_lng: float, max_lat: float, max_lng: float) -> str:
+    """The same selectors as ``_reported_query`` over a state-sized bbox (longer server timeout)."""
+    region = overpass.bbox(min_lat, min_lng, max_lat, max_lng)
+    body = "".join(f"{selector}{region};" for selector in _SELECTORS)
+    return f"[out:json][timeout:300];({body});out center tags;"
 
 
 def _element_point(element: dict[str, Any]) -> tuple[float, float] | None:
@@ -133,6 +142,35 @@ def fetch_reported_campsites(
     return reported
 
 
+def fetch_reported_campsites_bbox(
+    *,
+    min_lat: float,
+    min_lng: float,
+    max_lat: float,
+    max_lng: float,
+    client: httpx.Client | None = None,
+    raise_on_error: bool = False,
+) -> list[tuple[Any, ...]]:
+    """Fetch OSM reported campsites within a state-sized bbox.
+
+    ``raise_on_error`` mirrors ``trails.fetch_trails_bbox``: the coverage-wide ingest needs to
+    tell an empty tile from a failed one to decide whether the whole run can be marked done.
+    """
+    owns = client is None
+    client = client or httpx.Client(timeout=330.0)
+    try:
+        payload = overpass.post(client, _reported_query_bbox(min_lat, min_lng, max_lat, max_lng))
+        return _parse_reported(payload)
+    except SOURCE_ERRORS as error:
+        if raise_on_error:
+            raise
+        logger.warning("dispersed: bbox query failed (%s) - skipping", error)
+        return []
+    finally:
+        if owns:
+            client.close()
+
+
 def ingest_dispersed(
     cfg: Settings,
     con: psycopg.Connection | None = None,
@@ -151,3 +189,58 @@ def ingest_dispersed(
         upsert=upsert_campsites,
         progress_cb=progress_cb,
     )
+
+
+def ingest_dispersed_coverage(
+    cfg: Settings,
+    con: psycopg.Connection | None = None,
+    *,
+    client: httpx.Client | None = None,
+    progress_cb: Callable[[str, float], None] | None = None,
+) -> int:
+    """Ingest OSM reported campsites across all of ``cfg.coverage``, tiled like trails.
+
+    Overpass can't take a whole-coverage query in one request, so the union envelope is carved
+    into tiles (``trails._tile_bboxes``) and each tile's rows upserted as they arrive. One-shot
+    per query version: skips once ``dispersed:coverage:v{N}`` is in ``ingest_log``. A tile
+    failure leaves the run unmarked so the next cron retries the whole envelope. Returns rows
+    upserted (a site straddling a tile edge is counted once per tile, same caveat as trails).
+    """
+    key = f"dispersed:coverage:v{_DISPERSED_COVERAGE_VERSION}"
+    with cache.connection(con) as db:
+        if cache.is_ingested(db, key):
+            logger.info("dispersed: coverage-wide sites already ingested at v%d, skipping", _DISPERSED_COVERAGE_VERSION)
+            if progress_cb:
+                progress_cb("Dispersed camping already cached, skipping…", 100.0)
+            return 0
+        west, south, east, north = coverage_envelope(cfg.coverage)
+        tiles = _tile_bboxes(south, west, north, east)
+        logger.info("dispersed: fetching OSM reported campsites across coverage (%d tiles)…", len(tiles))
+        total = 0
+        had_failures = False
+        for index, (tile_south, tile_west, tile_north, tile_east) in enumerate(tiles, start=1):
+            if progress_cb:
+                progress_cb(f"Fetching dispersed camping ({index}/{len(tiles)})…", (index / len(tiles)) * 100.0)
+            try:
+                rows = fetch_reported_campsites_bbox(
+                    min_lat=tile_south,
+                    min_lng=tile_west,
+                    max_lat=tile_north,
+                    max_lng=tile_east,
+                    client=client,
+                    raise_on_error=True,
+                )
+            except SOURCE_ERRORS as error:
+                logger.warning("dispersed: tile %d/%d failed (%s) - will retry next run", index, len(tiles), error)
+                had_failures = True
+                continue
+            upsert_campsites(db, rows)
+            total += len(rows)
+        pruned = cache.prune_campsites_outside_bounds(db, "osm", west, south, east, north)
+        if had_failures:
+            logger.warning("dispersed: coverage only partially ingested (%d rows) - not recording as done", total)
+        else:
+            cache.record_ingest(db, key, total)
+            db.execute("DELETE FROM ingest_log WHERE key LIKE %s AND key <> %s", ["dispersed:coverage:v%", key])
+        logger.info("dispersed: cached %d reported campsites coverage-wide (pruned %d outside envelope)", total, pruned)
+        return total

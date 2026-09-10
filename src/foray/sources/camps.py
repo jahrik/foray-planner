@@ -35,7 +35,7 @@ import psycopg
 
 from foray import cache
 from foray.cache import upsert_campsites
-from foray.config import CoverageRegion, Settings
+from foray.config import CoverageRegion, Settings, coverage_envelope
 from foray.geo import KM_PER_DEG_LAT, haversine_km
 from foray.sources.http import SOURCE_ERRORS, USER_AGENT, Throttle, retry_after_seconds
 from foray.sources.ingest_base import run_area_ingest
@@ -249,6 +249,23 @@ def _states_for_disk(coverage: Sequence[CoverageRegion], lat: float, lng: float,
     return codes
 
 
+def _coverage_state_codes(coverage: Sequence[CoverageRegion]) -> list[str]:
+    """USPS codes for every ``cfg.coverage`` region that maps to a US state.
+
+    The coverage-wide camp ingest (issue #306 workstream B) lists *all* of these, not just the
+    ones whose bbox reaches the home disk (``_states_for_disk``) - a destination anywhere in
+    coverage should have its campgrounds cached, not only ones near the configured home.
+    """
+    seen: set[str] = set()
+    codes: list[str] = []
+    for region in coverage:
+        code = _STATE_CODES.get(region.name)
+        if code is not None and code not in seen:
+            seen.add(code)
+            codes.append(code)
+    return codes
+
+
 def _parse_facility(record: dict[str, Any]) -> tuple[Any, ...] | None:
     """RIDB facility record -> a campsites row tuple, or None if it lacks usable coords."""
     facility_id = record.get("FacilityID")
@@ -353,14 +370,17 @@ def fetch_campsites(
     radius_km: float,
     api_key: str,
     states: Sequence[str] = (),
+    clip: bool = True,
     client: httpx.Client | None = None,
     min_interval: float = _MIN_REQUEST_INTERVAL,
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> list[tuple[Any, ...]]:
-    """Fetch developed campgrounds within ``radius_km`` of home, deduped and clipped.
+    """Fetch developed campgrounds, deduped by facility id.
 
     ``states`` is the USPS codes to list (``_states_for_disk``); empty falls back to the
-    radius-tiling path for a non-US home.
+    radius-tiling path for a non-US home. ``clip`` (default) drops any facility outside
+    ``radius_km`` of (``lat``, ``lng``) - the coverage-wide ingest passes ``clip=False`` to
+    keep every facility a listed state returns.
     """
     owns = client is None
     client = client or httpx.Client(timeout=30.0)
@@ -379,7 +399,7 @@ def fetch_campsites(
                 if row is None:
                     continue
                 site_lat, site_lng = row[5], row[6]
-                if haversine_km(lat, lng, site_lat, site_lng) <= radius_km:
+                if not clip or haversine_km(lat, lng, site_lat, site_lng) <= radius_km:
                     by_id[row[0]] = row
     except SOURCE_ERRORS as error:
         # Match the land / trails / dispersed ingests: a RIDB outage (or a malformed page)
@@ -421,8 +441,70 @@ def ingest_campgrounds(
         upsert=upsert_campsites,
         progress_cb=progress_cb,
     )
-    with cache.connection(con) as db:
-        pruned = cache.prune_campsites_outside_radius(db, "ridb", home.lat, home.lng, home.radius_km)
-    if pruned:
-        logger.info("camps: pruned %d ridb rows now outside the %.0f km home radius", pruned, home.radius_km)
+    # The home-radius prune would delete every row the coverage-wide ingest cached outside the
+    # home disk, so it only owns pruning when no coverage is configured (the coverage path runs
+    # ``prune_campsites_outside_bounds`` instead).
+    if not cfg.coverage:
+        with cache.connection(con) as db:
+            pruned = cache.prune_campsites_outside_radius(db, "ridb", home.lat, home.lng, home.radius_km)
+        if pruned:
+            logger.info("camps: pruned %d ridb rows now outside the %.0f km home radius", pruned, home.radius_km)
     return count
+
+
+# Bump when the coverage-wide RIDB query changes in a way that needs a re-pull; the marker
+# ``camps:coverage:v{N}`` then stops matching and the next ``refresh --with camps --all`` cron
+# re-lists every state on its own (issue #306 workstream B, same self-heal as trails).
+_CAMPS_COVERAGE_VERSION = 1
+
+
+def ingest_campgrounds_coverage(
+    cfg: Settings,
+    con: psycopg.Connection | None = None,
+    *,
+    api_key: str | None = None,
+    client: httpx.Client | None = None,
+    progress_cb: Callable[[str, float], None] | None = None,
+) -> int:
+    """List every developed campground across all of ``cfg.coverage``, per state.
+
+    RIDB already fetches per-state, so full coverage is just listing every coverage state
+    rather than only the ones near home (``_states_for_disk``). One-shot per query version:
+    skips once ``camps:coverage:v{N}`` is in ``ingest_log``. Returns rows upserted (0 if no key).
+    """
+    api_key = api_key or os.getenv("RIDB_API_KEY")
+    if not api_key:
+        logger.info("camps: RIDB_API_KEY unset - skipping coverage-wide campground ingest")
+        return 0
+    states = _coverage_state_codes(cfg.coverage)
+    if not states:
+        logger.info("camps: no US state in coverage - nothing to list coverage-wide")
+        return 0
+    key = f"camps:coverage:v{_CAMPS_COVERAGE_VERSION}"
+    with cache.connection(con) as db:
+        if cache.is_ingested(db, key):
+            logger.info("camps: coverage-wide campgrounds already ingested at v%d, skipping", _CAMPS_COVERAGE_VERSION)
+            if progress_cb:
+                progress_cb("Campgrounds already cached, skipping…", 100.0)
+            return 0
+        logger.info("camps: listing campgrounds across %d coverage states (%s)…", len(states), ", ".join(states))
+        rows = fetch_campsites(
+            lat=0.0,
+            lng=0.0,
+            radius_km=0.0,
+            api_key=api_key,
+            states=states,
+            clip=False,
+            client=client,
+            progress_cb=progress_cb,
+        )
+        upsert_campsites(db, rows)
+        cache.record_ingest(db, key, len(rows))
+        pruned = 0
+        if any(region.bbox for region in cfg.coverage):
+            west, south, east, north = coverage_envelope(cfg.coverage)
+            pruned = cache.prune_campsites_outside_bounds(db, "ridb", west, south, east, north)
+        # Drop markers from superseded query versions so ingest_log doesn't accrete a stale row.
+        db.execute("DELETE FROM ingest_log WHERE key LIKE %s AND key <> %s", ["camps:coverage:v%", key])
+    logger.info("camps: cached %d campgrounds coverage-wide (pruned %d outside the envelope)", len(rows), pruned)
+    return len(rows)

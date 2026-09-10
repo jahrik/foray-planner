@@ -32,8 +32,8 @@ while true; do
   fi
 
   if [ $((now - layers_last)) -ge $((LAYERS_INTERVAL * 3600)) ]; then
-    echo "[scheduler] $(date -Iseconds) Starting layers refresh (camps, dispersed: home radius; land, trails: all coverage)…"
-    if foray refresh --with camps,dispersed && foray refresh --with land,trails --all; then
+    echo "[scheduler] $(date -Iseconds) Starting layers refresh (camps, land, dispersed, trails: all coverage)…"
+    if foray refresh --with camps,land,dispersed,trails --all; then
       layers_last=$(date +%s)
     else
       echo "[scheduler] layers refresh failed"

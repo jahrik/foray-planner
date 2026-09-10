@@ -213,11 +213,25 @@ def test_cli_trails_all_no_coverage_does_not_leak_connection(con, monkeypatch) -
     assert "No coverage regions configured" in result.output
 
 
-def test_cli_refresh_all_rejects_camps_and_dispersed(env_with_coverage) -> None:
+def test_cli_refresh_all_runs_the_coverage_camp_ingests(env_with_coverage, monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr("foray.cli.ingest_campgrounds_coverage", lambda *a, **k: calls.append("camps") or 0)
+    monkeypatch.setattr("foray.cli.ingest_dispersed_coverage", lambda *a, **k: calls.append("dispersed") or 0)
     runner = CliRunner()
-    result = runner.invoke(cli, ["refresh", "--with", "camps,land", "--all"])
+    result = runner.invoke(cli, ["refresh", "--with", "camps,dispersed", "--all"])
+    assert result.exit_code == 0, result.output
+    assert calls == ["camps", "dispersed"]
+
+
+def test_cli_refresh_all_camps_requires_coverage(con, monkeypatch) -> None:
+    monkeypatch.setenv("FORAY_HOME__LAT", "47.6")
+    monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
+    monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
+    monkeypatch.setenv("FORAY_COVERAGE", "[]")
+    runner = CliRunner()
+    result = runner.invoke(cli, ["refresh", "--with", "camps", "--all"])
     assert result.exit_code != 0
-    assert "--all doesn't apply to" in result.output
+    assert "No coverage regions configured" in result.output
 
 
 def test_cli_refresh_all_mushrooms_requires_countries(con, monkeypatch) -> None:
