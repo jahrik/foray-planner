@@ -658,6 +658,8 @@ def resolve_trail_network(
             scoring.trail_segments_by_name(con, name=trail.name, kind=trail.kind, ref_id=trail.id) if named else [trail]
         )
         merged = _merge_connected(trail, segments) or trail
+        if merged.geometry is None:  # no cached geometry at all - a real 404, per the contract below
+            return None
         return scoring.TrailPath(trail=merged, authoritative=True)
 
     trailhead = trail
