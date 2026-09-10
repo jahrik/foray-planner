@@ -226,8 +226,8 @@ _CLOSED_TO_PUBLIC = frozenset({"no", "private", "permit", "forestry", "agricultu
 _FOOT_ALLOWED = frozenset({"yes", "permissive", "designated", "official", "customers", "permit"})
 _FOOT_DENIED = frozenset({"no", "private"})
 # Physical barriers on the way that stop a vehicle but not a walker. A ``barrier=gate`` node
-# sitting on a forest road (detected at ingest, ``sources.trails._parse_trails``) is a stronger
-# walk-in signal than the access tags, which are often absent on an unmaintained road.
+# sitting on a forest road (detected at ingest, ``sources.trails._parse_trails``) stands in for
+# an absent ``motor_vehicle``/``access`` tag - but an explicit ``access=private`` still wins.
 _GATE_BARRIERS = frozenset({"gate", "lift_gate", "swing_gate", "bollard", "block", "chain"})
 
 
@@ -236,18 +236,19 @@ def _walk_in(attrs: dict[str, str] | None) -> bool:
 
     ``motor_vehicle`` restricts only vehicles, so a ``motor_vehicle=no`` road is walk-in unless
     ``foot`` explicitly denies it. A blanket ``access=*`` closes every mode by OSM convention, so
-    that only counts as walk-in when ``foot`` is explicitly re-granted. A gate/bollard node on
-    the way (``barrier``) is walk-in on its own unless ``foot`` denies it.
+    that only counts as walk-in when ``foot`` is explicitly re-granted - a gate/bollard node on
+    the way (``barrier``) does not override that legal closure. Absent an ``access=*`` closure, a
+    gate is walk-in on its own (it stands in for a missing ``motor_vehicle=no``).
     """
     if not attrs:
         return False
     foot = attrs.get("foot")
     if foot in _FOOT_DENIED:
         return False
-    if attrs.get("barrier") in _GATE_BARRIERS:
-        return True
     if attrs.get("access") in _CLOSED_TO_PUBLIC:
         return foot in _FOOT_ALLOWED
+    if attrs.get("barrier") in _GATE_BARRIERS:
+        return True
     return attrs.get("motor_vehicle") in _CLOSED_TO_PUBLIC
 
 
