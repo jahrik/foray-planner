@@ -8,9 +8,9 @@ import httpx
 import psycopg
 import pytest
 
-from foray.cache import is_ingested, record_ingest, upsert_campsites, upsert_trails
+from foray.cache import is_ingested, record_ingest, upsert_campsites, upsert_public_land, upsert_trails
 from foray.config import CoverageRegion, Home, Ingest, Settings
-from foray.scoring import get_trail, nearest_trail, trail_segments_by_name, trails_near
+from foray.scoring import get_trail, nearest_trail, trail_land_units, trail_segments_by_name, trails_near
 from foray.sources.trails import (
     _TRAILS_QUERY_VERSION,
     _network_query,
@@ -628,6 +628,82 @@ def test_trails_near_flags_a_walk_in_road(con: psycopg.Connection) -> None:
     assert by_name["Open Road"].walk_in is False
     assert by_name["Closed Road"].walk_in is False
     assert by_name["Foot OK Road"].walk_in is True
+
+
+_GATE_PAYLOAD = {
+    "elements": [
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "track", "name": "FR 300"},
+            "geometry": [{"lat": 47.6000, "lon": -122.30}, {"lat": 47.6050, "lon": -122.30}],
+        },
+        {  # a gate sitting on FR 300's first vertex
+            "type": "node",
+            "id": 50,
+            "lat": 47.6000,
+            "lon": -122.30,
+            "tags": {"barrier": "gate"},
+        },
+        {  # a lone gate nowhere near a road
+            "type": "node",
+            "id": 51,
+            "lat": 48.0,
+            "lon": -121.0,
+            "tags": {"barrier": "gate"},
+        },
+    ]
+}
+
+
+def test_parse_trails_marks_a_road_with_a_gate_node_as_walk_in() -> None:
+    rows = {row[0]: row for row in _parse_trails(_GATE_PAYLOAD)}
+    assert set(rows) == {"osm:way/1"}  # the two barrier nodes never become trailhead rows
+    attrs = json.loads(rows["osm:way/1"][10])
+    assert attrs["barrier"] == "gate"
+
+
+def test_trails_near_flags_a_gated_road_walk_in(con: psycopg.Connection) -> None:
+    upsert_trails(con, _parse_trails(_GATE_PAYLOAD))
+    (road,) = trails_near(con, lat=47.60, lng=-122.30, radius_km=20.0, kind="road")
+    assert road.name == "FR 300"
+    assert road.walk_in is True
+
+
+def test_walk_in_gate_is_overridden_by_an_explicit_foot_no() -> None:
+    from foray.scoring.queries import _walk_in
+
+    assert _walk_in({"barrier": "gate"}) is True
+    assert _walk_in({"barrier": "gate", "foot": "no"}) is False
+    assert _walk_in({"barrier": "cattle_grid"}) is False  # vehicles drive over it
+
+
+def test_trail_land_units_and_get_trail_tag_the_smallest_owning_unit(con: psycopg.Connection) -> None:
+    road = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "track", "name": "FR 12"},
+            "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.30}],
+        }
+    )
+    assert road is not None
+    upsert_trails(con, [road])
+    # A big forest polygon and a small wilderness polygon, both covering the road - smallest wins.
+    forest = '{"type":"Polygon","coordinates":[[[-123,47],[-121,47],[-121,48],[-123,48],[-123,47]]]}'
+    wild = '{"type":"Polygon","coordinates":[[[-122.4,47.5],[-122.2,47.5],[-122.2,47.7],[-122.4,47.7],[-122.4,47.5]]]}'
+    upsert_public_land(
+        con,
+        [
+            ("pl:1", "USFS", "Big National Forest", "usfs", "u", forest),
+            ("pl:2", "USFS", "Small Wilderness", "usfs", "u", wild),
+        ],
+    )
+    assert trail_land_units(con, ["osm:way/1"]) == {"osm:way/1": ("USFS", "Small Wilderness")}
+    assert trail_land_units(con, []) == {}
+    assert trail_land_units(con, ["osm:way/999"]) == {}  # unknown id -> absent, not a null entry
+    single = get_trail(con, "osm:way/1")
+    assert single is not None and (single.land_agency, single.land_unit) == ("USFS", "Small Wilderness")
 
 
 def test_trails_near_dedupes_same_named_trailheads(con: psycopg.Connection) -> None:

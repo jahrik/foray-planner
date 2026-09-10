@@ -965,6 +965,10 @@ export interface components {
              * @default false
              */
             walk_in: boolean;
+            /** Land Agency */
+            land_agency?: string | null;
+            /** Land Unit */
+            land_unit?: string | null;
             /** Geometry */
             geometry?: {
                 [key: string]: unknown;

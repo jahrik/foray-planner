@@ -42,6 +42,7 @@ from foray.scoring.queries import (
     precise_observations,
     recent_observations,
     region_access,
+    trail_land_units,
     trail_segments_by_name,
     trails_near,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "rank_destinations_corridor",
     "recent_observations",
     "region_access",
+    "trail_land_units",
     "trail_segments_by_name",
     "trails_near",
 ]

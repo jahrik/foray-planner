@@ -16,6 +16,30 @@ import {
 import { escapeHtml, feeLabel } from "../format";
 import { dist, displayName, errorDetail, monthsParam, MONTHS, setStatus } from "../state";
 
+// "Six Rivers National Forest" -> "Six Rivers NF" for a trail row's public-land suffix. Falls
+// back to the raw unit name, then the agency code, then nothing.
+const LAND_SUFFIXES: [RegExp, string][] = [
+  [/\bNational Forest$/, "NF"],
+  [/\bNational Park$/, "NP"],
+  [/\bNational Monument$/, "NM"],
+  [/\bNational Recreation Area$/, "NRA"],
+  [/\bNational Wildlife Refuge$/, "NWR"],
+  [/\bNational Grassland$/, "NG"],
+  [/\bState Park$/, "SP"],
+  [/\bState Forest$/, "SF"],
+  [/\bState Recreation Area$/, "SRA"],
+];
+
+function landLabel(agency: string | null | undefined, unit: string | null | undefined): string {
+  if (unit) {
+    for (const [pattern, abbr] of LAND_SUFFIXES) {
+      if (pattern.test(unit)) return unit.replace(pattern, abbr);
+    }
+    return unit;
+  }
+  return agency ?? "";
+}
+
 // The four detail-tab bodies behind each destination card (Calendar / Photos / Trails /
 // Campgrounds). Each function fetches once per card (the caller's createLazyLoader owns the
 // fetch-once guard) and renders straight into that card's own tab body rather than a slot
@@ -141,10 +165,11 @@ export async function loadPhotosInto(regionId: string, container: HTMLElement): 
 // observation centroid (`lat`/`lng`), not `region_id` - the latter resolves to the grid-cell
 // centre, which for a coastal cell can sit offshore, km from anything (issue #306 C4).
 //
-// Lists trailhead nodes plus the park's named paths and hiking routes (issue #306 C1) - where
-// OSM has only a couple of `highway=trailhead` nodes the marquee named trails are all `path`
-// ways, and a trailhead-only list drops them. Selecting a row draws the real trail on the map
-// (layers.ts's selectTrailhead) rather than just opening a popup.
+// Lists trailhead nodes plus the park's named paths, hiking routes, and forest roads (issue
+// #306 C1 / A4b) - where OSM has only a couple of `highway=trailhead` nodes the marquee trails
+// are all `path` ways, and forest roads are a primary foraging surface. Selecting a row draws
+// the real trail on the map (layers.ts's selectTrailhead). Walk-in (gated) roads get a badge
+// and each row shows the public-land unit it runs through.
 export async function loadTrailheadsInto(
   region: { region_id: string; center_lat: number; center_lng: number },
   container: HTMLElement,
@@ -157,7 +182,7 @@ export async function loadTrailheadsInto(
       query: {
         lat: region.center_lat,
         lng: region.center_lng,
-        kind: "trailhead,path,route",
+        kind: "trailhead,path,route,road",
         radius_km: regionRadiusKm(),
         limit: 20,
         // Rank by trail prominence (named route, then length, then target-genus finds along the
@@ -194,9 +219,18 @@ export async function loadTrailheadsInto(
     const button = document.createElement("button");
     button.type = "button";
     button.className = "chip";
-    // A path/route row carries its length; a trailhead node doesn't - use it to tell them apart.
-    const length = trailhead.length_km != null ? ` · ${trailhead.length_km.toFixed(1)} km` : "";
-    button.textContent = `${trailhead.name} · ${dist(trailhead.distance_km)}${length}`;
+    // A path/route/road row carries its length; a trailhead node doesn't.
+    const parts = [trailhead.name, dist(trailhead.distance_km)];
+    if (trailhead.length_km != null) parts.push(`${trailhead.length_km.toFixed(1)} km`);
+    const land = landLabel(trailhead.land_agency, trailhead.land_unit);
+    if (land) parts.push(land);
+    button.textContent = parts.join(" · ");
+    if (trailhead.walk_in) {
+      // A forest road gated to vehicles but open on foot - less picked, prime foraging.
+      button.classList.add("walkin");
+      button.title = "Walk-in forest road – gated to vehicles, open on foot";
+      button.textContent += " · walk-in";
+    }
     const marker = plotTrailhead(trailhead.center_lat, trailhead.center_lng, trailhead.name, () =>
       selectRow(trailhead, button, marker),
     );

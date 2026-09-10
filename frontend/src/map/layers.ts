@@ -31,6 +31,7 @@ import {
   setLandLayer,
   setSelectedTrail,
   TRAIL,
+  TRAIL_WALKIN,
 } from "./map";
 import { dist, displayName, errorDetail, monthsParam, qs, setStatus, state } from "../state";
 
@@ -246,6 +247,21 @@ function trailParts(geometry: GeoJSON.Geometry): L.LatLngTuple[][] {
   return [];
 }
 
+// Ungraded / rough tread, from the OSM detail tags the trail row carries (issue A4b): the
+// selected-trail line draws dashed for these so a graded road and a washed-out two-track don't
+// look alike on the map. `tracktype` grade4/5 is the primary signal; `surface` / `smoothness`
+// back it up when tracktype is absent (common on `highway=path`).
+const ROUGH_SURFACE = new Set(["ground", "dirt", "earth", "mud", "grass", "sand", "rock", "pebblestone"]);
+const ROUGH_SMOOTHNESS = new Set(["bad", "very_bad", "horrible", "very_horrible", "impassable"]);
+
+function isRoughSurface(attrs: Trail["attrs"]): boolean {
+  if (!attrs) return false;
+  const tracktype = attrs.tracktype;
+  if (tracktype === "grade4" || tracktype === "grade5") return true;
+  if (tracktype === "grade1" || tracktype === "grade2") return false; // graded - explicitly smooth
+  return ROUGH_SURFACE.has(attrs.surface ?? "") || ROUGH_SMOOTHNESS.has(attrs.smoothness ?? "");
+}
+
 // Only the most recently started animation should still be drawing - if the user clicks a
 // different trailhead mid-animation, clearSelectedTrail() already removed the in-progress layer
 // from the map, but without this guard the orphaned rAF loop would keep computing frames for a
@@ -308,12 +324,18 @@ export async function selectTrailhead(trail: Trail): Promise<void> {
   if (!path.trail.geometry) return;
   const parts = trailParts(path.trail.geometry);
   if (!parts.length) return;
+  const t = path.trail;
+  // Style by what the trail *is* (issue A4b): a walk-in gated road draws in a distinct hue from a
+  // drivable one; a rough/ungraded surface draws dashed. The "this is a proximity guess" dash
+  // (issue #306 C3) still wins when the result isn't authoritative.
+  const rough = isRoughSurface(t.attrs);
   const layer = L.polyline([], {
-    color: TRAIL,
-    // A named hiking route reads as a heavier line than a lone path (issue #306).
-    weight: path.trail.kind === "route" ? 5 : 3,
+    color: t.walk_in ? TRAIL_WALKIN : TRAIL,
+    // A named hiking route reads as a heavier line than a lone path (issue #306); a walk-in road
+    // sits between the two.
+    weight: t.kind === "route" ? 5 : t.walk_in ? 4 : 3,
     opacity: 0.9,
-    dashArray: path.authoritative ? undefined : "6 6",
+    dashArray: !path.authoritative ? "6 6" : rough ? "10 6" : undefined,
     bubblingMouseEvents: false,
   }).addTo(map);
   // A non-authoritative result is the nearest *different* mapped trail, not the selection's own
@@ -327,7 +349,8 @@ export async function selectTrailhead(trail: Trail): Promise<void> {
     layer.bindTooltip(tip, { sticky: true });
     setStatus(label);
   }
-  setSelectedTrail(layer);
+  setSelectedTrail(layer, t.walk_in === true);
+  renderLegend(); // surface / hide the "walk-in forest road" legend entry
   map.flyToBounds(L.latLngBounds(parts.flat()), { padding: [40, 40], maxZoom: 15, duration: 0.5 });
   animateTrail(layer, parts);
 }

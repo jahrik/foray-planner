@@ -765,6 +765,11 @@ a.chip:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
+/* Walk-in (gated) forest road in the Trails tab - dashed border pairs with the dashed map line
+   the selected-trail polyline draws for it (layers.ts's selectTrailhead). */
+.chip.walkin {
+  border-style: dashed;
+}
 .chip.removable {
   display: inline-flex;
   align-items: center;

@@ -38,6 +38,9 @@ export const LAND_DEFAULT = "#b5b5b5"; // any other agency
 // Bright red - a destination card's selected trail (layers.ts's selectTrailhead), drawn solid
 // when its geometry comes from real OSM topology, dashed when it's the nearest-cached fallback.
 export const TRAIL = "#ff5555";
+// Teal - a selected *walk-in* forest road (gated to vehicles, open on foot). Reads as distinct
+// from the red drive-in trail line; matching legend entry + Trails-tab chip (issue A4b).
+export const TRAIL_WALKIN = "#1fb6a6";
 export const PLAN_STOP = "#ffd060"; // neon gold - planned-route stops and connecting line
 export const FIRE_ACTIVE = "#ff3b1f"; // hot red - active wildfire perimeter/point (issue #227)
 export const FIRE_SCAR = "#ff8c42"; // burnt orange - recent burn scar (dimmer for older years)
@@ -182,9 +185,9 @@ async function applyVectorBasemap(theme: "dark" | "light"): Promise<void> {
 // loadPreciseObservations) are on the map by default, so they're always in the legend - camp/
 // land entries only appear once their layer is actually toggled on, instead of explaining
 // markers that aren't there yet. Called from layers.ts after every camps/land/precise load or
-// clear, so it always mirrors what's on the map. Trails have no toggle (a destination card's
-// Trails tab draws its own selected-trail line on demand, see selectTrailhead) so they're never
-// in this legend.
+// clear, so it always mirrors what's on the map. Trails have no toggle, but a walk-in (gated)
+// forest road drawn from the Trails tab gets a legend entry while its distinct teal line is
+// shown (issue A4b, state.selectedTrailWalkIn).
 export function renderLegend(): void {
   const el = qs("#legend");
   const camps = (document.getElementById("show-camps") as HTMLInputElement | null)?.checked;
@@ -210,6 +213,7 @@ export function renderLegend(): void {
   if (blm) entries.push([LAND_COLORS.BLM ?? LAND_DEFAULT, "BLM land"]);
   if (usfs) entries.push([LAND_COLORS.USFS ?? LAND_DEFAULT, "USFS land"]);
   if (tribal) entries.push([LAND_COLORS.Tribal ?? LAND_DEFAULT, "Tribal land"]);
+  if (state.selectedTrailWalkIn) entries.push([TRAIL_WALKIN, "Walk-in forest road (gated)"]);
   el.innerHTML = entries
     .map(([color, label]) => `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`)
     .join("");
@@ -749,10 +753,12 @@ export function setCardCampActive(marker: L.CircleMarker, site: CampSite, active
 // (layers.ts's selectTrailhead) - at most one at a time, see state.selectedTrailLayer.
 export function clearSelectedTrail(): void {
   state.selectedTrailLayer = clearLayer(map, state.selectedTrailLayer);
+  state.selectedTrailWalkIn = false;
 }
 
-export function setSelectedTrail(layer: L.Polyline): void {
+export function setSelectedTrail(layer: L.Polyline, walkIn = false): void {
   state.selectedTrailLayer = layer;
+  state.selectedTrailWalkIn = walkIn;
 }
 
 export function clearPlanRoute(): void {

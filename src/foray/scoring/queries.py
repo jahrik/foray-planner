@@ -225,6 +225,10 @@ _CLOSED_TO_PUBLIC = frozenset({"no", "private", "permit", "forestry", "agricultu
 # which by OSM convention closes every mode including foot).
 _FOOT_ALLOWED = frozenset({"yes", "permissive", "designated", "official", "customers", "permit"})
 _FOOT_DENIED = frozenset({"no", "private"})
+# Physical barriers on the way that stop a vehicle but not a walker. A ``barrier=gate`` node
+# sitting on a forest road (detected at ingest, ``sources.trails._parse_trails``) is a stronger
+# walk-in signal than the access tags, which are often absent on an unmaintained road.
+_GATE_BARRIERS = frozenset({"gate", "lift_gate", "swing_gate", "bollard", "block", "chain"})
 
 
 def _walk_in(attrs: dict[str, str] | None) -> bool:
@@ -232,13 +236,16 @@ def _walk_in(attrs: dict[str, str] | None) -> bool:
 
     ``motor_vehicle`` restricts only vehicles, so a ``motor_vehicle=no`` road is walk-in unless
     ``foot`` explicitly denies it. A blanket ``access=*`` closes every mode by OSM convention, so
-    that only counts as walk-in when ``foot`` is explicitly re-granted.
+    that only counts as walk-in when ``foot`` is explicitly re-granted. A gate/bollard node on
+    the way (``barrier``) is walk-in on its own unless ``foot`` denies it.
     """
     if not attrs:
         return False
     foot = attrs.get("foot")
     if foot in _FOOT_DENIED:
         return False
+    if attrs.get("barrier") in _GATE_BARRIERS:
+        return True
     if attrs.get("access") in _CLOSED_TO_PUBLIC:
         return foot in _FOOT_ALLOWED
     return attrs.get("motor_vehicle") in _CLOSED_TO_PUBLIC
@@ -289,6 +296,10 @@ def trails_near(
     ``with_geometry=False`` drops each trail's GeoJSON from the result (``geometry`` is ``None``).
     The ``/api/trails`` list only shows names + distances and fetches real geometry per row via
     ``/api/trails/network``, so shipping every LineString there is megabytes of unused payload.
+
+    Ownership (``land_agency`` / ``land_unit``) is not joined here - the endpoint enriches the
+    final list via ``trail_land_units`` so the spatial join runs for ~20 rows, not the 500
+    ``relevance`` candidates.
     """
     # params are appended in the order their %s appears in the final SQL: GEOG_POINT (CTE) ->
     # obs_join (FROM) -> radius (WHERE) -> kind (WHERE) -> limit (ORDER BY).
@@ -424,7 +435,10 @@ def trails_near(
 
 def _base_trail(row: Sequence[Any], *, distance_km: float, camp_distance_km: float | None) -> Trail:
     """Build a ``Trail`` from the standard 10-column prefix
-    ``(id, name, kind, source, url, center_lat, center_lng, geojson, length_km, attrs)``."""
+    ``(id, name, kind, source, url, center_lat, center_lng, geojson, length_km, attrs)``.
+
+    ``land_agency`` / ``land_unit`` are left unset here - the ``/api/trails`` endpoint enriches
+    the final short list via ``trail_land_units``."""
     tid, name, kind, source, url, clat, clng, geojson, length_km, attrs = row[:10]
     parsed_attrs = json.loads(attrs) if attrs else None
     return Trail(
@@ -444,16 +458,64 @@ def _base_trail(row: Sequence[Any], *, distance_km: float, camp_distance_km: flo
     )
 
 
+def trail_land_units(con: psycopg.Connection, trail_ids: Sequence[str]) -> dict[str, tuple[str | None, str | None]]:
+    """``{trail_id: (agency, unit)}`` for the smallest ``public_land`` polygon each trail runs
+    through (a wilderness inside a forest beats the forest). Ids with no cached ownership polygon
+    over them are absent from the map. Run over the ~20-row card list, not the relevance
+    candidate pool - the per-trail spatial join is too slow for 500 rows.
+    """
+    if not trail_ids:
+        return {}
+    rows = con.execute(_TRAIL_LAND_SQL, [list(trail_ids)]).fetchall()
+    return {row[0]: (row[1], row[2]) for row in rows if row[1] is not None}
+
+
+# Matched on the trail's representative point (``center_lat/lng``), not its full line: a
+# ``ST_DWithin(geography, point, 0)`` = point-in-polygon uses the ``public_land`` GIST index the
+# way ``land_near`` does (a geodesic line-vs-multipolygon ``ST_Intersects`` over ~12k
+# national-forest polygons was ~6s *per trail*). ``ST_Area`` is taken planar (``::geometry``,
+# degrees^2) - not a real area but monotonic for "smaller polygon wins" (a wilderness inside a
+# forest). A long trail whose midpoint sits in a different unit than its ends is an accepted
+# imprecision for a "on Six Rivers NF" label.
+_TRAIL_LAND_SQL: LiteralString = """
+    SELECT t.id, land.agency, land.unit
+    FROM trails t
+    LEFT JOIN LATERAL (
+        SELECT pl.agency, pl.unit FROM public_land pl
+        WHERE pl.geom IS NOT NULL
+          AND ST_DWithin(pl.geom, ST_SetSRID(ST_MakePoint(t.center_lng, t.center_lat), 4326)::geography, 0)
+        ORDER BY ST_Area(pl.geom::geometry)
+        LIMIT 1
+    ) land ON true
+    WHERE t.id = ANY(%s)
+    """
+
+
 def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
-    """Single trail row by id, or None if not cached. No camp-distance annotation (see ``trails_near``)."""
+    """Single trail row by id, or None if not cached. No camp-distance annotation (see ``trails_near``).
+
+    Carries the same ``land_agency`` / ``land_unit`` point-in-``public_land`` join as
+    ``trail_land_units`` so the trail drawn on a card selection labels + styles consistently
+    with its list row.
+    """
     row = con.execute(
-        "SELECT id, name, kind, source, url, center_lat, center_lng, geojson, connects, length_km, attrs "
-        "FROM trails WHERE id = %s",
+        """
+        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
+               t.connects, t.length_km, t.attrs, land.agency, land.unit
+        FROM trails t
+        LEFT JOIN LATERAL (
+            SELECT pl.agency, pl.unit FROM public_land pl
+            WHERE pl.geom IS NOT NULL
+              AND ST_DWithin(pl.geom, ST_SetSRID(ST_MakePoint(t.center_lng, t.center_lat), 4326)::geography, 0)
+            ORDER BY ST_Area(pl.geom::geometry) LIMIT 1
+        ) land ON true
+        WHERE t.id = %s
+        """,
         [trail_id],
     ).fetchone()
     if row is None:
         return None
-    trail_id_, name, kind, source, url, clat, clng, geojson, connects, length_km, attrs = row
+    trail_id_, name, kind, source, url, clat, clng, geojson, connects, length_km, attrs, land_agency, land_unit = row
     parsed_attrs = json.loads(attrs) if attrs else None
     return Trail(
         id=trail_id_,
@@ -470,6 +532,8 @@ def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
         length_km=length_km,
         attrs=parsed_attrs,
         walk_in=kind == "road" and _walk_in(parsed_attrs),
+        land_agency=land_agency,
+        land_unit=land_unit,
     )
 
 
