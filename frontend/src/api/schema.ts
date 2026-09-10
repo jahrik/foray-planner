@@ -969,6 +969,8 @@ export interface components {
             land_agency?: string | null;
             /** Land Unit */
             land_unit?: string | null;
+            /** Forage Obs */
+            forage_obs?: number | null;
             /** Geometry */
             geometry?: {
                 [key: string]: unknown;

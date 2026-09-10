@@ -21,6 +21,7 @@ from foray.sources.trails import (
     _tile_bboxes,
     _trails_query,
     _trails_query_bbox,
+    backfill_forage_obs,
     fetch_trails,
     ingest_trails,
     ingest_trails_region,
@@ -707,6 +708,49 @@ def test_trail_land_units_and_get_trail_tag_the_smallest_owning_unit(con: psycop
     assert trail_land_units(con, ["osm:way/999"]) == {}  # unknown id -> absent, not a null entry
     single = get_trail(con, "osm:way/1")
     assert single is not None and (single.land_agency, single.land_unit) == ("USFS", "Small Wilderness")
+
+
+def test_backfill_forage_obs_counts_research_grade_fungi_hugging_the_line(con: psycopg.Connection) -> None:
+    near_line = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "path", "name": "Loop"},
+            "geometry": [{"lat": 47.600, "lon": -122.30}, {"lat": 47.610, "lon": -122.30}],
+        }
+    )
+    far_line = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "path", "name": "Far"},
+            "geometry": [{"lat": 45.000, "lon": -120.00}, {"lat": 45.010, "lon": -120.00}],
+        }
+    )
+    assert near_line is not None and far_line is not None
+    upsert_trails(con, [near_line, far_line])
+    with con.cursor() as cur:
+        cur.execute("INSERT INTO fungi_genera (taxon_id, name) VALUES (48701, 'Boletus')")
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade, obscured)"
+            " VALUES (%s, 48701, %s, %s, '2022-09-15', 9, %s, %s)",
+            [
+                (1, 47.605, -122.3000, "research", False),  # on the line
+                (2, 47.606, -122.3005, "research", False),  # ~40 m off - within 500 m
+                (3, 47.607, -122.3000, "research", None),  # obscured NULL -> counts (COALESCE)
+                (4, 47.605, -122.3000, "needs_id", False),  # not research-grade -> excluded
+                (5, 47.605, -122.3000, "research", True),  # obscured -> excluded (fuzzed location)
+                (6, 47.650, -122.3000, "research", False),  # ~4 km away -> excluded
+            ],
+        )
+
+    assert backfill_forage_obs(con) == 2  # both trail rows visited
+    loop = get_trail(con, "osm:way/1")
+    far = get_trail(con, "osm:way/2")
+    assert loop is not None and loop.forage_obs == 3
+    assert far is not None and far.forage_obs == 0
+    # oldest-first rotation: a capped pass re-times only the stalest row
+    assert backfill_forage_obs(con, max_trails=1) == 1
 
 
 def test_trails_near_dedupes_same_named_trailheads(con: psycopg.Connection) -> None:

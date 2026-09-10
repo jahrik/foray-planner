@@ -2,6 +2,7 @@ import L from "leaflet";
 
 import { getJson } from "../api/client";
 import type { Calendar, CampSite, RecentObservation, RecentObservationsPage, Trail } from "../api/types";
+import { FORAGE_HI_THRESHOLD } from "../map/forage";
 import { selectTrailhead } from "../map/layers";
 import {
   clearCardCampMarkers,
@@ -230,6 +231,16 @@ export async function loadTrailheadsInto(
       button.classList.add("walkin");
       button.title = "Walk-in forest road – gated to vehicles, open on foot";
       button.textContent += " · walk-in";
+    }
+    // Foraging density (issue A4c): research-grade fungi records within ~500 m of the line. A
+    // hint, not a score - it tracks foot traffic as much as productivity - so it's shown as a
+    // plain count, and only the busiest rows get the visual lift.
+    if (trailhead.forage_obs != null && trailhead.forage_obs > 0) {
+      button.textContent += ` · ${trailhead.forage_obs} nearby`;
+      button.title = [button.title, `${trailhead.forage_obs} research-grade fungi records within ~500 m`]
+        .filter(Boolean)
+        .join(" · ");
+      if (trailhead.forage_obs >= FORAGE_HI_THRESHOLD) button.classList.add("forage-hi");
     }
     const marker = plotTrailhead(trailhead.center_lat, trailhead.center_lng, trailhead.name, () =>
       selectRow(trailhead, button, marker),

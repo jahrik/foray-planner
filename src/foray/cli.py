@@ -25,7 +25,7 @@ from foray.sources.ingest import (
     revalidate,
 )
 from foray.sources.land import ingest_public_land, ingest_public_land_coverage
-from foray.sources.trails import ingest_trails, ingest_trails_region
+from foray.sources.trails import backfill_forage_obs, ingest_trails, ingest_trails_region
 
 
 @click.group()
@@ -253,6 +253,21 @@ def backfill_precip_cmd(ctx: click.Context, limit: int | None, rebuild: bool) ->
         if updated and rebuild:
             click.echo("Rebuilding phenology…")
             build_phenology(con, cfg.cell_deg)
+    finally:
+        con.close()
+
+
+@cli.command("backfill-forage")
+@click.option("--limit", type=int, default=None, help="Cap trails re-counted this run (default: one batch).")
+def backfill_forage_cmd(limit: int | None) -> None:
+    """Refresh `trails.forage_obs` - the count of research-grade fungi observations hugging each
+    trail line, a genus-agnostic "how productive is this ground" signal the map ramps and the
+    Trails tab shows. One bounded pass per run (oldest counts first); a frequent cron cycles the
+    whole table as observations drift. Purely set-based, no external calls."""
+    con = connect()
+    try:
+        updated = backfill_forage_obs(con, max_trails=limit)
+        click.echo(f"Recomputed foraging density for {updated} trails.")
     finally:
         con.close()
 

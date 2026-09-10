@@ -4,6 +4,7 @@ import { getJson } from "../api/client";
 import type { CampSite, FireNear, LandUnit, PreciseObservation, Trail, TrailPath } from "../api/types";
 import { createRunGuard } from "../ui/card-select";
 import { feeLabel } from "../format";
+import { FORAGE_RAMP, forageTier } from "./forage";
 import { circleStyle } from "./markers";
 import { buildPopup } from "./popup";
 import {
@@ -329,8 +330,13 @@ export async function selectTrailhead(trail: Trail): Promise<void> {
   // drivable one; a rough/ungraded surface draws dashed. The "this is a proximity guess" dash
   // (issue #306 C3) still wins when the result isn't authoritative.
   const rough = isRoughSurface(t.attrs);
+  // Foraging-density ramp (issue A4c): more research-grade fungi records hugging the line -> a
+  // hotter colour. walk_in is a categorical override (keeps its teal); an un-backfilled trail
+  // (tier 0) keeps the default red rather than reading as "barren".
+  const tier = forageTier(t.forage_obs);
+  const trailColor = t.walk_in ? TRAIL_WALKIN : tier > 0 ? FORAGE_RAMP[tier - 1] : TRAIL;
   const layer = L.polyline([], {
-    color: t.walk_in ? TRAIL_WALKIN : TRAIL,
+    color: trailColor,
     // A named hiking route reads as a heavier line than a lone path (issue #306); a walk-in road
     // sits between the two.
     weight: t.kind === "route" ? 5 : t.walk_in ? 4 : 3,
@@ -349,8 +355,8 @@ export async function selectTrailhead(trail: Trail): Promise<void> {
     layer.bindTooltip(tip, { sticky: true });
     setStatus(label);
   }
-  setSelectedTrail(layer, t.walk_in === true);
-  renderLegend(); // surface / hide the "walk-in forest road" legend entry
+  setSelectedTrail(layer, t.walk_in === true, t.walk_in ? 0 : tier);
+  renderLegend(); // surface / hide the walk-in + foraging-density legend entries
   map.flyToBounds(L.latLngBounds(parts.flat()), { padding: [40, 40], maxZoom: 15, duration: 0.5 });
   animateTrail(layer, parts);
 }

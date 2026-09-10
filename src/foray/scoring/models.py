@@ -139,6 +139,12 @@ class Trail:
     # when no cached ownership polygon contains the trail. Lets the card say "on Six Rivers NF".
     land_agency: str | None = None
     land_unit: str | None = None
+    # Count of research-grade, non-obscured fungi observations within ~500 m of the trail line
+    # (``trails.forage_obs``, refreshed in rotation by ``sources.trails.backfill_forage_obs``).
+    # Genus-agnostic "how much fruits along here" - the map ramps the line by it and the Trails
+    # tab shows it. ``None`` until the backfill first reaches the row. Traffic-confounded (a busy
+    # roadside trail out-counts a remote productive road), so it's a hint, not a score.
+    forage_obs: int | None = None
 
 
 @dataclass

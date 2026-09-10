@@ -250,6 +250,7 @@ class Trail(BaseModel):
     walk_in: bool = False  # kind='road' rows: gated to motor vehicles but walkable (prime foraging)
     land_agency: str | None = None  # public-land owner the trail runs through ("USFS", "BLM", ...)
     land_unit: str | None = None  # its area name ("Six Rivers National Forest"); spatial join, see scoring
+    forage_obs: int | None = None  # research-grade fungi obs within ~500 m of the line; a hint, not a score
     # Raw GeoJSON geometry, same as LandUnit.geometry. ``None`` on the ``/api/trails`` list
     # response - that feeds a name/distance row list whose selection fetches the real geometry
     # from ``/api/trails/network``; see ``scoring.trails_near(with_geometry=False)``.

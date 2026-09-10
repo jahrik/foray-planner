@@ -14,6 +14,10 @@ FIRE_INTERVAL="${FORAY_FIRE_INTERVAL_HOURS:-24}"
 # High cap on purpose - each pass drains until Open-Meteo's free tier 429s it (lookup_batch
 # backs off on Retry-After, then gives up), so this is really just an upper safety bound.
 ELEVATION_LIMIT="${FORAY_ELEVATION_LIMIT:-20000}"
+# Per-trail foraging density: a bounded set-based pass (no external API) recounts the N stalest
+# trails each tick, so a frequent interval cycles the whole table as observations drift.
+FORAGE_INTERVAL="${FORAY_FORAGE_INTERVAL_HOURS:-6}"
+FORAGE_LIMIT="${FORAY_FORAGE_LIMIT:-20000}"
 
 obs_last=0
 layers_last=0
@@ -22,6 +26,7 @@ resync_last=0
 elevation_last=0
 precip_last=0
 fire_last=0
+forage_last=0
 
 while true; do
   now=$(date +%s)
@@ -78,6 +83,15 @@ while true; do
     else
       echo "[scheduler] rainfall refresh failed"
     fi
+  fi
+
+  # Per-trail foraging density: recount research-grade fungi observations hugging each trail
+  # line for the stalest FORAGE_LIMIT trails. Set-based, no external calls - a frequent small
+  # pass keeps the whole table roughly fresh without ever holding a long write on prod's 1-vCPU
+  # PG. New trails (NULL count) jump the queue.
+  if [ $((now - forage_last)) -ge $((FORAGE_INTERVAL * 3600)) ]; then
+    echo "[scheduler] $(date -Iseconds) Starting foraging-density backfill (limit $FORAGE_LIMIT)…"
+    foray backfill-forage --limit "$FORAGE_LIMIT" && forage_last=$(date +%s) || echo "[scheduler] foraging-density backfill failed"
   fi
 
   # Wildfire (issue #227): active perimeters + points (replace semantics), 3+current years of

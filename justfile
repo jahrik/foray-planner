@@ -134,6 +134,14 @@ genera-refresh: db
 backfill-precip: db
     docker compose run --rm app foray backfill-precip
 
+# Recompute per-trail foraging density (issue A4c): research-grade fungi observations hugging
+# each trail line. One bounded set-based pass per run (stalest first); the scheduler cycles the
+# whole table. `--limit N` caps a run.
+[doc('Recompute per-trail foraging density (issue A4c)')]
+[group('data')]
+backfill-forage *args: db
+    docker compose run --rm app foray backfill-forage {{ args }}
+
 # Refresh the recent-rain-per-destination layer (issue #226, Open-Meteo forecast API). Skips
 # region cells refreshed in the last ~20h, so a re-run resumes rather than starting over.
 [doc('Refresh the recent-rain-per-destination layer (issue #226)')]

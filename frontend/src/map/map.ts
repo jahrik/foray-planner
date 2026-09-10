@@ -2,6 +2,7 @@ import L from "leaflet";
 import "leaflet.markercluster";
 
 import type { CampSite, Home } from "../api/types";
+import { FORAGE_RAMP, FORAGE_TIER_LABELS } from "./forage";
 import { clearLayer, clearLayerList } from "./layer-lifecycle";
 import { circleStyle } from "./markers";
 import { buildPopup } from "./popup";
@@ -214,6 +215,10 @@ export function renderLegend(): void {
   if (usfs) entries.push([LAND_COLORS.USFS ?? LAND_DEFAULT, "USFS land"]);
   if (tribal) entries.push([LAND_COLORS.Tribal ?? LAND_DEFAULT, "Tribal land"]);
   if (state.selectedTrailWalkIn) entries.push([TRAIL_WALKIN, "Walk-in forest road (gated)"]);
+  if (state.selectedTrailForage > 0) {
+    const idx = state.selectedTrailForage - 1; // 0..2 into the tier-1/2/3 ramp
+    entries.push([FORAGE_RAMP[idx] ?? FORAGE_RAMP[2], `Selected trail: ${FORAGE_TIER_LABELS[idx] ?? ""}`]);
+  }
   el.innerHTML = entries
     .map(([color, label]) => `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`)
     .join("");
@@ -753,14 +758,16 @@ export function setCardCampActive(marker: L.CircleMarker, site: CampSite, active
 // (layers.ts's selectTrailhead) - at most one at a time, see state.selectedTrailLayer.
 export function clearSelectedTrail(): void {
   state.selectedTrailLayer = clearLayer(map, state.selectedTrailLayer);
-  const wasWalkIn = state.selectedTrailWalkIn;
+  const hadEntry = state.selectedTrailWalkIn || state.selectedTrailForage > 0;
   state.selectedTrailWalkIn = false;
-  if (wasWalkIn) renderLegend(); // drop the "walk-in forest road" entry we added
+  state.selectedTrailForage = 0;
+  if (hadEntry) renderLegend(); // drop the walk-in / foraging-density entries we added
 }
 
-export function setSelectedTrail(layer: L.Polyline, walkIn = false): void {
+export function setSelectedTrail(layer: L.Polyline, walkIn = false, forage: 0 | 1 | 2 | 3 = 0): void {
   state.selectedTrailLayer = layer;
   state.selectedTrailWalkIn = walkIn;
+  state.selectedTrailForage = forage;
 }
 
 export function clearPlanRoute(): void {
