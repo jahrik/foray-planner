@@ -5,7 +5,16 @@ import type { CampSite, Home } from "../api/types";
 import { clearLayer, clearLayerList } from "./layer-lifecycle";
 import { circleStyle } from "./markers";
 import { buildPopup } from "./popup";
-import { pickRoadFeature, roadLineLayerIds, roadPopupSpec } from "./road-inspect";
+import {
+  enrichedRoadPopupSpec,
+  pickNearbyTrail,
+  pickRoadFeature,
+  roadLineLayerIds,
+  roadPopupSpec,
+  shouldEnrichRoad,
+  type RoadProps,
+} from "./road-inspect";
+import { getJson } from "../api/client";
 import { dist, onScopeChange, qs, state } from "../state";
 
 // Marker palette. Destination + recency markers now read their colour from tokens.css at
@@ -321,11 +330,32 @@ export function inspectRoadAt(latlng: L.LatLng): boolean {
   ];
   const feature = pickRoadFeature(gl.queryRenderedFeatures(box, { layers: layerIds }));
   if (!feature) return false;
-  L.popup()
+  const props = (feature.properties ?? {}) as RoadProps;
+  const popup = L.popup()
     .setLatLng(latlng)
-    .setContent(buildPopup(roadPopupSpec(feature.properties ?? {}, latlng.lat, latlng.lng)))
+    .setContent(buildPopup(roadPopupSpec(props, latlng.lat, latlng.lng)))
     .openOn(map);
+  enrichRoadPopup(popup, props, latlng.lat, latlng.lng);
   return true;
+}
+
+// The Protomaps tile only carries a track's name at z15 and never its road number, so when the
+// tile gave us no name, look the way up in our own ingested trails/roads (GET /api/trails, from
+// #306/#314 - cached, no live Overpass) and fold the real name + Ref + surface into the popup
+// that is already open. Best-effort: any failure leaves the tile popup standing.
+function enrichRoadPopup(popup: L.Popup, props: RoadProps, lat: number, lng: number): void {
+  if (!shouldEnrichRoad(props)) return;
+  void getJson("/api/trails", {
+    query: { lat, lng, sort: "nearest", limit: 5, radius_km: 0.15 },
+  })
+    .then((rows) => {
+      if (!popup.isOpen()) return;
+      const enriched = enrichedRoadPopupSpec(props, lat, lng, pickNearbyTrail(rows));
+      if (enriched) popup.setContent(buildPopup(enriched));
+    })
+    .catch(() => {
+      /* the tile popup stands */
+    });
 }
 
 let onMapClick: ((lat: number, lng: number) => void) | null = null;
