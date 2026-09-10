@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { pickRoadFeature, roadLineLayerIds, roadPopupSpec } from "./road-inspect";
+import {
+  enrichedRoadPopupSpec,
+  type NearbyTrail,
+  pickNearbyTrail,
+  pickRoadFeature,
+  roadLineLayerIds,
+  roadPopupSpec,
+  shouldEnrichRoad,
+} from "./road-inspect";
 
 describe("roadLineLayerIds", () => {
   const style = [
@@ -65,6 +73,14 @@ describe("roadPopupSpec", () => {
     expect(roadPopupSpec({ kind: "minor_road" }, 0, 0).title).toBe("Unnamed road");
   });
 
+  it("drops the redundant prose line for an unnamed way - just the bare highway tag", () => {
+    expect(roadPopupSpec({ kind_detail: "track" }, 0, 0).lines).toEqual(["highway=track"]);
+    // a named way still spells the class out (the title carries the name, not the type)
+    expect(roadPopupSpec({ name: "Davison Road", kind_detail: "track" }, 0, 0).lines).toEqual([
+      "Forest / logging road (highway=track)",
+    ]);
+  });
+
   it("flags bridges and tunnels (bool or 1)", () => {
     expect(roadPopupSpec({ kind_detail: "path", is_bridge: true }, 0, 0).lines).toContain("Bridge");
     expect(roadPopupSpec({ kind_detail: "path", is_tunnel: 1 }, 0, 0).lines).toContain("Tunnel");
@@ -76,8 +92,85 @@ describe("roadPopupSpec", () => {
     expect(spec.link?.text).toMatch(/OpenStreetMap/);
   });
 
-  it("title-cases an unmapped highway value", () => {
-    const spec = roadPopupSpec({ kind_detail: "busway" }, 0, 0);
+  it("title-cases an unmapped highway value for a named way", () => {
+    const spec = roadPopupSpec({ name: "Busway 1", kind_detail: "busway" }, 0, 0);
     expect(spec.lines?.[0]).toBe("Busway road (highway=busway)");
+  });
+});
+
+describe("shouldEnrichRoad", () => {
+  it("enriches an unnamed track or foot/path kind", () => {
+    expect(shouldEnrichRoad({ kind_detail: "track" })).toBe(true);
+    expect(shouldEnrichRoad({ kind_detail: "path" })).toBe(true);
+    expect(shouldEnrichRoad({ kind_detail: "footway" })).toBe(true);
+    expect(shouldEnrichRoad({ kind: "path" })).toBe(true);
+  });
+
+  it("skips a named way or a class we don't ingest", () => {
+    expect(shouldEnrichRoad({ name: "Davison Trail", kind_detail: "track" })).toBe(false);
+    expect(shouldEnrichRoad({ "name:en": "X", kind_detail: "path" })).toBe(false);
+    expect(shouldEnrichRoad({ kind: "minor_road", kind_detail: "residential" })).toBe(false);
+    expect(shouldEnrichRoad({ kind_detail: "trunk" })).toBe(false);
+  });
+});
+
+describe("pickNearbyTrail", () => {
+  const row = (kind: string, distance_km: number): NearbyTrail => ({
+    name: "x",
+    kind,
+    url: "u",
+    distance_km,
+  });
+
+  it("takes the nearest row that is a way, skipping trailhead nodes and route relations", () => {
+    const rows = [row("trailhead", 0.01), row("route", 0.02), row("road", 0.03), row("path", 0.04)];
+    expect(pickNearbyTrail(rows)?.kind).toBe("road");
+  });
+
+  it("returns undefined when nothing is a road or path", () => {
+    expect(pickNearbyTrail([row("trailhead", 0.01)])).toBeUndefined();
+  });
+});
+
+describe("enrichedRoadPopupSpec", () => {
+  const near = (over: Partial<NearbyTrail> = {}): NearbyTrail => ({
+    name: "Lost Man Creek Road",
+    kind: "road",
+    url: "https://www.openstreetmap.org/way/12264948",
+    distance_km: 0.02,
+    attrs: { ref: "12N01", surface: "compacted", tracktype: "grade3" },
+    ...over,
+  });
+
+  it("returns null when there is no hit or it is too far to be the clicked way", () => {
+    expect(enrichedRoadPopupSpec({ kind_detail: "track" }, 0, 0, undefined)).toBeNull();
+    expect(enrichedRoadPopupSpec({ kind_detail: "track" }, 0, 0, near({ distance_km: 0.4 }))).toBeNull();
+  });
+
+  it("uses the real name, road number, surface, grade and the actual OSM way link", () => {
+    const spec = enrichedRoadPopupSpec({ kind_detail: "track" }, 41.3, -124.0, near())!;
+    expect(spec.title).toBe("Lost Man Creek Road");
+    expect(spec.lines).toEqual([
+      "Forest / logging road (highway=track)",
+      "Ref 12N01",
+      "Surface: compacted",
+      "Grade: grade 3",
+    ]);
+    expect(spec.link?.href).toBe("https://www.openstreetmap.org/way/12264948");
+  });
+
+  it("falls back to the road number as the title when the cached name is synthetic", () => {
+    const spec = enrichedRoadPopupSpec({ kind_detail: "track" }, 0, 0, near({ name: "Forest road (OSM)" }))!;
+    expect(spec.title).toBe("Ref 12N01");
+  });
+
+  it("notes a walk-in (vehicle-gated) forest road", () => {
+    const spec = enrichedRoadPopupSpec(
+      { kind_detail: "track" },
+      0,
+      0,
+      near({ walk_in: true, attrs: { ref: "300", motor_vehicle: "no" } }),
+    )!;
+    expect(spec.lines).toContain("Walk-in (gated to vehicles)");
   });
 });
