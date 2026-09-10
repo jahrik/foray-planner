@@ -753,7 +753,9 @@ export function setCardCampActive(marker: L.CircleMarker, site: CampSite, active
 // (layers.ts's selectTrailhead) - at most one at a time, see state.selectedTrailLayer.
 export function clearSelectedTrail(): void {
   state.selectedTrailLayer = clearLayer(map, state.selectedTrailLayer);
+  const wasWalkIn = state.selectedTrailWalkIn;
   state.selectedTrailWalkIn = false;
+  if (wasWalkIn) renderLegend(); // drop the "walk-in forest road" entry we added
 }
 
 export function setSelectedTrail(layer: L.Polyline, walkIn = false): void {

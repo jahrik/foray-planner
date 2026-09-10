@@ -676,6 +676,9 @@ def test_walk_in_gate_is_overridden_by_an_explicit_foot_no() -> None:
     assert _walk_in({"barrier": "gate"}) is True
     assert _walk_in({"barrier": "gate", "foot": "no"}) is False
     assert _walk_in({"barrier": "cattle_grid"}) is False  # vehicles drive over it
+    # an explicit legal closure still wins over the physical gate
+    assert _walk_in({"barrier": "gate", "access": "private"}) is False
+    assert _walk_in({"barrier": "gate", "access": "private", "foot": "yes"}) is True
 
 
 def test_trail_land_units_and_get_trail_tag_the_smallest_owning_unit(con: psycopg.Connection) -> None:
