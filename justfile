@@ -42,6 +42,13 @@ lint:
 test: db
     uv run pytest
 
+# Start Postgres if needed, then run a pytest subset while iterating, e.g.
+# `just test-some tests/sources/test_camps.py` or `just test-some -k coverage`.
+# Coverage gate is disabled here (a subset never meets it); `just test` still enforces it.
+[group('dev')]
+test-some *args: db
+    uv run pytest --cov-fail-under=0 {{ args }}
+
 # The full local CI gate: lint + test.
 [group('dev')]
 check: lint test

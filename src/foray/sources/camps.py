@@ -501,7 +501,10 @@ def ingest_campgrounds_coverage(
         upsert_campsites(db, rows)
         cache.record_ingest(db, key, len(rows))
         pruned = 0
-        if any(region.bbox for region in cfg.coverage):
+        # Only prune when every coverage region has a bbox: with a mixed config the envelope
+        # omits the no-bbox regions, so pruning to it would delete campsites those regions
+        # legitimately listed. Better to leave a few stale rows than drop valid ones.
+        if cfg.coverage and all(region.bbox for region in cfg.coverage):
             west, south, east, north = coverage_envelope(cfg.coverage)
             pruned = cache.prune_campsites_outside_bounds(db, "ridb", west, south, east, north)
         # Drop markers from superseded query versions so ingest_log doesn't accrete a stale row.
