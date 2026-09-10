@@ -56,7 +56,7 @@ All settings come from environment variables (prefix `FORAY_`, nested delimiter 
 | `FORAY_ELEVATION_INTERVAL_HOURS` / `FORAY_ELEVATION_LIMIT` | `1` / `20000` | Scheduler: elevation backfill interval + per-run upper bound (a run stops early when Open-Meteo rate-limits it) |
 | `FORAY_PRECIP_INTERVAL_HOURS` | `24` | Scheduler: rainfall pass interval (per-observation antecedent-rain backfill + recent-rain layer refresh, issue #226) |
 | `FORAY_FIRE_INTERVAL_HOURS` | `24` | Scheduler: wildfire refresh interval (active perimeters + burn-scar history + MTBS severity, issue #227) |
-| `FORAY_FORAGE_INTERVAL_HOURS` / `FORAY_FORAGE_LIMIT` | `6` / `20000` | Scheduler: per-trail foraging-density recount interval + trails per pass (set-based, stalest first - cycles the whole table over a few days) |
+| `FORAY_FORAGE_INTERVAL_HOURS` / `FORAY_FORAGE_LIMIT` | `6` / `20000` | Scheduler: per-trail foraging-density recount interval + trails per pass (set-based, stalest first - at the defaults, ~2 weeks to cycle a full ~1.2M-row trails table) |
 
 **Database connection** comes from the standard libpq env vars
 (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`), read natively by `psycopg`. Credentials
