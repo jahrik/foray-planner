@@ -37,9 +37,10 @@ FRONTEND.md
 # Ansible local collection/role/module cache (reinstalled via `just ansible install`)
 infra/ansible/.ansible/
 
-# local QA screenshots
+# local QA screenshots (ad-hoc dogfood captures from browser testing, saved at repo root)
 verify-*.png
 redesign-*.png
+/*.png
 *.playwright-mcp
 
 # Local vector-basemap test extracts - never commit (see docs/data-sources.md)
