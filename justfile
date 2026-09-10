@@ -37,17 +37,12 @@ lint:
     uv run ty check
     uv run vulture src/foray --min-confidence 80
 
-# Start Postgres if needed, then run pytest.
+# Start Postgres if needed, then run pytest. Pass args to run a subset while iterating, e.g.
+# `just test tests/sources/test_camps.py` or `just test -k coverage` - the coverage gate is
+# relaxed when args are given (a subset never meets it) and enforced for the full run.
 [group('dev')]
-test: db
-    uv run pytest
-
-# Start Postgres if needed, then run a pytest subset while iterating, e.g.
-# `just test-some tests/sources/test_camps.py` or `just test-some -k coverage`.
-# Coverage gate is disabled here (a subset never meets it); `just test` still enforces it.
-[group('dev')]
-test-some *args: db
-    uv run pytest --cov-fail-under=0 {{ args }}
+test *args: db
+    uv run pytest {{ if args == "" { "" } else { "--cov-fail-under=0" } }} {{ args }}
 
 # The full local CI gate: lint + test.
 [group('dev')]
