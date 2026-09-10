@@ -220,21 +220,36 @@ export async function loadCampgroundsInto(
   container: HTMLElement,
 ): Promise<boolean> {
   container.innerHTML = "<p class='hint'>Loading…</p>";
-  let sites: CampSite[];
-  try {
-    // Queried from the observation centroid, not `region_id` - see loadTrailheadsInto (#306 C4).
-    sites = await getJson("/api/camps", {
-      query: { lat: region.center_lat, lng: region.center_lng, radius_km: regionRadiusKm(), limit: 20 },
+  // Queried from the observation centroid, not `region_id` - see loadTrailheadsInto (#306 C4).
+  const camps = (radiusKm: number): Promise<CampSite[]> =>
+    getJson("/api/camps", {
+      query: { lat: region.center_lat, lng: region.center_lng, radius_km: radiusKm, limit: 20 },
     });
+  let sites: CampSite[];
+  let widened = false;
+  try {
+    sites = await camps(regionRadiusKm());
+    if (!sites.length) {
+      // Prairie Creek's nearest cached camp is ~30 km out but the destination circle is ~28 km -
+      // an empty tab hid camps that are right there. Fall back to a wider sweep and say so (#306 B2).
+      widened = true;
+      sites = await camps(regionRadiusKm() * 3);
+    }
   } catch (error) {
     container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
     return false;
   }
   if (!sites.length) {
-    container.innerHTML = "<p class='hint'>No campgrounds cached in this destination yet.</p>";
+    container.innerHTML = "<p class='hint'>No campgrounds cached near this destination yet.</p>";
     return true;
   }
   container.innerHTML = "";
+  if (widened) {
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.textContent = "None inside the destination - showing the nearest campgrounds.";
+    container.appendChild(hint);
+  }
   const list = document.createElement("div");
   list.className = "chips";
   // Only one card's campgrounds are plotted at a time (clearCardCampMarkers below clears the

@@ -7,6 +7,7 @@ Defaults for species and coverage are built into the app via ``foray.defaults``.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -55,6 +56,25 @@ class CoverageRegion(BaseModel):
     # regions that only need observations (place_id-based, no bbox required) - e.g. entries in
     # ``countries`` below.
     bbox: tuple[float, float, float, float] | None = None
+
+
+def coverage_envelope(regions: Iterable[CoverageRegion]) -> tuple[float, float, float, float]:
+    """Union ``(west, south, east, north)`` bbox of every region that has one.
+
+    The single query envelope for a whole-coverage ingest (public land, coverage-wide
+    dispersed camping). Derived from ``cfg.coverage`` rather than a hardcoded literal so
+    adding regions for another country later grows it automatically. Raises ``ValueError``
+    if no region carries a bbox.
+    """
+    boxes = [region.bbox for region in regions if region.bbox is not None]
+    if not boxes:
+        raise ValueError("no coverage regions with a bbox configured")
+    return (
+        min(box[0] for box in boxes),
+        min(box[1] for box in boxes),
+        max(box[2] for box in boxes),
+        max(box[3] for box in boxes),
+    )
 
 
 class Settings(BaseSettings):

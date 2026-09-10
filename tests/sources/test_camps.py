@@ -6,17 +6,20 @@ import httpx
 import psycopg
 import pytest
 
-from foray.cache import prune_campsites_outside_radius, upsert_campsites
-from foray.config import CoverageRegion
+from foray.cache import is_ingested, prune_campsites_outside_radius, upsert_campsites
+from foray.config import CoverageRegion, Settings
 from foray.scoring import camps_near
 from foray.sources.camps import (
+    _CAMPS_COVERAGE_VERSION,
     _clean_text,
+    _coverage_state_codes,
     _fee_range,
     _free_from_fee,
     _parse_facility,
     _query_centers,
     _states_for_disk,
     fetch_campsites,
+    ingest_campgrounds_coverage,
 )
 
 HOME_LAT, HOME_LNG = 47.6, -122.3
@@ -144,6 +147,74 @@ def test_states_for_disk_picks_only_regions_the_disk_reaches() -> None:
     assert _states_for_disk(_COVERAGE, 44.0, -120.5, 20.0) == ["OR"]
     # A non-US point resolves nothing → caller falls back to radius tiling.
     assert _states_for_disk(_COVERAGE, 48.85, 2.35, 100.0) == []
+
+
+def test_coverage_state_codes_is_every_us_state_in_coverage_deduped() -> None:
+    codes = _coverage_state_codes(
+        [*_COVERAGE, CoverageRegion(name="Oregon", place_id=99, bbox=(-124.0, 42.0, -117.0, 46.0))]
+    )
+    assert codes == ["OR", "WA", "CA", "ME"]  # "United States" (no code) dropped, Oregon not repeated
+
+
+def test_fetch_campsites_clip_false_keeps_facilities_outside_the_radius() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "RECDATA": [
+                    {"FacilityID": "1", "FacilityName": "A", "FacilityLatitude": 47.65, "FacilityLongitude": -122.35},
+                    {"FacilityID": "2", "FacilityName": "B", "FacilityLatitude": 33.0, "FacilityLongitude": -118.0},
+                ],
+                "METADATA": {"RESULTS": {"TOTAL_COUNT": 2}},
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    rows = fetch_campsites(
+        lat=0.0, lng=0.0, radius_km=0.0, api_key="k", states=["CA"], clip=False, client=client, min_interval=0.0
+    )
+    assert sorted(row[0] for row in rows) == ["ridb:1", "ridb:2"]
+
+
+def test_ingest_campgrounds_coverage_lists_every_state_prunes_and_is_one_shot(con: psycopg.Connection) -> None:
+    seen_states: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_states.append(request.url.params["state"])
+        return httpx.Response(
+            200,
+            json={
+                "RECDATA": [
+                    # in the OR/WA/CA envelope
+                    {"FacilityID": "1", "FacilityName": "In", "FacilityLatitude": 44.0, "FacilityLongitude": -122.0},
+                    # far outside it (Florida) - pruned by the envelope clip
+                    {"FacilityID": "2", "FacilityName": "Out", "FacilityLatitude": 28.0, "FacilityLongitude": -81.0},
+                ],
+                "METADATA": {"RESULTS": {"TOTAL_COUNT": 2}},
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    cfg = Settings(coverage=_COVERAGE[:3])  # Oregon, Washington, California
+
+    count = ingest_campgrounds_coverage(cfg, con, api_key="k", client=client)
+    assert count == 2
+    assert set(seen_states) == {"OR", "WA", "CA"}
+    assert is_ingested(con, f"camps:coverage:v{_CAMPS_COVERAGE_VERSION}")
+    cached = {row[0] for row in con.execute("SELECT id FROM campsites").fetchall()}
+    assert cached == {"ridb:1"}  # the Florida facility was pruned outside the coverage envelope
+
+    seen_states.clear()
+    assert ingest_campgrounds_coverage(cfg, con, api_key="k", client=client) == 0  # marker present
+    assert seen_states == []
+
+
+def test_ingest_campgrounds_coverage_skips_without_a_key(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("RIDB_API_KEY", raising=False)
+    cfg = Settings(coverage=_COVERAGE[:1])
+    assert ingest_campgrounds_coverage(cfg, con, api_key=None) == 0
 
 
 def test_fetch_campsites_lists_by_state_and_clips_to_radius() -> None:

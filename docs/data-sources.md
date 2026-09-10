@@ -34,19 +34,23 @@ scoring.
   Set as `RIDB_API_KEY` in your environment or `.env` file. If unset, camps ingest is a
   silent no-op and everything else still works.
 - **Per-state listing:** The primary path pages `facilities?state=XX&activity=CAMPING&full=true`
-  for every state the home disk reaches (from `FORAY_COVERAGE` bboxes), then clips each
-  facility to the true radius with the haversine formula. RIDB's point+radius search silently
-  returns only ~1/3 of the developed campgrounds actually present (it matches on the facility's
-  own coordinate, often unset), so it's kept only as a fallback for a non-US home. `full=true`
-  gives `Reservable` on each record.
+  per state. `foray refresh --with camps` (home-radius, on-demand) lists the states the home
+  disk reaches and clips each facility to the true radius; `foray refresh --with camps --all`
+  (the weekly cron) lists *every* `FORAY_COVERAGE` state and keeps all of them, so a destination
+  anywhere in coverage has its campgrounds cached. One-shot per query version (`camps:coverage:v{N}`
+  in `ingest_log`); bumping `_CAMPS_COVERAGE_VERSION` makes the next cron re-list every state.
+  RIDB's point+radius search silently returns only ~1/3 of the developed campgrounds actually
+  present (it matches on the facility's own coordinate, often unset), so it's kept only as a
+  fallback for a non-US home. `full=true` gives `Reservable` on each record.
 - **Fees:** RIDB ships fees as prose ("Camping: $16/vehicle... $2 per extra vehicle"), parsed
   best-effort into `fee_low`/`fee_high` - amounts qualified as add-ons / discounts / non-camping
   (extra vehicle, day use, senior, deposit) are dropped.
 - **`free` flag:** Only set `TRUE` on an explicit no-fee signal *and* no positive fee amount
   anywhere in the blob. Never guessed from missing data.
-- **Pruning:** Camp ingests only upsert, so a shrunk radius / moved home would strand old rows;
-  `prune_campsites_outside_radius` clears `source='ridb'` rows outside the current disk after
-  every ingest.
+- **Pruning:** Camp ingests only upsert, so a shrunk radius / moved home / shrunk coverage would
+  strand old rows. The home-radius path runs `prune_campsites_outside_radius` (disk) when no
+  coverage is configured; the coverage-wide path runs `prune_campsites_outside_bounds` (the
+  union `FORAY_COVERAGE` envelope) and owns pruning whenever coverage is set.
 - **Terms:** Government data, free for use with attribution.
 
 ---
@@ -63,6 +67,10 @@ hiking routes, trailheads).
 - **Rate limit:** Polite: sleep between requests; 429 responses respect the `Retry-After` header
 - **Dispersed camping (`sources/dispersed.py`):**
   - `tourism=camp_site`, `tourism=camp_pitch`, `backcountry=yes` → `kind='reported'` campsites
+  - `foray refresh --with dispersed` covers the home disk; `--with dispersed --all` (the weekly
+    cron) tiles the whole `FORAY_COVERAGE` envelope, same one-shot-per-version marker
+    (`dispersed:coverage:v{N}`) and tile-retry semantics as the trail ingest. State Parks and
+    other non-federal campgrounds RIDB doesn't carry come in through this path.
 - **Trails (`sources/trails.py`):**
   - `highway=path` / `highway=bridleway` ways → `kind='path'` (we exclude `highway=footway` -
     ~6x the rows, mostly urban sidewalks, and heavy enough to time the query out)

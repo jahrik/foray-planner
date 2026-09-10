@@ -37,7 +37,7 @@ import httpx
 import psycopg
 
 from foray.cache import connection, is_ingested, record_ingest, upsert_public_land
-from foray.config import CoverageRegion, Settings
+from foray.config import Settings, coverage_envelope
 from foray.geo import bbox_around
 from foray.sources.http import USER_AGENT
 from foray.sources.ingest_base import run_area_ingest
@@ -282,22 +282,6 @@ def ingest_public_land(
     )
 
 
-def _coverage_envelope(regions: Iterable[CoverageRegion]) -> tuple[float, float, float, float]:
-    """Union bbox of every region that has one - the query envelope for a whole-coverage ingest.
-
-    Derived from whatever's configured (``cfg.coverage``) rather than a hardcoded literal, so
-    adding regions for another country later grows this automatically.
-    """
-    boxes = [region.bbox for region in regions if region.bbox is not None]
-    if not boxes:
-        raise ValueError("no coverage regions with a bbox configured")
-    west = min(box[0] for box in boxes)
-    south = min(box[1] for box in boxes)
-    east = max(box[2] for box in boxes)
-    north = max(box[3] for box in boxes)
-    return (west, south, east, north)
-
-
 def ingest_public_land_coverage(
     cfg: Settings,
     con: psycopg.Connection | None = None,
@@ -319,7 +303,7 @@ def ingest_public_land_coverage(
             if progress_cb:
                 progress_cb("Public land already cached, skipping…", 100.0)
             return 0
-        envelope = _coverage_envelope(cfg.coverage)
+        envelope = coverage_envelope(cfg.coverage)
         logger.info("land: fetching BLM/USFS ownership across %d coverage regions…", len(cfg.coverage))
         rows = _fetch_public_land_envelope(envelope, client=client, sources=sources, progress_cb=progress_cb)
         upsert_public_land(database, rows)

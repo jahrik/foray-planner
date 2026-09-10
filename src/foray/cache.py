@@ -914,6 +914,25 @@ def prune_campsites_outside_radius(
     return result.rowcount
 
 
+def prune_campsites_outside_bounds(
+    con: psycopg.Connection, source: str, west: float, south: float, east: float, north: float
+) -> int:
+    """Delete ``source`` campsites outside the ``(west, south, east, north)`` envelope. Returns rows deleted.
+
+    The coverage-wide camp ingests (issue #306 workstream B) upsert every facility in the
+    configured coverage; this clears rows a shrunk coverage set no longer includes, the same
+    way ``prune_campsites_outside_radius`` does for the home-disk path.
+    """
+    result = con.execute(
+        "DELETE FROM campsites WHERE source = %s "
+        "AND (geom IS NULL OR NOT ST_Intersects("
+        "geom::geometry, ST_MakeEnvelope(%s, %s, %s, %s, 4326)))",
+        [source, west, south, east, north],
+    )
+    con.commit()
+    return result.rowcount
+
+
 def upsert_public_land(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
     """Upsert public-land polygons, refreshing existing rows in place. Returns rows attempted.
 

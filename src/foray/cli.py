@@ -12,8 +12,8 @@ from foray.logging_config import setup_logging
 from foray.refresh import REFRESH_LAYERS, parse_month_list, run_home_refresh
 from foray.scoring import build_phenology, plan_route
 from foray.sources import fire, geocode, satellite
-from foray.sources.camps import ingest_campgrounds
-from foray.sources.dispersed import ingest_dispersed
+from foray.sources.camps import ingest_campgrounds, ingest_campgrounds_coverage
+from foray.sources.dispersed import ingest_dispersed, ingest_dispersed_coverage
 from foray.sources.inat import InatQuotaExceeded, iter_fungi_genera
 from foray.sources.ingest import (
     backfill_elevations,
@@ -453,9 +453,8 @@ def _parse_targets(with_: str) -> tuple[str, ...]:
     "all_coverage",
     is_flag=True,
     help=(
-        "Ingest region-scoped targets (mushrooms, land, trails) across all configured "
-        "coverage/countries instead of just the home radius. Not supported for camps/dispersed "
-        "(on-demand, home-radius only)."
+        "Ingest region-scoped targets (mushrooms, camps, land, dispersed, trails) across all "
+        "configured coverage/countries instead of just the home radius."
     ),
 )
 @click.pass_context
@@ -464,14 +463,9 @@ def refresh(ctx: click.Context, with_: str, all_coverage: bool) -> None:
     cfg = ctx.obj["cfg"]
     targets = _parse_targets(with_)
     if all_coverage:
-        unsupported = [t for t in targets if t in ("camps", "dispersed")]
-        if unsupported:
-            raise click.UsageError(f"--all doesn't apply to {', '.join(unsupported)} (home-radius only, on-demand).")
         if "mushrooms" in targets and not cfg.countries:
             raise click.UsageError("No countries configured (set FORAY_COUNTRIES).")
-        if "land" in targets and not cfg.coverage:
-            raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
-        if "trails" in targets and not cfg.coverage:
+        if any(t in targets for t in ("camps", "land", "dispersed", "trails")) and not cfg.coverage:
             raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
     con = connect()
     try:
@@ -484,8 +478,14 @@ def refresh(ctx: click.Context, with_: str, all_coverage: bool) -> None:
                 for country in cfg.countries:
                     click.echo(f"Ingesting {country.name}…")
                     ingest_region(cfg, con, country)
+            if "camps" in targets:
+                click.echo("Ingesting campgrounds across coverage…")
+                ingest_campgrounds_coverage(cfg, con)
             if "land" in targets:
                 ingest_public_land_coverage(cfg, con)
+            if "dispersed" in targets:
+                click.echo("Ingesting dispersed camping across coverage…")
+                ingest_dispersed_coverage(cfg, con)
             if "trails" in targets:
                 for region in cfg.coverage:
                     click.echo(f"Ingesting trails for {region.name}…")
