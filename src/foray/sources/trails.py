@@ -866,3 +866,52 @@ def ingest_trails_region(
             )
         logger.info("trails: cached %d trails in %s", total, region.name)
         return total
+
+
+# Observations within this of a trail line feed its ``forage_obs`` count - the genus-agnostic
+# "how much fruits along here" signal the map ramps and the card shows. Matches the query-time
+# relevance radius (``scoring.queries._OBS_RELEVANCE_RADIUS_M``); keep the two in step.
+_FORAGE_OBS_RADIUS_M = 500
+# One backfill pass re-counts at most this many trails (oldest ``forage_obs_at`` first, NULLs
+# ahead of them). ~3s per 5k rows locally against a full ~1.2M-row trails table, so the default
+# pass is ~15s; a frequent cron then cycles the whole table over a couple of weeks. Bounded on
+# purpose - prod PG is a single vCPU and this one UPDATE holds row locks for its duration. The
+# operator can raise it via ``--limit`` / ``FORAY_FORAGE_LIMIT``.
+_FORAGE_BACKFILL_BATCH = 25000
+
+_FORAGE_BACKFILL_SQL = """
+    WITH batch AS (
+        SELECT id FROM trails
+        WHERE geom IS NOT NULL
+        ORDER BY forage_obs_at NULLS FIRST, id
+        LIMIT %s
+    )
+    UPDATE trails t SET
+        forage_obs = (
+            SELECT count(*) FROM observations o
+            WHERE o.geom IS NOT NULL
+              AND o.quality_grade = 'research'
+              AND NOT COALESCE(o.obscured, false)
+              AND ST_DWithin(o.geom, t.geom, %s)
+        ),
+        forage_obs_at = now()
+    FROM batch
+    WHERE t.id = batch.id
+"""
+
+
+def backfill_forage_obs(con: psycopg.Connection | None = None, *, max_trails: int | None = None) -> int:
+    """Refresh ``trails.forage_obs`` - the count of research-grade, non-obscured fungi
+    observations within ``_FORAGE_OBS_RADIUS_M`` of each trail line.
+
+    Processes the ``max_trails`` (default ``_FORAGE_BACKFILL_BATCH``) rows whose count is
+    oldest, NULLs first, so a frequent small cron cycles the whole table and keeps it roughly
+    fresh as observations drift. Returns the number of rows updated. Purely set-based - no
+    external calls - so it can't fail an ingest it's wired after; it just does one bounded pass.
+    """
+    limit = max_trails if max_trails is not None else _FORAGE_BACKFILL_BATCH
+    with connection(con) as database:
+        updated = database.execute(_FORAGE_BACKFILL_SQL, [limit, _FORAGE_OBS_RADIUS_M]).rowcount
+    if updated:
+        logger.info("trails: refreshed forage_obs for %d trails", updated)
+    return updated

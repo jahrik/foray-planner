@@ -56,6 +56,7 @@ All settings come from environment variables (prefix `FORAY_`, nested delimiter 
 | `FORAY_ELEVATION_INTERVAL_HOURS` / `FORAY_ELEVATION_LIMIT` | `1` / `20000` | Scheduler: elevation backfill interval + per-run upper bound (a run stops early when Open-Meteo rate-limits it) |
 | `FORAY_PRECIP_INTERVAL_HOURS` | `24` | Scheduler: rainfall pass interval (per-observation antecedent-rain backfill + recent-rain layer refresh, issue #226) |
 | `FORAY_FIRE_INTERVAL_HOURS` | `24` | Scheduler: wildfire refresh interval (active perimeters + burn-scar history + MTBS severity, issue #227) |
+| `FORAY_FORAGE_INTERVAL_HOURS` / `FORAY_FORAGE_LIMIT` | `6` / `20000` | Scheduler: per-trail foraging-density recount interval + trails per pass (set-based, stalest first - cycles the whole table over a few days) |
 
 **Database connection** comes from the standard libpq env vars
 (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`), read natively by `psycopg`. Credentials
@@ -103,7 +104,7 @@ ArcGIS BLM/USFS          Nominatim (geocoding)
 
 Search/scoring is **read-only** against cached data. Data ingestion happens independently:
 
-- **Scheduler service** (`scripts/scheduler.sh`): opt-in via `just scheduler` (docker-compose profile), pulls observations every 24h, refreshes layers (camps/land/dispersed/trails) every 168h, drains the elevation backfill (issue #36) every 1h, refreshes rainfall (issue #226) every 24h, and refreshes wildfire data (issue #227) every 24h
+- **Scheduler service** (`scripts/scheduler.sh`): opt-in via `just scheduler` (docker-compose profile), pulls observations every 24h, refreshes layers (camps/land/dispersed/trails) every 168h, drains the elevation backfill (issue #36) every 1h, refreshes rainfall (issue #226) every 24h, refreshes wildfire data (issue #227) every 24h, and recomputes per-trail foraging density every 6h
 - **Coverage regions**: state-level, using iNat `place_id` for exact administrative boundaries - all 50 US states by default (`FORAY_COVERAGE`), used by `trails --all` (Overpass can't take a whole-country query in one request)
 - **Countries**: country-level, one iNat `place_id` per country - United States by default (`FORAY_COUNTRIES`). Adding another country later is just one more entry, no code changes
 - **`just ingest`**: one-shot manual ingest for all coverage regions
@@ -131,6 +132,7 @@ uv run foray refresh --with camps,trails  # refresh only specific layers
 uv run foray refresh --with land,trails --all  # region-scoped land/trails across all coverage; not valid for camps/dispersed (home-radius only)
 uv run foray backfill-elevation  # fill observations.elevation_m for the backlog (Open-Meteo DEM; ingest does new rows inline)
 uv run foray backfill-precip     # fill observations.precip_7d_mm/30d_mm from Open-Meteo's ERA5 archive (issue #226)
+uv run foray backfill-forage     # recount research-grade fungi observations hugging each trail line (trails.forage_obs)
 uv run foray refresh-precip      # rebuild the recent-rain-per-destination layer (Open-Meteo forecast API)
 uv run foray fire                # refresh wildfire perimeters + burn scars + MTBS severity (NIFC/MTBS ArcGIS, issue #227)
 uv run foray genera-refresh      # sync the full Fungi genus catalog from iNat (fungi_genera)

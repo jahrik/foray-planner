@@ -377,7 +377,8 @@ def trails_near(
                ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km,
                {camp_select},
                {lead_select},
-               {obs_select} AS obs_n
+               {obs_select} AS obs_n,
+               t.forage_obs
         FROM trails t, pt{camp_join}{lead_join}{obs_join}
         WHERE t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s) {kind_filter}
         {order_limit}
@@ -386,8 +387,9 @@ def trails_near(
 
     # row layout: [8] this row's own length_km, [9] attrs, [10] unrounded distance, [11] camp
     # distance, [12] best connected length, [13] connects-a-route flag, [14] target-genus obs
-    # count near the line. Prominence is the lead trail's length (for a trailhead) or the row's
-    # own (for a path), plus a route bonus, plus a log-scaled foraging-density term.
+    # count near the line (query-time, genus-filtered), [15] persisted genus-agnostic forage_obs.
+    # Prominence is the lead trail's length (for a trailhead) or the row's own (for a path), plus
+    # a route bonus, plus a log-scaled foraging-density term.
     def lead_length(row: Sequence[Any]) -> float:
         return row[12] if row[12] is not None else (row[8] or 0.0)
 
@@ -430,11 +432,13 @@ def trails_near(
         # dozen "James Irvine Trail" segments. Unnamed rows (name None) are never collapsed.
         seen: set[str] = set()
         candidates = [row for row in candidates if not row[1] or not (row[1] in seen or seen.add(row[1]))]
-    trails = [_base_trail(row, distance_km=row[10], camp_distance_km=row[11]) for row in candidates]
+    trails = [_base_trail(row, distance_km=row[10], camp_distance_km=row[11], forage_obs=row[15]) for row in candidates]
     return trails[:limit] if limit is not None else trails
 
 
-def _base_trail(row: Sequence[Any], *, distance_km: float, camp_distance_km: float | None) -> Trail:
+def _base_trail(
+    row: Sequence[Any], *, distance_km: float, camp_distance_km: float | None, forage_obs: int | None = None
+) -> Trail:
     """Build a ``Trail`` from the standard 10-column prefix
     ``(id, name, kind, source, url, center_lat, center_lng, geojson, length_km, attrs)``.
 
@@ -456,6 +460,7 @@ def _base_trail(row: Sequence[Any], *, distance_km: float, camp_distance_km: flo
         length_km=length_km,
         attrs=parsed_attrs,
         walk_in=kind == "road" and _walk_in(parsed_attrs),
+        forage_obs=forage_obs,
     )
 
 
@@ -502,7 +507,7 @@ def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
     row = con.execute(
         """
         SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
-               t.connects, t.length_km, t.attrs, land.agency, land.unit
+               t.connects, t.length_km, t.attrs, land.agency, land.unit, t.forage_obs
         FROM trails t
         LEFT JOIN LATERAL (
             SELECT pl.agency, pl.unit FROM public_land pl
@@ -516,7 +521,22 @@ def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
     ).fetchone()
     if row is None:
         return None
-    trail_id_, name, kind, source, url, clat, clng, geojson, connects, length_km, attrs, land_agency, land_unit = row
+    (
+        trail_id_,
+        name,
+        kind,
+        source,
+        url,
+        clat,
+        clng,
+        geojson,
+        connects,
+        length_km,
+        attrs,
+        land_agency,
+        land_unit,
+        forage_obs,
+    ) = row
     parsed_attrs = json.loads(attrs) if attrs else None
     return Trail(
         id=trail_id_,
@@ -535,6 +555,7 @@ def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
         walk_in=kind == "road" and _walk_in(parsed_attrs),
         land_agency=land_agency,
         land_unit=land_unit,
+        forage_obs=forage_obs,
     )
 
 
@@ -646,7 +667,7 @@ def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: fl
     sql: LiteralString = f"""
         WITH pt AS (SELECT {GEOG_POINT} AS g)
         SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
-               t.length_km, t.attrs, ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km
+               t.length_km, t.attrs, ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km, t.forage_obs
         FROM trails t, pt
         WHERE t.kind IN ('path', 'road', 'route')
           AND t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s)
@@ -656,7 +677,7 @@ def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: fl
     row = con.execute(sql, [lng, lat, max_km * 1000.0]).fetchone()
     if row is None:
         return None
-    return _base_trail(row, distance_km=row[10], camp_distance_km=None)
+    return _base_trail(row, distance_km=row[10], camp_distance_km=None, forage_obs=row[11])
 
 
 def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[int]) -> dict[int, dict[str, Any]]:

@@ -106,9 +106,15 @@ CREATE TABLE IF NOT EXISTS trails (
                                      -- ingest so selecting a trailhead draws its trail straight
                                      -- from cache with no live Overpass call (issue #306)
     length_km   DOUBLE PRECISION,    -- path/route rows: great-circle length of the full polyline
-    attrs       TEXT                 -- path/route rows: JSON of the OSM detail tags (surface,
+    attrs       TEXT,                -- path/route rows: JSON of the OSM detail tags (surface,
                                      -- sac_scale, trail_visibility, network, operator, informal),
                                      -- stored as text like `geojson` - the map/Details view reads it
+    forage_obs    INTEGER,           -- count of research-grade, non-obscured fungi observations
+                                     -- within _FORAGE_OBS_RADIUS_M of the line - a genus-agnostic
+                                     -- "how much fruits along here" signal the map ramps + the
+                                     -- card shows. Refreshed in rotation by `backfill_forage_obs`.
+    forage_obs_at TIMESTAMPTZ        -- when forage_obs was last computed (NULLs go first in the
+                                     -- backfill rotation); staleness is fine, it drifts slowly
 );
 
 -- Wildfire perimeters + points (issue #227). An active fire and a recent burn scar are the
@@ -483,6 +489,13 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     (31, "ALTER TABLE campsites ADD COLUMN IF NOT EXISTS reservable BOOLEAN"),
     (32, "ALTER TABLE campsites ADD COLUMN IF NOT EXISTS fee_low DOUBLE PRECISION"),
     (33, "ALTER TABLE campsites ADD COLUMN IF NOT EXISTS fee_high DOUBLE PRECISION"),
+    # --- Per-trail foraging density -----------------------------------------------------
+    # `forage_obs` counts research-grade, non-obscured fungi observations hugging the trail
+    # line (genus-agnostic) so the map can ramp a line by how productive the ground is and the
+    # card can show it. `forage_obs_at` orders the backfill rotation (`backfill_forage_obs`).
+    # Both additive; NULL until the first backfill pass reaches the row.
+    (34, "ALTER TABLE trails ADD COLUMN IF NOT EXISTS forage_obs INTEGER"),
+    (35, "ALTER TABLE trails ADD COLUMN IF NOT EXISTS forage_obs_at TIMESTAMPTZ"),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]

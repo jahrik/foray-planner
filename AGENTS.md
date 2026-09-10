@@ -190,13 +190,16 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   grind (`foray resync --batch-size N`), and the elevation backfill drain
   (`foray backfill-elevation --limit N`, issue #36 - Open-Meteo rate-limits a burst so each
   pass only does a few hundred rows), and the rainfall pass (`foray backfill-precip` +
-  `foray refresh-precip`, issue #226), each on their own N-hour interval. Configurable via
+  `foray refresh-precip`, issue #226), and the per-trail foraging-density recount
+  (`foray backfill-forage --limit N`, issue #306 A4c - a bounded set-based pass over the stalest
+  trails, no external API), each on their own N-hour interval. Configurable via
   `FORAY_INGEST_INTERVAL_HOURS` (default 24), `FORAY_LAYERS_INTERVAL_HOURS` (default 168),
   `FORAY_REVALIDATE_INTERVAL_HOURS` (default 168), `FORAY_RESYNC_INTERVAL_HOURS` (default 1),
   `FORAY_RESYNC_BATCH_SIZE` (default 2000), `FORAY_ELEVATION_INTERVAL_HOURS` (default 1),
   `FORAY_ELEVATION_LIMIT` (default 20000 - an upper bound; a run stops earlier when Open-Meteo
   rate-limits it), and `FORAY_PRECIP_INTERVAL_HOURS` (default 24 - rain changes far faster than
-  the 168h layers), and `FORAY_FIRE_INTERVAL_HOURS` (default 24 - perimeter data updates ~daily).
+  the 168h layers), `FORAY_FIRE_INTERVAL_HOURS` (default 24 - perimeter data updates ~daily), and
+  `FORAY_FORAGE_INTERVAL_HOURS` / `FORAY_FORAGE_LIMIT` (default 6 / 20000).
 - `frontend/` - the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern
   into `src/{map,ui,views,api}/` subfolders. The #301 redesign reshaped the UI into one
   answer-first flow (no tabs); the pieces:

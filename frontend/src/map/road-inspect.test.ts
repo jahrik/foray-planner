@@ -173,4 +173,12 @@ describe("enrichedRoadPopupSpec", () => {
     )!;
     expect(spec.lines).toContain("Walk-in (gated to vehicles)");
   });
+
+  it("notes the foraging-record count when the way carries one", () => {
+    const spec = enrichedRoadPopupSpec({ kind_detail: "track" }, 0, 0, near({ forage_obs: 23 }))!;
+    expect(spec.lines).toContain("23 fungi records within ~500 m");
+    // absent / zero -> no line
+    const none = enrichedRoadPopupSpec({ kind_detail: "track" }, 0, 0, near({ forage_obs: 0 }))!;
+    expect((none.lines ?? []).some((l) => l.includes("fungi records"))).toBe(false);
+  });
 });

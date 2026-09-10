@@ -134,6 +134,7 @@ export interface NearbyTrail {
   distance_km: number;
   length_km?: number | null;
   walk_in?: boolean;
+  forage_obs?: number | null;
   attrs?: Record<string, string> | null;
 }
 
@@ -187,6 +188,10 @@ export function enrichedRoadPopupSpec(
     lines.push("Access restricted");
   if (flagged(props.is_bridge)) lines.push("Bridge");
   if (flagged(props.is_tunnel)) lines.push("Tunnel");
+  // Foraging density (issue A4c) - research-grade fungi records hugging this way. A hint that
+  // tracks foot traffic as much as productivity, so it's phrased as a plain count.
+  if (trail.forage_obs != null && trail.forage_obs > 0)
+    lines.push(`${trail.forage_obs} fungi records within ~500 m`);
 
   return {
     title: realName ?? (attrs.ref ? `Ref ${attrs.ref}` : fallbackTitle(props)),

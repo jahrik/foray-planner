@@ -32,6 +32,9 @@ interface MapState {
   // Whether the currently-drawn selected trail is a walk-in (gated) forest road - drives the
   // matching legend entry (issue A4b). Reset when the trail is cleared.
   selectedTrailWalkIn: boolean;
+  // Foraging-density tier (0 unknown / 1-3) of the currently-drawn selected trail - drives its
+  // line colour ramp + legend entry (issue A4c). Reset when the trail is cleared.
+  selectedTrailForage: 0 | 1 | 2 | 3;
   planRouteLayer: L.Polyline | null;
   focused: { lat: number; lng: number } | null;
 }
@@ -72,6 +75,7 @@ export const state: State = {
   cardCampMarkers: [],
   selectedTrailLayer: null,
   selectedTrailWalkIn: false,
+  selectedTrailForage: 0,
   planRouteLayer: null,
   planTrip: null,
   focused: null,

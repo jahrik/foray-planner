@@ -770,6 +770,12 @@ a.chip:hover {
 .chip.walkin {
   border-style: dashed;
 }
+/* Trails tab row with many research-grade fungi records hugging the line (issue A4c) - a subtle
+   warm lift, matching the hot end of the selected-trail map ramp (map.ts's FORAGE_RAMP). */
+.chip.forage-hi {
+  border-color: #ff8c42;
+  color: #ff8c42;
+}
 .chip.removable {
   display: inline-flex;
   align-items: center;
