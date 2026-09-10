@@ -467,6 +467,10 @@ def refresh(ctx: click.Context, with_: str, all_coverage: bool) -> None:
             raise click.UsageError("No countries configured (set FORAY_COUNTRIES).")
         if any(t in targets for t in ("camps", "land", "dispersed", "trails")) and not cfg.coverage:
             raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
+        # land / dispersed / trails query by bbox (envelope or per-region tiles); without one on
+        # any region they'd raise a bare ValueError. camps only needs the region name -> state code.
+        if any(t in targets for t in ("land", "dispersed", "trails")) and not any(r.bbox for r in cfg.coverage):
+            raise click.UsageError("No coverage region has a bbox (needed for land/dispersed/trails --all).")
     con = connect()
     try:
         # No more global location override to load here - home/radius overrides are now per-device
@@ -487,7 +491,11 @@ def refresh(ctx: click.Context, with_: str, all_coverage: bool) -> None:
                 click.echo("Ingesting dispersed camping across coverage…")
                 ingest_dispersed_coverage(cfg, con)
             if "trails" in targets:
+                # Skip observation-only regions (a `countries`-style entry with no bbox); the
+                # per-region Overpass ingest needs one and would otherwise raise.
                 for region in cfg.coverage:
+                    if region.bbox is None:
+                        continue
                     click.echo(f"Ingesting trails for {region.name}…")
                     ingest_trails_region(region, con)
             # The home-radius path rebuilds phenology inside run_home_refresh; the

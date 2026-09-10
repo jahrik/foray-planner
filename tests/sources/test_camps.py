@@ -209,6 +209,25 @@ def test_ingest_campgrounds_coverage_lists_every_state_prunes_and_is_one_shot(co
     assert seen_states == []
 
 
+def test_ingest_campgrounds_coverage_skips_prune_on_mixed_bbox_coverage(con: psycopg.Connection) -> None:
+    # A no-bbox coverage region alongside bbox'd ones: the envelope would omit it, so pruning
+    # to the envelope must be skipped rather than deleting that region's legitimate facilities.
+    upsert_campsites(
+        con,
+        [("ridb:99", "Montana site", "campground", None, None, 46.6, -111.0, "ridb", "u", None, None, None)],
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"RECDATA": [], "METADATA": {"RESULTS": {"TOTAL_COUNT": 0}}})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    cfg = Settings(coverage=[_COVERAGE[0], CoverageRegion(name="Montana", place_id=30)])  # OR (bbox) + MT (none)
+
+    ingest_campgrounds_coverage(cfg, con, api_key="k", client=client)
+    cached = {row[0] for row in con.execute("SELECT id FROM campsites").fetchall()}
+    assert "ridb:99" in cached  # not pruned - the envelope can't speak for the no-bbox region
+
+
 def test_ingest_campgrounds_coverage_skips_without_a_key(
     con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:

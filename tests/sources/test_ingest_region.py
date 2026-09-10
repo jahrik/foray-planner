@@ -214,6 +214,10 @@ def test_cli_trails_all_no_coverage_does_not_leak_connection(con, monkeypatch) -
 
 
 def test_cli_refresh_all_runs_the_coverage_camp_ingests(env_with_coverage, monkeypatch) -> None:
+    monkeypatch.setenv(
+        "FORAY_COVERAGE",
+        json.dumps([{"name": "Washington", "place_id": 46, "bbox": [-124.8, 45.5, -116.9, 49.0]}]),
+    )
     calls: list[str] = []
     monkeypatch.setattr("foray.cli.ingest_campgrounds_coverage", lambda *a, **k: calls.append("camps") or 0)
     monkeypatch.setattr("foray.cli.ingest_dispersed_coverage", lambda *a, **k: calls.append("dispersed") or 0)
@@ -232,6 +236,19 @@ def test_cli_refresh_all_camps_requires_coverage(con, monkeypatch) -> None:
     result = runner.invoke(cli, ["refresh", "--with", "camps", "--all"])
     assert result.exit_code != 0
     assert "No coverage regions configured" in result.output
+
+
+def test_cli_refresh_all_land_requires_a_coverage_bbox(con, monkeypatch) -> None:
+    # coverage configured, but every region is observation-only (no bbox) - the bbox-based
+    # ingests would otherwise raise a bare ValueError. camps (state-code only) stays allowed.
+    monkeypatch.setenv("FORAY_HOME__LAT", "47.6")
+    monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
+    monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
+    monkeypatch.setenv("FORAY_COVERAGE", json.dumps([{"name": "Washington", "place_id": 46}]))
+    runner = CliRunner()
+    result = runner.invoke(cli, ["refresh", "--with", "land,dispersed", "--all"])
+    assert result.exit_code != 0
+    assert "no coverage region has a bbox" in result.output.lower()
 
 
 def test_cli_refresh_all_mushrooms_requires_countries(con, monkeypatch) -> None:
