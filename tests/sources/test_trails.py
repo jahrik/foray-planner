@@ -729,26 +729,34 @@ def test_backfill_forage_obs_counts_research_grade_fungi_hugging_the_line(con: p
     )
     assert near_line is not None and far_line is not None
     upsert_trails(con, [near_line, far_line])
+    # a trailhead node sitting right on the line - stays NULL (points don't get a count)
+    th_point = '{"type":"Point","coordinates":[-122.30,47.605]}'
+    upsert_trails(
+        con, [("osm:node/9", "Loop TH", "trailhead", "osm", "u", 47.605, -122.30, th_point, None, None, None)]
+    )
     with con.cursor() as cur:
         cur.execute("INSERT INTO fungi_genera (taxon_id, name) VALUES (48701, 'Boletus')")
         cur.executemany(
             "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade, obscured)"
-            " VALUES (%s, 48701, %s, %s, '2022-09-15', 9, %s, %s)",
+            " VALUES (%s, %s, %s, %s, '2022-09-15', 9, %s, %s)",
             [
-                (1, 47.605, -122.3000, "research", False),  # on the line
-                (2, 47.606, -122.3005, "research", False),  # ~40 m off - within 500 m
-                (3, 47.607, -122.3000, "research", None),  # obscured NULL -> counts (COALESCE)
-                (4, 47.605, -122.3000, "needs_id", False),  # not research-grade -> excluded
-                (5, 47.605, -122.3000, "research", True),  # obscured -> excluded (fuzzed location)
-                (6, 47.650, -122.3000, "research", False),  # ~4 km away -> excluded
+                (1, 48701, 47.605, -122.3000, "research", False),  # on the line
+                (2, 48701, 47.606, -122.3005, "research", False),  # ~40 m off - within 500 m
+                (3, 48701, 47.607, -122.3000, "research", None),  # obscured NULL -> counts (COALESCE)
+                (4, 48701, 47.605, -122.3000, "needs_id", False),  # not research-grade -> excluded
+                (5, 48701, 47.605, -122.3000, "research", True),  # obscured -> excluded (fuzzed location)
+                (6, 48701, 47.650, -122.3000, "research", False),  # ~4 km away -> excluded
+                (7, 99999, 47.605, -122.3000, "research", False),  # taxon not in fungi_genera -> excluded
             ],
         )
 
-    assert backfill_forage_obs(con) == 2  # both trail rows visited
+    assert backfill_forage_obs(con) == 2  # the two line rows; the trailhead is skipped
     loop = get_trail(con, "osm:way/1")
     far = get_trail(con, "osm:way/2")
+    th = get_trail(con, "osm:node/9")
     assert loop is not None and loop.forage_obs == 3
     assert far is not None and far.forage_obs == 0
+    assert th is not None and th.forage_obs is None
     # oldest-first rotation: a capped pass re-times only the stalest row
     assert backfill_forage_obs(con, max_trails=1) == 1
 

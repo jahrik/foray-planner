@@ -874,15 +874,21 @@ def ingest_trails_region(
 _FORAGE_OBS_RADIUS_M = 500
 # One backfill pass re-counts at most this many trails (oldest ``forage_obs_at`` first, NULLs
 # ahead of them). ~3s per 5k rows locally against a full ~1.2M-row trails table, so the default
-# pass is ~15s; a frequent cron then cycles the whole table over a couple of weeks. Bounded on
+# pass is ~12s; the scheduler's 6h cadence then cycles a full table in ~2 weeks. Bounded on
 # purpose - prod PG is a single vCPU and this one UPDATE holds row locks for its duration. The
-# operator can raise it via ``--limit`` / ``FORAY_FORAGE_LIMIT``.
-_FORAGE_BACKFILL_BATCH = 25000
+# operator can raise it via ``--limit`` / ``FORAY_FORAGE_LIMIT`` (the scheduler default).
+_FORAGE_BACKFILL_BATCH = 20000
 
+# Only line kinds get a count - a trailhead is a point, and a selected trailhead row draws its
+# *connected* trail line(s), so a 500 m-of-the-node count would mislabel that line. Trailheads
+# keep forage_obs NULL -> tier 0 -> the default line colour. The ``fungi_genera`` guard is
+# belt-and-braces: ``sources.ingest`` already drops any observation it can't resolve to a
+# catalog genus, but the homonym-leak machinery (issue #242) means "is a catalog genus" is the
+# honest bar for "counts as a fungi find".
 _FORAGE_BACKFILL_SQL = """
     WITH batch AS (
         SELECT id FROM trails
-        WHERE geom IS NOT NULL
+        WHERE geom IS NOT NULL AND kind IN ('path', 'road', 'route')
         ORDER BY forage_obs_at NULLS FIRST, id
         LIMIT %s
     )
@@ -892,6 +898,7 @@ _FORAGE_BACKFILL_SQL = """
             WHERE o.geom IS NOT NULL
               AND o.quality_grade = 'research'
               AND NOT COALESCE(o.obscured, false)
+              AND o.taxon_id IN (SELECT taxon_id FROM fungi_genera)
               AND ST_DWithin(o.geom, t.geom, %s)
         ),
         forage_obs_at = now()
