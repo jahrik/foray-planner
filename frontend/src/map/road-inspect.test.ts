@@ -181,4 +181,14 @@ describe("enrichedRoadPopupSpec", () => {
     const none = enrichedRoadPopupSpec({ kind_detail: "track" }, 0, 0, near({ forage_obs: 0 }))!;
     expect((none.lines ?? []).some((l) => l.includes("fungi records"))).toBe(false);
   });
+
+  it("notes a seasonal / conditional access restriction", () => {
+    const spec = enrichedRoadPopupSpec(
+      { kind_detail: "track" },
+      0,
+      0,
+      near({ attrs: { "access:conditional": "no @ (Nov-May)" } }),
+    )!;
+    expect(spec.lines).toContain("Seasonal: no @ (Nov-May)");
+  });
 });

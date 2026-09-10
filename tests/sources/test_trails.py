@@ -86,6 +86,8 @@ def test_parse_element_derives_length_km_and_keeps_detail_tags() -> None:
                 "sac_scale": "mountain_hiking",
                 "informal": "yes",
                 "foot": "yes",
+                "seasonal": "yes",
+                "access:conditional": "no @ (Nov-May)",
                 "wikipedia": "en:Ridge Trail",  # not in _ATTR_TAGS - dropped
             },
             "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.30}],  # ~1.1 km
@@ -99,6 +101,8 @@ def test_parse_element_derives_length_km_and_keeps_detail_tags() -> None:
         "sac_scale": "mountain_hiking",
         "informal": "yes",
         "foot": "yes",
+        "seasonal": "yes",
+        "access:conditional": "no @ (Nov-May)",
     }
 
     bare = _parse_element(

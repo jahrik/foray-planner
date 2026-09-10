@@ -3,6 +3,7 @@ import L from "leaflet";
 import { getJson } from "../api/client";
 import type { Calendar, CampSite, RecentObservation, RecentObservationsPage, Trail } from "../api/types";
 import { FORAGE_HI_THRESHOLD } from "../map/forage";
+import { gradeLabel, seasonalNote } from "../map/trail-attrs";
 import { selectTrailhead } from "../map/layers";
 import {
   clearCardCampMarkers,
@@ -225,6 +226,9 @@ export async function loadTrailheadsInto(
     if (trailhead.length_km != null) parts.push(`${trailhead.length_km.toFixed(1)} km`);
     const land = landLabel(trailhead.land_agency, trailhead.land_unit);
     if (land) parts.push(land);
+    // `tracktype` grade (1 maintained ... 5 barely a track); the map dashes grade 4-5.
+    const grade = gradeLabel(trailhead.attrs);
+    if (grade) parts.push(grade);
     button.textContent = parts.join(" · ");
     if (trailhead.walk_in) {
       // A forest road gated to vehicles but open on foot - less picked, prime foraging.
@@ -241,6 +245,13 @@ export async function loadTrailheadsInto(
         .filter(Boolean)
         .join(" · ");
       if (trailhead.forage_obs >= FORAGE_HI_THRESHOLD) button.classList.add("forage-hi");
+    }
+    // A snow gate / winter closure / fire-season gate - the road isn't open year-round. We don't
+    // resolve the condition against today's date, just flag it and carry the raw OSM condition.
+    const seasonal = seasonalNote(trailhead.attrs);
+    if (seasonal) {
+      button.textContent += " · seasonal";
+      button.title = [button.title, `Seasonal access: ${seasonal}`].filter(Boolean).join(" · ");
     }
     const marker = plotTrailhead(trailhead.center_lat, trailhead.center_lng, trailhead.name, () =>
       selectRow(trailhead, button, marker),

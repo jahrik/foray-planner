@@ -5,6 +5,7 @@ import type { CampSite, FireNear, LandUnit, PreciseObservation, Trail, TrailPath
 import { createRunGuard } from "../ui/card-select";
 import { feeLabel } from "../format";
 import { FORAGE_RAMP, forageTier } from "./forage";
+import { isRoughSurface } from "./trail-attrs";
 import { circleStyle } from "./markers";
 import { buildPopup } from "./popup";
 import {
@@ -246,21 +247,6 @@ function trailParts(geometry: GeoJSON.Geometry): L.LatLngTuple[][] {
     return geometry.coordinates.map((line) => line.map(([lng, lat]) => [lat, lng] as L.LatLngTuple));
   }
   return [];
-}
-
-// Ungraded / rough tread, from the OSM detail tags the trail row carries (issue A4b): the
-// selected-trail line draws dashed for these so a graded road and a washed-out two-track don't
-// look alike on the map. `tracktype` grade4/5 is the primary signal; `surface` / `smoothness`
-// back it up when tracktype is absent (common on `highway=path`).
-const ROUGH_SURFACE = new Set(["ground", "dirt", "earth", "mud", "grass", "sand", "rock", "pebblestone"]);
-const ROUGH_SMOOTHNESS = new Set(["bad", "very_bad", "horrible", "very_horrible", "impassable"]);
-
-function isRoughSurface(attrs: Trail["attrs"]): boolean {
-  if (!attrs) return false;
-  const tracktype = attrs.tracktype;
-  if (tracktype === "grade4" || tracktype === "grade5") return true;
-  if (tracktype === "grade1" || tracktype === "grade2") return false; // graded - explicitly smooth
-  return ROUGH_SURFACE.has(attrs.surface ?? "") || ROUGH_SMOOTHNESS.has(attrs.smoothness ?? "");
 }
 
 // Only the most recently started animation should still be drawing - if the user clicks a
