@@ -137,12 +137,16 @@ export async function loadPhotosInto(regionId: string, container: HTMLElement): 
 
 // Same fetch-once-per-card pattern as loadCalendarInto/loadPhotosInto. Scoped to the
 // destination's own true circle (regionRadiusKm() - the same footprint issue #161 already uses
-// for precise-observations, not the whole home search radius) and to trailheads only (`kind`,
-// issue #115 follow-up) - a destination card should list what's actually reachable from inside
-// it, not every path/route/trailhead in the search area. Selecting a row draws the real trail on
-// the map (layers.ts's selectTrailhead) rather than just opening a popup.
+// for precise-observations, not the whole home search radius) and queried from the region's
+// observation centroid (`lat`/`lng`), not `region_id` - the latter resolves to the grid-cell
+// centre, which for a coastal cell can sit offshore, km from anything (issue #306 C4).
+//
+// Lists trailhead nodes plus the park's named paths and hiking routes (issue #306 C1) - where
+// OSM has only a couple of `highway=trailhead` nodes the marquee named trails are all `path`
+// ways, and a trailhead-only list drops them. Selecting a row draws the real trail on the map
+// (layers.ts's selectTrailhead) rather than just opening a popup.
 export async function loadTrailheadsInto(
-  region: { region_id: string },
+  region: { region_id: string; center_lat: number; center_lng: number },
   container: HTMLElement,
 ): Promise<boolean> {
   container.innerHTML = "<p class='hint'>Loading…</p>";
@@ -151,12 +155,13 @@ export async function loadTrailheadsInto(
     // See layers.ts's LandUnit cast - `geometry` is real GeoJSON, just untyped on the backend.
     trailheads = (await getJson("/api/trails", {
       query: {
-        region_id: region.region_id,
-        kind: "trailhead",
+        lat: region.center_lat,
+        lng: region.center_lng,
+        kind: "trailhead,path,route",
         radius_km: regionRadiusKm(),
         limit: 20,
-        // Rank by the trail each trailhead leads to (named route, then length) rather than raw
-        // proximity, and drop the ones that only connect to unnamed OSM connector stubs (#306).
+        // Rank by trail prominence (named route, then length, then target-genus finds along the
+        // line) rather than raw proximity, and drop unnamed sub-0.5 km OSM connector stubs (#306).
         sort: "relevance",
         significant_only: true,
       },
@@ -166,7 +171,7 @@ export async function loadTrailheadsInto(
     return false;
   }
   if (!trailheads.length) {
-    container.innerHTML = "<p class='hint'>No trailheads cached in this destination yet.</p>";
+    container.innerHTML = "<p class='hint'>No trails cached in this destination yet.</p>";
     return true;
   }
   container.innerHTML = "";
@@ -189,7 +194,9 @@ export async function loadTrailheadsInto(
     const button = document.createElement("button");
     button.type = "button";
     button.className = "chip";
-    button.textContent = `${trailhead.name} · ${dist(trailhead.distance_km)}`;
+    // A path/route row carries its length; a trailhead node doesn't - use it to tell them apart.
+    const length = trailhead.length_km != null ? ` · ${trailhead.length_km.toFixed(1)} km` : "";
+    button.textContent = `${trailhead.name} · ${dist(trailhead.distance_km)}${length}`;
     const marker = plotTrailhead(trailhead.center_lat, trailhead.center_lng, trailhead.name, () =>
       selectRow(trailhead, button, marker),
     );
@@ -209,14 +216,15 @@ export async function loadTrailheadsInto(
 // (name, fee, coords) - no server-side "resolve the real thing" step, so selecting a row just
 // syncs the active chip/marker pair and opens the marker's popup, instead of drawing anything new.
 export async function loadCampgroundsInto(
-  region: { region_id: string },
+  region: { region_id: string; center_lat: number; center_lng: number },
   container: HTMLElement,
 ): Promise<boolean> {
   container.innerHTML = "<p class='hint'>Loading…</p>";
   let sites: CampSite[];
   try {
+    // Queried from the observation centroid, not `region_id` - see loadTrailheadsInto (#306 C4).
     sites = await getJson("/api/camps", {
-      query: { region_id: region.region_id, radius_km: regionRadiusKm(), limit: 20 },
+      query: { lat: region.center_lat, lng: region.center_lng, radius_km: regionRadiusKm(), limit: 20 },
     });
   } catch (error) {
     container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;

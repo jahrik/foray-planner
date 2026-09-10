@@ -123,7 +123,11 @@ function addCard(
     onDetails: (cardEl, numEl) => {
       snapTo("full");
       ctx.cardSelection.select(cardEl, marker);
-      openDetails({ region_id: spec.regionId }, numEl.textContent ?? spec.regionId, ctx.restoreList);
+      openDetails(
+        { region_id: spec.regionId, center_lat: spec.lat, center_lng: spec.lng },
+        numEl.textContent ?? spec.regionId,
+        ctx.restoreList,
+      );
     },
     onPlan: () => toggleShortlist(spec.regionId),
     isPlanned: () => inShortlist(spec.regionId),
