@@ -277,8 +277,9 @@ def trails_near(
     a ``LATERAL`` KNN join off ``ix_campsites_geom`` (issue #268 PR 5 - previously an
     O(trails-in-radius * all-campsites) Python loop, ~13s on a 1M-trail / 17k-camp prod cache).
 
-    ``kind`` restricts to one element class (e.g. ``"trailhead"`` for the destination-card trail
-    list, issue #115 follow-up). ``limit`` caps the result - and when set, is pushed into the
+    ``kind`` restricts to one element class, or several comma-separated (the destination-card
+    trail list asks for ``"trailhead,path,route"`` - issue #306 C1, a park's named paths matter
+    where trailhead nodes are sparse). ``limit`` caps the result - and when set, is pushed into the
     query as ``ORDER BY <-> LIMIT`` so only that many trails are fetched (and camp-joined),
     rather than every trail in the radius then trimmed. ``with_camp_distance=False`` drops the
     per-trail nearest-camp LATERAL entirely - the trip planner only wants the single nearest
@@ -293,7 +294,11 @@ def trails_near(
     # obs_join (FROM) -> radius (WHERE) -> kind (WHERE) -> limit (ORDER BY).
     params: list[Any] = [lng, lat]
     geojson_select: LiteralString = "t.geojson" if with_geometry else "NULL::text"
-    kind_filter: LiteralString = "AND t.kind = %s" if kind is not None else ""
+    # ``kind`` may name one element class or several, comma-separated (the destination-card
+    # trail list asks for ``"trailhead,path,route"`` so a park's marquee named paths show
+    # alongside the sparse trailhead nodes - issue #306 C1).
+    kinds = [part.strip() for part in kind.split(",") if part.strip()] if kind else None
+    kind_filter: LiteralString = "AND t.kind = ANY(%s)" if kinds else ""
     if with_camp_distance:
         camp_select: LiteralString = "camp.d / 1000.0 AS camp_km"
         camp_join: LiteralString = """
@@ -339,8 +344,8 @@ def trails_near(
         obs_select = "0::bigint"
 
     params.append(radius_km * 1000.0)
-    if kind is not None:
-        params.append(kind)
+    if kinds:
+        params.append(kinds)
 
     order_limit: LiteralString = ""
     if sort == "nearest" and limit is not None:
@@ -406,11 +411,13 @@ def trails_near(
     else:
         # Rank on the unrounded distance so near-ties keep their true order (matches ``camps_near``).
         candidates.sort(key=lambda row: row[10])
-    if kind == "trailhead":
-        # Several nodes often share a trailhead name (different access points to one park); keep
-        # only the best-ranked of each so the list isn't three "Beaver Pond Natural Area" rows.
+    if significant_only or kinds == ["trailhead"]:
+        # Several rows often share a name: different access points to one park, or the OSM way
+        # segments of one long named trail. For the card list (``significant_only``) keep only
+        # the best-ranked of each name so it isn't three "Beaver Pond Natural Area" rows or a
+        # dozen "James Irvine Trail" segments. Unnamed rows (name None) are never collapsed.
         seen: set[str] = set()
-        candidates = [row for row in candidates if not (row[1] in seen or seen.add(row[1]))]
+        candidates = [row for row in candidates if not row[1] or not (row[1] in seen or seen.add(row[1]))]
     trails = [_base_trail(row, distance_km=row[10], camp_distance_km=row[11]) for row in candidates]
     return trails[:limit] if limit is not None else trails
 
@@ -482,6 +489,32 @@ def connected_trails(con: psycopg.Connection, trail_ids: Sequence[str]) -> list[
     ).fetchall()
     by_id = {row[0]: _base_trail(row, distance_km=0.0, camp_distance_km=None) for row in rows}
     return [by_id[tid] for tid in trail_ids if tid in by_id]
+
+
+# OSM splits one real named trail into many way rows; when a card lists it (as a ``path``/
+# ``route`` row, issue #306 C2) and the user selects it, stitch the sibling segments back
+# together so the drawn line is the whole trail, not the one way the row happened to be.
+_SEGMENT_STITCH_M = 8000.0
+
+
+def trail_segments_by_name(con: psycopg.Connection, *, name: str, kind: str, ref_id: str) -> list[Trail]:
+    """Every same-name, same-``kind`` trail row whose geometry runs within ``_SEGMENT_STITCH_M``
+    of the row ``ref_id`` (that row included), geometry loaded. Empty if ``ref_id`` isn't cached.
+
+    Feeds ``trails.resolve_trail_network`` for a directly-selected way/route id: OSM stores one
+    row per way, so "James Irvine Trail" is a dozen rows - this gathers the run near the picked
+    one. The distance bound keeps a coincidentally same-named trail in another state out.
+    """
+    sql: LiteralString = """
+        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
+               t.length_km, t.attrs
+        FROM trails t, (SELECT geom FROM trails WHERE id = %s) ref
+        WHERE t.name = %s AND t.kind = %s AND t.geom IS NOT NULL
+          AND ST_DWithin(t.geom, ref.geom, %s)
+        ORDER BY t.geom <-> ref.geom
+        """
+    rows = con.execute(sql, [ref_id, name, kind, _SEGMENT_STITCH_M]).fetchall()
+    return [_base_trail(row, distance_km=0.0, camp_distance_km=None) for row in rows]
 
 
 # Beyond this, "no trailhead nearby" and "this area isn't mapped yet" are indistinguishable, so

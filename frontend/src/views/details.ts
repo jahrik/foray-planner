@@ -17,10 +17,13 @@ import {
 
 type DetailTab = "calendar" | "photos" | "trails" | "camps";
 
-// Only the region id is needed - every loader queries by it. Both a scored destination
-// (RegionScore) and an "Active now" alert region satisfy this.
+// The region id plus its observation centroid: the calendar/photos loaders query by id, the
+// trails/camps loaders query by the centroid (issue #306 C4 - a grid cell's centre can sit
+// offshore). Both a scored destination (RegionScore) and an "Active now" alert region satisfy this.
 export interface DetailRegion {
   region_id: string;
+  center_lat: number;
+  center_lng: number;
 }
 
 export function openDetails(region: DetailRegion, title: string, onBack: () => void): void {

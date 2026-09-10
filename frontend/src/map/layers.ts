@@ -316,6 +316,17 @@ export async function selectTrailhead(trail: Trail): Promise<void> {
     dashArray: path.authoritative ? undefined : "6 6",
     bubblingMouseEvents: false,
   }).addTo(map);
+  // A non-authoritative result is the nearest *different* mapped trail, not the selection's own
+  // path - say so plainly rather than letting a stand-in trail read as the one that was picked
+  // (issue #306 C3).
+  if (!path.authoritative) {
+    const label = `Nearest mapped trail: ${path.trail.name} (exact path for “${trail.name}” unavailable)`;
+    // OSM names are untrusted - bind the tooltip as a text node, not an HTML string.
+    const tip = document.createElement("span");
+    tip.textContent = label;
+    layer.bindTooltip(tip, { sticky: true });
+    setStatus(label);
+  }
   setSelectedTrail(layer);
   map.flyToBounds(L.latLngBounds(parts.flat()), { padding: [40, 40], maxZoom: 15, duration: 0.5 });
   animateTrail(layer, parts);

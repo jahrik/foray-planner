@@ -10,7 +10,7 @@ import pytest
 
 from foray.cache import is_ingested, record_ingest, upsert_campsites, upsert_trails
 from foray.config import CoverageRegion, Home, Ingest, Settings
-from foray.scoring import get_trail, nearest_trail, trails_near
+from foray.scoring import get_trail, nearest_trail, trail_segments_by_name, trails_near
 from foray.sources.trails import (
     _TRAILS_QUERY_VERSION,
     _network_query,
@@ -1083,3 +1083,85 @@ def test_resolve_trail_network_returns_none_when_nothing_found_at_all(con: psyco
     upsert_trails(con, [trailhead])
     client = httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(200, json={"elements": []})))
     assert resolve_trail_network(con, "osm:node/1", client=client) is None
+
+
+def _named_way(way_id: int, name: str, coords: list[tuple[float, float]]) -> tuple[object, ...]:
+    row = _parse_element(
+        {
+            "type": "way",
+            "id": way_id,
+            "tags": {"highway": "path", "name": name},
+            "geometry": [{"lat": lat, "lon": lng} for lat, lng in coords],
+        }
+    )
+    assert row is not None
+    return row
+
+
+def test_trails_near_multi_kind_lists_trailheads_and_named_paths(con: psycopg.Connection) -> None:
+    # A park with one trailhead node but several marquee named paths - the card asks for all
+    # three kinds so the paths aren't dropped (issue #306 C1).
+    trailhead = _parse_element(
+        {"type": "node", "id": 1, "lat": 47.605, "lon": -122.30, "tags": {"highway": "trailhead", "name": "Fern TH"}}
+    )
+    assert trailhead is not None
+    upsert_trails(
+        con,
+        [
+            trailhead,
+            _named_way(2, "James Irvine Trail", [(47.606, -122.30), (47.612, -122.30)]),
+            _named_way(3, "Miner's Ridge Trail", [(47.607, -122.31), (47.613, -122.31)]),
+        ],
+    )
+    names = {t.name for t in trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, kind="trailhead,path,route")}
+    assert names == {"Fern TH", "James Irvine Trail", "Miner's Ridge Trail"}
+    # A single kind still works (the `= ANY` collapse of the old `= %s`).
+    only_th = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, kind="trailhead")
+    assert [t.name for t in only_th] == ["Fern TH"]
+
+
+def test_trails_near_significant_only_collapses_same_named_path_segments(con: psycopg.Connection) -> None:
+    upsert_trails(
+        con,
+        [
+            _named_way(2, "James Irvine Trail", [(47.601, -122.30), (47.606, -122.30)]),
+            _named_way(3, "James Irvine Trail", [(47.606, -122.30), (47.611, -122.30)]),
+            _named_way(4, "James Irvine Trail", [(47.611, -122.30), (47.616, -122.30)]),
+        ],
+    )
+    listed = trails_near(
+        con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, kind="path", significant_only=True, sort="relevance"
+    )
+    assert [t.name for t in listed] == ["James Irvine Trail"]
+
+
+def test_resolve_trail_network_draws_a_selected_path_stitched_by_name(con: psycopg.Connection) -> None:
+    upsert_trails(
+        con,
+        [
+            _named_way(2, "James Irvine Trail", [(47.601, -122.30), (47.606, -122.30)]),
+            _named_way(3, "James Irvine Trail", [(47.606, -122.30), (47.611, -122.30)]),
+            # Same name, but ~200 km away - must not be stitched in.
+            _named_way(4, "James Irvine Trail", [(49.401, -122.30), (49.406, -122.30)]),
+        ],
+    )
+    result = resolve_trail_network(con, "osm:way/2", client=httpx.Client())
+    assert result is not None
+    assert result.authoritative is True
+    assert result.trail.name == "James Irvine Trail"
+    geometry = result.trail.geometry
+    assert geometry is not None
+    assert geometry["type"] == "MultiLineString"
+    assert len(geometry["coordinates"]) == 2  # the two nearby segments, not the far one
+
+
+def test_trail_segments_by_name_bounds_by_distance(con: psycopg.Connection) -> None:
+    upsert_trails(
+        con,
+        [
+            _named_way(2, "Shared Name", [(47.601, -122.30), (47.606, -122.30)]),
+            _named_way(3, "Shared Name", [(49.401, -122.30), (49.406, -122.30)]),
+        ],
+    )
+    near = trail_segments_by_name(con, name="Shared Name", kind="path", ref_id="osm:way/2")
+    assert [t.id for t in near] == ["osm:way/2"]

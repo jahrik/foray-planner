@@ -632,18 +632,35 @@ def _merge_connected(trailhead: scoring.Trail, parts: Sequence[scoring.Trail]) -
 def resolve_trail_network(
     con: psycopg.Connection, trailhead_id: str, *, client: httpx.Client | None = None
 ) -> scoring.TrailPath | None:
-    """The real trail for a selected trailhead.
+    """The real trail for a row selected in a destination card's Trails tab.
 
-    Order of preference: the ingest-time cached link (``trails.connects``, issue #306 - no
-    network), then a live Overpass topology query, then the nearest cached path/route as a
-    proximity guess. Raises ``LookupError`` if the id doesn't resolve to a cached trailhead row
-    (``api.py`` treats that as "unknown trailhead"); returns None if the trailhead is known but
-    no trail could be found for it at all (a distinct 404).
+    For a ``path``/``route``/``road`` id (the card lists these too - issue #306 C1): that row's
+    own geometry, stitched with its same-name sibling segments, always authoritative.
+
+    For a ``trailhead`` node id, order of preference: the ingest-time cached link
+    (``trails.connects``, issue #306 - no network), then a live Overpass topology query, then
+    the nearest cached path/route as a proximity guess (``authoritative=False``).
+
+    Raises ``LookupError`` if the id isn't a cached trail at all (``api.py`` treats that as a
+    404); returns None if the row is known but no geometry could be found for it.
     """
-    trailhead = scoring.get_trail(con, trailhead_id)
-    if trailhead is None or trailhead.kind != "trailhead":
-        raise LookupError(f"no trailhead cached for id {trailhead_id!r}")
+    trail = scoring.get_trail(con, trailhead_id)
+    if trail is None:
+        raise LookupError(f"no trail cached for id {trailhead_id!r}")
 
+    # A path / route / road id selected straight from the card list (issue #306 C2): draw that
+    # feature's own geometry, stitched with its same-name sibling segments (OSM stores one row
+    # per way). Always authoritative and never needs a live query - the card only listed it
+    # because it's already cached.
+    if trail.kind != "trailhead":
+        named = bool(trail.name) and trail.name not in _SYNTHETIC_NAMES
+        segments = (
+            scoring.trail_segments_by_name(con, name=trail.name, kind=trail.kind, ref_id=trail.id) if named else [trail]
+        )
+        merged = _merge_connected(trail, segments) or trail
+        return scoring.TrailPath(trail=merged, authoritative=True)
+
+    trailhead = trail
     if trailhead.connects:
         merged = _merge_connected(trailhead, scoring.connected_trails(con, trailhead.connects))
         if merged is not None:
