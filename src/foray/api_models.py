@@ -248,6 +248,8 @@ class Trail(BaseModel):
     length_km: float | None = None  # path/route rows: great-circle length of the full polyline
     attrs: dict[str, str] | None = None  # path/route rows: kept OSM detail tags (issue #306)
     walk_in: bool = False  # kind='road' rows: gated to motor vehicles but walkable (prime foraging)
+    land_agency: str | None = None  # public-land owner the trail runs through ("USFS", "BLM", ...)
+    land_unit: str | None = None  # its area name ("Six Rivers National Forest"); spatial join, see scoring
     # Raw GeoJSON geometry, same as LandUnit.geometry. ``None`` on the ``/api/trails`` list
     # response - that feeds a name/distance row list whose selection fetches the real geometry
     # from ``/api/trails/network``; see ``scoring.trails_near(with_geometry=False)``.

@@ -29,6 +29,9 @@ interface MapState {
   trailheadMarkers: L.Marker[];
   cardCampMarkers: L.CircleMarker[];
   selectedTrailLayer: L.Polyline | null;
+  // Whether the currently-drawn selected trail is a walk-in (gated) forest road - drives the
+  // matching legend entry (issue A4b). Reset when the trail is cleared.
+  selectedTrailWalkIn: boolean;
   planRouteLayer: L.Polyline | null;
   focused: { lat: number; lng: number } | null;
 }
@@ -68,6 +71,7 @@ export const state: State = {
   trailheadMarkers: [],
   cardCampMarkers: [],
   selectedTrailLayer: null,
+  selectedTrailWalkIn: false,
   planRouteLayer: null,
   planTrip: null,
   focused: null,

@@ -310,6 +310,11 @@ def get_trails(
             taxon_ids=parse_species(species, conn, device_id) or None,
             with_geometry=False,
         )
+        # Enrich just the returned short list with the public-land unit each trail runs through
+        # (issue A4b) - "on Six Rivers NF" on the row, and it gates the walk-in map styling.
+        land = scoring.trail_land_units(conn, [trail.id for trail in found])
+    for trail in found:
+        trail.land_agency, trail.land_unit = land.get(trail.id, (None, None))
     return [Trail.model_validate(trail) for trail in found]
 
 

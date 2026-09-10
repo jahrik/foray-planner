@@ -76,7 +76,8 @@ _TILE_DEG = 2.0
 # re-pulls it automatically - no manual re-ingest, same idea as `cache._MIGRATIONS`.
 #   1 - highway=path + trailheads + route=hiking relations
 #   2 - adds highway=track / service=forestry (kind='road') and highway=bridleway
-_TRAILS_QUERY_VERSION = 2
+#   3 - adds barrier=gate/bollard/... nodes, matched onto road ways as a synthetic barrier attr
+_TRAILS_QUERY_VERSION = 3
 
 # Way classes we ingest, by the ``kind`` they become. Trails are foot/horse ways; roads are the
 # old logging / forest-service roads foragers actually walk and drive (issue: forest roads are a
@@ -107,6 +108,17 @@ def _way_selectors(region_filter: str) -> str:
     )
 
 
+# Barrier nodes that stop a vehicle but let a walker through - a gate on a forest road is a
+# stronger walk-in signal than the (often absent) access tags. Matched to a way at ingest by
+# coordinate; see ``_parse_trails``. ``cattle_grid`` is deliberately out - vehicles drive over it.
+_BARRIER_NODES = ("gate", "lift_gate", "swing_gate", "bollard", "block", "chain")
+
+
+def _barrier_selector(region_filter: str) -> str:
+    alt = "|".join(_BARRIER_NODES)
+    return f'node["barrier"~"^({alt})$"]{region_filter};'
+
+
 def _tile_bboxes(
     min_lat: float, min_lng: float, max_lat: float, max_lng: float, tile_deg: float = _TILE_DEG
 ) -> list[tuple[float, float, float, float]]:
@@ -134,6 +146,7 @@ def _trails_query(lat: float, lng: float, radius_m: float) -> str:
         "("
         f"{_way_selectors(region)}"
         f'node["highway"="trailhead"]{region};'
+        f"{_barrier_selector(region)}"
         ");"
         "out geom tags;"
         # Relations need their own `out geom`: inside a union `out geom` a route relation comes
@@ -179,6 +192,7 @@ def _trails_query_bbox(min_lat: float, min_lng: float, max_lat: float, max_lng: 
         "("
         f"{_way_selectors(region)}"
         f'node["highway"="trailhead"]{region};'
+        f"{_barrier_selector(region)}"
         ");"
         "out geom tags;"
         # See `_trails_query`: a union `out geom` drops relation members, so route relations
@@ -298,14 +312,42 @@ def _row(
     )
 
 
-def _parse_element(element: dict[str, Any]) -> tuple[Any, ...] | None:
-    """One Overpass element -> a trails row tuple, or None if it carries no usable geometry."""
+_BARRIER_NODE_SET = frozenset(_BARRIER_NODES)
+
+
+def _gate_points(payload: dict[str, Any]) -> frozenset[tuple[float, float]]:
+    """Rounded (lat, lng) of every vehicle-stopping barrier node in the payload.
+
+    Overpass returns a way's vertex coordinates and a standalone node's own coordinates from the
+    same OSM node identically, so a gate that sits on a forest road is matched to that road by an
+    exact (rounded) coordinate hit in ``_parse_element``."""
+    return frozenset(
+        (round(float(el["lat"]), 6), round(float(el["lon"]), 6))
+        for el in payload.get("elements", [])
+        if el.get("type") == "node"
+        and (el.get("tags") or {}).get("barrier") in _BARRIER_NODE_SET
+        and el.get("lat") is not None
+        and el.get("lon") is not None
+    )
+
+
+def _parse_element(
+    element: dict[str, Any], *, gate_points: frozenset[tuple[float, float]] = frozenset()
+) -> tuple[Any, ...] | None:
+    """One Overpass element -> a trails row tuple, or None if it carries no usable geometry.
+
+    ``gate_points`` (from ``_gate_points``): a road way with one of these on its line gets a
+    synthetic ``barrier=gate`` attr so ``scoring.queries._walk_in`` reads it as walk-in."""
     etype = element.get("type")
     eid = element.get("id")
     if eid is None:
         return None
     tags = element.get("tags") or {}
     if etype == "node":
+        # The query also returns barrier=gate nodes (consumed by ``_gate_points``); only a
+        # highway=trailhead node becomes a row.
+        if tags.get("highway") != "trailhead":
+            return None
         lat, lng = element.get("lat"), element.get("lon")
         if lat is None or lng is None:
             return None
@@ -319,7 +361,10 @@ def _parse_element(element: dict[str, Any]) -> tuple[Any, ...] | None:
         kind = "road" if _is_road(tags) else "path"
         fallback = "Forest road (OSM)" if kind == "road" else "Trail (OSM)"
         name = tags.get("name") or tags.get("ref") or fallback
-        return _row("way", int(eid), name, kind, [coords], attrs=_attrs(tags))
+        attrs = _attrs(tags)
+        if kind == "road" and gate_points and any((round(la, 6), round(ln, 6)) in gate_points for la, ln in coords):
+            attrs = {**(attrs or {}), "barrier": "gate"}
+        return _row("way", int(eid), name, kind, [coords], attrs=attrs)
     if etype == "relation":
         # `out geom` returns each way member with its own `geometry`; stitch them into one route.
         lines = [
@@ -458,9 +503,10 @@ def _parse_trails(payload: dict[str, Any]) -> list[tuple[Any, ...]]:
     (``_link_trailheads``) - so a selection draws from cache without a live query.
     """
     links = _link_trailheads(payload)
+    gate_points = _gate_points(payload)
     by_id: dict[str, tuple[Any, ...]] = {}
     for element in payload.get("elements", []):
-        row = _parse_element(element)
+        row = _parse_element(element, gate_points=gate_points)
         if row is None:
             continue
         row_id: str = row[0]
