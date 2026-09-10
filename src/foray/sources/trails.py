@@ -70,14 +70,16 @@ _MAX_POINTS_PER_LINE = 60
 # are upserted and discarded before the next tile starts; see ``ingest_trails_region``.
 _TILE_DEG = 2.0
 
-# Bump when the Overpass query in `_way_selectors` / `_trails_query_bbox` changes what it pulls.
-# `ingest_trails_region` keys its one-shot `ingest_log` marker on this, so a region ingested
-# under an older query no longer matches and the weekly `refresh --with trails --all` cron
-# re-pulls it automatically - no manual re-ingest, same idea as `cache._MIGRATIONS`.
+# Bump when the Overpass query in `_way_selectors` / `_trails_query_bbox` changes what it pulls,
+# or when `_ATTR_TAGS` changes what `_attrs` keeps off an unchanged payload. `ingest_trails_region`
+# keys its one-shot `ingest_log` marker on this, so a region ingested under an older version no
+# longer matches and the weekly `refresh --with trails --all` cron re-pulls it automatically -
+# no manual re-ingest, same idea as `cache._MIGRATIONS`.
 #   1 - highway=path + trailheads + route=hiking relations
 #   2 - adds highway=track / service=forestry (kind='road') and highway=bridleway
 #   3 - adds barrier=gate/bollard/... nodes, matched onto road ways as a synthetic barrier attr
-_TRAILS_QUERY_VERSION = 3
+#   4 - keeps the seasonal / *:conditional access tags in `attrs`
+_TRAILS_QUERY_VERSION = 4
 
 # Way classes we ingest, by the ``kind`` they become. Trails are foot/horse ways; roads are the
 # old logging / forest-service roads foragers actually walk and drive (issue: forest roads are a
@@ -232,7 +234,9 @@ def _trail_url(etype: str, eid: int) -> str:
 # `4wd_only` describe what you're walking or driving; `access`/`motor_vehicle` whether a forest
 # road is gated (walk-in - prime foraging, and a positive term in the road relevance sort - see
 # `scoring.queries._walk_in`); `ref` the road number (FR 300) even when `name` is set. The card
-# renders these ("FR 300 - dirt - drivable" vs "Ridge Trail - footpath").
+# renders these ("FR 300 - dirt - drivable" vs "Ridge Trail - footpath"). `seasonal` and the
+# `*:conditional` keys carry a time-limited restriction (snow gate, winter closure) the UI
+# surfaces as a "seasonal" hint - informational, not parsed into an access decision.
 _ATTR_TAGS = (
     "highway",
     "surface",
@@ -248,6 +252,10 @@ _ATTR_TAGS = (
     "motor_vehicle",
     "foot",
     "ref",
+    "seasonal",
+    "access:conditional",
+    "motor_vehicle:conditional",
+    "foot:conditional",
 )
 
 

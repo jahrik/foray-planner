@@ -91,7 +91,9 @@ hiking routes, trailheads).
   - **`length_km` / `attrs`:** great-circle length of the full polyline, and the kept OSM detail
     tags (`highway`, `surface`, `tracktype`, `smoothness`, `4wd_only`, `sac_scale`,
     `trail_visibility`, `network`, `operator`, `informal`, `access`, `motor_vehicle`, `foot`,
-    `ref`).
+    `ref`, and the `seasonal` / `access:conditional` / `motor_vehicle:conditional` /
+    `foot:conditional` keys that flag a snow gate or winter closure - surfaced as a "seasonal"
+    hint, never parsed into an open/closed decision).
   - **Re-ingest:** the per-region one-shot marker is `trails:place:{id}:q{_TRAILS_QUERY_VERSION}`.
     Widening the Overpass query bumps that constant, so the weekly `refresh --with trails --all`
     cron re-pulls every region automatically (superseded markers pruned on success) - no manual
@@ -125,12 +127,15 @@ spots" value without the license problem. Do not add iOverlander or The Dyrt.
 - **Sources:**
   - BLM Surface Management Agency (SMA) layer - filtered to `ADMIN_AGENCY_CODE='BLM'`
   - USFS Admin Forest boundaries
+  - Census TIGERweb **AIANNHA / Federal American Indian Reservations** (layer 2) - sovereign
+    nation land, stored with `agency='Tribal'`
 - **API:** ArcGIS REST FeatureServer `query?f=geojson` - paginated, server-side generalized
   (reduces geometry complexity before transfer)
 - **No key required**
-- **Storage:** GeoJSON stored as text + bounding-box columns. No PostGIS geometry types needed -
-  bbox overlap in SQL is sufficient for the "land near here" query.
-- **Attribution:** BLM and USFS are US federal agencies; data is public domain.
+- **Storage:** parsed into a PostGIS `geom geography` column on `public_land` with a GiST index
+  (`ix_public_land_geom`, issue #268); the "land near here" query is an index-backed `ST_DWithin`.
+  The persisted bounding-box columns were dropped in the same change.
+- **Attribution:** BLM, USFS and the Census Bureau are US federal agencies; data is public domain.
 - **PAD-US** (USGS national ownership layer) is a documented backstop if the ArcGIS sources
   change or go offline.
 
@@ -153,7 +158,9 @@ spots" value without the license problem. Do not add iOverlander or The Dyrt.
     years + current, matching the burn-morel productivity curve)
   - Severity: **MTBS Burned Area Boundaries** (`dominant_severity` join, published ~1.5-2 yr
     after a season - recent scars stay `NULL` and the layer still works)
-- **Storage:** GeoJSON text + bbox + representative center in `fire_perimeters`. No PostGIS.
+- **Storage:** `fire_perimeters`, with a PostGIS `geom geography` column + GiST index
+  (`ix_fire_perimeters_geom`, issue #268) backing the "fire near here" query and a representative
+  center for the card. The GeoJSON text is kept for serving the map layer; the bbox columns are gone.
 - **Refresh lanes:** `wfigs_active` uses replace semantics (a contained fire is deleted, not
   kept); `perimeter_history` is a plain upsert.
 - **Terms:** US government open data, free to use.
@@ -178,17 +185,19 @@ the rest of the map, without losing the road/city names the basemap would otherw
   per-region lock coalesces the two `<img>` tags' near-simultaneous requests so a cold region
   only pays the fetch once). `foray backfill-satellite` pre-fetches every region in the `regions`
   table ahead of time so this cold path is rare in practice.
-- **Endpoints:** both services are real XYZ tile pyramids under `server.arcgisonline.com`,
-  confirmed live via their `MapServer?f=json` capabilities (`"Map,Tilemap"`, not the dynamic
-  `MapServer/export` renderer `sources/land`/`sources/fire` use) - called only from
-  `sources/satellite.py` (never the browser):
+- **Endpoints:** three real XYZ tile pyramids under `server.arcgisonline.com`, confirmed live via
+  their `MapServer?f=json` capabilities (`"Map,Tilemap"`, not the dynamic `MapServer/export`
+  renderer `sources/land`/`sources/fire` use) - called only from `sources/satellite.py` (never
+  the browser), composited bottom-to-top:
   - `World_Imagery/MapServer/tile/{z}/{y}/{x}` - the aerial photo (jpg). No labels baked in.
+  - `Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}` - a transparent PNG of road /
+    trail lines, drawn over the imagery.
   - `Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}` - a transparent PNG of
-    roads/borders/place labels, Esri's standard pairing for `World_Imagery` (the "hybrid"
-    satellite view), drawn on top.
+    borders + place labels, Esri's standard pairing for `World_Imagery` (the "hybrid" satellite
+    view), drawn on top.
   `fetch_region_satellite` picks a zoom level for the region's radius, fetches every tile
   covering its true (Web-Mercator-circle) bounding box, and stitches + crops them into one raster
-  per layer with Pillow - both layers fetched concurrently to halve cold-cache latency.
+  per layer with Pillow - all three layers fetched concurrently to halve cold-cache latency.
 - **Why tiles, not `/export`:** a `v1` of this fetched one big image from `MapServer/export`
   instead. Two problems killed that approach: it renders on demand (25-45s per call, and degrades
   to a ~95% failure rate under just 6 concurrent requests - Esri's free export service does not

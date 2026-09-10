@@ -7,6 +7,7 @@
 // map.ts does the `queryRenderedFeatures` and opens the Leaflet popup.
 
 import type { PopupSpec } from "./popup";
+import { seasonalNote } from "./trail-attrs";
 
 /** The Protomaps flat-schema fields we read off a `roads` feature. All optional - a minor
  * unnamed way carries almost none of them. */
@@ -188,6 +189,8 @@ export function enrichedRoadPopupSpec(
     lines.push("Access restricted");
   if (flagged(props.is_bridge)) lines.push("Bridge");
   if (flagged(props.is_tunnel)) lines.push("Tunnel");
+  const seasonal = seasonalNote(attrs);
+  if (seasonal) lines.push(`Seasonal: ${seasonal}`);
   // Foraging density (issue A4c) - research-grade fungi records hugging this way. A hint that
   // tracks foot traffic as much as productivity, so it's phrased as a plain count.
   if (trail.forage_obs != null && trail.forage_obs > 0)
