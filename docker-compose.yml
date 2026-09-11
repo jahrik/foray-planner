@@ -70,23 +70,18 @@ services:
       start_period: 15s
       retries: 3
 
+  # Runs the same `jobs.yaml` manifest the prod systemd timers are generated from (issue #332
+  # PR 2) - `foray scheduler` (src/foray/schedule.py). Per-job cadence lives in jobs.yaml now,
+  # not env vars here.
   scheduler:
     profiles: [scheduler]
     build:
       <<: *runtime-build
     environment:
       <<: [*postgres-env, *ridb-env]
-      # Fallback defaults live in scripts/scheduler.sh, not here - these only override them.
-      FORAY_INGEST_INTERVAL_HOURS: ${FORAY_INGEST_INTERVAL_HOURS:-}
-      FORAY_LAYERS_INTERVAL_HOURS: ${FORAY_LAYERS_INTERVAL_HOURS:-}
-      FORAY_REVALIDATE_INTERVAL_HOURS: ${FORAY_REVALIDATE_INTERVAL_HOURS:-}
-      FORAY_RESYNC_INTERVAL_HOURS: ${FORAY_RESYNC_INTERVAL_HOURS:-}
-      FORAY_RESYNC_BATCH_SIZE: ${FORAY_RESYNC_BATCH_SIZE:-}
-      FORAY_ELEVATION_INTERVAL_HOURS: ${FORAY_ELEVATION_INTERVAL_HOURS:-}
-      FORAY_ELEVATION_LIMIT: ${FORAY_ELEVATION_LIMIT:-}
     depends_on:
       <<: *depends-postgres
-    command: ["sh", "scripts/scheduler.sh"]
+    command: ["foray", "scheduler"]
 
 volumes:
   foray-postgres-data:

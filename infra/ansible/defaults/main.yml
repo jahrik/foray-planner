@@ -74,37 +74,19 @@ foray_home_lat: "47.6062"
 foray_home_lng: "-122.3321"
 foray_home_radius_km: "150"
 
-# Cron: observation ingest (daily at 04:00 UTC)
-foray_ingest_cron_hour: "4"
-foray_ingest_cron_minute: "0"
-
-# Cron: full layer refresh (weekly Sunday at 03:00 UTC)
-foray_layers_cron_hour: "3"
-foray_layers_cron_minute: "0"
-foray_layers_cron_weekday: "0"
-
-# Cron: Fungi genus catalog refresh (weekly Sunday at 02:00 UTC, ahead of layers)
-foray_genera_cron_hour: "2"
-foray_genera_cron_minute: "0"
-foray_genera_cron_weekday: "0"
-
-# Cron: genus-drift revalidate (weekly Sunday at 05:00 UTC, matches local dev's
-# FORAY_REVALIDATE_INTERVAL_HOURS default of 168h)
-foray_revalidate_cron_hour: "5"
-foray_revalidate_cron_minute: "0"
-foray_revalidate_cron_weekday: "0"
-
-# Cron: observation resync (hourly, matches local dev's FORAY_RESYNC_INTERVAL_HOURS default of
-# 1h). A single small batch per run - the one-time full catch-up is foray:resync-once, not this.
-foray_resync_cron_minute: "30"
-foray_resync_batch_size: "2000"
-
-# Cron: elevation backfill (issue #36, hourly at :45). Each run drains the elevation-enrichment
-# backlog from Open-Meteo's free DEM until the free tier rate-limits it, then exits. The limit
-# is an upper safety bound, not the per-run target. --no-rebuild in the script: the daily ingest
-# rebuilds phenology.
-foray_elevation_cron_minute: "45"
-foray_elevation_backfill_limit: "20000"
+# Scheduled jobs (issue #332 PR 2): the job list + per-job command + interval now live in
+# jobs.yaml at the repo root (read by tasks/deploy/systemd_jobs.yml and by the dev-loop
+# scheduler, src/foray/schedule.py) - not here. These vars only shape the systemd timer
+# templates' night window / jitter, shared across every night-window / any-window job.
+#
+# Night window (TODO.md O2) - coverage-wide/heavy jobs only start inside this window.
+foray_night_window_start_hour: "2"
+foray_night_window_tz: America/Los_Angeles
+# Spread night-window jobs across a 3h window so they don't all start at :00 together (the
+# writer-cap semaphore, FORAY_OBSERVABILITY__WRITER_CAP, is the hard backstop if they still do).
+foray_night_window_randomized_delay_sec: "10800"
+# Light/any-window jobs get a much smaller jitter - they're meant to run close to on-schedule.
+foray_job_randomized_delay_sec: "300"
 
 # One-time foray:backfill-elevation-dem-once (clears the whole elevation backlog from local
 # Copernicus GLO-90 tiles instead of Open-Meteo's ~10k/day free tier - see

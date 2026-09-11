@@ -53,11 +53,38 @@ def emit_rows(count: int) -> None:
     print(f"{_ROWS_PREFIX}{count}", flush=True)
 
 
-def run(name: str, argv: list[str]) -> int:
+def _writer_slot_key(slot: int) -> str:
+    return f"writer-slot-{slot}"
+
+
+def _acquire_writer_slot(con: psycopg.Connection, cap: int, name: str) -> int:
+    """Block until one of ``cap`` writer-semaphore advisory-lock slots is free (issue #332 PR
+    2's writer cap - at most ``cap`` jobs tagged ``writer`` run at once, so a pile-up of
+    night-window jobs starting close together can't put more concurrent writers on the 1-vCPU
+    box than that). Returns the slot index held; the caller releases it with
+    ``pg_advisory_unlock(hashtext(_writer_slot_key(slot)))``."""
+    waited = False
+    while True:
+        for slot in range(cap):
+            got = con.execute("SELECT pg_try_advisory_lock(hashtext(%s))", [_writer_slot_key(slot)]).fetchone()
+            if got and got[0]:
+                if waited:
+                    logger.info("job %s: acquired writer slot %d", name, slot)
+                return slot
+        if not waited:
+            logger.info("job %s: waiting for a free writer slot (cap=%d)", name, cap)
+            waited = True
+        time.sleep(5)
+
+
+def run(name: str, argv: list[str], *, writer: bool = False) -> int:
     """Run ``argv`` (a ``foray`` subcommand + its own args) as job ``name``. Returns the exit
-    code the caller (the ``foray job`` CLI command) should itself exit with."""
+    code the caller (the ``foray job`` CLI command) should itself exit with. ``writer=True``
+    blocks until a writer-cap semaphore slot is free before running (see
+    ``_acquire_writer_slot``) - set for any job that writes to Postgres."""
     cfg = Settings()
     con = connect()
+    writer_slot: int | None = None
     try:
         # hashtext() gives every distinct job name its own lock key without a hand-maintained
         # int table (cache.py's schema-migration lock uses a fixed literal because there's
@@ -69,8 +96,12 @@ def run(name: str, argv: list[str]) -> int:
             record_job_run(con, name, started_at=now, ended_at=now, status="skipped", duration_ms=0)
             return 0
         try:
+            if writer:
+                writer_slot = _acquire_writer_slot(con, cfg.observability.writer_cap, name)
             return _run_locked(con, cfg, name, argv)
         finally:
+            if writer_slot is not None:
+                con.execute("SELECT pg_advisory_unlock(hashtext(%s))", [_writer_slot_key(writer_slot)])
             con.execute("SELECT pg_advisory_unlock(hashtext(%s))", [name])
     finally:
         con.close()

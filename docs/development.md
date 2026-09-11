@@ -104,7 +104,7 @@ ArcGIS BLM/USFS          Nominatim (geocoding)
 
 Search/scoring is **read-only** against cached data. Data ingestion happens independently:
 
-- **Scheduler service** (`scripts/scheduler.sh`): opt-in via `just scheduler` (docker-compose profile), pulls observations every 24h, refreshes layers (camps/land/dispersed/trails) every 168h, drains the elevation backfill (issue #36) every 1h, refreshes rainfall (issue #226) every 24h, refreshes wildfire data (issue #227) every 24h, and recomputes per-trail foraging density every 6h
+- **Scheduler service** (`foray scheduler`, reads `jobs.yaml`): opt-in via `just scheduler` (docker-compose profile), pulls observations every 24h, refreshes layers (camps/land/dispersed/trails) every 168h, drains the elevation backfill (issue #36) every 1h, refreshes rainfall (issue #226) every 24h, refreshes wildfire data (issue #227) every 24h, and recomputes per-trail foraging density every 6h - the same manifest prod's systemd timers are generated from (issue #332 PR 2)
 - **Coverage regions**: state-level, using iNat `place_id` for exact administrative boundaries - all 50 US states by default (`FORAY_COVERAGE`), used by `trails --all` (Overpass can't take a whole-country query in one request)
 - **Countries**: country-level, one iNat `place_id` per country - United States by default (`FORAY_COUNTRIES`). Adding another country later is just one more entry, no code changes
 - **`just ingest`**: one-shot manual ingest for all coverage regions

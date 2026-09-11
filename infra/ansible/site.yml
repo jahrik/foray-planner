@@ -171,11 +171,12 @@
         - "foray:deploy"
 
     # Tagged foray:deploy as well as foray:cron so CD (which runs --tags foray:deploy)
-    # re-renders the cron scripts on every deploy - otherwise a change to a cron template
-    # only reaches the droplet on a manual `just ansible cron` run.
-    - name: Include cron tasks
+    # re-renders the job units on every deploy - otherwise a jobs.yaml change only reaches the
+    # droplet on a manual `just ansible cron` run. Tag kept as `foray:cron` (not renamed to
+    # e.g. `foray:jobs`) so that existing recipe keeps working unchanged.
+    - name: Include scheduled-job (systemd timer) tasks
       ansible.builtin.include_tasks:
-        file: tasks/deploy/cron.yml
+        file: tasks/deploy/systemd_jobs.yml
         apply:
           tags:
             - foray

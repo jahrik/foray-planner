@@ -1,0 +1,98 @@
+# Single source of truth for every scheduled `foray` job (issue #332 PR 2).
+#
+# Both the dev/compose scheduler loop (`foray scheduler`, src/foray/schedule.py) and the prod
+# systemd timers (infra/ansible/tasks/deploy/systemd_jobs.yml, generated from this file) read
+# this list - so the two paths can no longer drift the way scripts/scheduler.sh and
+# infra/ansible/tasks/deploy/cron.yml did (the #332 finding: prod never ran fire/precip/forage,
+# because each path kept its own hand-maintained job list).
+#
+# Fields:
+#   name            - job id: `foray job <name> -- ...`, the job_runs key, the systemd unit
+#                     suffix (foray-<name>.service/.timer), the docker container name.
+#   command         - the `foray` subcommand + args to run (split on whitespace - no shell
+#                     quoting needed, every arg here is a plain flag/value).
+#   interval_hours  - expected cadence. For window: night jobs this must be 24 (daily) or a
+#                     multiple of 168 (weekly) - the systemd generator maps it to an OnCalendar
+#                     day-of-week, not a bare "every N hours" timer.
+#   window          - "any": fires on its own interval at any hour (light/incremental jobs -
+#                     small batches, external-API-paced, fine to run any time).
+#                     "night": only starts inside the 02:00-05:00 America/Los_Angeles window
+#                     (coverage-wide / heavy jobs - see issue #332 PR 2, O2 in TODO.md).
+#   writer          - true if this job writes to Postgres (nearly all of them) - counts against
+#                     the writer-cap semaphore (`foray.jobs`, FORAY_OBSERVABILITY__WRITER_CAP)
+#                     so a night-window pile-up can't put more than a few concurrent writers on
+#                     the 1-vCPU box at once. RandomizedDelaySec already spreads actual start
+#                     times; the cap is the hard backstop.
+
+jobs:
+  - name: ingest
+    command: ingest --countries
+    interval_hours: 24
+    window: night
+    writer: true
+
+  - name: layers-camps
+    command: refresh --with camps,dispersed
+    interval_hours: 168
+    window: any
+    writer: true
+
+  - name: layers-land
+    command: refresh --with land,trails --all
+    interval_hours: 168
+    window: night
+    writer: true
+
+  - name: dispersed-coverage
+    command: dispersed --all
+    interval_hours: 168
+    window: night
+    writer: true
+
+  - name: genera
+    command: genera-refresh
+    interval_hours: 168
+    window: night
+    writer: true
+
+  - name: revalidate
+    command: revalidate
+    interval_hours: 168
+    window: night
+    writer: true
+
+  - name: resync
+    command: resync --batch-size 2000
+    interval_hours: 1
+    window: any
+    writer: true
+
+  - name: elevation-backfill
+    command: backfill-elevation --limit 20000 --no-rebuild
+    interval_hours: 1
+    window: any
+    writer: true
+
+  - name: precip-backfill
+    command: backfill-precip
+    interval_hours: 24
+    window: any
+    writer: true
+
+  - name: refresh-precip
+    command: refresh-precip
+    interval_hours: 24
+    window: any
+    writer: true
+
+  - name: fire
+    command: fire
+    interval_hours: 24
+    window: any
+    writer: true
+
+  - name: forage-backfill
+    command: backfill-forage --limit 20000
+    interval_hours: 6
+    window: any
+    writer: true

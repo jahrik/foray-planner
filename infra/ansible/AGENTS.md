@@ -30,7 +30,8 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 | `tasks/provision/` | DO resource creation (database + cluster-config tuning + PgBouncer pools, droplet, firewall, monitoring, basemap Space + CDN) |
 | `tasks/provision/database.yml` | Cluster + app DB creation, then cluster-config tuning + PgBouncer pools (issue #333), all on every `foray:provision`. `ALTER ROLE`/per-table autovacuum are in `cache._MIGRATIONS` instead (the app's own DB role has sufficient privilege); the unused-index audit, SP-GiST vs GiST A/B, and the PG major-version upgrade aren't on DO's config surface and stay manual |
 | `tasks/provision/build_basemap_once.yml` | `foray:build-basemap-once` - extract the US PMTiles archive and upload it to the Space (runs on localhost) |
-| `tasks/deploy/` | App deployment + cron setup |
+| `tasks/deploy/` | App deployment + scheduled-job (systemd timer) setup |
+| `tasks/deploy/systemd_jobs.yml` | Generates one systemd service+timer per entry in `../../jobs.yaml` (issue #332 PR 2 - the repo-root job manifest, also read by `foray scheduler` for dev) |
 | `templates/foray.env.j2` | Runtime env file (secrets loaded from DO managed DB) |
 | `meta/argument_specs.yml` | Variable documentation and types |
 

@@ -6,9 +6,10 @@ here since it touches no network and no DB beyond schema application."""
 from __future__ import annotations
 
 import psycopg
+import pytest
 
 from foray import jobs
-from foray.cache import latest_job_run
+from foray.cache import connect, latest_job_run
 
 
 def test_run_records_an_ok_row_and_returns_zero(con: psycopg.Connection) -> None:
@@ -69,3 +70,36 @@ def test_run_skips_when_the_advisory_lock_is_already_held(con: psycopg.Connectio
     run = latest_job_run(con, "held-job")
     assert run is not None
     assert run["status"] == "skipped"
+
+
+def test_acquire_writer_slot_returns_immediately_when_a_slot_is_free(con: psycopg.Connection) -> None:
+    slot = jobs._acquire_writer_slot(con, cap=2, name="test-writer-free")
+    try:
+        assert slot in (0, 1)
+    finally:
+        con.execute("SELECT pg_advisory_unlock(hashtext(%s))", [jobs._writer_slot_key(slot)])
+
+
+def test_acquire_writer_slot_waits_out_the_writer_cap(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+    """issue #332 PR 2's writer-cap semaphore: with cap=1, a held slot 0 makes
+    `_acquire_writer_slot` poll (`time.sleep`) instead of returning immediately - it must pick
+    the slot up as soon as it's released, not block forever."""
+    holder = connect()
+    got = holder.execute("SELECT pg_try_advisory_lock(hashtext(%s))", [jobs._writer_slot_key(0)]).fetchone()
+    assert got is not None and got[0] is True
+
+    released = []
+
+    def fake_sleep(_seconds: float) -> None:
+        if not released:
+            released.append(True)
+            holder.execute("SELECT pg_advisory_unlock(hashtext(%s))", [jobs._writer_slot_key(0)])
+
+    monkeypatch.setattr(jobs.time, "sleep", fake_sleep)
+    try:
+        slot = jobs._acquire_writer_slot(con, cap=1, name="test-writer-wait")
+        assert slot == 0
+        assert released == [True]
+    finally:
+        con.execute("SELECT pg_advisory_unlock(hashtext(%s))", [jobs._writer_slot_key(0)])
+        holder.close()

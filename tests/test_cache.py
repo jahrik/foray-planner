@@ -28,6 +28,7 @@ from foray.cache import (
     load_region_places,
     load_region_satellite,
     mark_revalidated,
+    maybe_rebuild_phenology,
     observation_ids_for_genus,
     observation_taxon_ids,
     observations_missing_elevation,
@@ -45,6 +46,7 @@ from foray.cache import (
     upsert_observations,
     upsert_rows,
 )
+from foray.config import Observability, Settings
 from foray.geo import haversine_km
 
 # Seattle, used as the "home" point for latest_obs_date's haversine region-matching tests.
@@ -767,3 +769,37 @@ def test_latest_ingest_at_matches_prefix_and_ignores_others(con: psycopg.Connect
 
     assert latest_ingest_at(con, "trails:") is not None
     assert latest_ingest_at(con, "camps:") is None
+
+
+def test_maybe_rebuild_phenology_debounces_below_threshold(con: psycopg.Connection) -> None:
+    con.execute("DELETE FROM meta WHERE key = 'phenology_pending_rows'")
+    cfg = Settings(observability=Observability(phenology_rebuild_threshold=10))
+
+    assert maybe_rebuild_phenology(con, cfg, 4) is False
+    pending = con.execute("SELECT value FROM meta WHERE key = 'phenology_pending_rows'").fetchone()
+    assert pending == ("4",)
+
+    assert maybe_rebuild_phenology(con, cfg, 4) is False
+    pending = con.execute("SELECT value FROM meta WHERE key = 'phenology_pending_rows'").fetchone()
+    assert pending == ("8",)
+
+
+def test_maybe_rebuild_phenology_rebuilds_and_resets_past_threshold(con: psycopg.Connection) -> None:
+    con.execute("DELETE FROM meta WHERE key = 'phenology_pending_rows'")
+    cfg = Settings(observability=Observability(phenology_rebuild_threshold=10))
+
+    assert maybe_rebuild_phenology(con, cfg, 6) is False
+    assert maybe_rebuild_phenology(con, cfg, 6) is True  # 6 + 6 = 12 >= 10
+
+    pending = con.execute("SELECT value FROM meta WHERE key = 'phenology_pending_rows'").fetchone()
+    assert pending == ("0",)
+    regions_exists = con.execute("SELECT to_regclass('regions')").fetchone()
+    assert regions_exists is not None and regions_exists[0] is not None
+
+
+def test_maybe_rebuild_phenology_noop_for_zero_new_rows(con: psycopg.Connection) -> None:
+    con.execute("DELETE FROM meta WHERE key = 'phenology_pending_rows'")
+    cfg = Settings()
+
+    assert maybe_rebuild_phenology(con, cfg, 0) is False
+    assert con.execute("SELECT value FROM meta WHERE key = 'phenology_pending_rows'").fetchone() is None

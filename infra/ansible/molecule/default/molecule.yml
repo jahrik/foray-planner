@@ -7,6 +7,14 @@ platforms:
   - name: ubuntu
     image: geerlingguy/docker-ubuntu2404-ansible
     pre_build_image: true
+    # systemd_jobs.yml (issue #332 PR 2) manages real systemd units (daemon-reload, enable,
+    # start) - needs systemd actually running as the container's init, not just installed.
+    # geerlingguy's *-ansible images support this with cgroup access + no overriding command.
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    command: ""
 provisioner:
   name: ansible
 verifier:
