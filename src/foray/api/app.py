@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
+import psycopg
 from anyio import to_thread
 from fastapi import FastAPI
 from fastapi.middleware.gzip import GZipMiddleware
@@ -56,6 +57,15 @@ _ROUTERS = (
 )
 
 
+def _configure_connection(conn: psycopg.Connection) -> None:
+    # issue #333: caps one runaway query (a bad ST_Intersects, a huge-radius corridor query)
+    # holding a connection open indefinitely against the shared 22-backend cap. Set here, not
+    # via `ALTER ROLE ... SET` in a migration, because that role is shared with cron/migration
+    # connections, which legitimately run minutes-long bulk work this timeout would kill -
+    # `configure` only touches connections opened by *this* pool, so only the API is affected.
+    conn.execute("SET statement_timeout = '5s'")
+
+
 def create_app(cfg: Settings | None = None) -> FastAPI:
     """Wire up the API: a Postgres connection pool + config state, opened/closed via lifespan."""
     setup_logging()
@@ -79,6 +89,7 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         max_idle=300,
         max_lifetime=1800,
         check=ConnectionPool.check_connection,
+        configure=_configure_connection,
         open=False,
         kwargs={"autocommit": True},
     )

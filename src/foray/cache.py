@@ -526,6 +526,32 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # one-time `pg_repack` rewrites what's already there; not automated (touches prod directly).
     (38, "ALTER TABLE observations SET (fillfactor = 90)"),
     (39, "ALTER TABLE trails SET (fillfactor = 90)"),
+    # issue #333: session defaults for the connecting role, applied via ALTER ROLE CURRENT_USER
+    # so this works unchanged whether that role is local dev's "foray" or prod's DO-managed
+    # admin user - neither needs superuser to set its own defaults. random_page_cost=4 is the
+    # spinning-disk-era default and pushes the planner away from index scans it should be
+    # taking on SSD-backed storage (local disk and DO's managed volumes both qualify);
+    # effective_io_concurrency mirrors that for prefetch. effective_cache_size is deliberately
+    # NOT set here - it should reflect the actual plan's RAM, which this migration can't know,
+    # and DO may already auto-size it; check `SHOW effective_cache_size` on the real instance
+    # before setting that one by hand. statement_timeout is also deliberately excluded - it
+    # needs to apply to the API's pooled connections only, not the same role's cron/migration
+    # runs, which legitimately take minutes (see api/deps.py instead).
+    (40, "ALTER ROLE CURRENT_USER SET random_page_cost = 1.1"),
+    (41, "ALTER ROLE CURRENT_USER SET effective_io_concurrency = 200"),
+    # issue #333: observations (resync ~2000 rows/hr) and trails (forage backfill 20k/6h) take
+    # steady UPDATE traffic a table-size-percentage default doesn't suit well once a table is
+    # large - a 2% threshold on a multi-million-row table is a lot of dead tuples before
+    # autovacuum fires. Raising the cost limit lets it work through that backlog faster once
+    # triggered instead of throttling itself against foreground query I/O indefinitely.
+    (
+        42,
+        "ALTER TABLE observations SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_vacuum_cost_limit = 2000)",
+    ),
+    (
+        43,
+        "ALTER TABLE trails SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_vacuum_cost_limit = 2000)",
+    ),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]

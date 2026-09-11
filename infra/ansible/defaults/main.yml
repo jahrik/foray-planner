@@ -19,24 +19,22 @@ foray_do_db_engine: pg
 foray_do_db_version: "17"
 foray_do_db_name: foray
 
-# Cluster-config tuning (issue #333) - applied via digitalocean.cloud.database_config, opt-in
-# behind the foray:pg-tuning tag so a routine foray:provision run never silently changes live
-# cluster behavior. Values not on DO's config surface at all (ALTER ROLE random_page_cost /
-# effective_cache_size / effective_io_concurrency / statement_timeout, per-table autovacuum,
-# unused-index audit, SP-GiST vs GiST A/B, the PG major-version upgrade) aren't here - they're
-# direct SQL / DO-console actions the maintainer runs by hand, not something ansible can drive.
-foray_pg_tuning_enabled: false
+# Cluster-config tuning (issue #333) - applied via digitalocean.cloud.database_config as a
+# standard part of foray:provision (idempotent, safe to re-apply). Values not on DO's config
+# surface at all (ALTER ROLE random_page_cost/effective_io_concurrency and per-table autovacuum
+# are in cache._MIGRATIONS instead, since the app's own DB role can set those itself;
+# effective_cache_size, statement_timeout, the unused-index audit, SP-GiST vs GiST A/B, and the
+# PG major-version upgrade stay manual - see infra/ansible/AGENTS.md) aren't here.
 foray_pg_log_min_duration_ms: 500
 foray_pg_jit: false
 foray_pg_max_parallel_workers_per_gather: 0
 foray_pg_work_mem_kb: 4096
 foray_pg_shared_buffers_percentage: "25"
 
-# DO managed PgBouncer pools (issue #333) - also opt-in behind foray:pg-tuning. Creating the
-# pool is non-disruptive by itself (the app keeps connecting directly to the cluster until
-# FORAY_DATABASE_URL is deliberately repointed at a pool's own host/port - a separate, deliberate
-# cutover, not done here).
-foray_pgbouncer_enabled: false
+# DO managed PgBouncer pools (issue #333), also created as a standard part of foray:provision.
+# Creating the pool is non-disruptive by itself - the app keeps connecting directly to the
+# cluster until FORAY_DATABASE_URL is deliberately repointed at a pool's own host/port, a
+# separate, deliberate cutover not done here.
 foray_pgbouncer_api_pool_size: 10
 foray_pgbouncer_cron_pool_size: 3
 

@@ -32,3 +32,46 @@
     foray_db_port: "{{ foray_db_port }}"
     foray_db_user: "{{ foray_db_user }}"
     foray_db_password: "{{ foray_db_password }}"
+
+# issue #333: the cluster-config knobs DO's API actually exposes, applied on every
+# foray:provision run (idempotent - re-applying the same config is a no-op) so there's no
+# separate step to remember to run. Everything else in the issue - ALTER ROLE settings and
+# per-table autovacuum (both now in cache._MIGRATIONS, since the app's own DB role has
+# sufficient privilege for those without needing DO's control plane), the unused-index audit,
+# SP-GiST vs GiST, the PG major-version upgrade - isn't on this surface and stays a manual
+# maintainer action; see infra/ansible/AGENTS.md.
+- name: Apply Postgres cluster-config tuning
+  digitalocean.cloud.database_config:
+    token: "{{ foray_do_token }}"
+    cluster_id: "{{ foray_db_cluster.database.id }}"
+    config:
+      log_min_duration_statement: "{{ foray_pg_log_min_duration_ms }}"
+      track_io_timing: true
+      jit: "{{ foray_pg_jit }}"
+      max_parallel_workers_per_gather: "{{ foray_pg_max_parallel_workers_per_gather }}"
+      work_mem: "{{ foray_pg_work_mem_kb }}"
+      shared_buffers_percentage: "{{ foray_pg_shared_buffers_percentage }}"
+      pg_stat_statements.track: all
+
+# DO's managed PgBouncer. Creating these pools doesn't change how the app connects today - the
+# app keeps talking to the cluster directly until FORAY_DATABASE_URL is deliberately repointed
+# at a pool's own host/port, a separate cutover.
+- name: Create API connection pool (transaction mode)
+  digitalocean.cloud.database_connection_pool:
+    token: "{{ foray_do_token }}"
+    cluster_id: "{{ foray_db_cluster.database.id }}"
+    name: foray-api
+    mode: transaction
+    size: "{{ foray_pgbouncer_api_pool_size }}"
+    db: "{{ foray_do_db_name }}"
+    user: "{{ foray_db_user }}"
+
+- name: Create cron/migration connection pool (session mode)
+  digitalocean.cloud.database_connection_pool:
+    token: "{{ foray_do_token }}"
+    cluster_id: "{{ foray_db_cluster.database.id }}"
+    name: foray-cron
+    mode: session
+    size: "{{ foray_pgbouncer_cron_pool_size }}"
+    db: "{{ foray_do_db_name }}"
+    user: "{{ foray_db_user }}"
