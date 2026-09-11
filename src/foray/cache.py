@@ -522,8 +522,8 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # issue #333: leaves 10% free space per page on the two tables that take the heaviest
     # UPDATE traffic (resync ~2000 obs/hr, forage backfill 20k trails/6h) so an UPDATE that
     # doesn't grow the row can reuse space on the same page (HOT update) instead of always
-    # forcing a new page - only affects pages written after this runs, not existing ones (see
-    # docs/runbooks/pg-repack-observations.md for the one-time rewrite of what's already there).
+    # forcing a new page - only affects pages written after this runs, not existing ones. A
+    # one-time `pg_repack` rewrites what's already there; not automated (touches prod directly).
     (38, "ALTER TABLE observations SET (fillfactor = 90)"),
     (39, "ALTER TABLE trails SET (fillfactor = 90)"),
 ]

@@ -99,6 +99,17 @@
         - "foray:resize"
         - never
 
+    - name: Include Postgres cluster-config tuning + PgBouncer pools
+      ansible.builtin.include_tasks:
+        file: tasks/provision/database_tuning.yml
+        apply:
+          tags:
+            - "foray:pg-tuning"
+            - never
+      tags:
+        - "foray:pg-tuning"
+        - never
+
 - name: Deploy foray-planner
   hosts: foray
   gather_facts: false
