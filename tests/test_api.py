@@ -1078,3 +1078,49 @@ def test_get_coverage_reports_latest_run_not_a_cumulative_sum(client: TestClient
     body = response.json()
     washington = next(region for region in body if region["place_id"] == place_id)
     assert washington["observations_ingested"] == 40
+
+
+def test_healthz_is_always_ok_with_no_db_dependency(client: TestClient) -> None:
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_healthz_data_reports_stale_with_an_empty_ingest_log(client: TestClient) -> None:
+    response = client.get("/healthz/data")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["ok"] is False
+    assert all(layer["stale"] for layer in body["layers"])
+    assert {layer["layer"] for layer in body["layers"]} == {
+        "observations",
+        "land",
+        "trails",
+        "camps",
+        "dispersed",
+        "fire",
+        "precip",
+    }
+
+
+def test_healthz_data_ok_when_every_layer_is_fresh(client: TestClient, con: psycopg.Connection) -> None:
+    for prefix in (
+        "obs:fungi:place:1:x",
+        "land:coverage",
+        "trails:place:1:q1",
+        "camps:coverage:v1",
+        "dispersed:coverage:v1",
+    ):
+        con.execute("INSERT INTO ingest_log (key, fetched_at, row_count) VALUES (%s, now(), 1)", [prefix])
+    for job in ("fire", "refresh-precip"):
+        con.execute(
+            "INSERT INTO job_runs (job, started_at, ended_at, status) VALUES (%s, now(), now(), 'ok')",
+            [job],
+        )
+
+    response = client.get("/healthz/data")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert all(not layer["stale"] for layer in body["layers"])

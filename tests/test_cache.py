@@ -18,6 +18,8 @@ from foray.cache import (
     forget_ingest,
     genus_taxon_ids,
     is_ingested,
+    latest_ingest_at,
+    latest_job_run,
     latest_obs_date,
     list_selected_genera,
     load_genera,
@@ -29,6 +31,7 @@ from foray.cache import (
     observation_taxon_ids,
     observations_missing_elevation,
     record_ingest,
+    record_job_run,
     remove_genus,
     save_region_place,
     save_region_satellite,
@@ -701,3 +704,42 @@ def test_apply_schema_full_path_heals_a_cleared_middle_migration(con: psycopg.Co
     apply_schema(con)
 
     assert _schema_is_current(con) is True
+
+
+def test_record_job_run_and_latest_job_run_round_trip(con: psycopg.Connection) -> None:
+    started = dt.datetime(2026, 9, 10, 12, 0, tzinfo=dt.UTC)
+    ended = started + dt.timedelta(seconds=5)
+    record_job_run(con, "fire", started_at=started, ended_at=ended, status="ok", duration_ms=5000)
+
+    run = latest_job_run(con, "fire")
+
+    assert run is not None
+    assert run["status"] == "ok"
+    assert run["started_at"] == started
+    assert run["ended_at"] == ended
+
+
+def test_latest_job_run_returns_the_newest_row_for_that_job(con: psycopg.Connection) -> None:
+    older = dt.datetime(2026, 9, 1, tzinfo=dt.UTC)
+    newer = dt.datetime(2026, 9, 9, tzinfo=dt.UTC)
+    record_job_run(con, "fire", started_at=older, ended_at=older, status="error", duration_ms=1)
+    record_job_run(con, "fire", started_at=newer, ended_at=newer, status="ok", duration_ms=1)
+    record_job_run(con, "ingest", started_at=newer, ended_at=newer, status="ok", duration_ms=1)
+
+    run = latest_job_run(con, "fire")
+
+    assert run is not None
+    assert run["status"] == "ok"
+    assert run["started_at"] == newer
+
+
+def test_latest_job_run_none_when_job_never_ran(con: psycopg.Connection) -> None:
+    assert latest_job_run(con, "never-run") is None
+
+
+def test_latest_ingest_at_matches_prefix_and_ignores_others(con: psycopg.Connection) -> None:
+    record_ingest(con, "trails:place:1:q2", 10)
+    record_ingest(con, "land:coverage", 5)
+
+    assert latest_ingest_at(con, "trails:") is not None
+    assert latest_ingest_at(con, "camps:") is None

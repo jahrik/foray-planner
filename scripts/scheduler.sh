@@ -24,21 +24,33 @@ layers_last=0
 revalidate_last=0
 resync_last=0
 elevation_last=0
-precip_last=0
+precip_backfill_last=0
+precip_refresh_last=0
 fire_last=0
 forage_last=0
 
 while true; do
   now=$(date +%s)
 
+  # Every scheduled command runs through `foray job <name> -- ...` (issue #332): an
+  # advisory-lock overlap guard (a run that's still going when the next tick fires skips
+  # instead of piling up), a `job_runs` row on completion, and healthchecks/alert wiring. Each
+  # job below is independent - a failure (nonzero exit) only skips *that* job's `*_last`
+  # stamp so it retries next tick; it never blocks a sibling job the way the old `&&` chains
+  # did (backfill-precip && refresh-precip used to wedge on the first failure).
+
   if [ $((now - obs_last)) -ge $((OBS_INTERVAL * 3600)) ]; then
     echo "[scheduler] $(date -Iseconds) Starting observation ingest (all countries)…"
-    foray ingest --countries && obs_last=$(date +%s) || echo "[scheduler] observation ingest failed"
+    if foray job ingest -- ingest --countries; then
+      obs_last=$(date +%s)
+    else
+      echo "[scheduler] observation ingest failed"
+    fi
   fi
 
   if [ $((now - layers_last)) -ge $((LAYERS_INTERVAL * 3600)) ]; then
     echo "[scheduler] $(date -Iseconds) Starting layers refresh (camps, land, dispersed, trails: all coverage)…"
-    if foray refresh --with camps,land,dispersed,trails --all; then
+    if foray job layers -- refresh --with camps,land,dispersed,trails --all; then
       layers_last=$(date +%s)
     else
       echo "[scheduler] layers refresh failed"
@@ -51,7 +63,11 @@ while true; do
   # accumulate over time and never self-correct without this (see ingest.revalidate).
   if [ $((now - revalidate_last)) -ge $((REVALIDATE_INTERVAL * 3600)) ]; then
     echo "[scheduler] $(date -Iseconds) Starting observation revalidation (cross-kingdom homonym check)…"
-    foray revalidate && revalidate_last=$(date +%s) || echo "[scheduler] revalidation failed"
+    if foray job revalidate -- revalidate; then
+      revalidate_last=$(date +%s)
+    else
+      echo "[scheduler] revalidation failed"
+    fi
   fi
 
   # Slow whole-table grind (small batch, frequent interval) - the only path that eventually
@@ -60,7 +76,11 @@ while true; do
   # ratio check to catch (see ingest.resync).
   if [ $((now - resync_last)) -ge $((RESYNC_INTERVAL * 3600)) ]; then
     echo "[scheduler] $(date -Iseconds) Starting observation resync (batch of $RESYNC_BATCH_SIZE)…"
-    foray resync --batch-size "$RESYNC_BATCH_SIZE" && resync_last=$(date +%s) || echo "[scheduler] resync failed"
+    if foray job resync -- resync --batch-size "$RESYNC_BATCH_SIZE"; then
+      resync_last=$(date +%s)
+    else
+      echo "[scheduler] resync failed"
+    fi
   fi
 
   # Steady drain of the per-observation elevation backlog (issue #36). Open-Meteo's free DEM
@@ -69,19 +89,33 @@ while true; do
   # anything so destination cards pick up the new region means.
   if [ $((now - elevation_last)) -ge $((ELEVATION_INTERVAL * 3600)) ]; then
     echo "[scheduler] $(date -Iseconds) Starting elevation backfill (limit $ELEVATION_LIMIT)…"
-    foray backfill-elevation --limit "$ELEVATION_LIMIT" && elevation_last=$(date +%s) || echo "[scheduler] elevation backfill failed"
+    if foray job elevation-backfill -- backfill-elevation --limit "$ELEVATION_LIMIT"; then
+      elevation_last=$(date +%s)
+    else
+      echo "[scheduler] elevation backfill failed"
+    fi
   fi
 
   # Rainfall (issue #226): drain the per-observation antecedent-rain backlog (ERA5 archive,
   # rebuilds phenology when it enriches anything) and refresh the recent-rain-per-destination
   # layer (forecast API). Both hit Open-Meteo's free tier, which 429s a burst - each pass does
-  # what it can and the next tick resumes.
-  if [ $((now - precip_last)) -ge $((PRECIP_INTERVAL * 3600)) ]; then
-    echo "[scheduler] $(date -Iseconds) Starting rainfall backfill + recent-rain layer refresh…"
-    if foray backfill-precip && foray refresh-precip; then
-      precip_last=$(date +%s)
+  # what it can and the next tick resumes. Two independent jobs (not `&&`-chained) so a stuck
+  # backfill can't starve the refresh, or vice versa.
+  if [ $((now - precip_backfill_last)) -ge $((PRECIP_INTERVAL * 3600)) ]; then
+    echo "[scheduler] $(date -Iseconds) Starting rainfall backfill…"
+    if foray job precip-backfill -- backfill-precip; then
+      precip_backfill_last=$(date +%s)
     else
-      echo "[scheduler] rainfall refresh failed"
+      echo "[scheduler] rainfall backfill failed"
+    fi
+  fi
+
+  if [ $((now - precip_refresh_last)) -ge $((PRECIP_INTERVAL * 3600)) ]; then
+    echo "[scheduler] $(date -Iseconds) Starting recent-rain layer refresh…"
+    if foray job refresh-precip -- refresh-precip; then
+      precip_refresh_last=$(date +%s)
+    else
+      echo "[scheduler] recent-rain layer refresh failed"
     fi
   fi
 
@@ -91,14 +125,22 @@ while true; do
   # PG. New trails (NULL count) jump the queue.
   if [ $((now - forage_last)) -ge $((FORAGE_INTERVAL * 3600)) ]; then
     echo "[scheduler] $(date -Iseconds) Starting foraging-density backfill (limit $FORAGE_LIMIT)…"
-    foray backfill-forage --limit "$FORAGE_LIMIT" && forage_last=$(date +%s) || echo "[scheduler] foraging-density backfill failed"
+    if foray job forage-backfill -- backfill-forage --limit "$FORAGE_LIMIT"; then
+      forage_last=$(date +%s)
+    else
+      echo "[scheduler] foraging-density backfill failed"
+    fi
   fi
 
   # Wildfire (issue #227): active perimeters + points (replace semantics), 3+current years of
   # burn-scar history, MTBS severity. NIFC/MTBS ArcGIS; one source down is skipped, not fatal.
   if [ $((now - fire_last)) -ge $((FIRE_INTERVAL * 3600)) ]; then
     echo "[scheduler] $(date -Iseconds) Starting wildfire refresh (active + burn scars + MTBS)…"
-    foray fire && fire_last=$(date +%s) || echo "[scheduler] wildfire refresh failed"
+    if foray job fire -- fire; then
+      fire_last=$(date +%s)
+    else
+      echo "[scheduler] wildfire refresh failed"
+    fi
   fi
 
   sleep 300

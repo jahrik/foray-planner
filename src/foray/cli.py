@@ -6,6 +6,7 @@ import datetime as dt
 
 import click
 
+from foray import alerting, jobs
 from foray.cache import connect, observation_count, upsert_fungi_genera
 from foray.config import Settings
 from foray.logging_config import setup_logging
@@ -34,7 +35,48 @@ def cli(ctx: click.Context) -> None:
     """Plan mushroom-hunting trips from iNaturalist phenology."""
     setup_logging()
     ctx.ensure_object(dict)
-    ctx.obj["cfg"] = Settings()
+    cfg = Settings()
+    ctx.obj["cfg"] = cfg
+    alerting.init_sentry(cfg)
+
+
+@cli.command("migrate")
+def migrate_cmd() -> None:
+    """Apply the schema + `_MIGRATIONS` chain and exit (issue #332). `connect()` already does
+    this on every call, so this command exists to give CD a dedicated, one-shot migration step
+    (run once, before any app/cron container using the new image starts) instead of every
+    cron container and API instance racing `apply_schema` against each other and against a
+    schema-breaking migration mid-rollout - see infra/ansible/tasks/deploy/migrate.yml."""
+    con = connect()
+    con.close()
+    click.echo("Schema up to date.")
+
+
+@cli.command("job", context_settings={"ignore_unknown_options": True})
+@click.argument("name")
+@click.argument("command_args", nargs=-1, type=click.UNPROCESSED)
+def job_cmd(name: str, command_args: tuple[str, ...]) -> None:
+    """Run a scheduled `foray` command through the job wrapper (issue #332): advisory-lock
+    overlap guard, a `job_runs` row on completion, healthchecks.io pings, and a `foray alert`
+    on failure. Usage: `foray job <name> -- <foray-subcommand> [args...]`, e.g.
+    `foray job fire -- fire` or `foray job precip-backfill -- backfill-precip --no-rebuild`."""
+    if not command_args:
+        raise click.UsageError("job needs a command to run, e.g. `foray job fire -- fire`")
+    exit_code = jobs.run(name, list(command_args))
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
+@cli.command("alert")
+@click.argument("level")
+@click.argument("message")
+@click.pass_context
+def alert_cmd(ctx: click.Context, level: str, message: str) -> None:
+    """Deliver a domain alert (a REPLACE lane wiped, backlog growing, `www/maintenance.on`
+    left set, cert renewal failed, ...) via the configured ntfy topic - always logged locally
+    too. `level` is free text (e.g. `info`, `warning`, `error`); no-op delivery when
+    `FORAY_OBSERVABILITY__NTFY_URL` is unset."""
+    alerting.alert(ctx.obj["cfg"], level, message)
 
 
 @cli.command("ingest")

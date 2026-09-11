@@ -1,0 +1,37 @@
+---
+# issue #332: a dedicated migrate-once step, run before app.yml starts the new app container
+# (or cron.yml's scripts get a chance to fire) - every cron container and the API instance
+# already call `connect()`/`apply_schema` on every start, which raced fine when a migration
+# was additive, but a schema-breaking migration (e.g. #268 PR5's DROP COLUMN) mid-rollout can
+# make a stale container's own apply_schema fail. Running it exactly once here, against the
+# new image, before anything else on the new image starts, removes that race.
+- name: Check for the deploy-rendered env file
+  ansible.builtin.stat:
+    path: /opt/foray-planner/foray.env
+  register: foray_migrate_env_stat
+
+- name: Write environment file (first deploy on this droplet)
+  ansible.builtin.template:
+    src: foray.env.j2
+    dest: /opt/foray-planner/foray.env
+    mode: "0600"
+    owner: root
+    group: root
+  when: not foray_migrate_env_stat.stat.exists
+
+- name: Pull the app image that's about to be deployed
+  community.docker.docker_image_pull:
+    name: "{{ foray_app_image }}"
+    pull: always
+
+- name: Run the one-shot schema migration
+  community.docker.docker_container:
+    name: foray-migrate-once
+    image: "{{ foray_app_image }}"
+    state: started
+    detach: false
+    cleanup: true
+    networks:
+      - name: "{{ foray_docker_network }}"
+    env_file: /opt/foray-planner/foray.env
+    command: "foray migrate"

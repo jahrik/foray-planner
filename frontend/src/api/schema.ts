@@ -99,6 +99,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/healthz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Healthz
+         * @description Liveness only - the process can answer a request. No DB dependency on purpose: a
+         *     Postgres blip should surface via `/healthz/data` going stale, not take the whole
+         *     container out of rotation.
+         */
+        get: operations["healthz_healthz_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/healthz/data": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Healthz Data
+         * @description Freshness: any layer whose latest success is older than
+         *     ``interval_hours * observability.data_freshness_multiplier`` (default 2x) fails the check
+         *     - a non-200 response a cron/alerting layer or an uptime monitor can page on.
+         */
+        get: operations["healthz_data_healthz_data_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/destinations": {
         parameters: {
             query?: never;
@@ -663,6 +707,13 @@ export interface components {
             /** Observations Ingested */
             observations_ingested: number;
         };
+        /** DataHealthResponse */
+        DataHealthResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Layers */
+            layers: components["schemas"]["LayerFreshnessResponse"][];
+        };
         /**
          * FireNear
          * @description An active wildfire or recent burn scar near a point (issue #227). ``geometry`` is only
@@ -757,6 +808,20 @@ export interface components {
             geometry: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * LayerFreshnessResponse
+         * @description One data layer's freshness, as reported by ``/healthz/data`` (issue #332).
+         */
+        LayerFreshnessResponse: {
+            /** Layer */
+            layer: string;
+            /** Last Success */
+            last_success: string | null;
+            /** Interval Hours */
+            interval_hours: number;
+            /** Stale */
+            stale: boolean;
         };
         /** LocationBody */
         LocationBody: {
@@ -1206,6 +1271,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CoverageRegionResponse"][];
+                };
+            };
+        };
+    };
+    healthz_healthz_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+        };
+    };
+    healthz_data_healthz_data_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataHealthResponse"];
                 };
             };
         };

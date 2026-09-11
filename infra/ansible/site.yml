@@ -126,6 +126,17 @@
         - foray
         - "foray:deploy"
 
+    - name: Include one-shot schema migration task
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/migrate.yml
+        apply:
+          tags:
+            - foray
+            - "foray:deploy"
+      tags:
+        - foray
+        - "foray:deploy"
+
     - name: Include deploy tasks
       ansible.builtin.include_tasks:
         file: tasks/deploy/app.yml

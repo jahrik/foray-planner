@@ -46,6 +46,41 @@ class Ingest(BaseModel):
     region_sync_days: int = Field(gt=0, le=3650, default=30)
 
 
+class Intervals(BaseModel):
+    """Expected cadence (hours) for each scheduled job, so ``/healthz/data`` (issue #332) can
+    compute "past interval x2" freshness. Keep these in sync with ``scripts/scheduler.sh``'s
+    own ``FORAY_*_INTERVAL_HOURS`` defaults (a flat, separately-read set of env vars there -
+    the scheduler predates ``Settings`` nesting and isn't worth reshaping for this alone)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    ingest_hours: float = Field(gt=0, default=24)
+    layers_hours: float = Field(gt=0, default=168)
+    precip_hours: float = Field(gt=0, default=24)
+    fire_hours: float = Field(gt=0, default=24)
+
+
+class Observability(BaseModel):
+    """Alerting/observability wiring (issue #332), all opt-in via env vars with a no-op
+    default - a fresh checkout or a dev box with none of this configured behaves exactly as
+    before (see ``foray.alerting``)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    log_json: bool = False
+    # Base healthchecks.io ping URL (e.g. "https://hc-ping.com/<uuid>") with no trailing
+    # slash - the job name is appended as a path segment, "/fail" for a failed run. Empty:
+    # no pings sent.
+    healthchecks_base_url: str = ""
+    # Sentry/GlitchTip DSN, shared by the API and the CLI. Empty: SDK never initialized.
+    sentry_dsn: str = ""
+    # Plain ntfy topic URL (e.g. "https://ntfy.sh/<topic>") that `foray alert` POSTs domain
+    # alerts to. Empty: alerts are logged only, never sent.
+    ntfy_url: str = ""
+    # How far past its expected interval a layer can go before /healthz/data reports it stale.
+    data_freshness_multiplier: float = Field(gt=1, default=2.0)
+
+
 class CoverageRegion(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -102,6 +137,8 @@ class Settings(BaseSettings):
     # it stays same-origin under the existing CSP. Empty disables the toggle entirely.
     satellite_tiles_url: str = "/api/tiles/satellite/{z}/{x}/{y}.jpg"
     ingest: Ingest = Ingest()
+    intervals: Intervals = Field(default_factory=Intervals)
+    observability: Observability = Field(default_factory=Observability)
     # Sub-national regions (US states today) - the granularity trails ingest chunks by, since
     # Overpass can't handle a whole-country query in one request.
     coverage: list[CoverageRegion] = Field(default_factory=list)

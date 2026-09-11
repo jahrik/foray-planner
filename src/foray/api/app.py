@@ -17,12 +17,14 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from psycopg_pool import ConnectionPool
 
+from foray.alerting import init_sentry
 from foray.api.paths import DIST
 from foray.api.routes import (
     config,
     coverage,
     destinations,
     genera,
+    health,
     index,
     layers,
     location,
@@ -43,6 +45,7 @@ _ROUTERS = (
     config.router,
     genera.router,
     coverage.router,
+    health.router,
     destinations.router,
     layers.router,
     tiles.router,
@@ -57,6 +60,7 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
     """Wire up the API: a Postgres connection pool + config state, opened/closed via lifespan."""
     setup_logging()
     cfg = cfg or Settings()
+    init_sentry(cfg)
 
     # Pool connections carry PG* env vars by default (see cache.connect's docstring) - no
     # DSN-building code needed. `open=False` defers the actual connections until the

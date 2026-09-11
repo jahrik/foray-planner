@@ -150,6 +150,55 @@ def test_refresh_fire_end_to_end(con: psycopg.Connection) -> None:
     assert rows["perimeter_history:10"][2] == "low"  # MTBS severity joined by irwin id
 
 
+def test_refresh_fire_empty_response_guard_keeps_cached_active_rows(con: psycopg.Connection) -> None:
+    # issue #332: an empty response on a replace-semantics lane, with rows already cached, is
+    # treated as a source hiccup - the cached rows are kept, not wiped to zero.
+    for i in range(6):
+        con.execute(
+            "INSERT INTO fire_perimeters (id, source_key, status) VALUES (%s, %s, 'active')",
+            [f"wfigs_active:{i}", fire.LANE_ACTIVE],
+        )
+    client = httpx.Client(
+        transport=_transport(
+            {
+                "Perimeters_Current": _geojson(),
+                "Incident_Locations_Current": _geojson(),
+                "InterAgencyFirePerimeterHistory": _geojson(),
+            }
+        )
+    )
+
+    counts = fire.refresh_fire(con, _cfg(), client=client)
+
+    assert counts["active"] == 0
+    cached = con.execute("SELECT count(*) FROM fire_perimeters WHERE source_key = %s", [fire.LANE_ACTIVE]).fetchone()
+    assert cached is not None and cached[0] == 6
+
+
+def test_refresh_fire_empty_response_below_guard_still_clears_the_lane(con: psycopg.Connection) -> None:
+    # Below the guard threshold, an empty response behaves as before - the source legitimately
+    # reporting zero active fires clears the (small) cached lane.
+    con.execute(
+        "INSERT INTO fire_perimeters (id, source_key, status) VALUES ('wfigs_active:0', %s, 'active')",
+        [fire.LANE_ACTIVE],
+    )
+    client = httpx.Client(
+        transport=_transport(
+            {
+                "Perimeters_Current": _geojson(),
+                "Incident_Locations_Current": _geojson(),
+                "InterAgencyFirePerimeterHistory": _geojson(),
+            }
+        )
+    )
+
+    counts = fire.refresh_fire(con, _cfg(), client=client)
+
+    assert counts["active"] == 0
+    cached = con.execute("SELECT count(*) FROM fire_perimeters WHERE source_key = %s", [fire.LANE_ACTIVE]).fetchone()
+    assert cached is not None and cached[0] == 0
+
+
 def test_refresh_fire_skips_one_bad_lane(con: psycopg.Connection) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if "Perimeters_Current" in str(request.url):

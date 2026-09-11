@@ -84,10 +84,14 @@ def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
         )
     )
     # `_new`-suffixed so they don't collide with the live indexes while both tables exist;
-    # renamed to their normal names in the cutover. rank_destinations filters/groups by
-    # (taxon_id, region_id); place_calendar filters by region_id + taxon_id IN (...) - both
-    # scan the whole table without these, and `phenology` scales with taxon x region x month.
-    con.execute("CREATE INDEX ix_phenology_taxon_region_new ON phenology_new (taxon_id, region_id)")
+    # renamed to their normal names in the cutover. issue #333: `region_id` leads, matching
+    # how ranking._rank_candidates actually queries this table - filter `region_id = ANY(%s)`
+    # then `GROUP BY region_id, taxon_id[, month]` - not the old (taxon_id, region_id) order.
+    # `INCLUDE (month, cnt)` lets that GROUP BY be answered entirely from the index (an
+    # index-only scan) without a heap fetch per row.
+    con.execute(
+        "CREATE INDEX ix_phenology_taxon_region_new ON phenology_new (region_id, taxon_id) INCLUDE (month, cnt)"
+    )
     con.execute("CREATE INDEX ix_phenology_region_new ON phenology_new (region_id)")
     # _rank_candidates joins `regions` back by region_id to attach each card's mean elevation.
     con.execute("CREATE INDEX ix_regions_region_new ON regions_new (region_id)")
