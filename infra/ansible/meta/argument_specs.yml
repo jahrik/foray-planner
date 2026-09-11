@@ -38,7 +38,7 @@ argument_specs:
       foray_do_db_version:
         type: str
         description: Postgres major version
-        default: "16"
+        default: "17"
       foray_do_db_name:
         type: str
         description: Database name to create within the cluster
@@ -244,3 +244,53 @@ argument_specs:
         type: int
         description: Droplet memory-usage percent that triggers a DO monitoring alert
         default: 90
+      foray_pg_tuning_enabled:
+        type: bool
+        description: >
+          Apply the issue #333 cluster-config knobs (foray:pg-tuning tag, opt-in) - false skips
+          the database_config task entirely, leaving DO's defaults untouched.
+        default: false
+      foray_pg_log_min_duration_ms:
+        type: int
+        description: log_min_duration_statement threshold in ms (foray:pg-tuning)
+        default: 500
+      foray_pg_jit:
+        type: bool
+        description: >
+          Cluster-wide JIT compilation. Default off - this workload is many small PostGIS
+          queries, not a few large analytical ones; JIT overhead tends to lose more than it
+          saves at that shape (foray:pg-tuning).
+        default: false
+      foray_pg_max_parallel_workers_per_gather:
+        type: int
+        description: >
+          0 on a 1-vCPU plan (no spare core to parallelize into); raise only alongside a
+          bigger plan (foray:pg-tuning).
+        default: 0
+      foray_pg_work_mem_kb:
+        type: int
+        description: work_mem in KB, per sort/hash per connection (foray:pg-tuning)
+        default: 4096
+      foray_pg_shared_buffers_percentage:
+        type: str
+        description: shared_buffers as a percentage of the plan's RAM (foray:pg-tuning)
+        default: "25"
+      foray_pgbouncer_enabled:
+        type: bool
+        description: >
+          Create DO's managed PgBouncer connection pools (foray:pg-tuning tag, opt-in).
+          Creating the pool is non-disruptive on its own - the app keeps connecting directly
+          until FORAY_DATABASE_URL is deliberately pointed at a pool's own host/port.
+        default: false
+      foray_pgbouncer_api_pool_size:
+        type: int
+        description: >
+          Transaction-mode pool size for the API - api/app.py's pool has no session-scoped
+          state carried across requests, so transaction mode is safe there.
+        default: 10
+      foray_pgbouncer_cron_pool_size:
+        type: int
+        description: >
+          Session-mode pool size for cron/migration connections - the schema advisory lock and
+          any per-job SET work_mem/maintenance_work_mem need a session, not just a transaction.
+        default: 3

@@ -1,7 +1,7 @@
 # Postgres performance baseline
 
 Issue #333 PR 1. **These are local-dev baselines, not production numbers** - captured against
-`docker-compose.yml`'s single-container Postgres (`postgis/postgis:16-3.5`, no cluster tuning,
+`docker-compose.yml`'s single-container Postgres (`postgis/postgis:17-3.5`, no cluster tuning,
 default resource limits) on a dev machine, with local dev's own data volume (not prod's
 ~1.9M-observation / ~1.2M-trail scale). They're a starting shape for "does this query use the
 index we think it does", not a capacity number - re-run against prod (or a prod-sized snapshot)
@@ -14,8 +14,7 @@ just db
 just psql "EXPLAIN (ANALYZE, BUFFERS) <query>"
 ```
 
-or from a `psql` session against the local `foray` database (never a remote one -
-`docs/runbooks/pg-production-tuning.md` covers anything that touches the managed prod cluster).
+or from a `psql` session against the local `foray` database - never a remote one.
 
 ## Destination ranking (`scoring.ranking._rank_candidates`)
 
@@ -85,8 +84,7 @@ WHERE c.geom IS NOT NULL AND ST_DWithin(c.geom, pt.g, 25000);
 ```
 
 `campsites.geom`'s GiST index (not partial - campsites is a much smaller table, so the NULL
-overhead a partial index avoids on `observations`/`trails` doesn't pay for itself there; see
-the SP-GiST vs GiST A/B note in `docs/runbooks/pg-production-tuning.md`).
+overhead a partial index avoids on `observations`/`trails` doesn't pay for itself there).
 
 ## `trail_land_units` (`scoring.queries.trail_land_units`)
 
@@ -110,6 +108,6 @@ Point-in-polygon `LATERAL` join against `public_land` - watch for a GiST index s
 ## What this baseline doesn't cover
 
 `pg_stat_statements`, `track_io_timing`, and `auto_explain`-shaped always-on query logging are
-cluster config, not something a local `EXPLAIN` run can substitute for - see
-`docs/runbooks/pg-production-tuning.md` for what to enable on the real managed cluster before
-trusting a plan captured there.
+cluster config, not something a local `EXPLAIN` run can substitute for - the cluster-config
+knobs `infra/ansible` can apply are in `tasks/provision/database.yml`; trust a plan captured
+against the real managed cluster over this local baseline once those are live.
