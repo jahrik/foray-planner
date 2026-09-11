@@ -34,6 +34,10 @@ services:
     # template1 + $POSTGRES_DB at init; the schema migration also does `CREATE EXTENSION IF
     # NOT EXISTS postgis` so a pre-existing volume / the separate foray_test DB pick it up
     # too. Production uses DO managed Postgres, which ships PostGIS.
+    #
+    # Upgrading from an existing PG16 volume: Postgres refuses to start against a data
+    # directory from a different major version - `docker compose down -v` (local dev data is
+    # disposable/re-ingestable) to drop `foray-postgres-data` and let it recreate fresh.
     image: docker.io/postgis/postgis:17-3.5
     environment:
       POSTGRES_USER: foray

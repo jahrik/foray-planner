@@ -822,6 +822,8 @@ export interface components {
             interval_hours: number;
             /** Stale */
             stale: boolean;
+            /** Blocking */
+            blocking: boolean;
         };
         /** LocationBody */
         LocationBody: {

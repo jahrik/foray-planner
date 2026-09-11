@@ -328,6 +328,7 @@ class LayerFreshnessResponse(BaseModel):
     last_success: str | None
     interval_hours: float
     stale: bool
+    blocking: bool
 
 
 class DataHealthResponse(BaseModel):
