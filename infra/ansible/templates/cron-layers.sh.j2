@@ -9,10 +9,17 @@
 # name (and job_runs row) since `foray job` wraps a single foray subcommand. Container names
 # let migrate.yml (infra/ansible/tasks/deploy/migrate.yml) stop a still-running instance
 # before a schema-breaking migration.
-set -e
+#
+# No `set -e`: camps and land run independently on purpose (each is its own `foray job`, so
+# each records its own job_runs outcome) - a `set -e` here would abort before land/trails even
+# starts if camps/dispersed failed first, reintroducing the sibling-blocking bug the `foray
+# job` wrapper was built to remove. Track both exit codes and fail the script (for any outer
+# supervision watching cron's own exit status) only after both have been attempted.
+status=0
 docker run --rm --name foray-cron-layers-camps --pull always --env-file /opt/foray-planner/foray.env \
   {{ foray_app_image }} \
-  foray job layers-camps -- refresh --with camps,dispersed
+  foray job layers-camps -- refresh --with camps,dispersed || status=$?
 docker run --rm --name foray-cron-layers-land --pull always --env-file /opt/foray-planner/foray.env \
   {{ foray_app_image }} \
-  foray job layers-land -- refresh --with land,trails --all
+  foray job layers-land -- refresh --with land,trails --all || status=$?
+exit "$status"

@@ -13,6 +13,7 @@ semantics refresh, the recent-rain-per-destination layer - see ``foray.jobs``).
 from __future__ import annotations
 
 import datetime as dt
+import os
 
 from fastapi import APIRouter, Depends, Response
 from psycopg_pool import ConnectionPool
@@ -34,20 +35,27 @@ def healthz() -> StatusResponse:
     return StatusResponse(status="ok")
 
 
-# (layer name, ingest_log key prefix or None, job name for job_runs-backed layers, interval).
-# `intervals` on Settings carries the hour numbers; layers sharing a cadence (land/trails/
-# camps/dispersed all ride the weekly `refresh --with ... --all`) share `layers_hours`.
-def _layer_specs(cfg: Settings) -> list[tuple[str, str | None, str | None, float]]:
+# (layer name, ingest_log key prefix or None, job name for job_runs-backed layers, interval,
+# blocking). `intervals` on Settings carries the hour numbers; layers sharing a cadence
+# (land/trails/camps/dispersed all ride the weekly `refresh --with ... --all`) share
+# `layers_hours`. `blocking=False` layers still report their staleness but don't force a 503 -
+# fire/precip aren't scheduled in prod cron yet (#332 PR 2 adds them; flip to blocking once
+# they are). `camps` is dropped entirely, not just non-blocking, when RIDB_API_KEY is unset -
+# it's a documented-optional source (see sources/camps.py), so "never configured" isn't a
+# freshness problem to report at all.
+def _layer_specs(cfg: Settings) -> list[tuple[str, str | None, str | None, float, bool]]:
     intervals = cfg.intervals
-    return [
-        ("observations", "obs:fungi:", None, intervals.ingest_hours),
-        ("land", "land:", None, intervals.layers_hours),
-        ("trails", "trails:", None, intervals.layers_hours),
-        ("camps", "camps:", None, intervals.layers_hours),
-        ("dispersed", "dispersed:", None, intervals.layers_hours),
-        ("fire", None, "fire", intervals.fire_hours),
-        ("precip", None, "refresh-precip", intervals.precip_hours),
+    specs = [
+        ("observations", "obs:fungi:", None, intervals.ingest_hours, True),
+        ("land", "land:", None, intervals.layers_hours, True),
+        ("trails", "trails:", None, intervals.layers_hours, True),
+        ("dispersed", "dispersed:", None, intervals.layers_hours, True),
+        ("fire", None, "fire", intervals.fire_hours, False),
+        ("precip", None, "refresh-precip", intervals.precip_hours, False),
     ]
+    if os.getenv("RIDB_API_KEY"):
+        specs.insert(3, ("camps", "camps:", None, intervals.layers_hours, True))
+    return specs
 
 
 @router.get(
@@ -72,7 +80,7 @@ def healthz_data(
     now = dt.datetime.now(dt.UTC)
     layers: list[LayerFreshnessResponse] = []
     with pool.connection() as conn:
-        for name, prefix, job, interval_hours in _layer_specs(cfg):
+        for name, prefix, job, interval_hours, blocking in _layer_specs(cfg):
             last_success = latest_ingest_at(conn, prefix) if prefix else None
             if last_success is None and job:
                 run = latest_successful_job_run(conn, job)
@@ -91,9 +99,10 @@ def healthz_data(
                     last_success=last_success.isoformat() if last_success else None,
                     interval_hours=interval_hours,
                     stale=stale,
+                    blocking=blocking,
                 )
             )
-    ok = not any(layer.stale for layer in layers)
+    ok = not any(layer.stale and layer.blocking for layer in layers)
     if not ok:
         response.status_code = 503
     return DataHealthResponse(ok=ok, layers=layers)
