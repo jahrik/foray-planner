@@ -29,7 +29,7 @@ WITH tot AS (
            (sum(center_lng * cnt) / sum(cnt))::double precision AS center_lng,
            sum(cnt)::bigint AS total_cnt
     FROM phenology
-    WHERE region_id = ANY(ARRAY['47_-122', '47_-121'])
+    WHERE region_id = ANY(<a few hundred region_ids, e.g. every region_id in the home bbox>)
     GROUP BY region_id, taxon_id
 )
 SELECT * FROM tot;
@@ -37,10 +37,27 @@ SELECT * FROM tot;
 
 Before issue #333's index change, `phenology` carried `(taxon_id, region_id)` - a poor match
 for a query that filters `region_id = ANY(...)` first. After the change
-(`scoring/regions.py`'s build-and-swap now creates `(region_id, taxon_id) INCLUDE (month,
-cnt)`), the plan on a locally-seeded table shows an index-only scan on
-`ix_phenology_taxon_region` feeding the `GROUP BY` directly, with `Heap Fetches: 0` after an
-`ANALYZE phenology` (the build-and-swap already runs one right after creating the table).
+(`scoring/regions.py`'s build-and-swap now creates `(region_id, taxon_id) INCLUDE (month, cnt,
+center_lat, center_lng)` - the `tot` CTE above reads `center_lat`/`center_lng` out of
+`phenology` too, not just `month`/`cnt`, so both had to be covered for this to actually be
+index-only), the plan against a 300-`region_id` allowlist on a locally-seeded table is:
+
+```
+GroupAggregate  (cost=0.42..4750.25 rows=30765 width=40) (actual time=0.214..17.486 rows=7324 loops=1)
+  Group Key: phenology.region_id, phenology.taxon_id
+  Buffers: shared hit=899 read=159
+  ->  Index Only Scan using ix_phenology_taxon_region on phenology  (cost=0.42..3136.25 rows=37550 width=40) (actual time=0.194..5.921 rows=16640 loops=1)
+        Index Cond: (region_id = ANY (...))
+        Heap Fetches: 0
+        Buffers: shared hit=899 read=159
+```
+
+`Heap Fetches: 0` confirms the `GROUP BY` is answered entirely from the index, after an
+`ANALYZE phenology` (the build-and-swap already runs one right after creating the table). A
+tiny allowlist (a handful of `region_id`s, as opposed to the few hundred a real candidate-cell
+query passes) can make the planner prefer a `Bitmap Heap Scan` via the plain `ix_phenology_region`
+index instead - not a regression, just the planner's normal cost call at that selectivity;
+verify with a realistically-sized candidate set.
 
 ## `trails_near` (`scoring.queries.trails_near`)
 

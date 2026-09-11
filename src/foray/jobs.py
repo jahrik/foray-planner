@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 import subprocess
 import sys
 import time
@@ -33,6 +34,23 @@ from foray.cache import connect, record_job_run
 from foray.config import Settings
 
 logger = logging.getLogger(__name__)
+
+# A wrapped CLI command that wants its row count in `job_runs.rows` prints one of these lines
+# as its last line of output (see cli.py's `emit_rows` calls) - `_run_locked` greps it out of
+# the subprocess's stdout and forwards every other line unchanged, so cron logs read exactly
+# as before. Not every command reports one yet (`http_429_count` isn't wired up at all - no
+# source module currently counts its own 429 retries) - `rows`/`http_429_count` stay NULL/0
+# for anything that doesn't call `emit_rows`.
+_ROWS_PREFIX = "FORAY_JOB_ROWS="
+_ROWS_RE = re.compile(rf"^{re.escape(_ROWS_PREFIX)}(\d+)$")
+
+
+def emit_rows(count: int) -> None:
+    """Called by a CLI command as its last action to report how many rows it processed this
+    run. A plain `print` (not `click.echo`) since this is a wire-format line for `_run_locked`
+    to parse, not user-facing output - it's stripped back out before the rest of that
+    command's output reaches the terminal/cron log."""
+    print(f"{_ROWS_PREFIX}{count}", flush=True)
 
 
 def run(name: str, argv: list[str]) -> int:
@@ -63,16 +81,35 @@ def _run_locked(con: psycopg.Connection, cfg: Settings, name: str, argv: list[st
     clock_start = time.monotonic()
     alerting.healthcheck_ping(cfg, name, "start")
     logger.info("job %s: starting (%s)", name, " ".join(argv))
-    process = subprocess.run([sys.executable, "-m", "foray.cli", *argv])
+    # Piped (not inherited) so `emit_rows`'s line can be pulled out below - each remaining line
+    # is re-printed immediately so cron's `>> log 2>&1` redirect still sees it as it happens.
+    process = subprocess.Popen(
+        [sys.executable, "-m", "foray.cli", *argv],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    rows: int | None = None
+    assert process.stdout is not None
+    for line in process.stdout:
+        match = _ROWS_RE.match(line.rstrip("\n"))
+        if match:
+            rows = int(match.group(1))
+        else:
+            print(line, end="", flush=True)
+    returncode = process.wait()
     duration_ms = int((time.monotonic() - clock_start) * 1000)
     ended_at = dt.datetime.now(dt.UTC)
-    status = "ok" if process.returncode == 0 else "error"
-    record_job_run(con, name, started_at=started_at, ended_at=ended_at, status=status, duration_ms=duration_ms)
+    status = "ok" if returncode == 0 else "error"
+    record_job_run(
+        con, name, started_at=started_at, ended_at=ended_at, status=status, rows=rows, duration_ms=duration_ms
+    )
     if status == "ok":
         logger.info("job %s: ok (%dms)", name, duration_ms)
         alerting.healthcheck_ping(cfg, name, "")
     else:
-        logger.error("job %s: failed (exit %d, %dms)", name, process.returncode, duration_ms)
+        logger.error("job %s: failed (exit %d, %dms)", name, returncode, duration_ms)
         alerting.healthcheck_ping(cfg, name, "fail")
-        alerting.alert(cfg, "error", f"job {name!r} failed (exit {process.returncode})")
-    return process.returncode
+        alerting.alert(cfg, "error", f"job {name!r} failed (exit {returncode})")
+    return returncode

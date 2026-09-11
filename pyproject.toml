@@ -27,6 +27,7 @@ dependencies = [
     "rasterio>=1.4,<2.0",
     # sources/satellite.py stitches Esri XYZ map tiles into one raster per destination.
     "pillow>=12.3.0,<13.0",
+    "sentry-sdk>=2.69.1",
 ]
 
 [project.scripts]

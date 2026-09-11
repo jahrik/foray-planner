@@ -21,6 +21,7 @@ from foray.cache import (
     latest_ingest_at,
     latest_job_run,
     latest_obs_date,
+    latest_successful_job_run,
     list_selected_genera,
     load_genera,
     load_region_place,
@@ -735,6 +736,29 @@ def test_latest_job_run_returns_the_newest_row_for_that_job(con: psycopg.Connect
 
 def test_latest_job_run_none_when_job_never_ran(con: psycopg.Connection) -> None:
     assert latest_job_run(con, "never-run") is None
+
+
+def test_latest_successful_job_run_skips_a_newer_failed_or_skipped_attempt(con: psycopg.Connection) -> None:
+    """/healthz/data must see the last *successful* run, not the last attempt - a retry that
+    fails or gets skipped (advisory-lock overlap) right after a still-fresh success must not
+    make the layer look stale (issue #332 Copilot review)."""
+    success = dt.datetime(2026, 9, 1, tzinfo=dt.UTC)
+    later_failure = dt.datetime(2026, 9, 9, tzinfo=dt.UTC)
+    record_job_run(con, "fire", started_at=success, ended_at=success, status="ok", duration_ms=1)
+    record_job_run(con, "fire", started_at=later_failure, ended_at=later_failure, status="error", duration_ms=1)
+
+    run = latest_successful_job_run(con, "fire")
+
+    assert run is not None
+    assert run["status"] == "ok"
+    assert run["started_at"] == success
+
+
+def test_latest_successful_job_run_none_when_only_failures_exist(con: psycopg.Connection) -> None:
+    failed = dt.datetime(2026, 9, 1, tzinfo=dt.UTC)
+    record_job_run(con, "fire", started_at=failed, ended_at=failed, status="error", duration_ms=1)
+
+    assert latest_successful_job_run(con, "fire") is None
 
 
 def test_latest_ingest_at_matches_prefix_and_ignores_others(con: psycopg.Connection) -> None:

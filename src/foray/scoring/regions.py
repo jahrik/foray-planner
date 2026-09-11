@@ -87,10 +87,13 @@ def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
     # renamed to their normal names in the cutover. issue #333: `region_id` leads, matching
     # how ranking._rank_candidates actually queries this table - filter `region_id = ANY(%s)`
     # then `GROUP BY region_id, taxon_id[, month]` - not the old (taxon_id, region_id) order.
-    # `INCLUDE (month, cnt)` lets that GROUP BY be answered entirely from the index (an
-    # index-only scan) without a heap fetch per row.
+    # `INCLUDE (month, cnt, center_lat, center_lng)` lets that GROUP BY be answered entirely
+    # from the index (an index-only scan) without a heap fetch per row - `_rank_candidates`'s
+    # `tot` CTE also reads/aggregates `center_lat`/`center_lng` out of `phenology`, not just
+    # `month`/`cnt`, so both have to be covered too or the planner falls back to the heap.
     con.execute(
-        "CREATE INDEX ix_phenology_taxon_region_new ON phenology_new (region_id, taxon_id) INCLUDE (month, cnt)"
+        "CREATE INDEX ix_phenology_taxon_region_new ON phenology_new (region_id, taxon_id) "
+        "INCLUDE (month, cnt, center_lat, center_lng)"
     )
     con.execute("CREATE INDEX ix_phenology_region_new ON phenology_new (region_id)")
     # _rank_candidates joins `regions` back by region_id to attach each card's mean elevation.

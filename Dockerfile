@@ -74,7 +74,7 @@ RUN python -B -c "import rasterio, rasterio.sample"
 USER 1000
 EXPOSE 8000
 
-# Liveness: config endpoint returns 200 once the app is up (see scripts/healthcheck.py).
+# Liveness: /healthz returns 200 once the app is up, no DB round trip (see scripts/healthcheck.py).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "scripts/healthcheck.py"]
 

@@ -4,12 +4,15 @@
 # camps/dispersed stay home-radius only (on-demand, see AGENTS.md); land/trails run
 # coverage-wide (--all) so they're pre-cached for every configured region, not just home.
 # --pull always: refresh the local :latest each tick so a stale image can't fail apply_schema (#277).
-flock -n /tmp/foray-layers.lock sh -c '
-  set -e
-  docker run --rm --pull always --env-file /opt/foray-planner/foray.env \
-    {{ foray_app_image }} \
-    foray refresh --with camps,dispersed
-  docker run --rm --pull always --env-file /opt/foray-planner/foray.env \
-    {{ foray_app_image }} \
-    foray refresh --with land,trails --all
-'
+# `foray job` (issue #332) takes its own Postgres advisory lock keyed on the job name, so the
+# outer `flock -n` this used to run under is redundant - dropped. Each half gets its own job
+# name (and job_runs row) since `foray job` wraps a single foray subcommand. Container names
+# let migrate.yml (infra/ansible/tasks/deploy/migrate.yml) stop a still-running instance
+# before a schema-breaking migration.
+set -e
+docker run --rm --name foray-cron-layers-camps --pull always --env-file /opt/foray-planner/foray.env \
+  {{ foray_app_image }} \
+  foray job layers-camps -- refresh --with camps,dispersed
+docker run --rm --name foray-cron-layers-land --pull always --env-file /opt/foray-planner/foray.env \
+  {{ foray_app_image }} \
+  foray job layers-land -- refresh --with land,trails --all

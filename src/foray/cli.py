@@ -106,28 +106,34 @@ def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool, c
 
     con = connect()
     try:
+        total = 0
         if countries:
             for country in cfg.countries:
                 click.echo(f"Ingesting {country.name} (place_id={country.place_id})…")
                 counts = ingest_region(cfg, con, country)
+                total += sum(counts.values())
                 click.echo(f"  {sum(counts.values())} observations across {len(counts)} genera")
         elif all_regions:
             for region in cfg.coverage:
                 click.echo(f"Ingesting {region.name} (place_id={region.place_id})…")
                 counts = ingest_region(cfg, con, region)
+                total += sum(counts.values())
                 click.echo(f"  {sum(counts.values())} observations across {len(counts)} genera")
         elif region_name:
             click.echo(f"Ingesting {resolved_region.name} (place_id={resolved_region.place_id})…")
             counts = ingest_region(cfg, con, resolved_region)
+            total += sum(counts.values())
             click.echo(f"  {sum(counts.values())} observations across {len(counts)} genera")
         else:
             click.echo(f"Ingesting Fungi observations within {cfg.home.radius_km} km of home…")
             counts = ingest(cfg, con)
+            total += sum(counts.values())
             click.echo(f"  {sum(counts.values())} observations across {len(counts)} genera")
 
         click.echo("Rebuilding phenology…")
         build_phenology(con, cfg.cell_deg)
         click.echo(f"Total observations cached: {observation_count(con)}")
+        jobs.emit_rows(total)
     finally:
         con.close()
 
@@ -228,6 +234,7 @@ def revalidate_cmd(ctx: click.Context) -> None:
             ctx.exit(1)
         if not stats:
             click.echo("No suspect genera found - nothing to revalidate.")
+            jobs.emit_rows(0)
             return
         total_checked = sum(genus_stats["checked"] for genus_stats in stats.values())
         total_purged = sum(genus_stats["purged"] for genus_stats in stats.values())
@@ -236,6 +243,7 @@ def revalidate_cmd(ctx: click.Context) -> None:
             f"Revalidated {len(stats)} suspect genera: {total_checked} observations checked, "
             f"{total_purged} purged (no longer Fungi), {total_reassigned} reassigned."
         )
+        jobs.emit_rows(total_checked)
         # Rebuild whenever any suspect genus actually had cached rows to check, not just when
         # something was purged - a row that stayed Fungi but got its lat/lng/observed_on
         # refreshed (cache.upsert_observations) can still shift which region/month bucket it
@@ -270,6 +278,7 @@ def backfill_elevation_cmd(ctx: click.Context, limit: int | None, rebuild: bool)
         if updated and rebuild:
             click.echo("Rebuilding phenology…")
             build_phenology(con, cfg.cell_deg)
+        jobs.emit_rows(updated)
     finally:
         con.close()
 
@@ -448,15 +457,18 @@ def resync_cmd(ctx: click.Context, batch_size: int, until_done: bool) -> None:
                 f"Stopped after {total_checked} checked ({total_purged} purged, {total_reassigned} reassigned) - {exc}",
                 err=True,
             )
+            jobs.emit_rows(total_checked)
             ctx.exit(1)
         if total_checked == 0:
             click.echo("Nothing to resync.")
+            jobs.emit_rows(0)
             return
         click.echo(
             f"Done: {total_checked} observations checked, {total_purged} purged, "
             f"{total_reassigned} reassigned. Rebuilding phenology…"
         )
         build_phenology(con, cfg.cell_deg)
+        jobs.emit_rows(total_checked)
     finally:
         con.close()
 
@@ -480,6 +492,7 @@ def genera_refresh_cmd() -> None:
             ],
         )
         click.echo(f"Cached {len(rows)} Fungi genera.")
+        jobs.emit_rows(len(rows))
     finally:
         con.close()
 
