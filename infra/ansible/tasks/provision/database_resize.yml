@@ -29,6 +29,10 @@
     msg: "No database cluster named {{ foray_do_db_cluster_name }} found - nothing to resize."
   when: not foray_resize_db_id
 
+# no_log: true - unlike the digitalocean.cloud.* modules (which mask `token` internally via
+# their own argument_spec), a bare ansible.builtin.uri task doesn't know `Authorization` is
+# sensitive, so the resolved header (bearer token) would otherwise be visible in verbose or
+# on-failure task output.
 - name: Resize the managed Postgres cluster
   ansible.builtin.uri:
     url: "https://api.digitalocean.com/v2/databases/{{ foray_resize_db_id }}/resize"
@@ -40,6 +44,7 @@
       size: "{{ foray_do_db_size }}"
       num_nodes: 1
     status_code: 202
+  no_log: true
 
 - name: Wait for the cluster to report the new size
   digitalocean.cloud.database_clusters_info:
