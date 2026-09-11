@@ -185,21 +185,21 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   `resync --until-done` loops batch after batch until the whole cache is caught up
   (`just resync "--until-done --batch-size 20000"`) - a deliberate one-off catch-up run,
   not the small-batch/hourly default the scheduler uses.
-- `scripts/scheduler.sh` - shell loop running observation ingest (all regions), layer refresh,
-  observation revalidation (`foray revalidate`, see `ingest.py`), the whole-table resync
-  grind (`foray resync --batch-size N`), and the elevation backfill drain
-  (`foray backfill-elevation --limit N`, issue #36 - Open-Meteo rate-limits a burst so each
-  pass only does a few hundred rows), and the rainfall pass (`foray backfill-precip` +
-  `foray refresh-precip`, issue #226), and the per-trail foraging-density recount
-  (`foray backfill-forage --limit N`, issue #306 A4c - a bounded set-based pass over the stalest
-  trails, no external API), each on their own N-hour interval. Configurable via
-  `FORAY_INGEST_INTERVAL_HOURS` (default 24), `FORAY_LAYERS_INTERVAL_HOURS` (default 168),
-  `FORAY_REVALIDATE_INTERVAL_HOURS` (default 168), `FORAY_RESYNC_INTERVAL_HOURS` (default 1),
-  `FORAY_RESYNC_BATCH_SIZE` (default 2000), `FORAY_ELEVATION_INTERVAL_HOURS` (default 1),
-  `FORAY_ELEVATION_LIMIT` (default 20000 - an upper bound; a run stops earlier when Open-Meteo
-  rate-limits it), and `FORAY_PRECIP_INTERVAL_HOURS` (default 24 - rain changes far faster than
-  the 168h layers), `FORAY_FIRE_INTERVAL_HOURS` (default 24 - perimeter data updates ~daily), and
-  `FORAY_FORAGE_INTERVAL_HOURS` / `FORAY_FORAGE_LIMIT` (default 6 / 20000).
+- `jobs.yaml` (repo root) - the single job manifest (issue #332 PR 2): name, command, interval,
+  night/any window, writer flag, for every scheduled job (ingest, layers, dispersed-coverage,
+  genera, revalidate, resync, elevation/precip/forage backfills, refresh-precip, fire). Read by
+  both `foray scheduler` (`src/foray/schedule.py`, the dev-loop replacement for the old
+  `scripts/scheduler.sh`) and `infra/ansible/tasks/deploy/systemd_jobs.yml` (generates prod's
+  systemd timers) - the two paths sharing one list is what fixed prod silently never running
+  fire/precip/forage (each path used to keep its own hand-maintained job list). Every job runs
+  through `foray job <name> [--writer] -- <command>` (`src/foray/jobs.py`): advisory-lock
+  overlap guard, `job_runs` row, healthchecks/alert wiring, and (for `--writer` jobs) a
+  Postgres-advisory-lock writer-cap semaphore (`FORAY_OBSERVABILITY__WRITER_CAP`, default 2) so
+  a pile-up of night-window jobs can't put more than a few concurrent writers on the 1-vCPU box
+  at once. `cache.maybe_rebuild_phenology` debounces the (otherwise heaviest single op)
+  phenology rebuild that several of these jobs trigger - it accumulates changed-row counts in
+  `meta` and only actually rebuilds past `FORAY_OBSERVABILITY__PHENOLOGY_REBUILD_THRESHOLD`
+  (default 50), serialized by its own advisory lock so only one caller ever rebuilds at a time.
 - `frontend/` - the web client: **Vite + TypeScript (strict)**, Leaflet map, split by concern
   into `src/{map,ui,views,api}/` subfolders. The #301 redesign reshaped the UI into one
   answer-first flow (no tabs); the pieces:

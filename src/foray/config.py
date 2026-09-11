@@ -82,6 +82,17 @@ class Observability(BaseModel):
     ntfy_url: str = ""
     # How far past its expected interval a layer can go before /healthz/data reports it stale.
     data_freshness_multiplier: float = Field(gt=1, default=2.0)
+    # Debounce for the phenology rebuild (issue #332 PR 2) - the heaviest single op, previously
+    # run inline after every ingest/revalidate/backfill pass. `cache.maybe_rebuild_phenology`
+    # accumulates each pass's new/changed row count in `meta` and only actually rebuilds once
+    # the running total crosses this. A single ingest run easily clears it on its own; this
+    # mainly stops a run of small backfill ticks from each triggering their own full rebuild.
+    phenology_rebuild_threshold: int = Field(gt=0, default=50)
+    # Max concurrent Postgres-writing jobs (issue #332 PR 2) - `foray.jobs` gates any job
+    # launched with `foray job --writer` behind this many advisory-lock "slots" so a pile-up of
+    # night-window jobs starting close together can't put more than a few concurrent writers on
+    # the 1-vCPU box. Start conservative, watch prod PG CPU / lock waits, raise (TODO.md #332).
+    writer_cap: int = Field(gt=0, default=2)
 
 
 class CoverageRegion(BaseModel):

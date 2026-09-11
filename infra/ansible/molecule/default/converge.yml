@@ -2,9 +2,9 @@
 - name: Converge
   hosts: all
   tasks:
-    - name: Include cron tasks (no DO provisioning or Docker in molecule)
+    - name: Include scheduled-job (systemd timer) tasks (no DO provisioning or Docker in molecule)
       ansible.builtin.include_tasks:
-        file: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}/tasks/deploy/cron.yml"
+        file: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}/tasks/deploy/systemd_jobs.yml"
       vars:
         foray_app_image: ghcr.io/jahrik/foray-planner:latest
         foray_app_container_name: foray-planner
@@ -17,18 +17,9 @@
         foray_home_lat: "47.6062"
         foray_home_lng: "-122.3321"
         foray_home_radius_km: "150"
-        foray_ingest_cron_hour: "4"
-        foray_ingest_cron_minute: "0"
-        foray_layers_cron_hour: "3"
-        foray_layers_cron_minute: "0"
-        foray_layers_cron_weekday: "0"
-        foray_genera_cron_hour: "2"
-        foray_genera_cron_minute: "0"
-        foray_genera_cron_weekday: "0"
-        foray_revalidate_cron_hour: "5"
-        foray_revalidate_cron_minute: "0"
-        foray_revalidate_cron_weekday: "0"
-        foray_resync_cron_minute: "30"
-        foray_resync_batch_size: "2000"
-        foray_elevation_cron_minute: "45"
-        foray_elevation_backfill_limit: "20000"
+        foray_night_window_start_hour: "2"
+        foray_night_window_tz: America/Los_Angeles
+        foray_night_window_randomized_delay_sec: "10800"
+        foray_job_randomized_delay_sec: "300"
+        # jobs.yaml lives at the repo root; MOLECULE_PROJECT_DIRECTORY is infra/ansible.
+        foray_jobs_manifest_path: "{{ lookup('ansible.builtin.env', 'MOLECULE_PROJECT_DIRECTORY') }}/../../jobs.yaml"

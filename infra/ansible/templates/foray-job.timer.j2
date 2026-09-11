@@ -1,0 +1,25 @@
+# Managed by the foray-planner ansible role (issue #332 PR 2) - generated from jobs.yaml.
+# window: night jobs (coverage-wide / heavy - TODO.md O2) only start inside a low-traffic
+# window; window: any jobs fire on their own interval at any hour. Persistent=true means a
+# missed tick (droplet down, or the unit disabled during a deploy window) runs on the next
+# boot/reload instead of being skipped for a whole cycle.
+[Unit]
+Description=foray job timer: {{ item.name }}
+
+[Timer]
+Persistent=true
+{% if item.window == "night" %}
+{% if item.interval_hours | int >= 168 %}
+OnCalendar=Sun *-*-* {{ foray_night_window_start_hour }}:00:00 {{ foray_night_window_tz }}
+{% else %}
+OnCalendar=*-*-* {{ foray_night_window_start_hour }}:00:00 {{ foray_night_window_tz }}
+{% endif %}
+RandomizedDelaySec={{ foray_night_window_randomized_delay_sec }}
+{% else %}
+OnBootSec=5min
+OnUnitActiveSec={{ item.interval_hours }}h
+RandomizedDelaySec={{ foray_job_randomized_delay_sec }}
+{% endif %}
+
+[Install]
+WantedBy=timers.target

@@ -141,30 +141,36 @@ def test_camps_closes_connection_on_error(con: psycopg.Connection, env_config, m
 
 
 def test_backfill_elevation_rebuild_flag(con: psycopg.Connection, env_config, monkeypatch) -> None:
+    """`--rebuild` (default) makes it *eligible* to debounce-rebuild (issue #332 PR 2's
+    `maybe_rebuild_phenology`); `--no-rebuild` skips that call entirely."""
     monkeypatch.setattr(cli_module, "connect", lambda: _CloseTrackingConnection(con))
     monkeypatch.setattr(cli_module, "backfill_elevations", lambda con, max_points=None: 5)
-    rebuilds: list[str] = []
-    monkeypatch.setattr(cli_module, "build_phenology", lambda con, cell_deg: rebuilds.append("rebuild"))
+    rebuilds: list[int] = []
+    monkeypatch.setattr(
+        cli_module, "maybe_rebuild_phenology", lambda con, cfg, new_rows: rebuilds.append(new_rows) or True
+    )
     runner = CliRunner()
 
     assert runner.invoke(cli, ["backfill-elevation", "--no-rebuild"]).exit_code == 0
     assert rebuilds == []
 
     assert runner.invoke(cli, ["backfill-elevation"]).exit_code == 0
-    assert rebuilds == ["rebuild"]
+    assert rebuilds == [5]
 
 
 def test_backfill_precip_rebuild_flag(con: psycopg.Connection, env_config, monkeypatch) -> None:
     monkeypatch.setattr(cli_module, "connect", lambda: _CloseTrackingConnection(con))
     monkeypatch.setattr(cli_module, "backfill_precip", lambda con, *, cell_deg, max_cells=None: 3)
-    rebuilds: list[str] = []
-    monkeypatch.setattr(cli_module, "build_phenology", lambda con, cell_deg: rebuilds.append("rebuild"))
+    rebuilds: list[int] = []
+    monkeypatch.setattr(
+        cli_module, "maybe_rebuild_phenology", lambda con, cfg, new_rows: rebuilds.append(new_rows) or True
+    )
     runner = CliRunner()
 
     assert runner.invoke(cli, ["backfill-precip", "--no-rebuild"]).exit_code == 0
     assert rebuilds == []
     assert runner.invoke(cli, ["backfill-precip"]).exit_code == 0
-    assert rebuilds == ["rebuild"]
+    assert rebuilds == [3]
 
 
 def test_refresh_precip_cmd_reports_count(con: psycopg.Connection, env_config, monkeypatch) -> None:
@@ -193,13 +199,19 @@ def test_alert_cmd_delegates_to_alerting(env_config, monkeypatch) -> None:
 
 
 def test_job_cmd_delegates_to_jobs_run_and_propagates_exit_code(env_config, monkeypatch) -> None:
-    seen: list[tuple[str, list[str]]] = []
-    monkeypatch.setattr(cli_module.jobs, "run", lambda name, argv: (seen.append((name, argv)), 0)[1])
+    seen: list[tuple[str, list[str], bool]] = []
+    monkeypatch.setattr(
+        cli_module.jobs, "run", lambda name, argv, *, writer=False: (seen.append((name, argv, writer)), 0)[1]
+    )
     result = CliRunner().invoke(cli, ["job", "fire", "--", "fire"])
     assert result.exit_code == 0
-    assert seen == [("fire", ["fire"])]
+    assert seen == [("fire", ["fire"], False)]
 
-    monkeypatch.setattr(cli_module.jobs, "run", lambda name, argv: 1)
+    result = CliRunner().invoke(cli, ["job", "fire", "--writer", "--", "fire"])
+    assert result.exit_code == 0
+    assert seen[-1] == ("fire", ["fire"], True)
+
+    monkeypatch.setattr(cli_module.jobs, "run", lambda name, argv, *, writer=False: 1)
     result = CliRunner().invoke(cli, ["job", "fire", "--", "fire"])
     assert result.exit_code == 1
 

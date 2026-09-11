@@ -70,16 +70,12 @@ just scheduler          # starts the background ingest/refresh loop
 
 | Service | Role |
 |---|---|
-| `scheduler` | Background loop: observation ingest every 24h, layers refresh every 168h, observation revalidate + resync + elevation backfill hourly |
+| `scheduler` | Background loop (`foray scheduler`) running every job in `jobs.yaml` on its own interval |
 
-The scheduler runs `scripts/scheduler.sh`, which calls `foray ingest --countries`,
-`foray refresh` (layers), `foray revalidate`, `foray resync --batch-size N`, and
-`foray backfill-elevation --limit N`, each on its own interval. Set via env vars:
-`FORAY_INGEST_INTERVAL_HOURS` (24), `FORAY_LAYERS_INTERVAL_HOURS` (168),
-`FORAY_REVALIDATE_INTERVAL_HOURS` (168), `FORAY_RESYNC_INTERVAL_HOURS` (1) +
-`FORAY_RESYNC_BATCH_SIZE` (2000), `FORAY_ELEVATION_INTERVAL_HOURS` (1) +
-`FORAY_ELEVATION_LIMIT` (20000), `FORAY_FORAGE_INTERVAL_HOURS` (6) +
-`FORAY_FORAGE_LIMIT` (20000).
+`jobs.yaml` (repo root) is the single source of truth for the job list - both this dev-loop
+scheduler and prod's systemd timers (below) read it, so the two paths can't drift the way
+`scripts/scheduler.sh` and Ansible's old hand-written cron job list once did (issue #332 PR 2).
+Add/change a job there and both paths pick it up.
 
 ---
 
@@ -88,24 +84,37 @@ The scheduler runs `scripts/scheduler.sh`, which calls `foray ingest --countries
 The data pipeline is fully decoupled from search. Search/scoring is read-only against cached
 data and never triggers network calls. Data stays fresh via:
 
-**Option A - Cron (production default)**
+**Option A - systemd timers (production default)**
 
-The Ansible playbook configures host cron jobs that run one-off containers against the
-managed Postgres instance. Same image, same DB, spins up, runs, exits:
+The Ansible playbook generates one systemd service + timer per entry in `jobs.yaml`
+(`infra/ansible/tasks/deploy/systemd_jobs.yml`), each running a one-off container against the
+managed Postgres instance - same image, same DB, spins up, runs, exits:
 
-| Job | Schedule (UTC) |
-|---|---|
-| `foray-ingest` (`foray ingest --countries`) | daily 04:00 |
-| `foray-layers` (`foray refresh` layers) | weekly Sun 03:00 |
-| `foray-genera` (`foray genera-refresh`) | weekly Sun 02:00 |
-| `foray-revalidate` (`foray revalidate`) | weekly Sun 05:00 |
-| `foray-resync` (`foray resync --batch-size N`) | hourly :30 |
-| `foray-backfill-elevation` (`foray backfill-elevation`, issue #36) | hourly :45 |
+| Job | Command | Interval | Window |
+|---|---|---|---|
+| `foray-ingest` | `ingest --countries` | daily | night |
+| `foray-layers-camps` | `refresh --with camps,dispersed` | weekly | any |
+| `foray-layers-land` | `refresh --with land,trails --all` | weekly | night |
+| `foray-dispersed-coverage` | `dispersed --all` | weekly | night |
+| `foray-genera` | `genera-refresh` | weekly | night |
+| `foray-revalidate` | `revalidate` | weekly | night |
+| `foray-resync` | `resync --batch-size 2000` | hourly | any |
+| `foray-elevation-backfill` | `backfill-elevation --limit 20000 --no-rebuild` (issue #36) | hourly | any |
+| `foray-precip-backfill` | `backfill-precip` (issue #226) | daily | any |
+| `foray-refresh-precip` | `refresh-precip` (issue #226) | daily | any |
+| `foray-fire` | `fire` (issue #227) | daily | any |
+| `foray-forage-backfill` | `backfill-forage --limit 20000` (issue #330) | every 6h | any |
+
+`window: night` jobs (coverage-wide / heavy) only start inside a 02:00-05:00
+America/Los_Angeles window (`foray_night_window_*` in `infra/ansible/defaults/main.yml`);
+`window: any` jobs fire on their own interval at any hour. Every job also goes through a
+writer-cap semaphore (`FORAY_OBSERVABILITY__WRITER_CAP`, default 2) so a pile-up of
+night-window jobs starting close together can't put more than a few concurrent writers on the
+1-vCPU box at once.
 
 The elevation backfill drains the per-observation elevation backlog from Open-Meteo's free
 DEM; each run enriches as many rows as the free tier allows before it rate-limits, then exits
-(`lookup_batch` backs off on `Retry-After` first). Schedules are Ansible vars
-(`foray_*_cron_*` in `infra/ansible/defaults/main.yml`).
+(`lookup_batch` backs off on `Retry-After` first).
 
 Open-Meteo's free tier caps at ~10k points/day, so a fresh multi-million-row backlog would
 take ~200 days to clear at that pace. To clear it in one pass instead, run
@@ -229,13 +238,13 @@ just ansible deploy
 
 | Tag | Scope |
 |---|---|
-| `foray` | Provision + deploy + cron (not ingest-once - see below) |
+| `foray` | Provision + deploy + scheduled jobs (not ingest-once - see below) |
 | `foray:provision` | DO resources (Droplet, database, firewall) |
 | `foray:deploy` | Pull image, restart container |
-| `foray:cron` | Update cron schedules |
+| `foray:cron` | Update scheduled-job systemd timer/service units (tag kept as `foray:cron`) |
 | `foray:ingest-once` | Manual/opt-in full data ingest (`just ansible ingest-once`) - not part of `foray:deploy` or the `foray` umbrella; the daily `foray-ingest` cron job already keeps data fresh, so this only exists for warming a fresh droplet's data immediately instead of waiting for the next cron run. **Run this only after the first `foray:deploy`** - it depends on the env file that deploy renders (`/opt/foray-planner/foray.env`) and fails fast with a clear message if that hasn't happened yet. |
 | `foray:build-basemap-once` | Manual/opt-in (`just ansible build-basemap-once`) - `pmtiles extract` a CONUS bbox from Protomaps' daily planet build and upload it to the basemap Space. Runs on the control node (the extract is ~15-40 GB), not the droplet. Needs `DO_SPACES_KEY` / `DO_SPACES_SECRET`. Re-run monthly to refresh. |
-| `foray:backfill-elevation-dem-once` | Manual/opt-in one-pass elevation backfill (`just ansible backfill-elevation-dem-once`) - samples local Copernicus GLO-90 tiles on the droplet to clear the whole elevation backlog at once, instead of the hourly `foray-backfill-elevation` cron trickling through Open-Meteo's ~10k/day free tier. Downloads ~5 GB of tiles, then removes them. Set-based `COPY` + `UPDATE ... FROM` writes with `--sleep` pacing and a short `lock_timeout` so the live site keeps serving; `--no-rebuild` (daily ingest rematerializes phenology). Safe to re-run to finish a partial pass. Same env-file dependency and fail-fast as `foray:ingest-once`, plus a free-disk precheck. |
+| `foray:backfill-elevation-dem-once` | Manual/opt-in one-pass elevation backfill (`just ansible backfill-elevation-dem-once`) - samples local Copernicus GLO-90 tiles on the droplet to clear the whole elevation backlog at once, instead of the hourly `foray-elevation-backfill` job trickling through Open-Meteo's ~10k/day free tier. Downloads ~5 GB of tiles, then removes them. Set-based `COPY` + `UPDATE ... FROM` writes with `--sleep` pacing and a short `lock_timeout` so the live site keeps serving; `--no-rebuild` (daily ingest rematerializes phenology). Safe to re-run to finish a partial pass. Same env-file dependency and fail-fast as `foray:ingest-once`, plus a free-disk precheck. |
 | `foray:backfill-satellite-once` | Manual/opt-in one-off satellite-fill backfill (`just ansible backfill-satellite-once`, issue #293) - runs `foray backfill-satellite` on the droplet. Esri's tile CDN throttles a wide fan-out, so the run paces itself + retries and takes tens of minutes at national scale; the task fails (non-zero exit) if failures dominate, so re-run until clean. A plain run only fetches regions still missing from `region_satellite`; pass `-e foray_satellite_backfill_args=--refresh` to `TRUNCATE` the table first and re-fetch every region (needed after a change to what a region's raster should contain - bbox, zoom, tile sources, compositing in `sources/satellite.py`). Browsers pick up changed rasters within a day (`Cache-Control: max-age=86400`, not `immutable`). Same env-file dependency and fail-fast as `foray:ingest-once`. |
 | `foray:firewall-allow-runner` / `foray:firewall-revoke-runner` | CI-internal only - adds/removes the GitHub Actions runner's own IP from the live SSH firewall rule around an automated `foray:deploy` run (see below). Not something an operator runs directly. |
 

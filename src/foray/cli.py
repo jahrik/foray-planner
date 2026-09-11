@@ -7,7 +7,7 @@ import datetime as dt
 import click
 
 from foray import alerting, jobs
-from foray.cache import connect, observation_count, upsert_fungi_genera
+from foray.cache import connect, maybe_rebuild_phenology, observation_count, upsert_fungi_genera
 from foray.config import Settings
 from foray.logging_config import setup_logging
 from foray.refresh import REFRESH_LAYERS, parse_month_list, run_home_refresh
@@ -54,17 +54,34 @@ def migrate_cmd() -> None:
 
 @cli.command("job", context_settings={"ignore_unknown_options": True})
 @click.argument("name")
+@click.option(
+    "--writer",
+    is_flag=True,
+    help="Gate this run behind the writer-cap semaphore (issue #332 PR 2) - set for any job "
+    "that writes to Postgres, so a pile-up of concurrent jobs can't overrun the writer cap "
+    "(FORAY_OBSERVABILITY__WRITER_CAP).",
+)
 @click.argument("command_args", nargs=-1, type=click.UNPROCESSED)
-def job_cmd(name: str, command_args: tuple[str, ...]) -> None:
+def job_cmd(name: str, writer: bool, command_args: tuple[str, ...]) -> None:
     """Run a scheduled `foray` command through the job wrapper (issue #332): advisory-lock
     overlap guard, a `job_runs` row on completion, healthchecks.io pings, and a `foray alert`
     on failure. Usage: `foray job <name> -- <foray-subcommand> [args...]`, e.g.
     `foray job fire -- fire` or `foray job precip-backfill -- backfill-precip --no-rebuild`."""
     if not command_args:
         raise click.UsageError("job needs a command to run, e.g. `foray job fire -- fire`")
-    exit_code = jobs.run(name, list(command_args))
+    exit_code = jobs.run(name, list(command_args), writer=writer)
     if exit_code:
         raise SystemExit(exit_code)
+
+
+@cli.command("scheduler")
+def scheduler_cmd() -> None:
+    """Run the dev-loop scheduler (issue #332 PR 2): reads `jobs.yaml` (the same manifest the
+    prod systemd timers are generated from) and runs each job through `foray job` on its own
+    interval, forever. Replaces the old `scripts/scheduler.sh` - see `foray.schedule`."""
+    from foray import schedule
+
+    schedule.run_scheduler()
 
 
 @cli.command("alert")
@@ -130,8 +147,8 @@ def ingest_cmd(ctx: click.Context, region_name: str | None, all_regions: bool, c
             total += sum(counts.values())
             click.echo(f"  {sum(counts.values())} observations across {len(counts)} genera")
 
-        click.echo("Rebuilding phenology…")
-        build_phenology(con, cfg.cell_deg)
+        if maybe_rebuild_phenology(con, cfg, total):
+            click.echo("Rebuilding phenology…")
         click.echo(f"Total observations cached: {observation_count(con)}")
         jobs.emit_rows(total)
     finally:
@@ -175,14 +192,22 @@ def land_cmd(ctx: click.Context, all_coverage: bool) -> None:
 
 
 @cli.command("dispersed")
+@click.option(
+    "--all", "all_coverage", is_flag=True, help="Ingest reported dispersed camping across all coverage regions."
+)
 @click.pass_context
-def dispersed_cmd(ctx: click.Context) -> None:
-    """Ingest OSM-reported dispersed camping (camp_site/camp_pitch/backcountry tags) near home."""
+def dispersed_cmd(ctx: click.Context, all_coverage: bool) -> None:
+    """Ingest OSM-reported dispersed camping (camp_site/camp_pitch/backcountry tags) near home,
+    or --all (coverage-wide, issue #327/#332 - not wired into any prod schedule before this)."""
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
-        count = ingest_dispersed(cfg, con)
-        click.echo(f"Cached {count} reported dispersed-camping sites within {cfg.home.radius_km} km of home.")
+        if all_coverage:
+            count = ingest_dispersed_coverage(cfg, con)
+            click.echo(f"Cached {count} reported dispersed-camping sites (coverage-wide).")
+        else:
+            count = ingest_dispersed(cfg, con)
+            click.echo(f"Cached {count} reported dispersed-camping sites within {cfg.home.radius_km} km of home.")
     finally:
         con.close()
 
@@ -249,9 +274,8 @@ def revalidate_cmd(ctx: click.Context) -> None:
         # refreshed (cache.upsert_observations) can still shift which region/month bucket it
         # falls into, and a reassignment changes its taxon_id outright. Gating on purges alone
         # left phenology/regions stale after a refresh-only or reassign-only run.
-        if total_checked:
+        if total_checked and maybe_rebuild_phenology(con, cfg, total_checked):
             click.echo("Rebuilding phenology…")
-            build_phenology(con, cfg.cell_deg)
     finally:
         con.close()
 
@@ -275,9 +299,8 @@ def backfill_elevation_cmd(ctx: click.Context, limit: int | None, rebuild: bool)
     try:
         updated = backfill_elevations(con, max_points=limit)
         click.echo(f"Enriched {updated} observations with elevation.")
-        if updated and rebuild:
+        if updated and rebuild and maybe_rebuild_phenology(con, cfg, updated):
             click.echo("Rebuilding phenology…")
-            build_phenology(con, cfg.cell_deg)
         jobs.emit_rows(updated)
     finally:
         con.close()
@@ -301,9 +324,8 @@ def backfill_precip_cmd(ctx: click.Context, limit: int | None, rebuild: bool) ->
     try:
         updated = backfill_precip(con, cell_deg=cfg.cell_deg, max_cells=limit)
         click.echo(f"Enriched {updated} observations with antecedent rainfall.")
-        if updated and rebuild:
+        if updated and rebuild and maybe_rebuild_phenology(con, cfg, updated):
             click.echo("Rebuilding phenology…")
-            build_phenology(con, cfg.cell_deg)
     finally:
         con.close()
 
@@ -463,11 +485,11 @@ def resync_cmd(ctx: click.Context, batch_size: int, until_done: bool) -> None:
             click.echo("Nothing to resync.")
             jobs.emit_rows(0)
             return
+        rebuilt = maybe_rebuild_phenology(con, cfg, total_checked)
         click.echo(
             f"Done: {total_checked} observations checked, {total_purged} purged, "
-            f"{total_reassigned} reassigned. Rebuilding phenology…"
+            f"{total_reassigned} reassigned." + (" Rebuilt phenology." if rebuilt else "")
         )
-        build_phenology(con, cfg.cell_deg)
         jobs.emit_rows(total_checked)
     finally:
         con.close()

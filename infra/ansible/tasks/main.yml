@@ -43,9 +43,9 @@
     - foray
     - "foray:deploy"
 
-- name: Configure cron jobs
+- name: Configure scheduled jobs (systemd timers)
   ansible.builtin.include_tasks:
-    file: deploy/cron.yml
+    file: deploy/systemd_jobs.yml
     apply:
       tags:
         - foray

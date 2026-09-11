@@ -1,0 +1,51 @@
+---
+# issue #332 PR 2: systemd timers generated from jobs.yaml (the repo-root job manifest also
+# read by the dev-loop scheduler, src/foray/schedule.py) - replaces cron.yml + one
+# hand-written cron-*.sh.j2 shell script per job. That split (this file vs. scripts/
+# scheduler.sh, each with its own job list) is exactly what let prod silently never schedule
+# fire/precip/forage - see TODO.md E1. Every job in jobs.yaml gets a unit here; nothing is
+# picked by hand.
+
+- name: Load the job manifest (jobs.yaml, repo root)
+  # `playbook_dir` is the currently *running* playbook's directory - site.yml (infra/ansible)
+  # vs. molecule's converge.yml (infra/ansible/molecule/default) resolve it differently, so
+  # molecule's converge.yml passes foray_jobs_manifest_path explicitly instead of relying on
+  # the default here.
+  ansible.builtin.set_fact:
+    foray_jobs: "{{ (lookup('file', foray_jobs_manifest_path | default(playbook_dir + '/../../jobs.yaml')) | from_yaml).jobs }}"
+
+- name: Deploy a systemd service unit per job
+  ansible.builtin.template:
+    src: foray-job.service.j2
+    dest: "/etc/systemd/system/foray-{{ item.name }}.service"
+    mode: "0644"
+  loop: "{{ foray_jobs }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Deploy a systemd timer unit per job
+  ansible.builtin.template:
+    src: foray-job.timer.j2
+    dest: "/etc/systemd/system/foray-{{ item.name }}.timer"
+    mode: "0644"
+  loop: "{{ foray_jobs }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Reload systemd unit files
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable + start each job's timer
+  ansible.builtin.systemd:
+    name: "foray-{{ item.name }}.timer"
+    enabled: true
+    state: started
+  loop: "{{ foray_jobs }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# A job removed from jobs.yaml (renamed or retired) leaves its old unit + timer behind -
+# nothing here prunes them yet. Not common enough to automate for this PR; clean up by hand
+# (`systemctl disable --now foray-<old-name>.timer && rm /etc/systemd/system/foray-<old-name>.*`)
+# when a job is renamed/removed.

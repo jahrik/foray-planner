@@ -1,6 +1,6 @@
 ---
 # issue #332: a dedicated migrate-once step, run before app.yml starts the new app container
-# (or cron.yml's scripts get a chance to fire) - every cron container and the API instance
+# (or a systemd job unit gets a chance to fire) - every job container and the API instance
 # already call `connect()`/`apply_schema` on every start, which raced fine when a migration
 # was additive, but a schema-breaking migration (e.g. #268 PR5's DROP COLUMN) mid-rollout can
 # make a stale container's own apply_schema fail. Running it exactly once here, against the
@@ -25,31 +25,20 @@
     pull: always
 
 # A schema-breaking migration must not run while the old image is still up - it's still
-# serving requests (app container) and cron.yml's scripts are still able to fire (their
-# docker run commands are named, below) against the new schema. Mirrors app.yml's own
-# docker_container (state present/absent) replace pattern rather than a raw `docker stop`.
-# cron.yml re-renders and re-runs on every deploy right after app.yml, so nothing here needs
-# to bring these back - a container only exists at all while one happens to be running.
-- name: Stop the app + any in-flight cron containers before migrating
+# serving requests (app container) and any in-flight systemd job unit (issue #332 PR 2,
+# tasks/deploy/systemd_jobs.yml) is still able to fire against the new schema. Mirrors app.yml's
+# own docker_container (state present/absent) replace pattern rather than a raw `docker stop`.
+- name: Stop the app container before migrating
   community.docker.docker_container:
-    name: "{{ item }}"
+    name: "{{ foray_app_container_name }}"
     state: absent
-  loop:
-    - "{{ foray_app_container_name }}"
-    - foray-cron-ingest
-    - foray-cron-layers-camps
-    - foray-cron-layers-land
-    - foray-cron-genera
-    - foray-cron-revalidate
-    - foray-cron-resync
-    - foray-cron-backfill-elevation
 
-# The named stop above only catches containers started from a cron template that already names
-# itself - true on every deploy after this PR, but not the very first one: a cron tick that fired
-# under the previous (anonymous `docker run`) templates just before this deploy is still
-# unnamed and would otherwise keep running `apply_schema` against the old image mid-migration.
-# Catch those by image (`ancestor`) too, regardless of name, so the one-time transition is safe.
-- name: Find any other still-running container on the app image (unnamed legacy cron runs)
+# Job containers are named foray-<job-name> (per jobs.yaml, not hand-listed here - the whole
+# point of the #332 PR 2 manifest is that this file doesn't need to know the job list) and
+# systemd re-starts each one on its own timer, so re-running its unit after this migration
+# needs nothing further from here. Catch by image (`ancestor`) rather than by name so a
+# stray/renamed job's container is swept too, regardless of what it's called.
+- name: Find any other still-running container on the app image (in-flight job runs)
   community.docker.docker_host_info:
     containers: true
     containers_filters:

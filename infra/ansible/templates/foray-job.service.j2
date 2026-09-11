@@ -1,0 +1,19 @@
+# Managed by the foray-planner ansible role (issue #332 PR 2) - generated from jobs.yaml, one
+# unit per manifest entry. `foray job <name> [--writer] -- <command>` (src/foray/jobs.py)
+# already takes its own Postgres advisory lock keyed on the job name and records a job_runs
+# row, so this unit only needs to run the container - a still-running previous invocation of
+# this same oneshot unit makes systemd itself skip the next start, no `docker ps` guard needed.
+[Unit]
+Description=foray job: {{ item.name }}
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# --pull always: refresh the local :latest each tick so a stale image can't fail apply_schema
+# (#277) - migrate.yml's ancestor-filtered container sweep stops any in-flight run of this
+# image before a schema-breaking migration.
+ExecStart=/usr/bin/docker run --rm --name foray-{{ item.name }} --pull always \
+  --env-file /opt/foray-planner/foray.env \
+  {{ foray_app_image }} \
+  foray job {{ item.name }}{{ ' --writer' if item.writer else '' }} -- {{ item.command }}
