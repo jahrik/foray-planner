@@ -44,6 +44,27 @@
     - foray-cron-resync
     - foray-cron-backfill-elevation
 
+# The named stop above only catches containers started from a cron template that already names
+# itself - true on every deploy after this PR, but not the very first one: a cron tick that fired
+# under the previous (anonymous `docker run`) templates just before this deploy is still
+# unnamed and would otherwise keep running `apply_schema` against the old image mid-migration.
+# Catch those by image (`ancestor`) too, regardless of name, so the one-time transition is safe.
+- name: Find any other still-running container on the app image (unnamed legacy cron runs)
+  community.docker.docker_host_info:
+    containers: true
+    containers_filters:
+      ancestor: "{{ foray_app_image }}"
+      status: running
+  register: foray_migrate_stray_containers
+
+- name: Stop stray app-image containers before migrating
+  community.docker.docker_container:
+    name: "{{ item.Id }}"
+    state: absent
+  loop: "{{ foray_migrate_stray_containers.containers }}"
+  loop_control:
+    label: "{{ item.Names | default([item.Id]) | first }}"
+
 - name: Run the one-shot schema migration
   community.docker.docker_container:
     name: foray-migrate-once

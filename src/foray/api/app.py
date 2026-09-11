@@ -57,13 +57,26 @@ _ROUTERS = (
 )
 
 
+_REQUEST_STATEMENT_TIMEOUT = "SET statement_timeout = '5s'"
+
+
 def _configure_connection(conn: psycopg.Connection) -> None:
-    # issue #333: caps one runaway query (a bad ST_Intersects, a huge-radius corridor query)
-    # holding a connection open indefinitely against the shared 22-backend cap. Set here, not
-    # via `ALTER ROLE ... SET` in a migration, because that role is shared with cron/migration
+    # issue #333: caps one runaway request query (a bad ST_Intersects, a huge-radius corridor
+    # query) holding a connection open indefinitely against the shared 22-backend cap. Set here,
+    # not via `ALTER ROLE ... SET` in a migration, because that role is shared with cron/migration
     # connections, which legitimately run minutes-long bulk work this timeout would kill -
     # `configure` only touches connections opened by *this* pool, so only the API is affected.
-    conn.execute("SET statement_timeout = '5s'")
+    #
+    # This pool is also used for the lifespan's `apply_schema` and `refresh_runner.run_refresh`'s
+    # long-lived connection (full observations scans, index builds, ANALYZE) - both explicitly
+    # `SET statement_timeout = 0` on their own checkout before doing that work. `reset` (below)
+    # restores the 5s default when the connection goes back to the pool, so a long-running
+    # checkout can never leak its relaxed timeout onto a later request.
+    conn.execute(_REQUEST_STATEMENT_TIMEOUT)
+
+
+def _reset_connection(conn: psycopg.Connection) -> None:
+    conn.execute(_REQUEST_STATEMENT_TIMEOUT)
 
 
 def create_app(cfg: Settings | None = None) -> FastAPI:
@@ -90,6 +103,7 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         max_lifetime=1800,
         check=ConnectionPool.check_connection,
         configure=_configure_connection,
+        reset=_reset_connection,
         open=False,
         kwargs={"autocommit": True},
     )
@@ -107,6 +121,10 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
             # Full schema + migration chain, not just the CREATE TABLE baseline - the server
             # never calls cache.connect(), so this is the only place migrations get applied
             # in-process (a stale prod column otherwise waits on an out-of-process cron run).
+            # Disable the request-scoped 5s statement_timeout for this checkout: index builds
+            # and ANALYZE on the ~1.9M-row observations table can run well past that. `reset`
+            # restores 5s when this connection goes back to the pool.
+            conn.execute("SET statement_timeout = 0")
             apply_schema(conn)
         # `state.cfg.home` is now only ever the env/default home - see resolve_device_id
         # and resolve_home for per-visitor overrides. Multi-user, no accounts: each browser

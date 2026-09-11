@@ -51,7 +51,7 @@
       max_parallel_workers_per_gather: "{{ foray_pg_max_parallel_workers_per_gather }}"
       work_mem: "{{ foray_pg_work_mem_kb }}"
       shared_buffers_percentage: "{{ foray_pg_shared_buffers_percentage }}"
-      pg_stat_statements.track: all
+      pg_stat_statements_track: all
 
 # DO's managed PgBouncer. Creating these pools doesn't change how the app connects today - the
 # app keeps talking to the cluster directly until FORAY_DATABASE_URL is deliberately repointed
