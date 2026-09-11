@@ -1185,12 +1185,16 @@ def maybe_rebuild_phenology(con: psycopg.Connection, cfg: Settings, new_rows: in
     inline whenever it changed anything - the heaviest single op in the app, run far more
     often than the data actually needed it. This accumulates `new_rows` into a `meta`-stored
     counter and only actually rebuilds once the running total crosses
-    `cfg.observability.phenology_rebuild_threshold`, resetting the counter either way.
+    `cfg.observability.phenology_rebuild_threshold` - the counter is reset only *after* a
+    successful rebuild, so a failed rebuild (exception propagates to the caller) leaves the
+    accumulated count in place for the next pass to retry, instead of silently forgetting it.
 
     A session advisory lock (distinct from the per-job lock `foray.jobs` already takes - two
     *different* jobs can each push the counter past the threshold in the same tick) serializes
-    the check-and-maybe-rebuild so the rebuild itself only ever runs once, alone, not twice
-    concurrently. Returns whether a rebuild actually ran.
+    the check against the counter; `build_phenology` itself takes the same lock again (safe -
+    session-level advisory locks are reentrant) so the rebuild also can't race a direct
+    `build_phenology` call from `run_home_refresh` or the coverage-wide `refresh --all` CLI
+    path. Returns whether a rebuild actually ran.
     """
     if new_rows <= 0:
         return False
@@ -1200,18 +1204,21 @@ def maybe_rebuild_phenology(con: psycopg.Connection, cfg: Settings, new_rows: in
     try:
         row = con.execute("SELECT value FROM meta WHERE key = 'phenology_pending_rows'").fetchone()
         pending = (int(row[0]) if row else 0) + new_rows
+        # Persist the accumulated count *before* attempting a rebuild - if build_phenology
+        # raises, this value (not the pre-call one, and not 0) is what's on the next attempt,
+        # so nothing is lost and the threshold isn't re-earned from scratch.
+        con.execute(
+            "INSERT INTO meta (key, value) VALUES ('phenology_pending_rows', %s) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            [str(pending)],
+        )
         if pending < cfg.observability.phenology_rebuild_threshold:
-            con.execute(
-                "INSERT INTO meta (key, value) VALUES ('phenology_pending_rows', %s) "
-                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-                [str(pending)],
-            )
             return False
+        build_phenology(con, cfg.cell_deg)
         con.execute(
             "INSERT INTO meta (key, value) VALUES ('phenology_pending_rows', '0') "
             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
         )
-        build_phenology(con, cfg.cell_deg)
         return True
     finally:
         con.execute("SELECT pg_advisory_unlock(hashtext('phenology-rebuild'))")

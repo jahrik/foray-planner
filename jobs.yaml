@@ -31,14 +31,13 @@ jobs:
     window: night
     writer: true
 
-  - name: layers-camps
-    command: refresh --with camps,dispersed
-    interval_hours: 168
-    window: any
-    writer: true
-
+  # Coverage-wide (--all), not the home-radius-only camps/dispersed pair the old
+  # cron-layers.sh.j2 ran - that was itself the gap issue #332 named (RIDB campground coverage
+  # never reached non-home regions; see `ingest_campgrounds_coverage`, cli.py's `refresh --all`
+  # path). dispersed stays its own job (below) since it goes through a different CLI command
+  # (`foray dispersed --all`), not `refresh --with dispersed --all`.
   - name: layers-land
-    command: refresh --with land,trails --all
+    command: refresh --with camps,land,trails --all
     interval_hours: 168
     window: night
     writer: true

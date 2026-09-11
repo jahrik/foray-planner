@@ -24,10 +24,59 @@
     name: "{{ foray_app_image }}"
     pull: always
 
+# One-time cleanup for a droplet that still has the pre-#332-PR-2 crontab + shell scripts:
+# cron.yml (which created these) no longer runs, so they'd otherwise be orphaned - never
+# updated again, but still firing forever alongside the new systemd timers, duplicating every
+# job. Fixed, historical list (cron.yml itself is gone, so this can't grow again). `state:
+# absent` no-ops cleanly on a droplet that never had them (fresh provision, or already migrated).
+- name: Remove legacy cron entries (pre-systemd-timer prod cron)
+  ansible.builtin.cron:
+    name: "{{ item }}"
+    state: absent
+  loop:
+    - foray-ingest
+    - foray-layers
+    - foray-genera
+    - foray-revalidate
+    - foray-resync
+    - foray-backfill-elevation
+
+- name: Remove legacy cron shell scripts
+  ansible.builtin.file:
+    path: "/opt/foray-planner/scripts/{{ item }}"
+    state: absent
+  loop:
+    - cron-ingest.sh
+    - cron-layers.sh
+    - cron-genera.sh
+    - cron-revalidate.sh
+    - cron-resync.sh
+    - cron-backfill-elevation.sh
+
 # A schema-breaking migration must not run while the old image is still up - it's still
 # serving requests (app container) and any in-flight systemd job unit (issue #332 PR 2,
-# tasks/deploy/systemd_jobs.yml) is still able to fire against the new schema. Mirrors app.yml's
-# own docker_container (state present/absent) replace pattern rather than a raw `docker stop`.
+# tasks/deploy/systemd_jobs.yml) is still able to fire against the new schema. Stopping the
+# containers alone isn't enough to quiesce systemd: the job *timers* stay active and could
+# launch a fresh container between this sweep and the migration below, so stop those first.
+# systemd_jobs.yml (runs later in site.yml, after app.yml/caddy.yml) re-enables + starts them.
+- name: Discover any currently-deployed job timers
+  # No module lists units by glob; this only reads state (stopping goes through the systemd
+  # module below), so command-instead-of-module doesn't apply here.
+  ansible.builtin.command: systemctl list-units --type=timer --all --no-legend "foray-*.timer"  # noqa: command-instead-of-module
+  register: foray_migrate_existing_timers
+  changed_when: false
+  failed_when: false
+
+- name: Stop discovered job timers before migrating
+  ansible.builtin.systemd:
+    name: "{{ item.split()[0] }}"
+    state: stopped
+  loop: "{{ foray_migrate_existing_timers.stdout_lines | default([]) }}"
+  loop_control:
+    label: "{{ item.split()[0] }}"
+
+# Mirrors app.yml's own docker_container (state present/absent) replace pattern rather than a
+# raw `docker stop`.
 - name: Stop the app container before migrating
   community.docker.docker_container:
     name: "{{ foray_app_container_name }}"

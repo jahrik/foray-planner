@@ -47,7 +47,20 @@ def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
     their normal index names. ``*_new`` is a transient staging name; a crash mid-rebuild
     leaves a stray ``phenology_new`` (dropped at the top of the next run) rather than a lock
     held for the whole rebuild or half-built live tables.
+
+    A session advisory lock serializes the *whole* rebuild (not just the cutover) across every
+    caller - a direct call here (``run_home_refresh``, the coverage-wide ``refresh --all`` CLI
+    path) and a debounced call via ``cache.maybe_rebuild_phenology`` can otherwise race each
+    other's ``*_new`` staging tables (issue #332 PR 2 review).
     """
+    con.execute("SELECT pg_advisory_lock(hashtext('phenology-rebuild'))")
+    try:
+        _build_phenology_locked(con, cell_deg)
+    finally:
+        con.execute("SELECT pg_advisory_unlock(hashtext('phenology-rebuild'))")
+
+
+def _build_phenology_locked(con: psycopg.Connection, cell_deg: float) -> None:
     binned = BINNED.format(cell=cell_deg)
     # A previous crash between the CREATE and the cutover can leave staging tables behind.
     con.execute("DROP TABLE IF EXISTS phenology_new, regions_new")

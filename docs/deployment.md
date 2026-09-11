@@ -93,8 +93,7 @@ managed Postgres instance - same image, same DB, spins up, runs, exits:
 | Job | Command | Interval | Window |
 |---|---|---|---|
 | `foray-ingest` | `ingest --countries` | daily | night |
-| `foray-layers-camps` | `refresh --with camps,dispersed` | weekly | any |
-| `foray-layers-land` | `refresh --with land,trails --all` | weekly | night |
+| `foray-layers-land` | `refresh --with camps,land,trails --all` | weekly | night |
 | `foray-dispersed-coverage` | `dispersed --all` | weekly | night |
 | `foray-genera` | `genera-refresh` | weekly | night |
 | `foray-revalidate` | `revalidate` | weekly | night |

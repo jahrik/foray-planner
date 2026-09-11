@@ -1,13 +1,17 @@
 # Managed by the foray-planner ansible role (issue #332 PR 2) - generated from jobs.yaml.
 # window: night jobs (coverage-wide / heavy - TODO.md O2) only start inside a low-traffic
-# window; window: any jobs fire on their own interval at any hour. Persistent=true means a
-# missed tick (droplet down, or the unit disabled during a deploy window) runs on the next
-# boot/reload instead of being skipped for a whole cycle.
+# window; window: any jobs fire on their own interval at any hour.
+#
+# Persistent=true only on window: any jobs - it means a missed tick (droplet down, or the
+# unit disabled during a deploy window) runs immediately on the next boot/reload instead of
+# waiting a full cycle, which is fine for a light job at any hour. A night-window job must NOT
+# be Persistent: systemd's catch-up-on-boot behavior ignores OnCalendar's time-of-day and would
+# run a missed heavy/coverage-wide job the moment the box comes back up, however far outside
+# 02:00-05:00 that is - it just waits for its next scheduled night window instead.
 [Unit]
 Description=foray job timer: {{ item.name }}
 
 [Timer]
-Persistent=true
 {% if item.window == "night" %}
 {% if item.interval_hours | int >= 168 %}
 OnCalendar=Sun *-*-* {{ foray_night_window_start_hour }}:00:00 {{ foray_night_window_tz }}
@@ -16,6 +20,7 @@ OnCalendar=*-*-* {{ foray_night_window_start_hour }}:00:00 {{ foray_night_window
 {% endif %}
 RandomizedDelaySec={{ foray_night_window_randomized_delay_sec }}
 {% else %}
+Persistent=true
 OnBootSec=5min
 OnUnitActiveSec={{ item.interval_hours }}h
 RandomizedDelaySec={{ foray_job_randomized_delay_sec }}

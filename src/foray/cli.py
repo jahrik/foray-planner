@@ -485,7 +485,11 @@ def resync_cmd(ctx: click.Context, batch_size: int, until_done: bool) -> None:
             click.echo("Nothing to resync.")
             jobs.emit_rows(0)
             return
-        rebuilt = maybe_rebuild_phenology(con, cfg, total_checked)
+        # `checked` is the batch size (`stale_observation_ids` always returns up to
+        # `batch_size` rows regardless of whether any of them actually changed), so it's a poor
+        # debounce signal for the hourly small-batch cron - it would cross the threshold on
+        # nearly every tick. `purged`/`reassigned` are genuine taxon-bucket-changing writes.
+        rebuilt = maybe_rebuild_phenology(con, cfg, total_purged + total_reassigned)
         click.echo(
             f"Done: {total_checked} observations checked, {total_purged} purged, "
             f"{total_reassigned} reassigned." + (" Rebuilt phenology." if rebuilt else "")
