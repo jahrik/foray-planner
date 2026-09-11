@@ -34,6 +34,7 @@ from typing import Any
 import httpx
 import psycopg
 
+from foray.alerting import alert
 from foray.cache import apply_fire_severity, replace_fire_lane, upsert_fire_perimeters
 from foray.config import Settings
 from foray.geo import bbox_around
@@ -44,6 +45,15 @@ logger = logging.getLogger(__name__)
 _PAGE_SIZE = 1000
 _SIMPLIFY_DEG = 0.005  # ~500 m server-side generalization, same as land.py
 _HISTORY_YEARS_BACK = 3  # + current year = the burn-morel productivity window
+# issue #332: minimum previously-cached row count that makes a 0-row replace-lane response
+# suspicious rather than a legitimate "nothing active right now".
+_EMPTY_RESPONSE_GUARD = 5
+
+
+def _lane_row_count(con: psycopg.Connection, source_key: str) -> int:
+    row = con.execute("SELECT count(*) FROM fire_perimeters WHERE source_key = %s", [source_key]).fetchone()
+    return int(row[0]) if row else 0
+
 
 # NIFC WFIGS (Wildland Fire Interagency Geospatial Services) + InterAgency Perimeter History,
 # all on the NIFC ArcGIS Online org. MTBS burned-area boundaries on the MTBS portal server.
@@ -313,11 +323,32 @@ def refresh_fire(
             except _SOURCE_ERRORS as error:
                 logger.warning("fire: lane %s failed (%s) - skipping", lane, error)
                 continue
+            key = {LANE_ACTIVE: "active", LANE_POINTS: "points", LANE_HISTORY: "history"}[lane]
+            cached = _lane_row_count(con, lane) if replace and not rows else 0
+            if replace and not rows and cached >= _EMPTY_RESPONSE_GUARD:
+                # issue #332: an empty response on a replace-semantics lane is indistinguishable
+                # from "the source legitimately has nothing right now" (docstring above) unless
+                # something was already cached - a transient WFIGS hiccup that returns 200 with
+                # no features would otherwise wipe the whole active-fire layer to zero. Below the
+                # guard, a small/empty lane clearing out is unremarkable and proceeds normally.
+                logger.warning(
+                    "fire: lane %s returned 0 rows but %d were cached - treating as a source "
+                    "hiccup, keeping the cached rows instead of wiping the lane",
+                    lane,
+                    cached,
+                )
+                alert(
+                    cfg,
+                    "warning",
+                    f"fire: lane {lane!r} returned 0 rows from an otherwise-populated cache - "
+                    "skipped the replace-semantics wipe, kept the cached rows",
+                )
+                counts[key] = 0
+                continue
             if replace:
                 replace_fire_lane(con, lane, rows)
             else:
                 upsert_fire_perimeters(con, rows)
-            key = {LANE_ACTIVE: "active", LANE_POINTS: "points", LANE_HISTORY: "history"}[lane]
             counts[key] = len(rows)
             logger.info("fire: lane %s -> %d rows", lane, len(rows))
 

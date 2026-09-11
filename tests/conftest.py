@@ -39,6 +39,7 @@ _TABLES = (
     "precip_daily",
     "precipitation",
     "fire_perimeters",
+    "job_runs",
 )
 
 _TEST_DB_NAME = "foray_test"

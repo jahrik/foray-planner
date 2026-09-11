@@ -37,6 +37,51 @@ jobs:
       - name: Tests
         run: just test
 
+  schema-migrations:
+    # issue #332: the two 2026-08 schema-drift outages (materialized regions/phenology tables
+    # absent from SCHEMA; the server never running _MIGRATIONS in-process before the #234 fix)
+    # would both have been caught by this - a dedicated, from-scratch run of the full
+    # SCHEMA + _MIGRATIONS chain against a brand new Postgres+PostGIS container, decoupled
+    # from `just test`'s shared/possibly-warm local dev volume.
+    name: Full schema + migrations chain (fresh Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: docker.io/postgis/postgis:16-3.5
+        env:
+          POSTGRES_USER: foray
+          POSTGRES_PASSWORD: foray
+          POSTGRES_DB: foray
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U foray"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: foray
+      PGPASSWORD: foray
+      PGDATABASE: foray
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Apply the full schema + migrations chain from scratch
+        run: uv run foray migrate
+
+      - name: Re-apply is a clean no-op (idempotency)
+        run: uv run foray migrate
+
   frontend:
     name: Build client (type-check + bundle)
     runs-on: ubuntu-latest

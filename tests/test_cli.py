@@ -173,3 +173,37 @@ def test_refresh_precip_cmd_reports_count(con: psycopg.Connection, env_config, m
     result = CliRunner().invoke(cli, ["refresh-precip"])
     assert result.exit_code == 0
     assert "7 regions" in result.output
+
+
+def test_migrate_cmd_applies_schema_and_exits_clean(con: psycopg.Connection, env_config, monkeypatch) -> None:
+    monkeypatch.setattr(cli_module, "connect", lambda: _CloseTrackingConnection(con))
+    result = CliRunner().invoke(cli, ["migrate"])
+    assert result.exit_code == 0
+    assert "up to date" in result.output.lower()
+
+
+def test_alert_cmd_delegates_to_alerting(env_config, monkeypatch) -> None:
+    seen: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        cli_module.alerting, "alert", lambda cfg, level, message: seen.append((cfg.home.name, level, message))
+    )
+    result = CliRunner().invoke(cli, ["alert", "warning", "backlog growing"])
+    assert result.exit_code == 0
+    assert seen == [("Home", "warning", "backlog growing")]
+
+
+def test_job_cmd_delegates_to_jobs_run_and_propagates_exit_code(env_config, monkeypatch) -> None:
+    seen: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(cli_module.jobs, "run", lambda name, argv: (seen.append((name, argv)), 0)[1])
+    result = CliRunner().invoke(cli, ["job", "fire", "--", "fire"])
+    assert result.exit_code == 0
+    assert seen == [("fire", ["fire"])]
+
+    monkeypatch.setattr(cli_module.jobs, "run", lambda name, argv: 1)
+    result = CliRunner().invoke(cli, ["job", "fire", "--", "fire"])
+    assert result.exit_code == 1
+
+
+def test_job_cmd_requires_a_wrapped_command(env_config) -> None:
+    result = CliRunner().invoke(cli, ["job", "fire"])
+    assert result.exit_code != 0

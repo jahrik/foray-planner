@@ -290,7 +290,7 @@ CREATE TABLE IF NOT EXISTS meta (
 # Bump whenever the SCHEMA string above OR the CONCURRENTLY index set in apply_schema changes,
 # so a running instance re-executes them once on its next apply_schema. (New _MIGRATIONS
 # entries are tracked separately by version and don't need a bump.)
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Fixed advisory-lock key so two processes starting together (API + scheduler) serialize on
 # the full apply_schema path instead of racing CREATE INDEX CONCURRENTLY.
@@ -322,10 +322,19 @@ _CONCURRENT_INDEXES: list[LiteralString] = [
     # (~1.9M points) and trails (~1M lines) builds are slow even CONCURRENTLY; schedule those
     # into a maintenance window or accept a slow first post-deploy apply_schema.
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_campsites_geom ON campsites USING GIST (geom)",
-    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_geom ON observations USING GIST (geom)",
-    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_trails_geom ON trails USING GIST (geom)",
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_public_land_geom ON public_land USING GIST (geom)",
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_fire_perimeters_geom ON fire_perimeters USING GIST (geom)",
+    # issue #333: partial - `geom` is nullable (populated by the BEFORE trigger, migrations
+    # 20/21/22) and unset until a row's first insert/update touches it, so a plain index over
+    # the whole ~1.9M/~1.2M-row tables wastes space entering NULLs no spatial query ever
+    # matches. Same two-step swap as ix_observations_taxon_observed_research above: build the
+    # partial replacement first, drop the old one only once it's live - a failed/cancelled
+    # build must never leave the table with neither index.
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_geom_notnull "
+    "ON observations USING GIST (geom) WHERE geom IS NOT NULL",
+    "DROP INDEX CONCURRENTLY IF EXISTS ix_observations_geom",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_trails_geom_notnull ON trails USING GIST (geom) WHERE geom IS NOT NULL",
+    "DROP INDEX CONCURRENTLY IF EXISTS ix_trails_geom",
 ]
 
 # Schema changes past the initial CREATE TABLE/INDEX IF NOT EXISTS baseline above, applied in
@@ -496,6 +505,27 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # Both additive; NULL until the first backfill pass reaches the row.
     (34, "ALTER TABLE trails ADD COLUMN IF NOT EXISTS forage_obs INTEGER"),
     (35, "ALTER TABLE trails ADD COLUMN IF NOT EXISTS forage_obs_at TIMESTAMPTZ"),
+    # issue #332: one row per scheduled-job run (the `foray job` wrapper - see foray.jobs),
+    # so a run's outcome is queryable instead of living only in a cron container's stdout.
+    # `status` is "ok" / "error" / "skipped" (advisory-lock overlap - see jobs.run).
+    (
+        36,
+        "CREATE TABLE IF NOT EXISTS job_runs ("
+        "id BIGSERIAL PRIMARY KEY, job TEXT NOT NULL, started_at TIMESTAMPTZ NOT NULL, "
+        "ended_at TIMESTAMPTZ, status TEXT NOT NULL, rows INTEGER, duration_ms INTEGER, "
+        "http_429_count INTEGER)",
+    ),
+    # /healthz/data and any "last run of X" query filter by job then want the newest rows
+    # first - matches how ix_observations_taxon_observed_research etc. are shaped for their
+    # own hot query.
+    (37, "CREATE INDEX IF NOT EXISTS ix_job_runs_job_started ON job_runs (job, started_at DESC)"),
+    # issue #333: leaves 10% free space per page on the two tables that take the heaviest
+    # UPDATE traffic (resync ~2000 obs/hr, forage backfill 20k trails/6h) so an UPDATE that
+    # doesn't grow the row can reuse space on the same page (HOT update) instead of always
+    # forcing a new page - only affects pages written after this runs, not existing ones (see
+    # docs/runbooks/pg-repack-observations.md for the one-time rewrite of what's already there).
+    (38, "ALTER TABLE observations SET (fillfactor = 90)"),
+    (39, "ALTER TABLE trails SET (fillfactor = 90)"),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]
@@ -625,7 +655,16 @@ def copy_upsert(
 def _schema_is_current(con: psycopg.Connection) -> bool:
     """True when ``SCHEMA`` at ``SCHEMA_VERSION`` and every ``_MIGRATIONS`` entry are already
     applied on ``con`` - the fast-path guard that lets ``apply_schema`` skip re-executing the
-    whole ``SCHEMA`` string (and the CONCURRENTLY probe) on every CLI call and cron tick."""
+    whole ``SCHEMA`` string (and the CONCURRENTLY probe) on every CLI call and cron tick.
+
+    issue #332: this is also the natural shape for a future serve-time schema-version guard -
+    ``create_app``'s lifespan (``api/app.py``) could call this (or a cheap variant of it)
+    *before* ``apply_schema`` and refuse to start serving on a mismatch, instead of every
+    cron container + API instance racing ``apply_schema`` against a moving target during a
+    rolling deploy (the #277 footgun). Not wired up here - `cd.yml` needs a dedicated
+    migrate-once step first (see the CI/CD notes there) so there's always exactly one writer
+    for a schema version before any reader can be asked to gate on it.
+    """
     reg = con.execute("SELECT to_regclass('meta'), to_regclass('schema_migrations')").fetchone()
     if reg is None or reg[0] is None or reg[1] is None:
         return False
@@ -1085,6 +1124,41 @@ def record_ingest(
     )
 
 
+def record_job_run(
+    con: psycopg.Connection,
+    job: str,
+    *,
+    started_at: dt.datetime,
+    ended_at: dt.datetime,
+    status: str,
+    rows: int | None = None,
+    duration_ms: int | None = None,
+    http_429_count: int = 0,
+) -> None:
+    """One ``job_runs`` row per scheduled-job attempt (issue #332), written by
+    ``foray.jobs.run`` regardless of outcome - ``status`` is ``"ok"``, ``"error"``, or
+    ``"skipped"`` (an overlapping run found the advisory lock already held)."""
+    con.execute(
+        "INSERT INTO job_runs (job, started_at, ended_at, status, rows, duration_ms, http_429_count) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        [job, started_at, ended_at, status, rows, duration_ms, http_429_count],
+    )
+
+
+def latest_job_run(con: psycopg.Connection, job: str) -> dict[str, Any] | None:
+    """Most recent ``job_runs`` row for ``job``, or ``None`` if it has never run - the
+    freshness signal ``/healthz/data`` uses for layers with no ``ingest_log`` marker of their
+    own (fire's replace-semantics refresh, the recent-rain-per-destination layer)."""
+    row = con.execute(
+        "SELECT status, started_at, ended_at FROM job_runs WHERE job = %s ORDER BY started_at DESC LIMIT 1",
+        [job],
+    ).fetchone()
+    if row is None:
+        return None
+    status, started_at, ended_at = row
+    return {"status": status, "started_at": started_at, "ended_at": ended_at}
+
+
 def observation_count(con: psycopg.Connection) -> int:
     row = con.execute("SELECT count(*) FROM observations").fetchone()
     return int(row[0]) if row else 0
@@ -1102,6 +1176,15 @@ def forget_ingest(con: psycopg.Connection, key: str) -> int:
     no prefix matching. Used by ``foray trails --force`` to re-pull a single coverage region."""
     result = con.execute("DELETE FROM ingest_log WHERE key = %s", [key])
     return result.rowcount
+
+
+def latest_ingest_at(con: psycopg.Connection, prefix: str) -> dt.datetime | None:
+    """Newest ``ingest_log.fetched_at`` across every key starting with ``prefix`` - the
+    generalization of ``/api/coverage``'s per-region latest-ingest query
+    (``api.routes.coverage``) that ``/healthz/data`` (``api.routes.health``) reuses for the
+    other layers (land, trails, camps, dispersed) that also mark their ingests here."""
+    row = con.execute("SELECT max(fetched_at) FROM ingest_log WHERE key LIKE %s", [f"{prefix}%"]).fetchone()
+    return row[0] if row else None
 
 
 def is_area_covered(con: psycopg.Connection, prefix: str, lat: float, lng: float, radius_km: float) -> bool:

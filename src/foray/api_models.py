@@ -319,3 +319,17 @@ class LocationResponse(BaseModel):
 
 class StatusResponse(BaseModel):
     status: str
+
+
+class LayerFreshnessResponse(BaseModel):
+    """One data layer's freshness, as reported by ``/healthz/data`` (issue #332)."""
+
+    layer: str
+    last_success: str | None
+    interval_hours: float
+    stale: bool
+
+
+class DataHealthResponse(BaseModel):
+    ok: bool
+    layers: list[LayerFreshnessResponse]
