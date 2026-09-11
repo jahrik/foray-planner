@@ -48,7 +48,8 @@ docker run -d --name foray-planner -p 8000:8000 $PG_ENV -e RIDB_API_KEY=$RIDB_AP
 ```
 
 The image exposes port `8000` and serves both the API and the built frontend bundle.
-The health check polls `GET /api/config` every 30 seconds.
+The health check polls `GET /healthz` every 30 seconds (liveness only, no DB round trip -
+see `GET /healthz/data` for data-freshness monitoring).
 
 ---
 

@@ -24,6 +24,26 @@
     name: "{{ foray_app_image }}"
     pull: always
 
+# A schema-breaking migration must not run while the old image is still up - it's still
+# serving requests (app container) and cron.yml's scripts are still able to fire (their
+# docker run commands are named, below) against the new schema. Mirrors app.yml's own
+# docker_container (state present/absent) replace pattern rather than a raw `docker stop`.
+# cron.yml re-renders and re-runs on every deploy right after app.yml, so nothing here needs
+# to bring these back - a container only exists at all while one happens to be running.
+- name: Stop the app + any in-flight cron containers before migrating
+  community.docker.docker_container:
+    name: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ foray_app_container_name }}"
+    - foray-cron-ingest
+    - foray-cron-layers-camps
+    - foray-cron-layers-land
+    - foray-cron-genera
+    - foray-cron-revalidate
+    - foray-cron-resync
+    - foray-cron-backfill-elevation
+
 - name: Run the one-shot schema migration
   community.docker.docker_container:
     name: foray-migrate-once
@@ -35,3 +55,12 @@
       - name: "{{ foray_docker_network }}"
     env_file: /opt/foray-planner/foray.env
     command: "foray migrate"
+  register: foray_migrate_once_run
+
+# docker_container with detach:false does not fail the task on a non-zero container exit -
+# without this a failed migration is reported as successful and app.yml deploys the new image
+# against a half-migrated schema anyway.
+- name: Fail if the migration container exited non-zero
+  ansible.builtin.fail:
+    msg: "foray migrate exited {{ foray_migrate_once_run.container.State.ExitCode }} - see the container output above."
+  when: foray_migrate_once_run.container.State.ExitCode | int != 0

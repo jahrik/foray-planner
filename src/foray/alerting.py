@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 
 import httpx
+import sentry_sdk
 
 from foray.config import Settings
 from foray.sources.http import USER_AGENT
@@ -25,18 +26,18 @@ AlertLevel = str  # "info" | "warning" | "error" - not a Literal, callers pass f
 def healthcheck_ping(cfg: Settings, job: str, event: str) -> None:
     """Ping healthchecks.io (or a compatible dead-man's-switch endpoint) for ``job``.
 
-    ``event`` is ``"start"``, ``""`` (bare = success), or ``"fail"`` - appended as a path
-    segment per healthchecks.io's convention. No-op when
-    ``FORAY_OBSERVABILITY__HEALTHCHECKS_BASE_URL`` is unset.
+    ``event`` is ``"start"``, ``""`` (bare = success), or ``"fail"`` - the only two suffixes
+    healthchecks.io defines, appended to that job's own check URL. No-op when ``job`` has no
+    entry in ``FORAY_OBSERVABILITY__HEALTHCHECKS_URLS``.
     """
-    base = cfg.observability.healthchecks_base_url
-    if not base:
+    url = cfg.observability.healthchecks_urls.get(job)
+    if not url:
         return
-    url = f"{base.rstrip('/')}/{job}"
     if event:
-        url = f"{url}/{event}"
+        url = f"{url.rstrip('/')}/{event}"
     try:
-        httpx.get(url, timeout=_TIMEOUT, headers={"User-Agent": USER_AGENT})
+        response = httpx.get(url, timeout=_TIMEOUT, headers={"User-Agent": USER_AGENT})
+        response.raise_for_status()
     except httpx.HTTPError as error:
         logger.warning("alerting: healthchecks ping for %s/%s failed (%s)", job, event or "success", error)
 
@@ -50,12 +51,13 @@ def alert(cfg: Settings, level: AlertLevel, message: str) -> None:
     if not ntfy_url:
         return
     try:
-        httpx.post(
+        response = httpx.post(
             ntfy_url,
             content=message.encode(),
             headers={"Title": f"foray {level}", "User-Agent": USER_AGENT},
             timeout=_TIMEOUT,
         )
+        response.raise_for_status()
     except httpx.HTTPError as error:
         logger.warning("alerting: ntfy delivery failed (%s)", error)
 
@@ -65,15 +67,10 @@ def _level_to_logging(level: AlertLevel) -> int:
 
 
 def init_sentry(cfg: Settings) -> None:
-    """Initialize the Sentry/GlitchTip SDK if ``FORAY_OBSERVABILITY__SENTRY_DSN`` is set and
-    the ``sentry-sdk`` package is installed. Called once from the CLI group callback and from
-    ``create_app`` - ``sentry_sdk.init`` is itself idempotent-safe to call more than once."""
+    """Initialize the Sentry/GlitchTip SDK if ``FORAY_OBSERVABILITY__SENTRY_DSN`` is set.
+    Called once from the CLI group callback and from ``create_app`` - ``sentry_sdk.init`` is
+    itself idempotent-safe to call more than once."""
     dsn = cfg.observability.sentry_dsn
     if not dsn:
-        return
-    try:
-        import sentry_sdk  # ty: ignore[unresolved-import]  # optional dep, not in pyproject.toml
-    except ImportError:
-        logger.warning("alerting: FORAY_OBSERVABILITY__SENTRY_DSN is set but sentry-sdk isn't installed - skipping")
         return
     sentry_sdk.init(dsn=dsn)

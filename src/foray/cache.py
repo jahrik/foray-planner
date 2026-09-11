@@ -1146,9 +1146,10 @@ def record_job_run(
 
 
 def latest_job_run(con: psycopg.Connection, job: str) -> dict[str, Any] | None:
-    """Most recent ``job_runs`` row for ``job``, or ``None`` if it has never run - the
-    freshness signal ``/healthz/data`` uses for layers with no ``ingest_log`` marker of their
-    own (fire's replace-semantics refresh, the recent-rain-per-destination layer)."""
+    """Most recent ``job_runs`` row for ``job`` regardless of outcome, or ``None`` if it has
+    never run. For the freshness signal, use ``latest_successful_job_run`` instead - this one
+    exists for callers that want to know the outcome of the last *attempt* (e.g. `foray job`
+    itself), not the last success."""
     row = con.execute(
         "SELECT status, started_at, ended_at FROM job_runs WHERE job = %s ORDER BY started_at DESC LIMIT 1",
         [job],
@@ -1157,6 +1158,23 @@ def latest_job_run(con: psycopg.Connection, job: str) -> dict[str, Any] | None:
         return None
     status, started_at, ended_at = row
     return {"status": status, "started_at": started_at, "ended_at": ended_at}
+
+
+def latest_successful_job_run(con: psycopg.Connection, job: str) -> dict[str, Any] | None:
+    """Most recent ``status = 'ok'`` ``job_runs`` row for ``job``, or ``None`` if it has never
+    succeeded - the freshness signal ``/healthz/data`` uses for layers with no ``ingest_log``
+    marker of their own (fire's replace-semantics refresh, the recent-rain-per-destination
+    layer). Filtering by status here (rather than fetching the latest row and checking it)
+    means a failed/skipped retry that runs after a still-fresh success doesn't make the layer
+    look stale."""
+    row = con.execute(
+        "SELECT started_at, ended_at FROM job_runs WHERE job = %s AND status = 'ok' ORDER BY started_at DESC LIMIT 1",
+        [job],
+    ).fetchone()
+    if row is None:
+        return None
+    started_at, ended_at = row
+    return {"status": "ok", "started_at": started_at, "ended_at": ended_at}
 
 
 def observation_count(con: psycopg.Connection) -> int:

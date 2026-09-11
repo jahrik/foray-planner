@@ -20,7 +20,7 @@ from psycopg_pool import ConnectionPool
 from foray.api.deps import get_pool, get_state
 from foray.api.state import AppState
 from foray.api_models import DataHealthResponse, LayerFreshnessResponse, StatusResponse
-from foray.cache import latest_ingest_at, latest_job_run
+from foray.cache import latest_ingest_at, latest_successful_job_run
 from foray.config import Settings
 
 router = APIRouter()
@@ -50,7 +50,15 @@ def _layer_specs(cfg: Settings) -> list[tuple[str, str | None, str | None, float
     ]
 
 
-@router.get("/healthz/data")
+@router.get(
+    "/healthz/data",
+    responses={
+        503: {
+            "model": DataHealthResponse,
+            "description": "At least one layer's latest success is older than its expected interval.",
+        }
+    },
+)
 def healthz_data(
     response: Response,
     state: AppState = Depends(get_state),
@@ -67,8 +75,8 @@ def healthz_data(
         for name, prefix, job, interval_hours in _layer_specs(cfg):
             last_success = latest_ingest_at(conn, prefix) if prefix else None
             if last_success is None and job:
-                run = latest_job_run(conn, job)
-                if run is not None and run["status"] == "ok":
+                run = latest_successful_job_run(conn, job)
+                if run is not None:
                     last_success = run["ended_at"] or run["started_at"]
             # The pool opens connections in autocommit with no explicit session timezone, so a
             # TIMESTAMPTZ column can come back naive (server-local) rather than UTC-aware -

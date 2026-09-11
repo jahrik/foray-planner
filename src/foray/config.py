@@ -68,10 +68,13 @@ class Observability(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     log_json: bool = False
-    # Base healthchecks.io ping URL (e.g. "https://hc-ping.com/<uuid>") with no trailing
-    # slash - the job name is appended as a path segment, "/fail" for a failed run. Empty:
-    # no pings sent.
-    healthchecks_base_url: str = ""
+    # Per-job healthchecks.io ping URL (e.g. {"ingest": "https://hc-ping.com/<uuid>"}),
+    # JSON-encoded like `coverage`/`countries` above - healthchecks.io's UUID is the *final*
+    # path component of a check's own URL, not something a shared base + job name can compose,
+    # so each job that should be monitored needs its own check configured on healthchecks.io
+    # and listed here. "/start"/"/fail" are appended as-is (healthchecks.io's only event
+    # suffixes); a bare URL is a success ping. A job with no entry here is never pinged.
+    healthchecks_urls: dict[str, str] = Field(default_factory=dict)
     # Sentry/GlitchTip DSN, shared by the API and the CLI. Empty: SDK never initialized.
     sentry_dsn: str = ""
     # Plain ntfy topic URL (e.g. "https://ntfy.sh/<topic>") that `foray alert` POSTs domain

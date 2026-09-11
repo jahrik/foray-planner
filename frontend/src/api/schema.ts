@@ -1313,6 +1313,15 @@ export interface operations {
                     "application/json": components["schemas"]["DataHealthResponse"];
                 };
             };
+            /** @description At least one layer's latest success is older than its expected interval. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataHealthResponse"];
+                };
+            };
         };
     };
     destinations_api_destinations_get: {
