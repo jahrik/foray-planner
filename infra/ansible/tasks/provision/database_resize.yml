@@ -1,0 +1,54 @@
+---
+# Manual/opt-in only (foray:db-resize, never) - a deliberate, disruptive action (the cluster
+# briefly restarts and can be read-only or unreachable during the resize), so it must never run
+# as a side effect of a regular foray:provision or foray:deploy pass. Target size comes from
+# foray_do_db_size in defaults/main.yml, the same variable database.yml uses to create the
+# cluster in the first place, so the two never drift apart. Storage is not set explicitly - the
+# basic db-s-* tiers each carry a fixed disk allocation determined by the size, not an
+# independently adjustable amount.
+#
+# digitalocean.cloud.database_cluster's `present()` is create-only - it never diffs or updates
+# size on an existing cluster (verified against the module source), and this collection has no
+# dedicated database-resize module, so this goes straight at DO's REST API via `uri`.
+#
+# Looked up fresh here rather than reusing database.yml's `foray_db_cluster` fact - this task
+# runs standalone (--tags foray:db-resize, `never`), so database.yml's own tasks (tagged
+# foray:provision/foray:deploy) never execute in the same run and never set that fact.
+- name: Look up the cluster to resize
+  digitalocean.cloud.database_clusters_info:
+    token: "{{ foray_do_token }}"
+  register: foray_resize_db_lookup
+
+- name: Resolve the cluster to resize
+  ansible.builtin.set_fact:
+    foray_resize_db_id: >-
+      {{ (foray_resize_db_lookup.databases | selectattr('name', 'equalto', foray_do_db_cluster_name) | list | first | default({})).get('id') }}
+
+- name: Fail if the cluster to resize wasn't found
+  ansible.builtin.fail:
+    msg: "No database cluster named {{ foray_do_db_cluster_name }} found - nothing to resize."
+  when: not foray_resize_db_id
+
+- name: Resize the managed Postgres cluster
+  ansible.builtin.uri:
+    url: "https://api.digitalocean.com/v2/databases/{{ foray_resize_db_id }}/resize"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ foray_do_token }}"
+    body_format: json
+    body:
+      size: "{{ foray_do_db_size }}"
+      num_nodes: 1
+    status_code: 202
+
+- name: Wait for the cluster to report the new size
+  digitalocean.cloud.database_clusters_info:
+    token: "{{ foray_do_token }}"
+  register: foray_resize_db_info
+  until: >-
+    (foray_resize_db_info.databases | selectattr('name', 'equalto', foray_do_db_cluster_name) | list | first | default({})).get('size')
+    == foray_do_db_size
+    and (foray_resize_db_info.databases | selectattr('name', 'equalto', foray_do_db_cluster_name) | list | first | default({})).get('status')
+    == 'online'
+  retries: 40
+  delay: 30

@@ -65,6 +65,14 @@
   loop_control:
     label: "{{ item.Names | default([item.Id]) | first }}"
 
+# digitalocean.cloud.database_config (tasks/provision/database.yml) issues a fresh PATCH on
+# every run regardless of whether the values actually changed (the module always reports
+# changed=true, never diffs), and DO puts the cluster's primary into a read-only recovery state
+# while that config apply lands - a `foray migrate` that races this window fails with
+# psycopg.errors.ReadOnlySqlTransaction. Retry instead of failing outright: on the smallest plan
+# (db-s-1vcpu-1gb) this observably took longer than a minute to clear, so the budget here is
+# generous (up to 8 minutes) rather than tuned tight to the common case.
+
 - name: Run the one-shot schema migration
   community.docker.docker_container:
     name: foray-migrate-once
@@ -77,11 +85,19 @@
     env_file: /opt/foray-planner/foray.env
     command: "foray migrate"
   register: foray_migrate_once_run
+  # docker_container's registered result shape isn't consistent enough to key a retry off of:
+  # observed both a `container.State.ExitCode` shape and a bare `{"Output": "..."}` shape with
+  # no `State` at all on the very same task across attempts. `foray migrate`'s own traceback
+  # text is the one thing that reliably distinguishes success from failure in both shapes, so
+  # check that instead of the container metadata.
+  until: "'Traceback (most recent call last):' not in (foray_migrate_once_run.container.Output | default(''))"
+  retries: 16
+  delay: 30
 
 # docker_container with detach:false does not fail the task on a non-zero container exit -
 # without this a failed migration is reported as successful and app.yml deploys the new image
-# against a half-migrated schema anyway.
-- name: Fail if the migration container exited non-zero
+# against a half-migrated schema anyway. Same Output-text check as the retry `until` above.
+- name: Fail if the migration container's output shows a traceback
   ansible.builtin.fail:
-    msg: "foray migrate exited {{ foray_migrate_once_run.container.State.ExitCode }} - see the container output above."
-  when: foray_migrate_once_run.container.State.ExitCode | int != 0
+    msg: "foray migrate did not succeed after retries - see the container output above:\n{{ foray_migrate_once_run.container.Output | default('no output captured') }}"
+  when: "'Traceback (most recent call last):' in (foray_migrate_once_run.container.Output | default(''))"

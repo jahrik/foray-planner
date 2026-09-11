@@ -124,7 +124,8 @@ Point-in-polygon `LATERAL` join against `public_land` - watch for a GiST index s
 
 ## What this baseline doesn't cover
 
-`pg_stat_statements`, `track_io_timing`, and `auto_explain`-shaped always-on query logging are
-cluster config, not something a local `EXPLAIN` run can substitute for - the cluster-config
-knobs `infra/ansible` can apply are in `tasks/provision/database.yml`; trust a plan captured
-against the real managed cluster over this local baseline once those are live.
+`pg_stat_statements` and `auto_explain`-shaped always-on query logging are cluster config, not
+something a local `EXPLAIN` run can substitute for - the cluster-config knobs `infra/ansible`
+can apply are in `tasks/provision/database.yml`; trust a plan captured against the real managed
+cluster over this local baseline once those are live. `track_io_timing` is not one of DO's
+exposed config keys (confirmed live: `PATCH .../config` 400s on it) - dropped from that task.
