@@ -124,6 +124,7 @@ async function main(): Promise<void> {
   state.cellDeg = config.cell_deg;
   state.basemapUrl = config.basemap_url ?? "";
   state.terrainUrl = config.terrain_url ?? "";
+  state.satelliteTilesUrl = config.satellite_tiles_url ?? "";
   initTheme();
   initUnits();
   initTextSize();

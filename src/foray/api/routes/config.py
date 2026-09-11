@@ -33,4 +33,5 @@ def get_config(
         last_error=state.last_error,
         basemap_url=cfg.basemap_url,
         terrain_url=cfg.terrain_url,
+        satellite_tiles_url=cfg.satellite_tiles_url,
     )

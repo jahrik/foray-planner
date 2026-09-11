@@ -4,7 +4,7 @@
 // Part 2d).
 
 import { loadCamps, loadFire, loadLand } from "../map/layers";
-import { setAerialEnabled, setContoursEnabled } from "../map/map";
+import { setAerialEnabled, setContoursEnabled, setSatelliteBasemapEnabled } from "../map/map";
 import { cancelRefresh, startRefresh } from "../refresh";
 import { qs, state } from "../state";
 
@@ -61,4 +61,12 @@ export function initLayerToggles(): void {
   contours.onchange = (e) => setContoursEnabled((e.target as HTMLInputElement).checked);
   const contoursRow = contours.closest("label");
   if (contoursRow) contoursRow.hidden = !state.terrainUrl;
+  // The full-map satellite basemap toggle (issue #340) - a different feature from "Aerial
+  // imagery" above (that's the per-destination photo fill from #293). No fetch here either -
+  // map.ts swaps the whole MapLibre style. Hidden when no satellite tile URL is configured,
+  // same gating shape as Contours.
+  const satelliteBasemap = qs("#show-satellite-basemap");
+  satelliteBasemap.onchange = (e) => setSatelliteBasemapEnabled((e.target as HTMLInputElement).checked);
+  const satelliteBasemapRow = satelliteBasemap.closest("label");
+  if (satelliteBasemapRow) satelliteBasemapRow.hidden = !state.satelliteTilesUrl;
 }

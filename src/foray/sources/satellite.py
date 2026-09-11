@@ -60,6 +60,21 @@ LABELS_TILE_URL = (
     "Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
 )
 
+# Named so the full-viewport satellite basemap proxy (issue #340, api/routes/tiles.py) can
+# address any of the three layers by name instead of importing the URL templates directly.
+TILE_LAYERS: dict[str, str] = {
+    "image": IMAGE_TILE_URL,
+    "roads": ROADS_TILE_URL,
+    "labels": LABELS_TILE_URL,
+}
+# Esri serves imagery as JPEG and both reference layers as (alpha-carrying) PNG - passed through
+# untouched by fetch_tile_bytes, so the proxy response's Content-Type must match.
+_TILE_CONTENT_TYPE: dict[str, str] = {
+    "image": "image/jpeg",
+    "roads": "image/png",
+    "labels": "image/png",
+}
+
 TILE_PX = 256
 
 # Same Web Mercator radius as the tile services themselves (and Leaflet's default CRS - see
@@ -103,7 +118,7 @@ _TILE_RETRY_ATTEMPTS = 4
 _TILE_RETRY_BACKOFF_S = 0.75
 
 
-def _fetch_tile(url_template: str, zoom: int, tile_x: int, tile_y: int, client: httpx.Client) -> Image.Image:
+def _fetch_tile_bytes(url_template: str, zoom: int, tile_x: int, tile_y: int, client: httpx.Client) -> bytes:
     url = url_template.format(z=zoom, x=tile_x, y=tile_y)
     for attempt in range(_TILE_RETRY_ATTEMPTS):
         last = attempt == _TILE_RETRY_ATTEMPTS - 1
@@ -113,12 +128,38 @@ def _fetch_tile(url_template: str, zoom: int, tile_x: int, tile_y: int, client: 
                 time.sleep(_TILE_RETRY_BACKOFF_S * 2**attempt + random.uniform(0, 0.25))
                 continue
             response.raise_for_status()
-            return Image.open(BytesIO(response.content)).convert("RGBA")
+            return response.content
         except httpx.TransportError:
             if last:
                 raise
             time.sleep(_TILE_RETRY_BACKOFF_S * 2**attempt + random.uniform(0, 0.25))
     raise AssertionError("unreachable: the final attempt returns or raises")  # pragma: no cover
+
+
+def _fetch_tile(url_template: str, zoom: int, tile_x: int, tile_y: int, client: httpx.Client) -> Image.Image:
+    content = _fetch_tile_bytes(url_template, zoom, tile_x, tile_y, client)
+    return Image.open(BytesIO(content)).convert("RGBA")
+
+
+def fetch_tile_bytes(
+    layer: str, zoom: int, tile_x: int, tile_y: int, *, client: httpx.Client | None = None
+) -> tuple[bytes, str]:
+    """Raw upstream bytes for one Esri tile addressed by the browser's own tile coordinates -
+    the full-viewport satellite basemap proxy (issue #340, ``api.routes.tiles``), as opposed to
+    ``fetch_region_satellite``'s server-computed stitch for one destination circle. No PIL
+    re-encode: imagery stays JPEG and the reference layers keep their alpha channel exactly as
+    Esri serves them. Raises ``httpx.HTTPError`` on failure; ``KeyError`` for an unknown layer
+    (the route validates ``layer`` before calling this, so that should never surface).
+    """
+    url_template = TILE_LAYERS[layer]
+    owns = client is None
+    client = client or httpx.Client(timeout=30.0)
+    try:
+        content = _fetch_tile_bytes(url_template, zoom, tile_x, tile_y, client)
+    finally:
+        if owns:
+            client.close()
+    return content, _TILE_CONTENT_TYPE[layer]
 
 
 def _stitched_crop(

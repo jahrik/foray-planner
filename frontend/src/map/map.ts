@@ -146,14 +146,14 @@ async function applyVectorBasemap(theme: "dark" | "light"): Promise<void> {
   if (!map || !state.basemapUrl) return;
   if (basemap.hasVectorBasemap()) {
     if (tileTheme === theme) return; // already showing the right style
-    basemap.setVectorBasemapTheme(state.basemapUrl, state.terrainUrl, theme);
+    basemap.setVectorBasemapTheme(state.basemapUrl, state.terrainUrl, state.satelliteTilesUrl, theme);
     tileTheme = theme;
     return;
   }
   if (vectorMounting) return;
   vectorMounting = true;
   try {
-    basemap.mountVectorBasemap(map, state.basemapUrl, state.terrainUrl, theme);
+    basemap.mountVectorBasemap(map, state.basemapUrl, state.terrainUrl, state.satelliteTilesUrl, theme);
   } catch (error) {
     vectorMounting = false; // let a later setTiles() retry
     throw error;
@@ -551,6 +551,39 @@ export function setContoursEnabled(on: boolean): void {
     return;
   }
   void import("./basemap").then((basemap) => basemap.setContoursVisible(on));
+}
+
+// The Layers-pill "Satellite basemap" toggle (issue #340): swaps the whole vector style for
+// real Esri imagery with our own roads/boundaries/labels drawn over it (basemap-satellite.ts)
+// instead of the vector map's land/water fills - a different feature from the per-destination
+// aerial photo fill above (setAerialEnabled), which stays independently available. Hidden when
+// there is no basemap or no satellite tile URL configured, same guard shape as
+// setContoursEnabled.
+export function setSatelliteBasemapEnabled(on: boolean): void {
+  if (!state.basemapUrl || !state.satelliteTilesUrl) {
+    const box = qs("#show-satellite-basemap") as HTMLInputElement;
+    if (box.checked) {
+      box.checked = false;
+      box.dispatchEvent(new Event("change"));
+    }
+    return;
+  }
+  void import("./basemap").then((basemap) => {
+    basemap.setSatelliteBasemapMode(
+      state.basemapUrl,
+      state.terrainUrl,
+      state.satelliteTilesUrl,
+      currentTheme(),
+      on,
+    );
+    if (!map) return;
+    if (on) {
+      map.attributionControl.addAttribution(SATELLITE_ATTRIBUTION);
+    } else {
+      map.attributionControl.removeAttribution(SATELLITE_ATTRIBUTION);
+    }
+    decorateAttribution(map);
+  });
 }
 
 // Fills the selected destination's true footprint with a satellite image plus its matching
