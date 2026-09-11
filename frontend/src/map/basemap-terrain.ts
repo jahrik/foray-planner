@@ -46,12 +46,12 @@ interface TerrainPalette {
 
 const PALETTE: Record<"dark" | "light", TerrainPalette> = {
   dark: {
-    // Deepen valleys without washing out the D2 contrast pass - low exaggeration, a shadow
-    // that reads as "darker ground" rather than a grey film, barely any highlight.
+    // Deepen valleys without washing out the D2 contrast pass - a shadow that reads as
+    // "darker ground" rather than a grey film, barely any highlight.
     shadow: "#0a0d0c",
     highlight: "#3a4038",
     accent: "#12331f",
-    exaggeration: 0.32,
+    exaggeration: 0.75,
     contour: "rgba(214, 170, 120, 0.42)",
     contourLabel: "#d8b482",
     contourHalo: "#141414",
@@ -60,7 +60,7 @@ const PALETTE: Record<"dark" | "light", TerrainPalette> = {
     shadow: "#6b6459",
     highlight: "#fffdf7",
     accent: "#8f8674",
-    exaggeration: 0.4,
+    exaggeration: 0.9,
     contour: "rgba(120, 92, 54, 0.4)",
     contourLabel: "#6b4c22",
     contourHalo: "#f7f7f4",
@@ -92,17 +92,26 @@ export function terrainSources(
   } as Record<string, SourceSpecification>;
 }
 
+// At regional zooms (looking for a mountain from far away) the DEM is heavily overzoomed and
+// per-pixel relief washes out, so ramp exaggeration up well past the palette's base value the
+// further out you are; it eases back down to the tuned base by the zoom where the DEM has real
+// native resolution (DEM_MAX_ZOOM territory).
+function exaggerationExpression(base: number) {
+  return ["interpolate", ["linear"], ["zoom"], 6, base * 2.4, 9, base * 1.7, 13, base];
+}
+
 function hillshadeLayer(palette: TerrainPalette): LayerSpecification {
   return {
     id: HILLSHADE_LAYER_ID,
     type: "hillshade",
     source: DEM_SOURCE_ID,
     paint: {
-      "hillshade-exaggeration": palette.exaggeration,
+      "hillshade-exaggeration": exaggerationExpression(palette.exaggeration),
       "hillshade-shadow-color": palette.shadow,
       "hillshade-highlight-color": palette.highlight,
       "hillshade-accent-color": palette.accent,
       "hillshade-illumination-direction": 315,
+      "hillshade-method": "igor",
     },
   } as LayerSpecification;
 }
@@ -154,6 +163,11 @@ function contourLabelLayer(palette: TerrainPalette, visible: boolean): LayerSpec
  * "Contours" toggle state into the layers so a theme swap (which rebuilds the whole style)
  * keeps them showing. Pure: does not mutate `base`.
  *
+ * `includeHillshade` (default `true`) is `false` for the satellite basemap (issue #340): real
+ * photographic shadows already show relief, so compositing synthetic hillshade on top would
+ * just wash out the imagery's true colors. Contours stay on either way - they're still useful
+ * elevation information over a photo.
+ *
  * If an anchor is missing (a future protomaps-themes-base rename), the layer falls back to a
  * sane index near the bottom of the stack rather than being dropped.
  */
@@ -161,20 +175,21 @@ export function applyTerrainLayers(
   base: LayerSpecification[],
   theme: "dark" | "light",
   contoursVisible = false,
+  includeHillshade = true,
 ): LayerSpecification[] {
   const palette = PALETTE[theme];
-  const hillshade = hillshadeLayer(palette);
+  const hillshade = includeHillshade ? hillshadeLayer(palette) : null;
   const contourLine = contourLineLayer(palette, contoursVisible);
   const contourLabel = contourLabelLayer(palette, contoursVisible);
 
-  const hillshadeAnchor = anchorIndex(base, /^water/, 2);
+  const hillshadeAnchor = hillshade ? anchorIndex(base, /^water/, 2) : -1;
   const contourAnchor = anchorIndex(base, /^roads/, base.length);
 
   const out: LayerSpecification[] = [];
-  let hillshadeDone = false;
+  let hillshadeDone = !hillshade;
   let contoursDone = false;
   base.forEach((layer, index) => {
-    if (index === hillshadeAnchor) {
+    if (hillshade && index === hillshadeAnchor) {
       out.push(hillshade);
       hillshadeDone = true;
     }
@@ -184,7 +199,7 @@ export function applyTerrainLayers(
     }
     out.push(layer);
   });
-  if (!hillshadeDone) out.push(hillshade);
+  if (hillshade && !hillshadeDone) out.push(hillshade);
   if (!contoursDone) out.push(contourLine, contourLabel);
   return out;
 }

@@ -28,6 +28,7 @@ from foray.api.routes import (
     location,
     plan,
     refresh,
+    tiles,
 )
 from foray.api.security import install_middleware
 from foray.api.state import AppState
@@ -44,6 +45,7 @@ _ROUTERS = (
     coverage.router,
     destinations.router,
     layers.router,
+    tiles.router,
     plan.router,
     location.router,
     refresh.router,

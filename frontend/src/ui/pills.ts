@@ -96,6 +96,7 @@ export function initPills(): void {
     "show-fire",
     "show-aerial",
     "show-contours",
+    "show-satellite-basemap",
   ];
   const layersPill = createPill({
     label: "Layers",

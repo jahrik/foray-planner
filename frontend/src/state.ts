@@ -50,6 +50,9 @@ interface ScopeState {
   // Terrarium DEM tile URL template ({z}/{x}/{y}), from /api/config - drives the hillshade +
   // contours. Empty -> no terrain layer. Set once on load, before initMap.
   terrainUrl: string;
+  // Same-origin {z}/{x}/{y} template for the satellite basemap toggle (issue #340), from
+  // /api/config. Empty -> the toggle is hidden. Set once on load, before initMap.
+  satelliteTilesUrl: string;
 }
 
 /** How results are shown: which view, sort order, unit system, and the last plan payload. */
@@ -82,6 +85,7 @@ export const state: State = {
   cellDeg: 0.25, // overwritten from /api/config once it loads; matches the backend default
   basemapUrl: "", // overwritten from /api/config; empty means no base layer
   terrainUrl: "", // overwritten from /api/config; empty means no hillshade/contours
+  satelliteTilesUrl: "", // overwritten from /api/config; empty means no satellite basemap toggle
   units: getUnits(),
 };
 

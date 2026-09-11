@@ -30,6 +30,7 @@ import "@maplibre/maplibre-gl-leaflet";
 import mlcontour from "maplibre-contour";
 import { Protocol } from "pmtiles";
 import { applyForayRoadStyle } from "./basemap-roads";
+import { roadsAndLabelsOnly, satelliteImageryLayer, satelliteSource } from "./basemap-satellite";
 import {
   applyTerrainLayers,
   CONTOUR_LAYER_IDS,
@@ -53,6 +54,10 @@ let glLayer: L.MaplibreGL | null = null;
 // here so a theme swap (which rebuilds the whole style) can re-bake the toggle state.
 let demSource: InstanceType<typeof mlcontour.DemSource> | null = null;
 let contoursVisible = false;
+// The Layers-pill "Satellite basemap" toggle (issue #340) - swaps the whole style between the
+// vector map and real Esri imagery. Tracked here (not just passed as an argument) so a theme
+// change alone re-bakes whichever mode is currently active, the same way `contoursVisible` does.
+let satelliteBasemapEnabled = false;
 
 /** The URL pattern the contour vector source pulls from - encodes the per-zoom thresholds. */
 function contourTilesUrl(source: InstanceType<typeof mlcontour.DemSource>): string {
@@ -80,7 +85,17 @@ function ensureDemSource(terrainUrl: string): InstanceType<typeof mlcontour.DemS
   return demSource;
 }
 
-function buildStyle(url: string, terrainUrl: string, theme: "dark" | "light"): StyleSpecification {
+// `satelliteUrl` is only ever used when `satelliteBasemapEnabled` is true (the Layers-pill
+// toggle) - buildStyle is the one place that branches on that flag, so every other call site
+// (mount, theme change, contour toggle, the satellite toggle itself) stays a plain "rebuild and
+// setStyle" with no satellite-specific logic of its own.
+function buildStyle(
+  url: string,
+  terrainUrl: string,
+  satelliteUrl: string,
+  theme: "dark" | "light",
+): StyleSpecification {
+  const useSatellite = satelliteBasemapEnabled && !!satelliteUrl;
   const sources: StyleSpecification["sources"] = {
     protomaps: {
       type: "vector",
@@ -88,12 +103,19 @@ function buildStyle(url: string, terrainUrl: string, theme: "dark" | "light"): S
       attribution: ATTRIBUTION,
     },
   };
-  let layers = applyForayRoadStyle(themedBaseLayers(theme), theme);
+  const vectorLayers = applyForayRoadStyle(themedBaseLayers(theme), theme);
+  let layers: StyleSpecification["layers"];
+  if (useSatellite) {
+    Object.assign(sources, satelliteSource(satelliteUrl));
+    layers = [satelliteImageryLayer(), ...roadsAndLabelsOnly(vectorLayers)];
+  } else {
+    layers = vectorLayers;
+  }
 
   if (terrainUrl) {
     const source = ensureDemSource(terrainUrl);
     Object.assign(sources, terrainSources(source.sharedDemProtocolUrl, contourTilesUrl(source)));
-    layers = applyTerrainLayers(layers, theme, contoursVisible);
+    layers = applyTerrainLayers(layers, theme, contoursVisible, !useSatellite);
   }
 
   return {
@@ -112,20 +134,41 @@ export function mountVectorBasemap(
   map: L.Map,
   url: string,
   terrainUrl: string,
+  satelliteUrl: string,
   theme: "dark" | "light",
 ): L.MaplibreGL {
   if (!protocolRegistered) {
     addProtocol("pmtiles", new Protocol().tile);
     protocolRegistered = true;
   }
-  glLayer = L.maplibreGL({ style: buildStyle(url, terrainUrl, theme) }).addTo(map);
+  glLayer = L.maplibreGL({ style: buildStyle(url, terrainUrl, satelliteUrl, theme) }).addTo(map);
   return glLayer;
 }
 
-/** Swap the vector style for a theme change (light <-> dark). No-op if the basemap has not
- * been mounted yet (no basemap_url configured). */
-export function setVectorBasemapTheme(url: string, terrainUrl: string, theme: "dark" | "light"): void {
-  glLayer?.getMaplibreMap().setStyle(buildStyle(url, terrainUrl, theme));
+/** Swap the style for a theme change (light <-> dark). No-op if the basemap has not been
+ * mounted yet (no basemap_url configured). Keeps whichever of vector/satellite mode is
+ * currently active - see `satelliteBasemapEnabled`. */
+export function setVectorBasemapTheme(
+  url: string,
+  terrainUrl: string,
+  satelliteUrl: string,
+  theme: "dark" | "light",
+): void {
+  glLayer?.getMaplibreMap().setStyle(buildStyle(url, terrainUrl, satelliteUrl, theme));
+}
+
+/** The Layers-pill "Satellite basemap" toggle: swap the whole style between the vector map and
+ * real Esri imagery with our own roads/boundaries/labels over it. No-op if the basemap has not
+ * been mounted yet. */
+export function setSatelliteBasemapMode(
+  url: string,
+  terrainUrl: string,
+  satelliteUrl: string,
+  theme: "dark" | "light",
+  on: boolean,
+): void {
+  satelliteBasemapEnabled = on;
+  glLayer?.getMaplibreMap().setStyle(buildStyle(url, terrainUrl, satelliteUrl, theme));
 }
 
 export function hasVectorBasemap(): boolean {

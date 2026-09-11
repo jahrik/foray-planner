@@ -36,6 +36,9 @@ class ConfigResponse(BaseModel):
     # Terrarium DEM tile URL template ({z}/{x}/{y}) for the hillshade + contour layers; empty
     # when terrain is disabled.
     terrain_url: str = ""
+    # Same-origin {z}/{x}/{y} template for the full-map satellite basemap toggle; empty when
+    # disabled (see Settings.satellite_tiles_url).
+    satellite_tiles_url: str = ""
 
 
 class GenusResult(BaseModel):

@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     # free, no key, CORS-open). FORAY_TERRAIN_URL overrides it with a self-hosted URL; an empty
     # FORAY_TERRAIN_URL (a local .env) drops the terrain layer. See docs/data-sources.md.
     terrain_url: str = "https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png"
+    # Relative URL template ({z}/{x}/{y}) for the full-map satellite basemap toggle (issue #340) -
+    # our own proxy in front of Esri World Imagery (api/routes/tiles.py), never Esri directly, so
+    # it stays same-origin under the existing CSP. Empty disables the toggle entirely.
+    satellite_tiles_url: str = "/api/tiles/satellite/{z}/{x}/{y}.jpg"
     ingest: Ingest = Ingest()
     # Sub-national regions (US states today) - the granularity trails ingest chunks by, since
     # Overpass can't handle a whole-country query in one request.

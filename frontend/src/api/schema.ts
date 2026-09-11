@@ -398,6 +398,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tiles/satellite/{z}/{x}/{y}.jpg": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Satellite Tile
+         * @description One Esri World Imagery tile, proxied same-origin so the satellite basemap toggle (issue
+         *     #340) stays under the existing CSP (`security.py`'s satellite fill is `'self'`-only).
+         */
+        get: operations["get_satellite_tile_api_tiles_satellite__z___x___y__jpg_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/plan": {
         parameters: {
             query?: never;
@@ -625,6 +646,11 @@ export interface components {
              * @default
              */
             terrain_url: string;
+            /**
+             * Satellite Tiles Url
+             * @default
+             */
+            satellite_tiles_url: string;
         };
         /** CoverageRegionResponse */
         CoverageRegionResponse: {
@@ -1642,6 +1668,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TrailPath"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_satellite_tile_api_tiles_satellite__z___x___y__jpg_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                z: number;
+                x: number;
+                y: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": unknown;
                 };
             };
             /** @description Validation Error */
