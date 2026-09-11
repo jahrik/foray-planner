@@ -797,6 +797,27 @@ def test_maybe_rebuild_phenology_rebuilds_and_resets_past_threshold(con: psycopg
     assert regions_exists is not None and regions_exists[0] is not None
 
 
+def test_maybe_rebuild_phenology_keeps_pending_count_on_a_failed_rebuild(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed rebuild must not silently forget the accumulated work - the counter should
+    only reset on success, so the next pass retries instead of needing another full threshold's
+    worth of new rows first (PR #344 review)."""
+    con.execute("DELETE FROM meta WHERE key = 'phenology_pending_rows'")
+    cfg = Settings(observability=Observability(phenology_rebuild_threshold=10))
+
+    def boom(con: psycopg.Connection, cell_deg: float) -> None:
+        raise RuntimeError("simulated rebuild failure")
+
+    monkeypatch.setattr("foray.scoring.regions.build_phenology", boom)
+
+    with pytest.raises(RuntimeError):
+        maybe_rebuild_phenology(con, cfg, 12)
+
+    pending = con.execute("SELECT value FROM meta WHERE key = 'phenology_pending_rows'").fetchone()
+    assert pending == ("12",)
+
+
 def test_maybe_rebuild_phenology_noop_for_zero_new_rows(con: psycopg.Connection) -> None:
     con.execute("DELETE FROM meta WHERE key = 'phenology_pending_rows'")
     cfg = Settings()

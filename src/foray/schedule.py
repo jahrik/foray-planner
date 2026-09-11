@@ -64,7 +64,11 @@ def _due(con, job: JobSpec) -> bool:
     last = latest_successful_job_run(con, job.name)
     if last is None:
         return True
-    elapsed_hours = (_utcnow() - last["started_at"]).total_seconds() / 3600
+    # ended_at, not started_at - the old scheduler.sh stamped its `*_last` checkpoint only
+    # after the command returned, so a long-running job's cadence was measured between
+    # completions, not between starts. Measuring from started_at would tighten the effective
+    # interval by however long the job takes to run.
+    elapsed_hours = (_utcnow() - last["ended_at"]).total_seconds() / 3600
     return elapsed_hours >= job.interval_hours
 
 
