@@ -57,6 +57,11 @@ def run_refresh(state: AppState, pool: ConnectionPool, base_cfg: Settings, home:
         # concurrent readers (other requests borrowing their own connections) natively
         # via MVCC, unlike the DuckDB-era single-writer-file model this replaced.
         with pool.connection() as db:
+            # This checkout can run for minutes across several ingest layers, well past the
+            # pool's request-scoped 5s statement_timeout (see app._configure_connection) -
+            # disable it for this connection; the pool's `reset` restores 5s once it's
+            # returned, so a later request never inherits the relaxed timeout.
+            db.execute("SET statement_timeout = 0")
             run_home_refresh(
                 refresh_cfg,
                 db,

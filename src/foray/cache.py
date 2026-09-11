@@ -301,15 +301,23 @@ _SCHEMA_LOCK_KEY = 4915623
 # independently and a failure is logged, not raised: IF NOT EXISTS / IF EXISTS makes them
 # idempotent, but two instances starting together can still race (one loses), and none of these
 # is a correctness dependency - only a query-speed optimization.
-_CONCURRENT_INDEXES: list[LiteralString] = [
+#
+# Most entries are a bare statement. A `DROP` that retires an old index in favor of one built
+# earlier in this same list is instead a (statement, "guard-name") pair: the DROP only runs if
+# the CREATE tagged with that same guard-name succeeded, so a failed/cancelled build never
+# leaves the table with neither index (see apply_schema's loop below).
+_CONCURRENT_INDEXES: list[LiteralString | tuple[LiteralString, str]] = [
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_revalidated_at ON observations (revalidated_at)",
     # Supersedes the old non-partial ix_observations_taxon_observed: BINNED always filters
     # quality_grade = 'research' first, so the partial index is smaller and better matched.
     # Create the replacement first, drop the old one only after - a failed/cancelled build must
     # not leave the table with neither index.
-    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_taxon_observed_research "
-    "ON observations (taxon_id, observed_on) WHERE quality_grade = 'research'",
-    "DROP INDEX CONCURRENTLY IF EXISTS ix_observations_taxon_observed",
+    (
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_taxon_observed_research "
+        "ON observations (taxon_id, observed_on) WHERE quality_grade = 'research'",
+        "taxon_observed_research",
+    ),
+    ("DROP INDEX CONCURRENTLY IF EXISTS ix_observations_taxon_observed", "taxon_observed_research"),
     # Backfill-queue scans (observations_missing_elevation / observations_missing_precip): the
     # partial predicate matches the WHERE clause so the queue is an index scan over just the
     # pending rows, not a seq scan of the whole table. Keyed on the queue's ORDER BY column.
@@ -330,11 +338,18 @@ _CONCURRENT_INDEXES: list[LiteralString] = [
     # matches. Same two-step swap as ix_observations_taxon_observed_research above: build the
     # partial replacement first, drop the old one only once it's live - a failed/cancelled
     # build must never leave the table with neither index.
-    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_geom_notnull "
-    "ON observations USING GIST (geom) WHERE geom IS NOT NULL",
-    "DROP INDEX CONCURRENTLY IF EXISTS ix_observations_geom",
-    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_trails_geom_notnull ON trails USING GIST (geom) WHERE geom IS NOT NULL",
-    "DROP INDEX CONCURRENTLY IF EXISTS ix_trails_geom",
+    (
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_geom_notnull "
+        "ON observations USING GIST (geom) WHERE geom IS NOT NULL",
+        "observations_geom_notnull",
+    ),
+    ("DROP INDEX CONCURRENTLY IF EXISTS ix_observations_geom", "observations_geom_notnull"),
+    (
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_trails_geom_notnull ON trails USING GIST (geom) "
+        "WHERE geom IS NOT NULL",
+        "trails_geom_notnull",
+    ),
+    ("DROP INDEX CONCURRENTLY IF EXISTS ix_trails_geom", "trails_geom_notnull"),
 ]
 
 # Schema changes past the initial CREATE TABLE/INDEX IF NOT EXISTS baseline above, applied in
@@ -751,9 +766,22 @@ def apply_schema(con: psycopg.Connection) -> None:
         # explicit transaction block since `con` is autocommit. A race with another starting
         # instance is caught and logged, not raised - none of these is a correctness dependency.
         indexes_ok = True
-        for statement in _CONCURRENT_INDEXES:
+        succeeded_guards: set[str] = set()
+        for entry in _CONCURRENT_INDEXES:
+            statement, guard = entry if isinstance(entry, tuple) else (entry, None)
+            is_drop = statement.startswith("DROP")
+            if is_drop and guard is not None and guard not in succeeded_guards:
+                indexes_ok = False
+                logger.warning(
+                    "cache: skipping %r - its replacement index did not build successfully "
+                    "this run, so dropping the old one would leave the table with neither.",
+                    statement,
+                )
+                continue
             try:
                 con.execute(statement)
+                if guard is not None and not is_drop:
+                    succeeded_guards.add(guard)
             except psycopg.Error:
                 indexes_ok = False
                 logger.warning(
