@@ -87,17 +87,30 @@
   register: foray_migrate_once_run
   # docker_container's registered result shape isn't consistent enough to key a retry off of:
   # observed both a `container.State.ExitCode` shape and a bare `{"Output": "..."}` shape with
-  # no `State` at all on the very same task across attempts. `foray migrate`'s own traceback
-  # text is the one thing that reliably distinguishes success from failure in both shapes, so
-  # check that instead of the container metadata.
-  until: "'Traceback (most recent call last):' not in (foray_migrate_once_run.container.Output | default(''))"
+  # no `State` at all on the very same task across attempts. Success requires *positive*
+  # evidence - an explicit exit code of 0, or Output present as a string with no traceback in
+  # it - rather than just the absence of a traceback: a docker-level failure with neither
+  # `State` nor `Output` populated must retry/fail, not be treated as a silent success.
+  until: >-
+    ((foray_migrate_once_run.container | default({})).get('State', {}).get('ExitCode') == 0)
+    or (((foray_migrate_once_run.container | default({})).get('Output')) is string
+        and 'Traceback (most recent call last):' not in (foray_migrate_once_run.container | default({})).get('Output'))
   retries: 16
   delay: 30
 
 # docker_container with detach:false does not fail the task on a non-zero container exit -
 # without this a failed migration is reported as successful and app.yml deploys the new image
-# against a half-migrated schema anyway. Same Output-text check as the retry `until` above.
-- name: Fail if the migration container's output shows a traceback
+# against a half-migrated schema anyway. Same success check as the retry `until` above, inverted.
+- name: Fail if the migration container did not succeed
   ansible.builtin.fail:
-    msg: "foray migrate did not succeed after retries - see the container output above:\n{{ foray_migrate_once_run.container.Output | default('no output captured') }}"
-  when: "'Traceback (most recent call last):' in (foray_migrate_once_run.container.Output | default(''))"
+    msg: >-
+      foray migrate did not succeed after retries (exit code
+      {{ (foray_migrate_once_run.container | default({})).get('State', {}).get('ExitCode', 'unknown') }}) -
+      see the container output above:
+      {{ (foray_migrate_once_run.container | default({})).get('Output', 'no output captured') }}
+  when: >-
+    not (
+      ((foray_migrate_once_run.container | default({})).get('State', {}).get('ExitCode') == 0)
+      or (((foray_migrate_once_run.container | default({})).get('Output')) is string
+          and 'Traceback (most recent call last):' not in (foray_migrate_once_run.container | default({})).get('Output'))
+    )

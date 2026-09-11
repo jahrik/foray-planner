@@ -37,7 +37,7 @@ argument_specs:
           Managed database size slug. Only affects a fresh cluster create or an explicit
           `foray:db-resize` run - database_cluster's `present()` never diffs/updates size on an
           existing cluster.
-        default: db-s-1vcpu-1gb
+        default: db-s-1vcpu-2gb
       foray_do_db_version:
         type: str
         description: Postgres major version
