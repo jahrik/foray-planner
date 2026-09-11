@@ -31,6 +31,15 @@ provision:
         -e foray_do_ssh_key_name=$FORAY_SSH_KEY_NAME \
         -e '{"foray_ssh_allowed_ips": ["'"$FORAY_SSH_ALLOWED_IPS"'"]}'
 
+# One-time, deliberate/disruptive: resize the managed Postgres cluster to foray_do_db_size
+# (defaults/main.yml) - e.g. after DO's disk-protection lockout puts the cluster read-only
+# because it's full. The cluster briefly restarts; expect a short read-only/unreachable window.
+[doc('Resize the managed Postgres cluster to foray_do_db_size (deliberate/disruptive)')]
+[group('deploy-once')]
+db-resize:
+    @test -n "${DO_API_TOKEN:-}" || (echo "ERROR: DO_API_TOKEN not set" && exit 1)
+    cd {{ ansible_dir }} && uv run ansible-playbook site.yml --tags foray:db-resize
+
 # One-off: build the US PMTiles vector basemap archive and upload it to the DO Space. Slices a
 # bbox out of Protomaps' daily planet build (via HTTP range requests, not a full download),
 # ~15-40 GB into ~/.cache/foray-basemap on THIS machine, then uploads it. `provision` must have

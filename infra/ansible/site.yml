@@ -74,6 +74,17 @@
         - "foray:build-basemap-once"
         - never
 
+    - name: Include managed database resize
+      ansible.builtin.include_tasks:
+        file: tasks/provision/database_resize.yml
+        apply:
+          tags:
+            - "foray:db-resize"
+            - never
+      tags:
+        - "foray:db-resize"
+        - never
+
     # Runs after firewall provisioning, not inside tasks/provision/droplet.yml - the firewall
     # is what opens port 22 for foray_ssh_allowed_ips, so waiting for SSH before it exists
     # means the first provision run after the operator's IP changes always times out.

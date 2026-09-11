@@ -33,7 +33,10 @@ argument_specs:
         default: foray-postgres
       foray_do_db_size:
         type: str
-        description: Managed database size slug
+        description: >-
+          Managed database size slug. Only affects a fresh cluster create or an explicit
+          `foray:db-resize` run - database_cluster's `present()` never diffs/updates size on an
+          existing cluster.
         default: db-s-1vcpu-1gb
       foray_do_db_version:
         type: str
@@ -263,12 +266,14 @@ argument_specs:
         default: 0
       foray_pg_work_mem_kb:
         type: int
-        description: work_mem in KB, per sort/hash per connection
-        default: 4096
+        description: >-
+          work_mem in KB, per sort/hash per connection. DO's managed config API caps this
+          relative to the cluster's plan size - the smallest plan's ceiling is 1024.
+        default: 1024
       foray_pg_shared_buffers_percentage:
-        type: str
+        type: float
         description: shared_buffers as a percentage of the plan's RAM
-        default: "25"
+        default: 25.0
       foray_pgbouncer_api_pool_size:
         type: int
         description: >

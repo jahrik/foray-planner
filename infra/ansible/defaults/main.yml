@@ -14,7 +14,12 @@ foray_do_ssh_key_name: ""
 
 # Managed Postgres cluster
 foray_do_db_cluster_name: foray-postgres
-foray_do_db_size: db-s-1vcpu-1gb
+# db-s-1vcpu-1gb's fixed 10GB disk allocation filled up (~82%+, foray db alone at 8.25GB),
+# putting DO's disk-protection read-only lockout on the whole cluster - bumped to the next tier
+# up for its larger disk allocation. Only takes effect on an explicit `foray:db-resize` run
+# (tasks/provision/database_resize.yml) - database_cluster's `present()` never diffs/updates
+# size on an existing cluster.
+foray_do_db_size: db-s-1vcpu-2gb
 foray_do_db_engine: pg
 foray_do_db_version: "17"
 foray_do_db_name: foray
@@ -28,8 +33,8 @@ foray_do_db_name: foray
 foray_pg_log_min_duration_ms: 500
 foray_pg_jit: false
 foray_pg_max_parallel_workers_per_gather: 0
-foray_pg_work_mem_kb: 4096
-foray_pg_shared_buffers_percentage: "25"
+foray_pg_work_mem_kb: 1024
+foray_pg_shared_buffers_percentage: 25.0
 
 # DO managed PgBouncer pools (issue #333), also created as a standard part of foray:provision.
 # Creating the pool is non-disruptive by itself - the app keeps connecting directly to the

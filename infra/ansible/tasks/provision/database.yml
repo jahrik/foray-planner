@@ -33,25 +33,28 @@
     foray_db_user: "{{ foray_db_user }}"
     foray_db_password: "{{ foray_db_password }}"
 
-# issue #333: the cluster-config knobs DO's API actually exposes, applied on every
-# foray:provision run (idempotent - re-applying the same config is a no-op) so there's no
-# separate step to remember to run. Everything else in the issue - ALTER ROLE settings and
-# per-table autovacuum (both now in cache._MIGRATIONS, since the app's own DB role has
-# sufficient privilege for those without needing DO's control plane), the unused-index audit,
-# SP-GiST vs GiST, the PG major-version upgrade - isn't on this surface and stays a manual
-# maintainer action; see infra/ansible/AGENTS.md.
+# issue #333: the cluster-config knobs DO's API actually exposes (confirmed live against the
+# real cluster - track_io_timing and pg_stat_statements_track both turned out not to be real
+# keys on this API despite DO's own docs listing them, and shared_buffers_percentage/work_mem
+# have type/range constraints the module doesn't validate client-side), applied on every
+# foray:provision run so there's no separate step to remember to run. NOT a diff-then-patch: the
+# digitalocean.cloud.database_config module always PATCHes and always reports changed=true, and
+# DO's own apply briefly puts the cluster's primary in a read-only state regardless of whether
+# any value actually moved - migrate.yml's migration step retries through that window. Everything
+# else in the issue - ALTER ROLE settings and per-table autovacuum (both now in
+# cache._MIGRATIONS, since the app's own DB role has sufficient privilege for those without
+# needing DO's control plane), the unused-index audit, SP-GiST vs GiST, the PG major-version
+# upgrade - isn't on this surface and stays a manual maintainer action; see infra/ansible/AGENTS.md.
 - name: Apply Postgres cluster-config tuning
   digitalocean.cloud.database_config:
     token: "{{ foray_do_token }}"
     cluster_id: "{{ foray_db_cluster.database.id }}"
     config:
       log_min_duration_statement: "{{ foray_pg_log_min_duration_ms }}"
-      track_io_timing: true
       jit: "{{ foray_pg_jit }}"
       max_parallel_workers_per_gather: "{{ foray_pg_max_parallel_workers_per_gather }}"
       work_mem: "{{ foray_pg_work_mem_kb }}"
       shared_buffers_percentage: "{{ foray_pg_shared_buffers_percentage }}"
-      pg_stat_statements_track: all
 
 # DO's managed PgBouncer. Creating these pools doesn't change how the app connects today - the
 # app keeps talking to the cluster directly until FORAY_DATABASE_URL is deliberately repointed
