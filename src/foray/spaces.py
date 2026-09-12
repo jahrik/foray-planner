@@ -44,9 +44,15 @@ def client(cfg: Spaces) -> Any:
     )
 
 
-def put_object(cfg: Spaces, key: str, data: bytes, content_type: str) -> str:
-    """Upload `data` to `key` with a public-read ACL, returning its public URL."""
-    client(cfg).put_object(Bucket=cfg.bucket, Key=key, Body=data, ContentType=content_type, ACL="public-read")
+def put_object(cfg: Spaces, key: str, data: bytes, content_type: str, *, public: bool = False) -> str:
+    """Upload `data` to `key`, returning its public URL (still returned when `public=False` -
+    the bucket's default ACL applies, and the URL is only actually fetchable by a caller with
+    credentials via `object_bytes`, not a browser). Private by default: bulk-snapshot uploads
+    (`foray.ingest_bulk`) are read back server-side with credentials, not by an anonymous
+    client, and would otherwise be world-downloadable the moment a stager runs. `region_satellite`
+    passes `public=True` deliberately - its rasters are served straight through to the browser."""
+    extra = {"ACL": "public-read"} if public else {}
+    client(cfg).put_object(Bucket=cfg.bucket, Key=key, Body=data, ContentType=content_type, **extra)
     return f"{cfg.base_url}/{key}"
 
 
@@ -57,21 +63,11 @@ def object_bytes(cfg: Spaces, key: str) -> bytes:
     return body.read()
 
 
-def list_snapshot_dates(cfg: Spaces, source: str) -> list[date]:
-    """Every ``YYYY-MM-DD`` staged under ``bulk/{source}/``, ascending. Empty if none staged
-    yet, or if the prefix doesn't exist - not an error, since a source's first snapshot has to
-    start somewhere."""
-    prefix = f"bulk/{source}/"
-    paginator = client(cfg).get_paginator("list_objects_v2")
-    dates: set[date] = set()
-    for page in paginator.paginate(Bucket=cfg.bucket, Prefix=prefix, Delimiter="/"):
-        for common_prefix in page.get("CommonPrefixes", []):
-            raw = common_prefix["Prefix"].removeprefix(prefix).rstrip("/")
-            try:
-                dates.add(date.fromisoformat(raw))
-            except ValueError:
-                logger.warning("spaces: skipping non-date prefix %s under %s", raw, prefix)
-    return sorted(dates)
+# Marker object a stager writes last, after every other object under its snapshot prefix has
+# landed - `list_snapshot_dates` only counts a date as available once this exists, so a loader
+# can never pick up a partially-uploaded snapshot (a stager that dies mid-upload) or one an
+# overlapping stage run is still writing to.
+_SUCCESS_MARKER = "_SUCCESS"
 
 
 def snapshot_prefix(source: str, snapshot_date: date) -> str:
@@ -79,3 +75,31 @@ def snapshot_prefix(source: str, snapshot_date: date) -> str:
     Actions weekly stager (`foray stage-snapshot`) and the droplet-side loader (`foray
     ingest-bulk`) key off this same layout."""
     return f"bulk/{source}/{snapshot_date.isoformat()}/"
+
+
+def mark_snapshot_complete(cfg: Spaces, source: str, snapshot_date: date) -> None:
+    """Write the completion marker for a snapshot - call this last, only after every object the
+    stager is uploading for `snapshot_date` has landed."""
+    client(cfg).put_object(
+        Bucket=cfg.bucket, Key=f"{snapshot_prefix(source, snapshot_date)}{_SUCCESS_MARKER}", Body=b""
+    )
+
+
+def list_snapshot_dates(cfg: Spaces, source: str) -> list[date]:
+    """Every ``YYYY-MM-DD`` staged (and marked complete via `mark_snapshot_complete`) under
+    ``bulk/{source}/``, ascending. Empty if none staged yet, or if the prefix doesn't exist - not
+    an error, since a source's first snapshot has to start somewhere."""
+    prefix = f"bulk/{source}/"
+    paginator = client(cfg).get_paginator("list_objects_v2")
+    dates: set[date] = set()
+    for page in paginator.paginate(Bucket=cfg.bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith(f"/{_SUCCESS_MARKER}"):
+                continue
+            raw = key.removeprefix(prefix).removesuffix(f"/{_SUCCESS_MARKER}")
+            try:
+                dates.add(date.fromisoformat(raw))
+            except ValueError:
+                logger.warning("spaces: skipping non-date snapshot marker %s under %s", raw, prefix)
+    return sorted(dates)

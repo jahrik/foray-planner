@@ -22,7 +22,7 @@ from typing import LiteralString
 import psycopg
 
 from foray.config import Settings
-from foray.spaces import list_snapshot_dates
+from foray.spaces import list_snapshot_dates, mark_snapshot_complete
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,10 @@ def stage_snapshot(cfg: Settings, source: str, snapshot_date: date | None = None
         raise KeyError(f"no stager registered for bulk source {source!r} (registered: {sorted(STAGERS)})")
     snapshot_date = snapshot_date or date.today()
     stager(cfg, snapshot_date)
+    # Last, only once every object the stager uploaded has landed - list_snapshot_dates (and so
+    # ingest_bulk below) ignores a date prefix until this marker exists, so a loader can never
+    # pick up a partial upload from a stager that died mid-run.
+    mark_snapshot_complete(cfg.spaces, source, snapshot_date)
     return snapshot_date
 
 
