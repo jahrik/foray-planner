@@ -162,6 +162,12 @@ jobs:
           # empty -> foray_terrain_url falls back to its default (AWS Open Data's
           # elevation-tiles-prod). Set it to a self-hosted tile URL to override.
           FORAY_TERRAIN_URL: ${{ secrets.FORAY_TERRAIN_URL }}
+          # Same Spaces access key the basemap archive uses (infra/ansible/AGENTS.md) - also
+          # gives the deployed app its own read/write access for region_satellite's rasters and
+          # bulk-snapshot staging (issue #334 PR 1, foray.env.j2's FORAY_SPACES__* block). Unset
+          # -> both features fall back to their no-Space behavior.
+          DO_SPACES_KEY: ${{ secrets.DO_SPACES_KEY }}
+          DO_SPACES_SECRET: ${{ secrets.DO_SPACES_SECRET }}
         run: |
           uv run ansible-playbook site.yml --tags foray:deploy \
             -i inventory/hosts.yml \

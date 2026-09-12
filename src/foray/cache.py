@@ -18,8 +18,10 @@ from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any, LiteralString
 
+import httpx
 import psycopg
 
+from foray import spaces
 from foray.config import Settings
 from foray.geo import haversine_km
 
@@ -225,10 +227,15 @@ CREATE TABLE IF NOT EXISTS region_places (
 -- region_places above. A live Esri export at the resolution the frontend wants (4096px) takes
 -- 25-45s server-side, which is fine paid once at backfill time (`foray backfill-satellite`) but
 -- not something a page load should ever block on - see sources/satellite.py.
+-- image/labels are nullable (issue #334 PR 1): when `Settings.spaces` is configured, the
+-- rasters live in the DO Space instead and only image_url/labels_url are populated - see
+-- cache.save_region_satellite. Unconfigured (the default) keeps storing bytes here directly.
 CREATE TABLE IF NOT EXISTS region_satellite (
     region_id  TEXT PRIMARY KEY,
-    image      BYTEA NOT NULL,        -- World_Imagery export, JPEG bytes
-    labels     BYTEA NOT NULL,        -- Boundaries_and_Places export, transparent PNG bytes
+    image      BYTEA,                 -- World_Imagery export, JPEG bytes (Postgres fallback)
+    labels     BYTEA,                 -- Boundaries_and_Places export, transparent PNG (fallback)
+    image_url  TEXT,                  -- public Space URL, when Settings.spaces is configured
+    labels_url TEXT,
     fetched_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -303,7 +310,7 @@ CREATE TABLE IF NOT EXISTS meta (
 # Bump whenever the SCHEMA string above OR the CONCURRENTLY index set in apply_schema changes,
 # so a running instance re-executes them once on its next apply_schema. (New _MIGRATIONS
 # entries are tracked separately by version and don't need a bump.)
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Fixed advisory-lock key so two processes starting together (API + scheduler) serialize on
 # the full apply_schema path instead of racing CREATE INDEX CONCURRENTLY.
@@ -652,6 +659,20 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
             FOR EACH ROW EXECUTE FUNCTION foray_trail_geom_from_geometry();
         ALTER TABLE trails DROP COLUMN IF EXISTS geojson;
         """,
+    ),
+    # issue #334 PR 1: region_satellite's rasters move to a DO Space when Settings.spaces is
+    # configured (cache.save_region_satellite) - existing bytea columns become optional
+    # fallback storage instead of the only storage, and a url column holds the Space pointer.
+    # No data migration here: an already-cached region's bytea rows keep serving from Postgres
+    # as before until the next `backfill-satellite --refresh` re-fetches it through whichever
+    # path is configured - forcing every existing row through a one-time upload isn't worth the
+    # write load for a purely-informational raster cache that regenerates cheaply on its own.
+    (
+        46,
+        "ALTER TABLE region_satellite ALTER COLUMN image DROP NOT NULL; "
+        "ALTER TABLE region_satellite ALTER COLUMN labels DROP NOT NULL; "
+        "ALTER TABLE region_satellite ADD COLUMN IF NOT EXISTS image_url TEXT; "
+        "ALTER TABLE region_satellite ADD COLUMN IF NOT EXISTS labels_url TEXT",
     ),
 ]
 
@@ -1516,19 +1537,48 @@ def save_region_place(con: psycopg.Connection, region_id: str, place_name: str |
     )
 
 
-def load_region_satellite(con: psycopg.Connection, region_id: str) -> tuple[bytes, bytes] | None:
+def load_region_satellite(con: psycopg.Connection, cfg: Settings, region_id: str) -> tuple[bytes, bytes] | None:
     """Cached ``(image, labels)`` bytes for a region's satellite fill, or ``None`` if never
-    fetched - caller should fetch (``sources.satellite.fetch_region_satellite``) and save."""
-    row = con.execute("SELECT image, labels FROM region_satellite WHERE region_id = %s", [region_id]).fetchone()
-    return None if row is None else (bytes(row[0]), bytes(row[1]))
+    fetched - caller should fetch (``sources.satellite.fetch_region_satellite``) and save.
+
+    Reads whichever storage `save_region_satellite` wrote to: a Space URL (fetched over HTTP)
+    when `cfg.spaces` is configured, the row's own bytea columns otherwise. A region cached
+    under one mode before a `spaces` config change still reads back correctly - both columns are
+    checked regardless of the current config."""
+    row = con.execute(
+        "SELECT image, labels, image_url, labels_url FROM region_satellite WHERE region_id = %s", [region_id]
+    ).fetchone()
+    if row is None:
+        return None
+    image, labels, image_url, labels_url = row
+    if image_url is not None and labels_url is not None:
+        with httpx.Client(timeout=30) as client:
+            image_response, labels_response = client.get(image_url), client.get(labels_url)
+        image_response.raise_for_status()
+        labels_response.raise_for_status()
+        return image_response.content, labels_response.content
+    if image is not None and labels is not None:
+        return bytes(image), bytes(labels)
+    return None
 
 
-def save_region_satellite(con: psycopg.Connection, region_id: str, image: bytes, labels: bytes) -> None:
-    con.execute(
-        "INSERT INTO region_satellite (region_id, image, labels) VALUES (%s, %s, %s) "
-        "ON CONFLICT (region_id) DO NOTHING",
-        [region_id, image, labels],
-    )
+def save_region_satellite(con: psycopg.Connection, cfg: Settings, region_id: str, image: bytes, labels: bytes) -> None:
+    if cfg.spaces.configured:
+        image_url = spaces.put_object(cfg.spaces, f"satellite/{region_id}/image.jpg", image, "image/jpeg", public=True)
+        labels_url = spaces.put_object(
+            cfg.spaces, f"satellite/{region_id}/labels.png", labels, "image/png", public=True
+        )
+        con.execute(
+            "INSERT INTO region_satellite (region_id, image_url, labels_url) VALUES (%s, %s, %s) "
+            "ON CONFLICT (region_id) DO NOTHING",
+            [region_id, image_url, labels_url],
+        )
+    else:
+        con.execute(
+            "INSERT INTO region_satellite (region_id, image, labels) VALUES (%s, %s, %s) "
+            "ON CONFLICT (region_id) DO NOTHING",
+            [region_id, image, labels],
+        )
 
 
 # Half-width of the bounding box `observations_missing_elevation(near=...)` restricts to: ~1600

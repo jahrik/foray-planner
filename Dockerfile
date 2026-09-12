@@ -58,8 +58,13 @@ RUN useradd --uid 1000 --create-home foray
 # Unpinned deliberately: it's a security-tracked lib, apt should pull the patched version, and
 # a pin would 404 the moment Debian supersedes it (see .hadolint.yaml for DL3008). The
 # `import rasterio` check below fails the build loudly if the package ever goes missing.
+# gdal-bin (issue #334 PR 1): ogr2ogr, needed by the future bulk-source stagers/loaders
+# (#334 PR 2/3, #335) to reproject/convert PAD-US GPKG, USFS shapefiles, MTBS shapefiles, etc.
+# before COPY-ing them into Postgres. Same image as `foray serve` (see the Dockerfile's CMD
+# comment below) - no separate "ingest" image, `docker run ... foray ingest-bulk ...` runs
+# this one.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libexpat1 \
+    && apt-get install -y --no-install-recommends libexpat1 gdal-bin \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

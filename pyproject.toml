@@ -31,6 +31,12 @@ dependencies = [
     # schedule.py parses jobs.yaml (issue #332 PR 2) - already a transitive dep, declared
     # explicit since the app now imports it directly.
     "pyyaml>=6.0,<7.0",
+    # spaces.py: S3-compatible client for DO Spaces (issue #334 PR 1) - region_satellite's
+    # rasters and the bulk-snapshot staging path.
+    "boto3>=1.34,<2.0",
+    # ingest_bulk.py's future loaders (issue #334 PR 3, #335) query staged Parquet/GPKG
+    # snapshots directly rather than loading them into Python first.
+    "duckdb>=1.1,<2.0",
 ]
 
 [project.scripts]

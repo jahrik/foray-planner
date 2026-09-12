@@ -6,6 +6,7 @@ import logging
 import threading
 
 import httpx
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from psycopg_pool import ConnectionPool
 
@@ -188,6 +189,17 @@ def _satellite_fetch_lock(region_id: str) -> threading.Lock:
         return _satellite_fetch_locks.setdefault(region_id, threading.Lock())
 
 
+def _load_cached_satellite(conn: psycopg.Connection, state: AppState, region_id: str) -> tuple[bytes, bytes] | None:
+    """`db_load_region_satellite`, treating a Space read failure (e.g. a stale/deleted object
+    behind a cached URL) as a cache miss rather than a hard error - the caller re-fetches from
+    Esri and re-saves, which also self-heals the bad URL."""
+    try:
+        return db_load_region_satellite(conn, state.cfg, region_id)
+    except httpx.HTTPError as error:
+        logger.warning("satellite: cached fetch from Space failed for region %s (%s)", region_id, error)
+        return None
+
+
 def _region_satellite_bytes(region_id: str, state: AppState, pool: ConnectionPool) -> tuple[bytes, bytes]:
     """Cached ``(image, labels)`` bytes for a region, fetching + caching on first request.
 
@@ -198,14 +210,14 @@ def _region_satellite_bytes(region_id: str, state: AppState, pool: ConnectionPoo
     this cold path should be rare in practice.
     """
     with pool.connection() as conn:
-        cached = db_load_region_satellite(conn, region_id)
+        cached = _load_cached_satellite(conn, state, region_id)
         if cached is not None:
             return cached
     with _satellite_fetch_lock(region_id):
         with pool.connection() as conn:
             # Re-check inside the lock: the request that was already fetching may have finished
             # and saved while this one was waiting its turn.
-            cached = db_load_region_satellite(conn, region_id)
+            cached = _load_cached_satellite(conn, state, region_id)
             if cached is not None:
                 return cached
             center_lat, center_lng = region_center(region_id, state.cfg)
@@ -215,7 +227,7 @@ def _region_satellite_bytes(region_id: str, state: AppState, pool: ConnectionPoo
             except httpx.HTTPError as error:
                 logger.warning("satellite: fetch failed for region %s (%s)", region_id, error)
                 raise HTTPException(502, "satellite imagery temporarily unavailable") from None
-            db_save_region_satellite(conn, region_id, image, labels)
+            db_save_region_satellite(conn, state.cfg, region_id, image, labels)
         return image, labels
 
 

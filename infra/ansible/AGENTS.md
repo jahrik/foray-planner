@@ -14,7 +14,7 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 | `foray_app_image` | Container image (default: ghcr.io/jahrik/foray-planner:latest) |
 | `foray_ridb_api_key` | Recreation.gov API key (optional) |
 | `foray_alert_email` | DO monitoring alert recipient (from `FORAY_ALERT_EMAIL` env); unset skips alert policy creation (issue #84) |
-| `foray_spaces_access_key_id` / `foray_spaces_secret_access_key` | DO Spaces access key (from `DO_SPACES_KEY` / `DO_SPACES_SECRET`, generated under API -> Spaces Keys, separate from the API token). Needed for the basemap Space; unset skips it |
+| `foray_spaces_access_key_id` / `foray_spaces_secret_access_key` | DO Spaces access key (from `DO_SPACES_KEY` / `DO_SPACES_SECRET`, generated under API -> Spaces Keys, separate from the API token). Needed for the basemap Space; unset skips it. Also passed to the deployed app itself as `FORAY_SPACES__*` (issue #334 PR 1, `templates/foray.env.j2`) - the same Space backs `region_satellite`'s rasters (`satellite/` prefix) and bulk-snapshot staging (`bulk/` prefix) alongside the basemap archive |
 | `foray_basemap_url` | Vector basemap archive URL (from `FORAY_BASEMAP_URL` env, else the computed CDN URL once the Spaces key is set, else empty = no base layer) |
 | `foray_basemap_space_name` / `foray_basemap_object_key` / `foray_basemap_bbox` | Space name, archive key, and CONUS bbox for the PMTiles archive |
 | `foray_terrain_url` | Terrarium DEM tile URL template for hillshade + contours (from `FORAY_TERRAIN_URL` env, else AWS Open Data's `elevation-tiles-prod`) |

@@ -185,6 +185,15 @@ the rest of the map, without losing the road/city names the basemap would otherw
   per-region lock coalesces the two `<img>` tags' near-simultaneous requests so a cold region
   only pays the fetch once). `foray backfill-satellite` pre-fetches every region in the `regions`
   table ahead of time so this cold path is rare in practice.
+- **Where the bytes live (issue #334 PR 1):** when `FORAY_SPACES__ACCESS_KEY_ID`/
+  `SECRET_ACCESS_KEY`/`BUCKET` are set (`Settings.spaces`, `foray/spaces.py`), a save uploads
+  both rasters to the DO Space instead and `region_satellite` keeps only their public URLs
+  (`image_url`/`labels_url`) - the API route still serves the bytes itself (fetched from the
+  Space over HTTP), not a redirect, so the response headers/caching behavior above are unchanged.
+  Unconfigured (the default, and every dev box without a Spaces key) falls back to storing the
+  bytes directly in `region_satellite`'s `image`/`labels` bytea columns, exactly as before -
+  this is opt-in, not a breaking change. `FORAY_SPACES__*` also backs the bulk-snapshot staging
+  path (`foray.ingest_bulk`, `bulk/{source}/{date}/`) - one Space, two prefixes.
 - **Endpoints:** three real XYZ tile pyramids under `server.arcgisonline.com`, confirmed live via
   their `MapServer?f=json` capabilities (`"Map,Tilemap"`, not the dynamic `MapServer/export`
   renderer `sources/land`/`sources/fire` use) - called only from `sources/satellite.py` (never
@@ -357,3 +366,28 @@ or filtering, same posture as land ownership.
 - **Terms:** Free for non-commercial use; [Open-Meteo terms](https://open-meteo.com/en/terms).
   "© Open-Meteo" is shown in the map credits line (`map.ts` `TILE_ATTRIBUTION`).
 - **Tests:** Network-mocked with `httpx.MockTransport`; the suite never hits the real API.
+
+---
+
+## Bulk-snapshot ingest pipeline (issue #334)
+
+**Role:** Machinery for authoritative bulk data sources too large or too infrequently updated
+to fetch live per-region (issue #335: PAD-US, USFS Trail_NFS + MVUM, MTBS/RAVG; also the future
+iNat Open Data / RIDB full-dump loaders, #334 PR 2) - not a source itself.
+
+- **Staging (GitHub Actions, `.github/workflows/bulk-load.yml`, weekly + manual dispatch):**
+  `foray stage-snapshot <source>` fetches/transforms a source (GDAL/`ogr2ogr` in the app image
+  handles reprojection; DuckDB queries staged Parquet/GPKG directly) and uploads it to the DO
+  Space under `bulk/{source}/{date}/` (`foray.spaces.snapshot_prefix`). Runs off the droplet
+  deliberately - a source snapshot can be tens of GB, more disk/bandwidth than the 1-vCPU
+  droplet should spend on a job that never touches Postgres.
+- **Loading (droplet, `foray ingest-bulk <source>`):** finds the newest staged snapshot
+  (`foray.spaces.list_snapshot_dates`), skips it if already loaded (`meta` key
+  `bulk_snapshot:{source}`), otherwise loads it via `foray.ingest_bulk.copy_and_swap` - a
+  staging table is populated first and only swapped in on success, so a table is never visible
+  half-loaded.
+- **Config:** `FORAY_SPACES__ACCESS_KEY_ID`/`SECRET_ACCESS_KEY`/`BUCKET`/`REGION` (`Settings.spaces`,
+  see the satellite-overlay section above for the other consumer of this same Space).
+- **Status:** issue #334 PR 1 ships this machinery with no sources registered yet
+  (`foray.ingest_bulk.STAGERS`/`LOADERS` are both empty) - PR 2 and #335 add the per-source
+  stager/loader pairs.

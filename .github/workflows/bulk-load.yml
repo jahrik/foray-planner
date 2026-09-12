@@ -1,0 +1,71 @@
+name: Bulk snapshot staging
+
+# Weekly re-stage of bulk data sources (iNat Open Data, RIDB, PAD-US, USFS Trail_NFS, MTBS/RAVG
+# - issue #334 PR 2, #335) to the DO Space, via `foray stage-snapshot <source>`. Runs here
+# rather than on the droplet: a source snapshot can be tens of GB, more disk/bandwidth than the
+# 1-vCPU droplet should spend on a job that doesn't touch Postgres at all. `foray ingest-bulk`
+# (a systemd timer via jobs.yaml, see issue #332) separately loads whatever's staged here into
+# the database on its own schedule.
+#
+# `vars.FORAY_BULK_SOURCES` (repo variable, comma-separated) is empty until #334 PR 2 / #335
+# register a stager for at least one source (`foray.ingest_bulk.STAGERS`) - until then this
+# workflow runs and exits cleanly with nothing to do, rather than failing weekly on an
+# unregistered name.
+#
+# Stages into the *same* Space the deployed app reads from (infra/ansible/AGENTS.md,
+# `foray_basemap_space_name`/`foray_basemap_region` - default bucket "foray-basemap", region
+# the droplet's DO region), not a separate one: `vars.FORAY_SPACES_BUCKET`/`FORAY_SPACES_REGION`
+# must be set to those same values (or left unset to use the same defaults) or a staged
+# snapshot lands somewhere `foray ingest-bulk` on the droplet never looks.
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Monday 09:00 UTC
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Stage a single source now (blank = every source in FORAY_BULK_SOURCES)"
+        required: false
+        default: ""
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: "ghcr.io/${{ github.repository }}"
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the current app image
+        run: docker pull "$IMAGE:latest"
+
+      - name: Stage each targeted source
+        env:
+          SOURCES: ${{ vars.FORAY_BULK_SOURCES }}
+          DISPATCH_SOURCE: ${{ github.event.inputs.source }}
+          FORAY_SPACES__ACCESS_KEY_ID: ${{ secrets.DO_SPACES_KEY }}
+          FORAY_SPACES__SECRET_ACCESS_KEY: ${{ secrets.DO_SPACES_SECRET }}
+          # Must match the deployed app's Space (infra/ansible defaults: foray-basemap / the
+          # droplet's DO region) - see the comment above.
+          FORAY_SPACES__BUCKET: ${{ vars.FORAY_SPACES_BUCKET || 'foray-basemap' }}
+          FORAY_SPACES__REGION: ${{ vars.FORAY_SPACES_REGION || 'sfo3' }}
+        run: |
+          set -euo pipefail
+          targets="${DISPATCH_SOURCE:-$SOURCES}"
+          if [ -z "$targets" ]; then
+            echo "No bulk sources registered yet (issue #334 PR 2, #335) - nothing to stage."
+            exit 0
+          fi
+          IFS=',' read -ra list <<< "$targets"
+          for source in "${list[@]}"; do
+            docker run --rm \
+              -e FORAY_SPACES__ACCESS_KEY_ID \
+              -e FORAY_SPACES__SECRET_ACCESS_KEY \
+              -e FORAY_SPACES__BUCKET \
+              -e FORAY_SPACES__REGION \
+              "$IMAGE:latest" foray stage-snapshot "$source"
+          done
