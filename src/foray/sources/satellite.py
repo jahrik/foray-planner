@@ -47,6 +47,7 @@ import psycopg
 from PIL import Image
 
 from foray.cache import save_region_satellite
+from foray.config import Settings
 from foray.geo import KM_PER_DEG_LAT, web_mercator_bbox_m
 
 logger = logging.getLogger(__name__)
@@ -232,6 +233,7 @@ def fetch_region_satellite(
 
 def backfill_region_satellite(
     con: psycopg.Connection,
+    cfg: Settings,
     *,
     cell_deg: float,
     max_regions: int | None = None,
@@ -281,7 +283,7 @@ def backfill_region_satellite(
         for index, result in enumerate(executor.map(fetch_one, rows), start=1):
             if result is not None:
                 region_id, image, labels = result
-                save_region_satellite(con, region_id, image, labels)
+                save_region_satellite(con, cfg, region_id, image, labels)
                 updated += 1
             else:
                 failed += 1

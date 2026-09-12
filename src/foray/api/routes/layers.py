@@ -198,14 +198,14 @@ def _region_satellite_bytes(region_id: str, state: AppState, pool: ConnectionPoo
     this cold path should be rare in practice.
     """
     with pool.connection() as conn:
-        cached = db_load_region_satellite(conn, region_id)
+        cached = db_load_region_satellite(conn, state.cfg, region_id)
         if cached is not None:
             return cached
     with _satellite_fetch_lock(region_id):
         with pool.connection() as conn:
             # Re-check inside the lock: the request that was already fetching may have finished
             # and saved while this one was waiting its turn.
-            cached = db_load_region_satellite(conn, region_id)
+            cached = db_load_region_satellite(conn, state.cfg, region_id)
             if cached is not None:
                 return cached
             center_lat, center_lng = region_center(region_id, state.cfg)
@@ -215,7 +215,7 @@ def _region_satellite_bytes(region_id: str, state: AppState, pool: ConnectionPoo
             except httpx.HTTPError as error:
                 logger.warning("satellite: fetch failed for region %s (%s)", region_id, error)
                 raise HTTPException(502, "satellite imagery temporarily unavailable") from None
-            db_save_region_satellite(conn, region_id, image, labels)
+            db_save_region_satellite(conn, state.cfg, region_id, image, labels)
         return image, labels
 
 

@@ -102,6 +102,41 @@ class Observability(BaseModel):
     ranking_cache_ttl_seconds: int = Field(gt=0, default=600)
 
 
+class Spaces(BaseModel):
+    """DO Spaces credentials for the app's own object storage use (issue #334 PR 1) - the
+    bulk-snapshot staging path (``{source}/{date}/`` under ``bulk/``) and, once configured,
+    ``region_satellite``'s image/labels rasters (moved off Postgres BYTEA, a URL pointer kept
+    in the table instead). Separate from the ansible-only ``foray_spaces_*`` vars that
+    provision the *basemap* Space/CDN (infra/ansible/AGENTS.md) - this is the app's own runtime
+    read/write access, needed by both the API process and `foray ingest-bulk`/`stage-snapshot`.
+    Empty (the default) means unconfigured: `region_satellite` falls back to storing bytes in
+    Postgres directly (dev-friendly, no Space required), and bulk-snapshot commands refuse to
+    run - see `foray.spaces`."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    access_key_id: str = ""
+    secret_access_key: str = ""
+    bucket: str = ""
+    region: str = "nyc3"
+    # Public base URL objects are read back through (the Space's own endpoint, or a CDN
+    # endpoint in front of it) - e.g. "https://<bucket>.nyc3.cdn.digitaloceanspaces.com".
+    # Defaults to the plain (non-CDN) Space endpoint when left empty and a bucket is set.
+    public_url: str = ""
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.access_key_id and self.secret_access_key and self.bucket)
+
+    @property
+    def endpoint_url(self) -> str:
+        return f"https://{self.region}.digitaloceanspaces.com"
+
+    @property
+    def base_url(self) -> str:
+        return self.public_url or f"https://{self.bucket}.{self.region}.digitaloceanspaces.com"
+
+
 class CoverageRegion(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -157,6 +192,7 @@ class Settings(BaseSettings):
     # our own proxy in front of Esri World Imagery (api/routes/tiles.py), never Esri directly, so
     # it stays same-origin under the existing CSP. Empty disables the toggle entirely.
     satellite_tiles_url: str = "/api/tiles/satellite/{z}/{x}/{y}.jpg"
+    spaces: Spaces = Field(default_factory=Spaces)
     ingest: Ingest = Ingest()
     intervals: Intervals = Field(default_factory=Intervals)
     observability: Observability = Field(default_factory=Observability)

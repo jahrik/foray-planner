@@ -219,3 +219,28 @@ def test_job_cmd_delegates_to_jobs_run_and_propagates_exit_code(env_config, monk
 def test_job_cmd_requires_a_wrapped_command(env_config) -> None:
     result = CliRunner().invoke(cli, ["job", "fire"])
     assert result.exit_code != 0
+
+
+def test_stage_snapshot_cmd_without_spaces_configured_fails_clean(env_config) -> None:
+    result = CliRunner().invoke(cli, ["stage-snapshot", "padus"])
+    assert result.exit_code != 0
+    assert "FORAY_SPACES" in result.output
+
+
+def test_ingest_bulk_cmd_without_spaces_configured_fails_clean(
+    con: psycopg.Connection, env_config, monkeypatch
+) -> None:
+    monkeypatch.setattr(cli_module, "connect", lambda: _CloseTrackingConnection(con))
+    result = CliRunner().invoke(cli, ["ingest-bulk", "padus"])
+    assert result.exit_code != 0
+    assert "FORAY_SPACES" in result.output
+
+
+def test_ingest_bulk_cmd_unknown_source_fails_clean(con: psycopg.Connection, env_config, monkeypatch) -> None:
+    monkeypatch.setenv("FORAY_SPACES__ACCESS_KEY_ID", "k")
+    monkeypatch.setenv("FORAY_SPACES__SECRET_ACCESS_KEY", "s")
+    monkeypatch.setenv("FORAY_SPACES__BUCKET", "foray-bulk")
+    monkeypatch.setattr(cli_module, "connect", lambda: _CloseTrackingConnection(con))
+    result = CliRunner().invoke(cli, ["ingest-bulk", "padus"])
+    assert result.exit_code != 0
+    assert "no loader registered" in result.output
