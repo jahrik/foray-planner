@@ -46,7 +46,7 @@ from foray.cache import (
     upsert_observations,
     upsert_rows,
 )
-from foray.config import Observability, Settings
+from foray.config import Observability, Settings, Spaces
 from foray.geo import haversine_km
 
 # Seattle, used as the "home" point for latest_obs_date's haversine region-matching tests.
@@ -514,20 +514,50 @@ def test_load_region_places_empty_input(con: psycopg.Connection) -> None:
 
 
 def test_load_region_satellite_missing_returns_none(con: psycopg.Connection) -> None:
-    assert load_region_satellite(con, "425_-1099") is None
+    assert load_region_satellite(con, Settings(), "425_-1099") is None
 
 
 def test_save_and_load_region_satellite_round_trips(con: psycopg.Connection) -> None:
-    save_region_satellite(con, "425_-1099", b"\xff\xd8jpeg-bytes", b"\x89PNGlabel-bytes")
+    save_region_satellite(con, Settings(), "425_-1099", b"\xff\xd8jpeg-bytes", b"\x89PNGlabel-bytes")
 
-    assert load_region_satellite(con, "425_-1099") == (b"\xff\xd8jpeg-bytes", b"\x89PNGlabel-bytes")
+    assert load_region_satellite(con, Settings(), "425_-1099") == (b"\xff\xd8jpeg-bytes", b"\x89PNGlabel-bytes")
 
 
 def test_save_region_satellite_keeps_first_result_on_reinsert(con: psycopg.Connection) -> None:
-    save_region_satellite(con, "425_-1099", b"first-image", b"first-labels")
-    save_region_satellite(con, "425_-1099", b"second-image", b"second-labels")
+    save_region_satellite(con, Settings(), "425_-1099", b"first-image", b"first-labels")
+    save_region_satellite(con, Settings(), "425_-1099", b"second-image", b"second-labels")
 
-    assert load_region_satellite(con, "425_-1099") == (b"first-image", b"first-labels")
+    assert load_region_satellite(con, Settings(), "425_-1099") == (b"first-image", b"first-labels")
+
+
+def test_save_region_satellite_uploads_to_space_when_configured(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = Settings(spaces=Spaces(access_key_id="k", secret_access_key="s", bucket="foray-bulk", region="nyc3"))
+    uploaded: dict[str, bytes] = {}
+
+    def fake_put_object(spaces_cfg: Spaces, key: str, data: bytes, content_type: str) -> str:
+        uploaded[key] = data
+        return f"{spaces_cfg.base_url}/{key}"
+
+    monkeypatch.setattr("foray.cache.spaces.put_object", fake_put_object)
+
+    save_region_satellite(con, cfg, "425_-1099", b"image-bytes", b"labels-bytes")
+
+    row = con.execute(
+        "SELECT image, labels, image_url, labels_url FROM region_satellite WHERE region_id = %s",
+        ["425_-1099"],
+    ).fetchone()
+    assert row == (
+        None,
+        None,
+        "https://foray-bulk.nyc3.digitaloceanspaces.com/satellite/425_-1099/image.jpg",
+        "https://foray-bulk.nyc3.digitaloceanspaces.com/satellite/425_-1099/labels.png",
+    )
+    assert uploaded == {
+        "satellite/425_-1099/image.jpg": b"image-bytes",
+        "satellite/425_-1099/labels.png": b"labels-bytes",
+    }
 
 
 def _obs_row(

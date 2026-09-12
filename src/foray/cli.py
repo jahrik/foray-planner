@@ -6,7 +6,7 @@ import datetime as dt
 
 import click
 
-from foray import alerting, jobs
+from foray import alerting, ingest_bulk, jobs
 from foray.cache import connect, maybe_rebuild_phenology, observation_count, upsert_fungi_genera
 from foray.config import Settings
 from foray.logging_config import setup_logging
@@ -372,6 +372,7 @@ def backfill_satellite_cmd(ctx: click.Context, limit: int | None, concurrency: i
     try:
         updated, failed = satellite.backfill_region_satellite(
             con,
+            cfg,
             cell_deg=cfg.cell_deg,
             max_regions=limit,
             concurrency=concurrency,
@@ -381,6 +382,48 @@ def backfill_satellite_cmd(ctx: click.Context, limit: int | None, concurrency: i
         click.echo(f"Cached satellite imagery for {updated} regions ({failed} failed).")
         if failed and failed > updated:
             raise click.ClickException(f"{failed}/{updated + failed} regions failed - likely Esri throttling; re-run.")
+    finally:
+        con.close()
+
+
+@cli.command("stage-snapshot")
+@click.argument("source")
+@click.pass_context
+def stage_snapshot_cmd(ctx: click.Context, source: str) -> None:
+    """Fetch + upload today's snapshot for a bulk data `source` to the DO Space
+    (`bulk/{source}/{date}/`), without touching Postgres - the GitHub Actions weekly workflow's
+    job (`.github/workflows/bulk-load.yml`), kept off the droplet since a source snapshot (iNat
+    Open Data, RIDB, PAD-US, ...) can be tens of GB. `foray ingest-bulk` loads whatever's staged
+    here into the database separately. No source is registered yet (issue #334 PR 1 ships the
+    machinery; PR 2/#335 add the per-source stagers)."""
+    cfg = ctx.obj["cfg"]
+    try:
+        snapshot_date = ingest_bulk.stage_snapshot(cfg, source)
+    except (KeyError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from None
+    click.echo(f"Staged {source} snapshot {snapshot_date.isoformat()}.")
+
+
+@cli.command("ingest-bulk")
+@click.argument("source")
+@click.pass_context
+def ingest_bulk_cmd(ctx: click.Context, source: str) -> None:
+    """Load the newest snapshot `stage-snapshot` staged for a bulk data `source` into Postgres
+    via COPY-into-staging-then-swap (`foray.ingest_bulk.copy_and_swap`), if it's newer than what
+    was last loaded (tracked in `meta`). A no-op if nothing new is staged. No source is
+    registered yet (issue #334 PR 1 ships the machinery; PR 2/#335 add the per-source
+    loaders)."""
+    cfg = ctx.obj["cfg"]
+    con = connect()
+    try:
+        try:
+            snapshot_date = ingest_bulk.ingest_bulk(con, cfg, source)
+        except (KeyError, RuntimeError) as exc:
+            raise click.ClickException(str(exc)) from None
+        if snapshot_date is None:
+            click.echo(f"{source}: already up to date.")
+        else:
+            click.echo(f"Loaded {source} snapshot {snapshot_date.isoformat()}.")
     finally:
         con.close()
 
