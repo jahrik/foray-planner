@@ -10,12 +10,17 @@ handling on top - but takes ``USER_AGENT`` from here.)
 
 from __future__ import annotations
 
+import io
 import threading
 import time
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from typing import TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:
+    from _typeshed import WriteableBuffer
 
 # Attribution / ToS: iNat and Nominatim both ask for a descriptive UA identifying the app.
 USER_AGENT = "foray-planner/0.1 (mushroom trip planner; +https://github.com/jahrik)"
@@ -81,3 +86,60 @@ def retry_after_seconds(response: httpx.Response, attempt: int, *, base_delay: f
 
 def _clamp(value: float, cap: float) -> float:
     return min(max(value, 0.0), cap)
+
+
+class HttpRangeReader(io.RawIOBase):
+    """A seekable, read-only file-like view over one HTTP(S) resource, fetched lazily via
+    ``Range`` requests - lets ``zipfile.ZipFile`` open a member of a multi-GB remote archive
+    (issue #334 PR 2: the ~29 GB iNat GBIF DwC-A dump) without ever downloading the whole
+    thing to disk. ``zipfile`` needs random access (it reads the central directory at the end
+    of the file first, then seeks to the member's local header), which this provides one HTTP
+    Range GET at a time; wrap it in ``io.BufferedReader(reader, buffer_size=...)`` before
+    handing it to ``zipfile.ZipFile`` so zipfile's usual small reads don't turn into one
+    request each - a large buffer (a few MB) keeps a sequential member scan to a modest
+    request count instead of one per read() call.
+
+    The server must support ``Accept-Ranges: bytes`` (verified against both sources this reads
+    from - static.inaturalist.org and ridb.recreation.gov's downloads - not checked at
+    runtime, since a server that ignores ``Range`` and 200s the whole body would silently
+    corrupt every seek here rather than erroring, and both are known-good CDN-fronted static
+    files, not user-supplied URLs).
+    """
+
+    def __init__(self, client: httpx.Client, url: str) -> None:
+        self._client = client
+        self._url = url
+        self._pos = 0
+        self._size = int(client.head(url, follow_redirects=True).headers["content-length"])
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        if whence == io.SEEK_SET:
+            self._pos = offset
+        elif whence == io.SEEK_CUR:
+            self._pos += offset
+        elif whence == io.SEEK_END:
+            self._pos = self._size + offset
+        else:
+            raise ValueError(f"invalid whence {whence!r}")
+        return self._pos
+
+    def tell(self) -> int:
+        return self._pos
+
+    def readinto(self, buffer: WriteableBuffer) -> int:
+        buffer = memoryview(buffer)
+        if self._pos >= self._size:
+            return 0
+        end = min(self._pos + len(buffer), self._size) - 1
+        resp = self._client.get(self._url, headers={"Range": f"bytes={self._pos}-{end}"})
+        resp.raise_for_status()
+        data = resp.content
+        buffer[: len(data)] = data
+        self._pos += len(data)
+        return len(data)

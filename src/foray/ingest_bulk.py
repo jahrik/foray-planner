@@ -25,6 +25,7 @@ from typing import LiteralString
 import psycopg
 
 from foray.config import Settings
+from foray.sources import camps, inat_bulk
 from foray.spaces import list_snapshot_dates, new_run_id, publish_snapshot, snapshot_run_id
 
 logger = logging.getLogger(__name__)
@@ -40,8 +41,14 @@ Stager = Callable[[Settings, date, str], None]
 # and loads it into Postgres via `copy_and_swap`. Runs on the droplet (`foray ingest-bulk`).
 Loader = Callable[[psycopg.Connection, Settings, date, str], None]
 
-STAGERS: dict[str, Stager] = {}
-LOADERS: dict[str, Loader] = {}
+STAGERS: dict[str, Stager] = {
+    "ridb": camps.stage_ridb,
+    "inat": inat_bulk.stage_inat,
+}
+LOADERS: dict[str, Loader] = {
+    "ridb": camps.load_ridb,
+    "inat": inat_bulk.load_inat,
+}
 
 
 def copy_and_swap(

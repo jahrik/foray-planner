@@ -2,25 +2,78 @@
 
 from __future__ import annotations
 
+import csv
+import gzip
+import io
+import json
+import zipfile
+from datetime import date
+from pathlib import Path
+
 import httpx
 import psycopg
 import pytest
 
+from foray import spaces
 from foray.cache import is_ingested, prune_campsites_outside_radius, upsert_campsites
-from foray.config import CoverageRegion, Settings
+from foray.config import CoverageRegion, Settings, Spaces
 from foray.scoring import camps_near
+from foray.sources import camps
 from foray.sources.camps import (
     _CAMPS_COVERAGE_VERSION,
+    _camping_facility_ids,
     _clean_text,
     _coverage_state_codes,
     _fee_range,
     _free_from_fee,
+    _iter_bulk_campsite_rows,
     _parse_facility,
     _query_centers,
+    _ridb_bulk_loaded,
     _states_for_disk,
     fetch_campsites,
+    ingest_campgrounds,
     ingest_campgrounds_coverage,
+    load_ridb,
+    stage_ridb,
 )
+
+_SPACES_CFG = Spaces(access_key_id="k", secret_access_key="s", bucket="foray-bulk")
+
+
+@pytest.fixture(autouse=True)
+def _clear_ridb_bulk_marker(con: psycopg.Connection):
+    # `meta` isn't in conftest's per-test TRUNCATE list (see tests/test_ingest_bulk.py's
+    # matching fixture) - clear the ridb bulk-loaded marker so one test's
+    # `ingest_bulk.record_snapshot_loaded(con, "ridb", ...)` can't leak into another test's
+    # live-crawl assertions via `_ridb_bulk_loaded`.
+    con.execute("DELETE FROM meta WHERE key = 'bulk_snapshot:ridb'")
+    yield
+    con.execute("DELETE FROM meta WHERE key = 'bulk_snapshot:ridb'")
+
+
+def _ridb_export_zip(facilities: list[dict[str, str]], entity_activities: list[dict[str, str]] | None = None) -> bytes:
+    """Build a minimal in-memory RIDB full-export zip with just the two CSVs the bulk loader
+    reads - real-shaped column names, a tiny fixed row set."""
+    facility_cols = ["FacilityID", "FacilityName", "FacilityTypeDescription", "FacilityLatitude", "FacilityLongitude"]
+    activity_cols = ["ActivityID", "ActivityDescription", "ActivityFeeDescription", "EntityID", "EntityType"]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        fac_buf = io.StringIO()
+        writer = csv.DictWriter(fac_buf, fieldnames=facility_cols, extrasaction="ignore")
+        writer.writeheader()
+        for row in facilities:
+            writer.writerow(row)
+        zf.writestr("Facilities_API_v1.csv", fac_buf.getvalue())
+
+        act_buf = io.StringIO()
+        writer = csv.DictWriter(act_buf, fieldnames=activity_cols)
+        writer.writeheader()
+        for row in entity_activities or []:
+            writer.writerow(row)
+        zf.writestr("EntityActivities_API_v1.csv", act_buf.getvalue())
+    return buf.getvalue()
+
 
 HOME_LAT, HOME_LNG = 47.6, -122.3
 
@@ -439,3 +492,132 @@ def test_camps_near_limit_caps_ranked_result(con: psycopg.Connection) -> None:
     sites = camps_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=100.0, limit=2)
     # Same free-first-then-distance order as the unlimited result, just truncated to `limit`.
     assert [site.name for site in sites] == ["Free Close", "Free Far"]
+
+
+# --- Bulk snapshot stager/loader (issue #334 PR 2) ---
+
+
+def test_camping_facility_ids_matches_on_camping_activity_for_facility_entities() -> None:
+    zip_bytes = _ridb_export_zip(
+        facilities=[],
+        entity_activities=[
+            {"ActivityID": "9", "EntityID": "111", "EntityType": "Facility"},  # CAMPING, Facility
+            {"ActivityID": "9", "EntityID": "222", "EntityType": "Rec Area"},  # CAMPING, wrong type
+            {"ActivityID": "6", "EntityID": "333", "EntityType": "Facility"},  # BOATING, wrong activity
+        ],
+    )
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        assert _camping_facility_ids(zf) == {"111"}
+
+
+def test_iter_bulk_campsite_rows_keeps_campground_type_and_camping_activity_facilities() -> None:
+    zip_bytes = _ridb_export_zip(
+        facilities=[
+            {
+                "FacilityID": "1",
+                "FacilityName": "Typed Campground",
+                "FacilityTypeDescription": "Campground",
+                "FacilityLatitude": "47.6",
+                "FacilityLongitude": "-122.3",
+            },
+            {
+                "FacilityID": "2",
+                "FacilityName": "Generic Facility With Camping",
+                "FacilityTypeDescription": "Facility",
+                "FacilityLatitude": "47.7",
+                "FacilityLongitude": "-122.4",
+            },
+            {
+                "FacilityID": "3",
+                "FacilityName": "Visitor Center",
+                "FacilityTypeDescription": "Visitor Center",
+                "FacilityLatitude": "47.8",
+                "FacilityLongitude": "-122.5",
+            },
+            {
+                "FacilityID": "4",
+                "FacilityName": "No Coords",
+                "FacilityTypeDescription": "Campground",
+                "FacilityLatitude": "",
+                "FacilityLongitude": "",
+            },
+        ],
+        entity_activities=[{"ActivityID": "9", "EntityID": "2", "EntityType": "Facility"}],
+    )
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        rows = list(_iter_bulk_campsite_rows(zf))
+    ids = {row[0] for row in rows}
+    assert ids == {"ridb:1", "ridb:2"}
+
+
+def test_stage_ridb_uploads_filtered_rows_as_gzip_jsonl(monkeypatch: pytest.MonkeyPatch) -> None:
+    zip_bytes = _ridb_export_zip(
+        facilities=[
+            {
+                "FacilityID": "1",
+                "FacilityName": "A Campground",
+                "FacilityTypeDescription": "Campground",
+                "FacilityLatitude": "47.6",
+                "FacilityLongitude": "-122.3",
+            }
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == camps.RIDB_FULL_EXPORT_URL
+        return httpx.Response(200, content=zip_bytes)
+
+    uploaded: dict[str, bytes] = {}
+
+    def fake_put_object(cfg: Spaces, key: str, data: bytes, content_type: str, **kwargs: object) -> str:
+        uploaded[key] = data
+        return f"https://space/{key}"
+
+    monkeypatch.setattr(camps.spaces, "put_object", fake_put_object)
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    stage_ridb(Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1", client=client)
+
+    assert len(uploaded) == 1
+    ((key, data),) = uploaded.items()
+    assert key == spaces.snapshot_run_prefix("ridb", date(2026, 1, 1), "run1") + "campsites.jsonl.gz"
+    rows = [json.loads(line) for line in gzip.decompress(data).decode().splitlines()]
+    assert len(rows) == 1
+    assert rows[0][0] == "ridb:1"
+    assert rows[0][5:7] == [47.6, -122.3]
+
+
+def test_load_ridb_upserts_and_prunes_stale_rows(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+    upsert_campsites(
+        con,
+        [("ridb:stale", "Gone Now", "campground", None, None, 47.5, -122.2, "ridb", "u", None, None, None)],
+    )
+    rows = [["ridb:1", "A Campground", "campground", None, None, 47.6, -122.3, "ridb", "u1", False, None, None]]
+    payload = "\n".join(json.dumps(row) for row in rows).encode()
+
+    def fake_download_file(cfg: Spaces, key: str, dest_path: str) -> None:
+        Path(dest_path).write_bytes(gzip.compress(payload))
+
+    monkeypatch.setattr(camps.spaces, "download_file", fake_download_file)
+
+    load_ridb(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
+
+    ids = {row[0] for row in con.execute("SELECT id FROM campsites").fetchall()}
+    assert ids == {"ridb:1"}
+
+
+def test_ridb_bulk_loaded_reflects_meta_marker(con: psycopg.Connection) -> None:
+    from foray import ingest_bulk
+
+    assert _ridb_bulk_loaded(con) is False
+    ingest_bulk.record_snapshot_loaded(con, "ridb", date(2026, 1, 1))
+    assert _ridb_bulk_loaded(con) is True
+
+
+def test_ingest_campgrounds_skips_live_crawl_once_bulk_loaded(con: psycopg.Connection) -> None:
+    from foray import ingest_bulk
+
+    ingest_bulk.record_snapshot_loaded(con, "ridb", date(2026, 1, 1))
+
+    assert ingest_campgrounds(Settings(), con, api_key="unused") == 0
+    assert ingest_campgrounds_coverage(Settings(), con, api_key="unused") == 0

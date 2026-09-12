@@ -95,3 +95,20 @@ jobs:
     interval_hours: 6
     window: any
     writer: true
+
+  # Loads whatever `.github/workflows/bulk-load.yml`'s weekly stage run most recently
+  # published (issue #334 PR 2) - a no-op most days (`ingest-bulk` compares against `meta`
+  # before doing any real work), so daily is cheap insurance against missing a stage. Requires
+  # `FORAY_SPACES__*` configured; unconfigured, the CLI command raises and this job just fails
+  # loudly in job_runs rather than silently skipping (see foray.ingest_bulk).
+  - name: ingest-bulk-inat
+    command: ingest-bulk inat
+    interval_hours: 24
+    window: any
+    writer: true
+
+  - name: ingest-bulk-ridb
+    command: ingest-bulk ridb
+    interval_hours: 24
+    window: any
+    writer: true

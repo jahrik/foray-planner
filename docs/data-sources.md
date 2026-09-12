@@ -41,7 +41,9 @@ scoring.
   in `ingest_log`); bumping `_CAMPS_COVERAGE_VERSION` makes the next cron re-list every state.
   RIDB's point+radius search silently returns only ~1/3 of the developed campgrounds actually
   present (it matches on the facility's own coordinate, often unset), so it's kept only as a
-  fallback for a non-US home. `full=true` gives `Reservable` on each record.
+  fallback for a non-US home. `full=true` gives `Reservable` on each record. **Superseded by
+  the `ridb` bulk snapshot** once one has loaded (issue #334 PR 2, see the bulk-snapshot section
+  below) - this live per-state/coverage-wide crawl then skips itself automatically.
 - **Fees:** RIDB ships fees as prose ("Camping: $16/vehicle... $2 per extra vehicle"), parsed
   best-effort into `fee_low`/`fee_high` - amounts qualified as add-ons / discounts / non-camping
   (extra vehicle, day use, senior, deposit) are dropped.
@@ -372,28 +374,49 @@ or filtering, same posture as land ownership.
 ## Bulk-snapshot ingest pipeline (issue #334)
 
 **Role:** Machinery for authoritative bulk data sources too large or too infrequently updated
-to fetch live per-region (issue #335: PAD-US, USFS Trail_NFS + MVUM, MTBS/RAVG; also the future
-iNat Open Data / RIDB full-dump loaders, #334 PR 2) - not a source itself.
+to fetch live per-region (issue #335: PAD-US, USFS Trail_NFS + MVUM, MTBS/RAVG) - not a source
+itself.
 
 - **Staging (GitHub Actions, `.github/workflows/bulk-load.yml`, weekly + manual dispatch):**
-  `foray stage-snapshot <source>` fetches/transforms a source (GDAL/`ogr2ogr` in the app image
-  handles reprojection; DuckDB queries staged Parquet/GPKG directly) and uploads it to the DO
-  Space under a fresh, run-unique key space (`foray.spaces.snapshot_run_prefix` -
+  `foray stage-snapshot <source>` fetches/transforms a source and uploads it to the DO Space
+  under a fresh, run-unique key space (`foray.spaces.snapshot_run_prefix` -
   `bulk/{source}/{date}/runs/{run_id}/...`) - re-staging a date, or two overlapping runs, can
   never collide, since every run gets its own prefix. Only once every object has landed does it
   publish a small manifest naming the current `run_id` (`foray.spaces.publish_snapshot`,
   `bulk/{source}/{date}/_manifest.json`) - the one atomic pointer flip a reader ever observes.
   Runs off the droplet deliberately - a source snapshot can be tens of GB, more disk/bandwidth
-  than the 1-vCPU droplet should spend on a job that never touches Postgres.
+  than the 1-vCPU droplet should spend on a job that never touches Postgres. GDAL/`ogr2ogr` in
+  the app image (for #335's shapefile/GeoPackage sources) and DuckDB (for querying staged
+  Parquet/GPKG directly) are there for the sources that need them; `inat`/`ridb` (below) need
+  neither - both stream-filter their source over plain HTTP.
 - **Loading (droplet, `foray ingest-bulk <source>`):** finds the newest *published* snapshot
-  date (`foray.spaces.list_snapshot_dates`, which only counts a date once its manifest exists),
-  skips it if it's not newer than what's already loaded (`meta` key `bulk_snapshot:{source}`),
-  otherwise resolves that date's current `run_id` and loads it via `foray.ingest_bulk.copy_and_swap`
-  - a staging table is populated first (via `foray.spaces.download_file`'s streaming download for
-  a large snapshot file, not `object_bytes`, which would materialize it in memory) and only
-  swapped in on success, so a table is never visible half-loaded.
+  date (`foray.spaces.list_snapshot_dates`, which only counts a date once its manifest exists)
+  and skips it if it's not newer than what's already loaded (`meta` key `bulk_snapshot:{source}`).
+  A full-table source loads via `foray.ingest_bulk.copy_and_swap` (staging table populated first,
+  swapped in on success, never visible half-loaded); `inat`/`ridb` instead upsert into their
+  existing table in place (they only ever add/refresh rows for their own `source`/kingdom, never
+  own the whole table) - see each loader's docstring for why.
 - **Config:** `FORAY_SPACES__ACCESS_KEY_ID`/`SECRET_ACCESS_KEY`/`BUCKET`/`REGION` (`Settings.spaces`,
   see the satellite-overlay section above for the other consumer of this same Space).
-- **Status:** issue #334 PR 1 ships this machinery with no sources registered yet
-  (`foray.ingest_bulk.STAGERS`/`LOADERS` are both empty) - PR 2 and #335 add the per-source
-  stager/loader pairs.
+- **Registered sources (issue #334 PR 2):**
+  - **`inat`** (`foray.sources.inat_bulk`) - iNaturalist's own complete GBIF Darwin Core Archive
+    export (`static.inaturalist.org/observations/gbif-observations-dwca.zip`, ~29 GB, refreshed
+    at least daily), streamed via HTTP range reads (`foray.sources.http.HttpRangeReader`) -
+    never downloaded whole. Filtered to `kingdom == "Fungi"` + `countryCode == "US"` rows at
+    stage time (no DB needed there); the loader resolves each row's genus name to our catalog's
+    genus-level `taxon_id` (`fungi_genera`) and upserts into `observations`, exactly like the
+    live `ingest`/`ingest_region` path. Replaces the old manual
+    `just bulk-download`/`bulk-filter`/`bulk-load` + `scripts/inat_dwca_filter.py` /
+    `load_inat_bulk.py` pair and the one-off `infra/ansible/tasks/deploy/bulk_load_once.yml`
+    task - use `just bulk-stage inat` / `just bulk-load inat` (or the scheduled
+    `ingest-bulk-inat` job) instead. Chosen over the AWS Open Data dump
+    (`inaturalist-open-data`) because that dump only carries `observation_uuid`, never the
+    numeric `id` this project's schema keys `observations` on.
+  - **`ridb`** (`foray.sources.camps`) - RIDB's full CSV export
+    (`ridb.recreation.gov/downloads/RIDBFullExport_V1_CSV.zip`, public, no API key, refreshed
+    at least daily), filtered to camping facilities and upserted into `campsites`, then pruned
+    to exactly what the export lists. Fixes the live per-state search's documented ~2/3
+    under-return by listing every facility nationally in one pass. Once a `ridb` snapshot has
+    ever loaded, `ingest_campgrounds`/`ingest_campgrounds_coverage` (the live per-state/
+    coverage-wide RIDB crawl) skip themselves automatically - no separate flag, just a check
+    against `meta`.

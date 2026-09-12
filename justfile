@@ -176,28 +176,21 @@ revalidate: db
 resync *args: db
     docker compose run --rm app foray resync {{ args }}
 
-# One-time (or rebuild-from-scratch) bulk-load path for issue #79 Phase 3 - the nightly ingest
-# cron keeps things fresh day-to-day, so these are opt-in, not part of `check`/`start`. ~25.5GB
-# download, run on the host (not in a container) since it just needs `curl` and a place to land
-# data/ - `-C -` resumes an interrupted download instead of restarting it.
-[doc('Download the ~25.5GB iNat GBIF DwC-A archive (resumable)')]
+# Bulk-snapshot path (issue #334 PR 2) - replaces the old bulk-download/bulk-filter/bulk-load
+# scripts entirely: `foray.sources.inat_bulk`/`foray.sources.camps` stream-filter straight off
+# the source (iNat's GBIF DwC-A export, RIDB's full CSV export) via HTTP range reads, no local
+# download of the multi-GB archive needed. Needs `FORAY_SPACES__*` configured (same $5/mo
+# Space the basemap archive already uses) - opt-in, not part of `check`/`start`.
+[doc('Fetch + upload a bulk snapshot for <source> (inat, ridb) to the Space')]
 [group('data')]
-bulk-download:
-    mkdir -p data
-    curl -L -C - --fail -o data/gbif-observations-dwca.zip \
-        https://static.inaturalist.org/observations/gbif-observations-dwca.zip
+bulk-stage source:
+    docker compose run --rm app foray stage-snapshot {{ source }}
 
-# Multi-hour full scan of the ~208M-row archive - needs the fungi_genera catalog populated
-# first (`just genera-refresh`).
-[doc('Full scan of the DwC-A archive for fungi observations (multi-hour)')]
+# Load whatever `bulk-stage` most recently published for <source> into Postgres.
+[doc('Load the newest staged bulk snapshot for <source> into Postgres')]
 [group('data')]
-bulk-filter:
-    uv run python scripts/inat_dwca_filter.py
-
-# Load the filtered bulk observations into Postgres.
-[group('data')]
-bulk-load: db
-    uv run python scripts/load_inat_bulk.py
+bulk-load source: db
+    docker compose run --rm app foray ingest-bulk {{ source }}
 
 # --- deps ---
 

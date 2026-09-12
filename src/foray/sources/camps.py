@@ -21,19 +21,26 @@ proxy-based layer (tracked separately) - this module only handles developed camp
 
 from __future__ import annotations
 
+import csv
+import gzip
 import html
+import io
+import json
 import logging
 import math
 import os
 import re
+import tempfile
 import time
+import zipfile
 from collections.abc import Callable, Iterator, Sequence
+from datetime import date
 from typing import Any
 
 import httpx
 import psycopg
 
-from foray import cache
+from foray import cache, spaces
 from foray.cache import upsert_campsites
 from foray.config import CoverageRegion, Settings, coverage_envelope
 from foray.geo import KM_PER_DEG_LAT, haversine_km
@@ -421,6 +428,10 @@ def ingest_campgrounds(
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest developed campgrounds into the cache. Returns rows upserted (0 if no key)."""
+    with cache.connection(con) as db:
+        if _ridb_bulk_loaded(db):
+            logger.info("camps: ridb bulk snapshot already loaded - skipping live per-state crawl")
+            return 0
     api_key = api_key or os.getenv("RIDB_API_KEY")
     if not api_key:
         logger.info("camps: RIDB_API_KEY unset - skipping campground ingest")
@@ -472,6 +483,10 @@ def ingest_campgrounds_coverage(
     rather than only the ones near home (``_states_for_disk``). One-shot per query version:
     skips once ``camps:coverage:v{N}`` is in ``ingest_log``. Returns rows upserted (0 if no key).
     """
+    with cache.connection(con) as db:
+        if _ridb_bulk_loaded(db):
+            logger.info("camps: ridb bulk snapshot already loaded - skipping coverage-wide live crawl")
+            return 0
     api_key = api_key or os.getenv("RIDB_API_KEY")
     if not api_key:
         logger.info("camps: RIDB_API_KEY unset - skipping coverage-wide campground ingest")
@@ -511,3 +526,100 @@ def ingest_campgrounds_coverage(
         db.execute("DELETE FROM ingest_log WHERE key LIKE %s AND key <> %s", ["camps:coverage:v%", key])
     logger.info("camps: cached %d campgrounds coverage-wide (pruned %d outside the envelope)", len(rows), pruned)
     return len(rows)
+
+
+def _ridb_bulk_loaded(con: psycopg.Connection) -> bool:
+    """True once ``foray ingest-bulk ridb`` has loaded a snapshot at least once - the signal
+    that the live per-state/coverage-wide RIDB crawl above is now redundant (the bulk snapshot
+    is a full national dump, refreshed at least daily). Checked directly against `meta` (the
+    same key convention as ``foray.ingest_bulk.last_loaded_snapshot``) rather than importing
+    ``ingest_bulk`` - that module registers this file's stager/loader, so the import has to run
+    the other way to avoid a cycle.
+    """
+    row = con.execute("SELECT 1 FROM meta WHERE key = %s", ["bulk_snapshot:ridb"]).fetchone()
+    return row is not None
+
+
+# --- Bulk snapshot stager/loader (issue #334 PR 2) ---
+#
+# RIDB's own full CSV export (checked live 2026-09-12: 21 files, refreshed at least daily,
+# public - no RIDB_API_KEY needed) lists every facility nationally in one download, sidestepping
+# the per-state pagination above entirely - and with it the documented ~2/3 under-return of the
+# radius-search fallback. A facility counts as a campground the same way the live
+# ``activity=CAMPING`` filter does: ``FacilityTypeDescription == "Campground"`` (5,789 of
+# ~15.4k facilities, verified against the 2026-09-11 export) or a "CAMPING" row for it in
+# ``EntityActivities_API_v1.csv`` (another ~1,341 facilities typed just "Facility" that also
+# offer camping). ``Facilities_API_v1.csv``'s columns are the *same names* the live JSON API
+# uses (``FacilityID``, ``FacilityLatitude``, ...), so parsing reuses ``_parse_facility``
+# unchanged - only ``Reservable`` needs coercing from the CSV's ``"true"``/``"false"`` text to a
+# real bool first.
+
+RIDB_FULL_EXPORT_URL = "https://ridb.recreation.gov/downloads/RIDBFullExport_V1_CSV.zip"
+_CAMPING_ACTIVITY_ID = "9"
+
+
+def _camping_facility_ids(zf: zipfile.ZipFile) -> set[str]:
+    """FacilityIDs with a CAMPING entry in the full export's activity join table."""
+    ids: set[str] = set()
+    with zf.open("EntityActivities_API_v1.csv") as raw:
+        reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8", newline=""))
+        for row in reader:
+            if row["ActivityID"] == _CAMPING_ACTIVITY_ID and row["EntityType"] == "Facility":
+                ids.add(row["EntityID"])
+    return ids
+
+
+def _iter_bulk_campsite_rows(zf: zipfile.ZipFile) -> Iterator[tuple[Any, ...]]:
+    """Every camping-facility row from an open RIDB full-export zip, in ``campsites`` tuple
+    shape (``_parse_facility``'s shape) - the same rows the live per-state crawl produces."""
+    camping_ids = _camping_facility_ids(zf)
+    with zf.open("Facilities_API_v1.csv") as raw:
+        reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8", newline=""))
+        for record in reader:
+            if record.get("FacilityTypeDescription") != "Campground" and record.get("FacilityID") not in camping_ids:
+                continue
+            coerced = dict(record)
+            coerced["Reservable"] = (record.get("Reservable") or "").strip().lower() == "true"
+            row = _parse_facility(coerced)
+            if row is not None:
+                yield row
+
+
+def stage_ridb(cfg: Settings, snapshot_date: date, run_id: str, *, client: httpx.Client | None = None) -> None:
+    """Stager: download the RIDB full export, filter to camping facilities, upload as gzipped
+    JSON Lines under this run's Space prefix. Runs in GitHub Actions (no DB, no API key).
+    ``client`` is injectable (matches ``fetch_campsites``) so tests never hit the real URL."""
+    owns = client is None
+    client = client or httpx.Client(timeout=300.0)
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".zip") as tmp:
+            with client.stream("GET", RIDB_FULL_EXPORT_URL, follow_redirects=True) as resp:
+                resp.raise_for_status()
+                for chunk in resp.iter_bytes(1024 * 1024):
+                    tmp.write(chunk)
+            tmp.flush()
+            with zipfile.ZipFile(tmp.name) as zf:
+                rows = list(_iter_bulk_campsite_rows(zf))
+    finally:
+        if owns:
+            client.close()
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
+        gz.write("\n".join(json.dumps(row) for row in rows).encode())
+    key = spaces.snapshot_run_prefix("ridb", snapshot_date, run_id) + "campsites.jsonl.gz"
+    spaces.put_object(cfg.spaces, key, buf.getvalue(), "application/gzip")
+    logger.info("camps: staged %d camping facilities from the RIDB full export", len(rows))
+
+
+def load_ridb(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_id: str) -> None:
+    """Loader: load the newest staged RIDB snapshot into ``campsites`` and prune any ``ridb``
+    row the export no longer lists (a closed/delisted facility) - the export is authoritative
+    and complete, unlike the live crawl's home-radius/coverage-state scoping."""
+    key = spaces.snapshot_run_prefix("ridb", snapshot_date, run_id) + "campsites.jsonl.gz"
+    with tempfile.NamedTemporaryFile(suffix=".jsonl.gz") as tmp:
+        spaces.download_file(cfg.spaces, key, tmp.name)
+        with gzip.open(tmp.name, "rt", encoding="utf-8") as f:
+            rows = [tuple(json.loads(line)) for line in f if line.strip()]
+    upsert_campsites(con, rows)
+    pruned = cache.prune_campsites_missing_from(con, "ridb", [row[0] for row in rows])
+    logger.info("camps: loaded %d ridb facilities from the bulk snapshot (pruned %d stale)", len(rows), pruned)

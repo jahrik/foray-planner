@@ -393,9 +393,9 @@ def stage_snapshot_cmd(ctx: click.Context, source: str) -> None:
     """Fetch + upload today's snapshot for a bulk data `source` to the DO Space
     (`bulk/{source}/{date}/`), without touching Postgres - the GitHub Actions weekly workflow's
     job (`.github/workflows/bulk-load.yml`), kept off the droplet since a source snapshot (iNat
-    Open Data, RIDB, PAD-US, ...) can be tens of GB. `foray ingest-bulk` loads whatever's staged
-    here into the database separately. No source is registered yet (issue #334 PR 1 ships the
-    machinery; PR 2/#335 add the per-source stagers)."""
+    GBIF DwC-A, RIDB, PAD-US, ...) can be tens of GB. `foray ingest-bulk` loads whatever's
+    staged here into the database separately. Registered sources: `inat`, `ridb` (issue #334
+    PR 2); PR 3/#335 add more."""
     cfg = ctx.obj["cfg"]
     try:
         snapshot_date = ingest_bulk.stage_snapshot(cfg, source)
@@ -409,10 +409,8 @@ def stage_snapshot_cmd(ctx: click.Context, source: str) -> None:
 @click.pass_context
 def ingest_bulk_cmd(ctx: click.Context, source: str) -> None:
     """Load the newest snapshot `stage-snapshot` staged for a bulk data `source` into Postgres
-    via COPY-into-staging-then-swap (`foray.ingest_bulk.copy_and_swap`), if it's newer than what
-    was last loaded (tracked in `meta`). A no-op if nothing new is staged. No source is
-    registered yet (issue #334 PR 1 ships the machinery; PR 2/#335 add the per-source
-    loaders)."""
+    if it's newer than what was last loaded (tracked in `meta`). A no-op if nothing new is
+    staged. Registered sources: `inat`, `ridb` (issue #334 PR 2); PR 3/#335 add more."""
     cfg = ctx.obj["cfg"]
     con = connect()
     try:

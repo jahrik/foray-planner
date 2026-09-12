@@ -506,10 +506,10 @@ def ingest_region(
     """Pull every Fungi observation within a coverage region. Returns {genus_taxon_id: rows}.
 
     Bounded to the last ``cfg.region_sync_days`` regardless of whether this is the region's
-    first run - full historical coverage is a one-time bulk load, not this path (see
-    scripts/inat_dwca_filter.py + load_inat_bulk.py). Falling back to a full since_year
-    backfill on first run is what repeatedly crashed the droplet with ENOSPC before this was
-    capped.
+    first run - full historical coverage is a bulk load (``foray stage-snapshot inat`` +
+    ``foray ingest-bulk inat``, see ``foray.sources.inat_bulk``), not this path. Falling back
+    to a full since_year backfill on first run is what repeatedly crashed the droplet with
+    ENOSPC before this was capped.
     """
     known_genus_ids = _load_known_genus_ids(db)
     recent_cutoff = (dt.date.today() - dt.timedelta(days=cfg.region_sync_days)).isoformat()
