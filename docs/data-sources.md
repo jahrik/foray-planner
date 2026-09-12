@@ -378,14 +378,20 @@ iNat Open Data / RIDB full-dump loaders, #334 PR 2) - not a source itself.
 - **Staging (GitHub Actions, `.github/workflows/bulk-load.yml`, weekly + manual dispatch):**
   `foray stage-snapshot <source>` fetches/transforms a source (GDAL/`ogr2ogr` in the app image
   handles reprojection; DuckDB queries staged Parquet/GPKG directly) and uploads it to the DO
-  Space under `bulk/{source}/{date}/` (`foray.spaces.snapshot_prefix`). Runs off the droplet
-  deliberately - a source snapshot can be tens of GB, more disk/bandwidth than the 1-vCPU
-  droplet should spend on a job that never touches Postgres.
-- **Loading (droplet, `foray ingest-bulk <source>`):** finds the newest staged snapshot
-  (`foray.spaces.list_snapshot_dates`), skips it if already loaded (`meta` key
-  `bulk_snapshot:{source}`), otherwise loads it via `foray.ingest_bulk.copy_and_swap` - a
-  staging table is populated first and only swapped in on success, so a table is never visible
-  half-loaded.
+  Space under a fresh, run-unique key space (`foray.spaces.snapshot_run_prefix` -
+  `bulk/{source}/{date}/runs/{run_id}/...`) - re-staging a date, or two overlapping runs, can
+  never collide, since every run gets its own prefix. Only once every object has landed does it
+  publish a small manifest naming the current `run_id` (`foray.spaces.publish_snapshot`,
+  `bulk/{source}/{date}/_manifest.json`) - the one atomic pointer flip a reader ever observes.
+  Runs off the droplet deliberately - a source snapshot can be tens of GB, more disk/bandwidth
+  than the 1-vCPU droplet should spend on a job that never touches Postgres.
+- **Loading (droplet, `foray ingest-bulk <source>`):** finds the newest *published* snapshot
+  date (`foray.spaces.list_snapshot_dates`, which only counts a date once its manifest exists),
+  skips it if it's not newer than what's already loaded (`meta` key `bulk_snapshot:{source}`),
+  otherwise resolves that date's current `run_id` and loads it via `foray.ingest_bulk.copy_and_swap`
+  - a staging table is populated first (via `foray.spaces.download_file`'s streaming download for
+  a large snapshot file, not `object_bytes`, which would materialize it in memory) and only
+  swapped in on success, so a table is never visible half-loaded.
 - **Config:** `FORAY_SPACES__ACCESS_KEY_ID`/`SECRET_ACCESS_KEY`/`BUCKET`/`REGION` (`Settings.spaces`,
   see the satellite-overlay section above for the other consumer of this same Space).
 - **Status:** issue #334 PR 1 ships this machinery with no sources registered yet

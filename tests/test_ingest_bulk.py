@@ -33,19 +33,25 @@ def test_stage_snapshot_unknown_source_raises_keyerror() -> None:
         ingest_bulk.stage_snapshot(_CONFIGURED, "padus")
 
 
-def test_stage_snapshot_calls_registered_stager_then_marks_complete(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[tuple[Settings, date]] = []
-    marked: list[tuple[Spaces, str, date]] = []
-    monkeypatch.setitem(ingest_bulk.STAGERS, "padus", lambda cfg, d: calls.append((cfg, d)))
+def test_stage_snapshot_calls_registered_stager_then_publishes_its_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[Settings, date, str]] = []
+    published: list[tuple[Spaces, str, date, str]] = []
+    monkeypatch.setitem(
+        ingest_bulk.STAGERS, "padus", lambda cfg, snapshot_date, run_id: calls.append((cfg, snapshot_date, run_id))
+    )
     monkeypatch.setattr(
-        ingest_bulk, "mark_snapshot_complete", lambda spaces_cfg, source, d: marked.append((spaces_cfg, source, d))
+        ingest_bulk,
+        "publish_snapshot",
+        lambda spaces_cfg, source, snapshot_date, run_id: published.append((spaces_cfg, source, snapshot_date, run_id)),
     )
 
     result = ingest_bulk.stage_snapshot(_CONFIGURED, "padus", date(2026, 1, 1))
 
     assert result == date(2026, 1, 1)
-    assert calls == [(_CONFIGURED, date(2026, 1, 1))]
-    assert marked == [(_CONFIGURED.spaces, "padus", date(2026, 1, 1))]
+    assert len(calls) == 1
+    cfg, snapshot_date, run_id = calls[0]
+    assert (cfg, snapshot_date) == (_CONFIGURED, date(2026, 1, 1))
+    assert published == [(_CONFIGURED.spaces, "padus", date(2026, 1, 1), run_id)]
 
 
 def test_ingest_bulk_requires_spaces_configured(con: psycopg.Connection) -> None:
@@ -59,28 +65,51 @@ def test_ingest_bulk_unknown_source_raises_keyerror(con: psycopg.Connection) -> 
 
 
 def test_ingest_bulk_no_snapshots_staged_returns_none(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(ingest_bulk.LOADERS, "padus", lambda con, cfg, d: None)
+    monkeypatch.setitem(ingest_bulk.LOADERS, "padus", lambda con, cfg, snapshot_date, run_id: None)
     monkeypatch.setattr(ingest_bulk, "list_snapshot_dates", lambda cfg, source: [])
 
     assert ingest_bulk.ingest_bulk(con, _CONFIGURED, "padus") is None
 
 
 def test_ingest_bulk_loads_newest_unseen_snapshot(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
-    loaded: list[date] = []
-    monkeypatch.setitem(ingest_bulk.LOADERS, "padus", lambda con, cfg, d: loaded.append(d))
+    loaded: list[tuple[date, str]] = []
+    monkeypatch.setitem(
+        ingest_bulk.LOADERS, "padus", lambda con, cfg, snapshot_date, run_id: loaded.append((snapshot_date, run_id))
+    )
     monkeypatch.setattr(ingest_bulk, "list_snapshot_dates", lambda cfg, source: [date(2026, 1, 1), date(2026, 1, 8)])
+    monkeypatch.setattr(ingest_bulk, "snapshot_run_id", lambda cfg, source, snapshot_date: f"run-{snapshot_date}")
 
     result = ingest_bulk.ingest_bulk(con, _CONFIGURED, "padus")
 
     assert result == date(2026, 1, 8)
-    assert loaded == [date(2026, 1, 8)]
+    assert loaded == [(date(2026, 1, 8), "run-2026-01-08")]
     assert ingest_bulk.last_loaded_snapshot(con, "padus") == date(2026, 1, 8)
 
 
 def test_ingest_bulk_skips_already_loaded_snapshot(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     ingest_bulk.record_snapshot_loaded(con, "padus", date(2026, 1, 8))
     loaded: list[date] = []
-    monkeypatch.setitem(ingest_bulk.LOADERS, "padus", lambda con, cfg, d: loaded.append(d))
+    monkeypatch.setitem(
+        ingest_bulk.LOADERS, "padus", lambda con, cfg, snapshot_date, run_id: loaded.append(snapshot_date)
+    )
+    monkeypatch.setattr(ingest_bulk, "list_snapshot_dates", lambda cfg, source: [date(2026, 1, 8)])
+
+    result = ingest_bulk.ingest_bulk(con, _CONFIGURED, "padus")
+
+    assert result is None
+    assert loaded == []
+
+
+def test_ingest_bulk_never_loads_an_older_date_than_already_recorded(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The Space listing no longer has the exact recorded date (e.g. GC'd) but does have an
+    # older one - must not downgrade to it.
+    ingest_bulk.record_snapshot_loaded(con, "padus", date(2026, 1, 15))
+    loaded: list[date] = []
+    monkeypatch.setitem(
+        ingest_bulk.LOADERS, "padus", lambda con, cfg, snapshot_date, run_id: loaded.append(snapshot_date)
+    )
     monkeypatch.setattr(ingest_bulk, "list_snapshot_dates", lambda cfg, source: [date(2026, 1, 8)])
 
     result = ingest_bulk.ingest_bulk(con, _CONFIGURED, "padus")
