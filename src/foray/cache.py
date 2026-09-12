@@ -951,8 +951,8 @@ def genus_taxon_ids(con: psycopg.Connection) -> dict[str, int]:
 
     ``name`` has no uniqueness constraint in the schema, so this checks for duplicates
     rather than silently keeping whichever row happens to win a dict build - a silent drop
-    here would make the bulk-filter script quietly skip that genus's observations with no
-    error to explain why.
+    here would make the bulk iNat loader (``foray.sources.inat_bulk``) quietly skip that
+    genus's observations with no error to explain why.
     """
     rows = con.execute("SELECT name, taxon_id FROM fungi_genera").fetchall()
     genera: dict[str, int] = {}
@@ -1166,6 +1166,25 @@ def prune_campsites_outside_bounds(
         "geom::geometry, ST_MakeEnvelope(%s, %s, %s, %s, 4326)))",
         [source, west, south, east, north],
     )
+    con.commit()
+    if result.rowcount:
+        _invalidate_rank_cache()  # see prune_campsites_outside_radius
+    return result.rowcount
+
+
+def prune_campsites_missing_from(con: psycopg.Connection, source: str, ids: Sequence[str]) -> int:
+    """Delete ``source`` campsites whose id isn't in ``ids``. Returns rows deleted.
+
+    For a source loaded from an authoritative full dump (the RIDB bulk snapshot, issue #334
+    PR 2) every row it lists is the complete truth, unlike the home-radius/coverage-envelope
+    prunes above - a facility the dump no longer lists (closed, delisted, merged into another
+    id) has to go regardless of where it sits geographically. Deletes nothing if ``ids`` is
+    empty - an empty load is far more likely a bug than a real "zero facilities" result, and
+    wiping every cached row of a source on that basis would be worse than leaving stale ones.
+    """
+    if not ids:
+        return 0
+    result = con.execute("DELETE FROM campsites WHERE source = %s AND id <> ALL(%s)", [source, list(ids)])
     con.commit()
     if result.rowcount:
         _invalidate_rank_cache()  # see prune_campsites_outside_radius

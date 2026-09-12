@@ -33,6 +33,14 @@ def test_stage_snapshot_unknown_source_raises_keyerror() -> None:
         ingest_bulk.stage_snapshot(_CONFIGURED, "padus")
 
 
+def test_inat_and_ridb_stagers_and_loaders_are_registered() -> None:
+    # issue #334 PR 2 - the actual stager/loader behavior is covered by
+    # tests/sources/test_inat_bulk.py and tests/sources/test_camps.py; this just guards the
+    # registration itself against a future refactor silently dropping an entry.
+    assert set(ingest_bulk.STAGERS) >= {"inat", "ridb"}
+    assert set(ingest_bulk.LOADERS) >= {"inat", "ridb"}
+
+
 def test_stage_snapshot_calls_registered_stager_then_publishes_its_run(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[Settings, date, str]] = []
     published: list[tuple[Spaces, str, date, str]] = []

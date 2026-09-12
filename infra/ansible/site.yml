@@ -209,17 +209,6 @@
         - "foray:ingest-once"
         - never
 
-    - name: Include one-off bulk load task
-      ansible.builtin.include_tasks:
-        file: tasks/deploy/bulk_load_once.yml
-        apply:
-          tags:
-            - "foray:bulk-load-once"
-            - never
-      tags:
-        - "foray:bulk-load-once"
-        - never
-
     - name: Include one-off DEM elevation backfill task
       ansible.builtin.include_tasks:
         file: tasks/deploy/backfill_elevation_dem_once.yml

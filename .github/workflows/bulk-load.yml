@@ -1,16 +1,16 @@
 name: Bulk snapshot staging
 
-# Weekly re-stage of bulk data sources (iNat Open Data, RIDB, PAD-US, USFS Trail_NFS, MTBS/RAVG
+# Weekly re-stage of bulk data sources (iNat GBIF DwC-A, RIDB, PAD-US, USFS Trail_NFS, MTBS/RAVG
 # - issue #334 PR 2, #335) to the DO Space, via `foray stage-snapshot <source>`. Runs here
 # rather than on the droplet: a source snapshot can be tens of GB, more disk/bandwidth than the
 # 1-vCPU droplet should spend on a job that doesn't touch Postgres at all. `foray ingest-bulk`
 # (a systemd timer via jobs.yaml, see issue #332) separately loads whatever's staged here into
 # the database on its own schedule.
 #
-# `vars.FORAY_BULK_SOURCES` (repo variable, comma-separated) is empty until #334 PR 2 / #335
-# register a stager for at least one source (`foray.ingest_bulk.STAGERS`) - until then this
-# workflow runs and exits cleanly with nothing to do, rather than failing weekly on an
-# unregistered name.
+# `vars.FORAY_BULK_SOURCES` (repo variable, comma-separated) must be set to `inat,ridb` for
+# this to do anything (issue #334 PR 2 registers those two stagers; PR 3/#335 add more to the
+# list) - left unset, this workflow runs and exits cleanly with nothing to do, rather than
+# failing weekly on an unregistered name.
 #
 # Stages into the *same* Space the deployed app reads from (infra/ansible/AGENTS.md,
 # `foray_basemap_space_name`/`foray_basemap_region` - default bucket "foray-basemap", region
