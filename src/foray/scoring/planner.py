@@ -13,6 +13,7 @@ from foray.geo import (
 )
 from foray.scoring.models import CampSite, RegionScore, Stop, Trail, TripPlan
 from foray.scoring.queries import camps_near, trails_near
+from foray.scoring.rank_cache import DEFAULT_TTL_SECONDS
 from foray.scoring.ranking import rank_destinations, rank_destinations_corridor
 
 
@@ -36,6 +37,7 @@ def plan_route(
     require_free_camp: bool = False,
     min_score_norm: float = 0.0,
     waypoints: list[str] | None = None,
+    ttl_seconds: float = DEFAULT_TTL_SECONDS,
 ) -> TripPlan:
     """Plan a trip from ``start`` to ``destination`` (auto-picked if not given), stopping at the
     best fruiting spots - each with a nearby camp and trail - along the way.
@@ -97,6 +99,7 @@ def plan_route(
             radius_km=auto_pick_radius_km,
             cell_deg=cell_deg,
             recent_weeks=recent_weeks,
+            ttl_seconds=ttl_seconds,
         )
         picks = [
             pick
@@ -144,6 +147,7 @@ def plan_route(
         corridor_km=corridor_km,
         cell_deg=cell_deg,
         recent_weeks=recent_weeks,
+        ttl_seconds=ttl_seconds,
     )
 
     # Select - annotate + filter, preserving the score-desc order rank_destinations_corridor

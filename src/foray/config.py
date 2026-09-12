@@ -93,6 +93,13 @@ class Observability(BaseModel):
     # night-window jobs starting close together can't put more than a few concurrent writers on
     # the 1-vCPU box. Start conservative, watch prod PG CPU / lock waits, raise (TODO.md #332).
     writer_cap: int = Field(gt=0, default=2)
+    # TTL (issue #333 PR 2) for the in-process ranking cache (`foray.scoring.rank_cache`) that
+    # sits in front of `rank_destinations`/`rank_destinations_corridor` - a backstop for cache
+    # staleness beyond the explicit invalidation `build_phenology` already does on every rebuild
+    # (no equivalent signal exists yet for the less-frequent trails/camps/fire cache refreshes).
+    # `foray serve` runs a single uvicorn process (see `foray.cli`'s `serve` command and the
+    # Dockerfile's CMD), so a module-level cache needs no cross-process invalidation.
+    ranking_cache_ttl_seconds: int = Field(gt=0, default=600)
 
 
 class CoverageRegion(BaseModel):

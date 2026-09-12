@@ -568,6 +568,13 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         43,
         "ALTER TABLE trails SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_vacuum_cost_limit = 2000)",
     ),
+    # issue #333 PR 2: lets scoring.regions._build_phenology_locked warm shared_buffers with the
+    # fresh `phenology`/`regions` tables right after the swap - a bundled contrib extension, but
+    # not guaranteed superuser-installable on every box (DO's managed PG allowlists it, a local
+    # dev/CI Postgres image might not have the .so at all), so the rebuild degrades gracefully
+    # (see the try/except around the pg_prewarm() calls there) rather than depending on this
+    # migration having actually applied.
+    (44, "CREATE EXTENSION IF NOT EXISTS pg_prewarm"),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]
@@ -604,6 +611,21 @@ def connection(con: psycopg.Connection | None = None) -> Iterator[psycopg.Connec
         yield fresh
     finally:
         fresh.close()
+
+
+def _invalidate_rank_cache() -> None:
+    """Drop the in-process ranking cache (issue #333 PR 2) after a trails/campsites/fire write.
+
+    ``rank_destinations``/``rank_destinations_corridor`` fold ``_apply_access`` (trails +
+    campsites) and ``_apply_fire`` (fire_perimeters) into a cached result that otherwise only
+    busts on a phenology rebuild - without this, a card scored right after one of these upserts
+    (an ingest run, a test asserting a before/after score change) would read a stale
+    pre-upsert score until the TTL backstop lapses. Local import: avoid a cache<->scoring
+    import cycle (same reason ``maybe_rebuild_phenology`` imports ``build_phenology`` locally).
+    """
+    from foray.scoring import rank_cache
+
+    rank_cache.invalidate()
 
 
 def upsert_rows(
@@ -999,7 +1021,9 @@ def upsert_campsites(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -
         "fee_low",
         "fee_high",
     )
-    return upsert_rows(con, "campsites", columns, rows)
+    result = upsert_rows(con, "campsites", columns, rows)
+    _invalidate_rank_cache()
+    return result
 
 
 def prune_campsites_outside_radius(
@@ -1046,7 +1070,9 @@ def upsert_public_land(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]])
     Each tuple is (id, agency, unit, source, url, geojson).
     """
     columns: tuple[LiteralString, ...] = ("id", "agency", "unit", "source", "url", "geojson")
-    return upsert_rows(con, "public_land", columns, rows)
+    result = upsert_rows(con, "public_land", columns, rows)
+    _invalidate_rank_cache()
+    return result
 
 
 def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
@@ -1069,7 +1095,9 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
         "length_km",
         "attrs",
     )
-    return upsert_rows(con, "trails", columns, rows)
+    result = upsert_rows(con, "trails", columns, rows)
+    _invalidate_rank_cache()
+    return result
 
 
 _FIRE_COLUMNS: tuple[LiteralString, ...] = (
@@ -1097,7 +1125,9 @@ def upsert_fire_perimeters(con: psycopg.Connection, rows: Sequence[tuple[Any, ..
 
     Tuple order is :data:`_FIRE_COLUMNS`. The MTBS severity columns are written separately by
     :func:`apply_fire_severity` (backfill-style), so a plain refresh never blanks them."""
-    return upsert_rows(con, "fire_perimeters", _FIRE_COLUMNS, rows)
+    result = upsert_rows(con, "fire_perimeters", _FIRE_COLUMNS, rows)
+    _invalidate_rank_cache()
+    return result
 
 
 def replace_fire_lane(con: psycopg.Connection, source_key: str, rows: Sequence[tuple[Any, ...]]) -> int:
@@ -1152,6 +1182,8 @@ def apply_fire_severity(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
             [unburned, low, moderate, high, dominant, mtbs_fire_id, match_value],
         )
         updated += result.rowcount or 0
+    if updated:
+        _invalidate_rank_cache()
     return updated
 
 

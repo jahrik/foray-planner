@@ -13,6 +13,7 @@ from typing import LiteralString, cast
 
 import psycopg
 
+from foray.scoring import rank_cache
 from foray.scoring._sql import BINNED, CENTER_LAT, CENTER_LNG, GEOG_POINT, taxon_filter
 
 # Mean ground elevation for a region (issue #36), over the observations that have one - obscured
@@ -125,6 +126,22 @@ def _build_phenology_locked(con: psycopg.Connection, cell_deg: float) -> None:
         con.execute("ALTER INDEX ix_phenology_taxon_region_new RENAME TO ix_phenology_taxon_region")
         con.execute("ALTER INDEX ix_phenology_region_new RENAME TO ix_phenology_region")
         con.execute("ALTER INDEX ix_regions_region_new RENAME TO ix_regions_region")
+    # issue #333 PR 2: the swap just replaced both tables' backing files - shared_buffers has
+    # nothing cached for them until normal traffic reads it back in page by page. pg_prewarm
+    # (migration 44) pulls the new tables straight into cache so the first requests after a
+    # rebuild don't pay a cold-cache read storm. Narrowly caught: a box where the extension
+    # hasn't been installed yet (a fresh CI/dev Postgres a migration hasn't reached, or a
+    # managed-PG surface that hasn't allowlisted it) degrades to "no prewarm" rather than
+    # breaking the rebuild - mirrors region_elevations' degrade-gracefully style above.
+    for table in ("phenology", "regions"):
+        try:
+            con.execute("SELECT pg_prewarm(%s)", [table])
+        except psycopg.errors.UndefinedFunction:
+            con.rollback()
+    # Every cached rank_destinations/rank_destinations_corridor result was computed from the
+    # tables just replaced above - drop them all rather than serve stale cards until their TTL
+    # lapses (issue #333 PR 2).
+    rank_cache.invalidate()
 
 
 def region_elevations(con: psycopg.Connection, region_ids: Collection[str]) -> dict[str, int | None]:

@@ -32,6 +32,13 @@ from foray.sources import inat
 
 router = APIRouter()
 
+# issue #333 PR 2: short client-side cache for the ranking/destination JSON endpoints, following
+# the same constant-plus-header pattern tiles.py/layers.py already use for the tile/satellite
+# binary responses. `private` (not `public`, unlike those) - home lookup is per-device via
+# resolve_device_id's cookie, so a shared/CDN cache serving one device's response to another
+# would be wrong. Only set on success: a 409 ("no data for this area yet") must not be cached.
+_DESTINATIONS_CACHE_CONTROL = "private, max-age=60"
+
 
 @router.get("/api/destinations")
 def destinations(
@@ -62,9 +69,11 @@ def destinations(
                 radius_km=radius_km or home.radius_km,
                 cell_deg=cfg.cell_deg,
                 recent_weeks=cfg.recent_weeks,
+                ttl_seconds=cfg.observability.ranking_cache_ttl_seconds,
             )
     except psycopg.errors.UndefinedTable:
         raise HTTPException(409, "no data for this area yet - click Fetch data") from None
+    response.headers["Cache-Control"] = _DESTINATIONS_CACHE_CONTROL
     return [RegionScore.model_validate(region) for region in ranked]
 
 
@@ -88,6 +97,7 @@ def calendar(
             )
     except psycopg.errors.UndefinedTable:
         raise HTTPException(409, "no data for this area yet - click Fetch data") from None
+    response.headers["Cache-Control"] = _DESTINATIONS_CACHE_CONTROL
     return {str(month): CalendarBucket.model_validate(bucket) for month, bucket in calendar.items()}
 
 
@@ -121,6 +131,7 @@ def observation_photos(
             )
     except psycopg.errors.UndefinedTable:
         raise HTTPException(409, "no data for this area yet - click Fetch data") from None
+    response.headers["Cache-Control"] = _DESTINATIONS_CACHE_CONTROL
     photos_by_obs = inat.photos_for_observations([obs["id"] for obs in recent])
     result = []
     for obs in recent:
@@ -162,6 +173,7 @@ def get_alerts(
             )
     except psycopg.errors.UndefinedTable:
         return []
+    response.headers["Cache-Control"] = _DESTINATIONS_CACHE_CONTROL
     return [AlertRegion.model_validate(region) for region in regions]
 
 
@@ -202,4 +214,5 @@ def observations_precise(
             )
     except psycopg.errors.UndefinedTable:
         return []
+    response.headers["Cache-Control"] = _DESTINATIONS_CACHE_CONTROL
     return [PreciseObservation.model_validate(obs) for obs in observations]

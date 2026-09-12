@@ -676,6 +676,7 @@ def plan_cmd(
             max_stops=max_stops,
             max_drive_km=max_drive_km,
             require_free_camp=not any_camp,
+            ttl_seconds=cfg.observability.ranking_cache_ttl_seconds,
         )
     finally:
         con.close()

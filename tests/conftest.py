@@ -24,6 +24,7 @@ import psycopg
 import pytest
 
 from foray.cache import connect
+from foray.scoring import rank_cache
 
 _TABLES = (
     "observations",
@@ -67,6 +68,11 @@ def con(_pg_session: psycopg.Connection) -> psycopg.Connection:
     _pg_session.execute("DROP TABLE IF EXISTS phenology")
     _pg_session.execute("DROP TABLE IF EXISTS regions")
     _pg_session.execute(f"TRUNCATE {', '.join(_TABLES)} RESTART IDENTITY CASCADE")
+    # rank_destinations/rank_destinations_corridor cache in-process (issue #333 PR 2), keyed on
+    # request params only - without this, two tests reusing the same lat/lng/months/taxon
+    # constants (common across this suite) could read a previous test's cached result off the
+    # now-truncated table instead of hitting Postgres.
+    rank_cache.invalidate()
     return _pg_session
 
 
