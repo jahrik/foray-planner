@@ -10,7 +10,7 @@ from typing import Any, LiteralString, cast
 import psycopg
 import pytest
 
-from foray.scoring import build_phenology, fire_near, rank_destinations
+from foray.scoring import build_phenology, fire_near, rank_cache, rank_destinations
 from foray.scoring.models import RegionScore
 
 CELL = 0.25
@@ -73,6 +73,10 @@ def _add_fire(con: psycopg.Connection, **kw: Any) -> None:
         f"INSERT INTO fire_perimeters ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))})",
     )
     con.execute(query, list(cols.values()))
+    # A raw INSERT (unlike cache.upsert_fire_perimeters, which self-invalidates - issue #333
+    # PR 2) bypasses the ranking cache's write-path hook, so a test that ranks before and after
+    # calling this needs to bust it manually or read back a stale pre-insert score.
+    rank_cache.invalidate()
 
 
 def _rank(con: psycopg.Connection, taxa: list[int]) -> list[RegionScore]:

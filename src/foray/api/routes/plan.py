@@ -105,6 +105,7 @@ def plan(
                 camp_radius_km=camp_radius_km,
                 require_free_camp=require_free_camp,
                 waypoints=picked_waypoints,
+                ttl_seconds=cfg.observability.ranking_cache_ttl_seconds,
             )
     except psycopg.errors.UndefinedTable:
         raise HTTPException(409, "no data for this area yet - click Fetch data") from None

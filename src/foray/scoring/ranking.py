@@ -30,6 +30,7 @@ from foray.geo import (
     project_to_plane,
     segment_progress_and_offset,
 )
+from foray.scoring import rank_cache
 from foray.scoring._sql import genus_name_map, sql_in, taxon_filter
 from foray.scoring.models import FireNear, RegionScore, SpeciesHit
 from foray.scoring.queries import fire_near, region_access
@@ -314,11 +315,29 @@ def rank_destinations(
     radius_km: float,
     cell_deg: float,
     recent_weeks: int = 4,
+    ttl_seconds: float = rank_cache.DEFAULT_TTL_SECONDS,
 ) -> list[RegionScore]:
     """Rank grid regions within radius by expected choice-fungi activity in ``months``.
 
     ``RegionScore.distance_km`` here is straight-line distance from ``(home_lat, home_lng)``.
+
+    Cached in-process (``rank_cache``, issue #333 PR 2) for ``ttl_seconds``, keyed on every
+    input above - a repeat card render (map pan back, calendar/plan reads of the same area)
+    skips all of this module's SQL entirely until the TTL lapses or a phenology rebuild busts
+    the cache.
     """
+    key = rank_cache.radial_key(
+        months=tuple(months),
+        taxon_ids=tuple(taxon_ids),
+        home_lat=home_lat,
+        home_lng=home_lng,
+        radius_km=radius_km,
+        cell_deg=cell_deg,
+        recent_weeks=recent_weeks,
+    )
+    cached = rank_cache.get(key, ttl_seconds)
+    if cached is not None:
+        return cached
 
     def keep(clat: float, clng: float) -> tuple[bool, float]:
         dist = haversine_km(home_lat, home_lng, clat, clng)
@@ -338,6 +357,7 @@ def rank_destinations(
     )
     _apply_fire(con, results, taxon_ids=taxon_ids)
     _apply_access(con, results)
+    rank_cache.put(key, results)
     return results
 
 
@@ -353,6 +373,7 @@ def rank_destinations_corridor(
     corridor_km: float,
     cell_deg: float,
     recent_weeks: int = 4,
+    ttl_seconds: float = rank_cache.DEFAULT_TTL_SECONDS,
 ) -> list[RegionScore]:
     """Rank grid regions within ``corridor_km`` of the straight line ``start`` -> ``dest``.
 
@@ -360,7 +381,24 @@ def rank_destinations_corridor(
     ``start``, ``haversine_km(start, dest)`` at ``dest``) rather than home-distance, so
     callers can order stops "along the way" with a plain sort. A degenerate segment
     (``dest`` ~= ``start``) falls back to plain radial distance from ``start`` as progress.
+
+    Cached in-process the same way as ``rank_destinations`` - see its docstring.
     """
+    key = rank_cache.corridor_key(
+        months=tuple(months),
+        taxon_ids=tuple(taxon_ids),
+        start_lat=start_lat,
+        start_lng=start_lng,
+        dest_lat=dest_lat,
+        dest_lng=dest_lng,
+        corridor_km=corridor_km,
+        cell_deg=cell_deg,
+        recent_weeks=recent_weeks,
+    )
+    cached = rank_cache.get(key, ttl_seconds)
+    if cached is not None:
+        return cached
+
     dx, dy = project_to_plane(start_lat, start_lng, dest_lat, dest_lng)
     total_km = haversine_km(start_lat, start_lng, dest_lat, dest_lng)
 
@@ -394,4 +432,5 @@ def rank_destinations_corridor(
     )
     _apply_fire(con, results, taxon_ids=taxon_ids)
     _apply_access(con, results)
+    rank_cache.put(key, results)
     return results
