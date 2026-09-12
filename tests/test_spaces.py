@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import Any
 
 import pytest
+from botocore.exceptions import ClientError
 
 from foray import spaces
 from foray.config import Spaces
@@ -35,43 +37,58 @@ def test_snapshot_prefix() -> None:
     assert spaces.snapshot_prefix("padus", date(2026, 1, 8)) == "bulk/padus/2026-01-08/"
 
 
+def test_snapshot_run_prefix_is_unique_per_run() -> None:
+    prefix_a = spaces.snapshot_run_prefix("padus", date(2026, 1, 8), "run-a")
+    prefix_b = spaces.snapshot_run_prefix("padus", date(2026, 1, 8), "run-b")
+    assert prefix_a == "bulk/padus/2026-01-08/runs/run-a/"
+    assert prefix_a != prefix_b
+
+
+def test_new_run_id_is_unique() -> None:
+    assert spaces.new_run_id() != spaces.new_run_id()
+
+
 class _FakeS3Client:
-    def __init__(self) -> None:
+    """A single object store keyed by full Key, plus the date-level CommonPrefixes a real
+    ``Delimiter="/"`` listing of ``bulk/{source}/`` would return - enough to exercise
+    `list_snapshot_dates`/`snapshot_run_id` without a real Space."""
+
+    def __init__(self, date_prefixes: list[str], objects: dict[str, bytes] | None = None) -> None:
+        self._date_prefixes = date_prefixes
+        self._objects: dict[str, bytes] = dict(objects or {})
         self.put_calls: list[dict[str, Any]] = []
 
     def put_object(self, **kwargs: Any) -> None:
         self.put_calls.append(kwargs)
+        self._objects[kwargs["Key"]] = kwargs["Body"]
 
     def get_object(self, **kwargs: Any) -> dict[str, Any]:
-        class _Body:
-            def read(self) -> bytes:
-                return b"object-bytes"
+        key = kwargs["Key"]
+        if key not in self._objects:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
 
-        return {"Body": _Body()}
+        class _Body:
+            def __init__(self, data: bytes) -> None:
+                self._data = data
+
+            def read(self) -> bytes:
+                return self._data
+
+        return {"Body": _Body(self._objects[key])}
 
     def get_paginator(self, name: str) -> Any:
         assert name == "list_objects_v2"
+        prefixes = self._date_prefixes
 
         class _Paginator:
             def paginate(self, **kwargs: Any) -> list[dict[str, Any]]:
-                return [
-                    {
-                        "Contents": [
-                            {"Key": "bulk/padus/2026-01-01/data.gpkg"},
-                            {"Key": "bulk/padus/2026-01-01/_SUCCESS"},
-                            {"Key": "bulk/padus/2026-01-08/data.gpkg"},
-                            {"Key": "bulk/padus/2026-01-08/_SUCCESS"},
-                            {"Key": "bulk/padus/2026-01-15/data.gpkg"},  # no marker - still uploading
-                            {"Key": "bulk/padus/not-a-date/_SUCCESS"},
-                        ]
-                    }
-                ]
+                return [{"CommonPrefixes": [{"Prefix": prefix} for prefix in prefixes]}]
 
         return _Paginator()
 
 
 def test_put_object_defaults_to_private(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = _FakeS3Client()
+    fake = _FakeS3Client(date_prefixes=[])
     monkeypatch.setattr(spaces, "client", lambda cfg: fake)
 
     url = spaces.put_object(_CONFIGURED, "bulk/padus/2026-01-08/data.gpkg", b"bytes", "application/octet-stream")
@@ -88,7 +105,7 @@ def test_put_object_defaults_to_private(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_put_object_public_sets_public_read_acl(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = _FakeS3Client()
+    fake = _FakeS3Client(date_prefixes=[])
     monkeypatch.setattr(spaces, "client", lambda cfg: fake)
 
     url = spaces.put_object(_CONFIGURED, "satellite/425_-1099/image.jpg", b"bytes", "image/jpeg", public=True)
@@ -106,22 +123,87 @@ def test_put_object_public_sets_public_read_acl(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_object_bytes_reads_from_the_space(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(spaces, "client", lambda cfg: _FakeS3Client())
+    fake = _FakeS3Client(date_prefixes=[], objects={"bulk/padus/2026-01-08/data.gpkg": b"object-bytes"})
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
 
     assert spaces.object_bytes(_CONFIGURED, "bulk/padus/2026-01-08/data.gpkg") == b"object-bytes"
 
 
-def test_mark_snapshot_complete_writes_the_marker_object(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = _FakeS3Client()
+def test_download_file_streams_via_boto3_download_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    calls: list[tuple[str, str, str]] = []
+
+    class _FakeDownloadClient:
+        def download_file(self, bucket: str, key: str, dest_path: str) -> None:
+            calls.append((bucket, key, dest_path))
+
+    monkeypatch.setattr(spaces, "client", lambda cfg: _FakeDownloadClient())
+    dest = str(tmp_path / "data.gpkg")
+
+    spaces.download_file(_CONFIGURED, "bulk/padus/2026-01-08/runs/run-1/data.gpkg", dest)
+
+    assert calls == [("foray-bulk", "bulk/padus/2026-01-08/runs/run-1/data.gpkg", dest)]
+
+
+def test_publish_snapshot_writes_a_manifest_naming_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeS3Client(date_prefixes=[])
     monkeypatch.setattr(spaces, "client", lambda cfg: fake)
 
-    spaces.mark_snapshot_complete(_CONFIGURED, "padus", date(2026, 1, 8))
+    spaces.publish_snapshot(_CONFIGURED, "padus", date(2026, 1, 8), "run-1")
 
-    assert fake.put_calls == [{"Bucket": "foray-bulk", "Key": "bulk/padus/2026-01-08/_SUCCESS", "Body": b""}]
+    assert fake.put_calls == [
+        {
+            "Bucket": "foray-bulk",
+            "Key": "bulk/padus/2026-01-08/_manifest.json",
+            "Body": json.dumps({"run_id": "run-1"}).encode(),
+            "ContentType": "application/json",
+        }
+    ]
 
 
-def test_list_snapshot_dates_only_counts_marked_complete_snapshots(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(spaces, "client", lambda cfg: _FakeS3Client())
+def test_snapshot_run_id_returns_none_when_never_published(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeS3Client(date_prefixes=[])
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
 
-    # 2026-01-15 has data but no _SUCCESS marker yet (still uploading) - excluded.
+    assert spaces.snapshot_run_id(_CONFIGURED, "padus", date(2026, 1, 8)) is None
+
+
+def test_snapshot_run_id_returns_the_published_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeS3Client(date_prefixes=[])
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
+    spaces.publish_snapshot(_CONFIGURED, "padus", date(2026, 1, 8), "run-1")
+
+    assert spaces.snapshot_run_id(_CONFIGURED, "padus", date(2026, 1, 8)) == "run-1"
+
+
+def test_republishing_a_date_overwrites_the_manifest_without_touching_the_old_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The core race this design closes: a re-stage of the same date uploads under a brand new
+    # run_id and only then flips the manifest - the old run's objects are simply orphaned, never
+    # partially mixed into a read.
+    fake = _FakeS3Client(date_prefixes=[])
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
+    spaces.publish_snapshot(_CONFIGURED, "padus", date(2026, 1, 8), "run-1")
+
+    spaces.publish_snapshot(_CONFIGURED, "padus", date(2026, 1, 8), "run-2")
+
+    assert spaces.snapshot_run_id(_CONFIGURED, "padus", date(2026, 1, 8)) == "run-2"
+
+
+def test_list_snapshot_dates_only_counts_published_snapshots(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeS3Client(
+        date_prefixes=[
+            "bulk/padus/2026-01-01/",
+            "bulk/padus/2026-01-08/",
+            "bulk/padus/2026-01-15/",
+            "bulk/padus/not-a-date/",
+        ],
+        objects={
+            "bulk/padus/2026-01-01/_manifest.json": json.dumps({"run_id": "run-1"}).encode(),
+            "bulk/padus/2026-01-08/_manifest.json": json.dumps({"run_id": "run-2"}).encode(),
+            # 2026-01-15 has data uploaded but no manifest published yet - still in progress.
+        },
+    )
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
+
     assert spaces.list_snapshot_dates(_CONFIGURED, "padus") == [date(2026, 1, 1), date(2026, 1, 8)]

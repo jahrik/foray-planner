@@ -1,11 +1,14 @@
 """Bulk-snapshot ingest pipeline skeleton (issue #334 PR 1).
 
 The machinery #335's per-source loaders (PAD-US, USFS trails, MTBS/RAVG) and #334 PR 2's
-iNat/RIDB loaders build on: a source stages a dated snapshot to the DO Space
-(``bulk/{source}/{date}/...``, see `foray.spaces.snapshot_prefix`) from GitHub Actions
-(`foray stage-snapshot`, no droplet disk/bandwidth spent), then the droplet loads whichever
-snapshot is newest into Postgres (`foray ingest-bulk`) via a COPY-into-staging-then-swap
-pattern (`copy_and_swap`) so a table is never read mid-load.
+iNat/RIDB loaders build on: a source stages a dated snapshot to its own run-unique key space in
+the DO Space (`foray.spaces.snapshot_run_prefix`) from GitHub Actions (`foray stage-snapshot`,
+no droplet disk/bandwidth spent), then publishes a small manifest naming that run
+(`foray.spaces.publish_snapshot`) once every object has landed. The droplet then loads whichever
+snapshot is newest-published into Postgres (`foray ingest-bulk`) via a COPY-into-staging-then-swap
+pattern (`copy_and_swap`) so a table is never read mid-load. Per-run key isolation + a single
+atomic manifest write means a re-staged date, or two overlapping stage runs, can never produce a
+mixed/partial read - see `foray.spaces` for the mechanics.
 
 No source is registered yet - `STAGERS`/`LOADERS` are empty, and both CLI commands raise a
 clear error for any source name until #334 PR 2 / #335 add entries. The registry + generic
@@ -22,18 +25,20 @@ from typing import LiteralString
 import psycopg
 
 from foray.config import Settings
-from foray.spaces import list_snapshot_dates, mark_snapshot_complete
+from foray.spaces import list_snapshot_dates, new_run_id, publish_snapshot, snapshot_run_id
 
 logger = logging.getLogger(__name__)
 
 # A stager fetches/transforms a source's data (GDAL/ogr2ogr, DuckDB, or a plain HTTP download -
-# whatever the source needs) and uploads it under `spaces.snapshot_prefix(source, today)`.
-# Runs from GitHub Actions, not the droplet - see `.github/workflows/bulk-load.yml`.
-Stager = Callable[[Settings, date], None]
+# whatever the source needs) and uploads it under
+# `spaces.snapshot_run_prefix(source, snapshot_date, run_id)` - its own private key space for
+# this run, so re-staging a date or two overlapping runs can never collide. Runs from GitHub
+# Actions, not the droplet - see `.github/workflows/bulk-load.yml`.
+Stager = Callable[[Settings, date, str], None]
 
-# A loader reads one already-staged snapshot (`spaces.snapshot_prefix(source, snapshot_date)`)
+# A loader reads one published run (`spaces.snapshot_run_prefix(source, snapshot_date, run_id)`)
 # and loads it into Postgres via `copy_and_swap`. Runs on the droplet (`foray ingest-bulk`).
-Loader = Callable[[psycopg.Connection, Settings, date], None]
+Loader = Callable[[psycopg.Connection, Settings, date, str], None]
 
 STAGERS: dict[str, Stager] = {}
 LOADERS: dict[str, Loader] = {}
@@ -89,17 +94,19 @@ def stage_snapshot(cfg: Settings, source: str, snapshot_date: date | None = None
     if stager is None:
         raise KeyError(f"no stager registered for bulk source {source!r} (registered: {sorted(STAGERS)})")
     snapshot_date = snapshot_date or date.today()
-    stager(cfg, snapshot_date)
-    # Last, only once every object the stager uploaded has landed - list_snapshot_dates (and so
-    # ingest_bulk below) ignores a date prefix until this marker exists, so a loader can never
-    # pick up a partial upload from a stager that died mid-run.
-    mark_snapshot_complete(cfg.spaces, source, snapshot_date)
+    # A fresh run_id every call, even re-staging the same date - the stager uploads under its
+    # own private prefix (spaces.snapshot_run_prefix) so a retry or an overlapping run can never
+    # collide with another run's objects. publish_snapshot only flips the pointer once this
+    # run's upload is fully done, so a reader can never observe a mix of two runs.
+    run_id = new_run_id()
+    stager(cfg, snapshot_date, run_id)
+    publish_snapshot(cfg.spaces, source, snapshot_date, run_id)
     return snapshot_date
 
 
 def ingest_bulk(con: psycopg.Connection, cfg: Settings, source: str) -> date | None:
-    """Load the newest staged snapshot for `source` if it's newer than what's already loaded.
-    Returns the snapshot date loaded, or ``None`` if nothing new was staged."""
+    """Load the newest published snapshot for `source` if it's newer than what's already
+    loaded. Returns the snapshot date loaded, or ``None`` if there's nothing new."""
     if not cfg.spaces.configured:
         raise RuntimeError("FORAY_SPACES__* not configured - see foray.config.Spaces")
     loader = LOADERS.get(source)
@@ -110,9 +117,15 @@ def ingest_bulk(con: psycopg.Connection, cfg: Settings, source: str) -> date | N
         logger.info("ingest-bulk: no snapshots staged yet for %s", source)
         return None
     newest = available[-1]
-    if newest == last_loaded_snapshot(con, source):
-        logger.info("ingest-bulk: %s already at snapshot %s", source, newest)
+    last = last_loaded_snapshot(con, source)
+    # <=, not != - the Space listing (or a database restored from a different point) can lack
+    # the exact date last recorded, and an older available date must never load over a newer
+    # already-loaded one.
+    if last is not None and newest <= last:
+        logger.info("ingest-bulk: %s already at snapshot %s (newest available: %s)", source, last, newest)
         return None
-    loader(con, cfg, newest)
+    run_id = snapshot_run_id(cfg.spaces, source, newest)
+    assert run_id is not None, f"list_snapshot_dates returned {newest} but it has no published run"
+    loader(con, cfg, newest, run_id)
     record_snapshot_loaded(con, source, newest)
     return newest

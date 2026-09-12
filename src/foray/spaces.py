@@ -12,7 +12,9 @@ fall back to Postgres-only behavior rather than erroring, matching the ansible-s
 
 from __future__ import annotations
 
+import json
 import logging
+import uuid
 from datetime import date
 from typing import Any
 
@@ -57,49 +59,95 @@ def put_object(cfg: Spaces, key: str, data: bytes, content_type: str, *, public:
 
 
 def object_bytes(cfg: Spaces, key: str) -> bytes:
-    """Fetch an object's bytes directly from the Space (not via its public URL) - used for
-    server-side reads (e.g. staging-table loads) that shouldn't depend on the CDN/public path."""
+    """Fetch a *small* object's bytes directly from the Space (not via its public URL) - the
+    snapshot manifest, not the snapshot data itself. A staged Parquet/GPKG can be tens of GB on
+    a 2 GB droplet; loading one through this would OOM before COPY even starts - use
+    `download_file` for those instead."""
     body = client(cfg).get_object(Bucket=cfg.bucket, Key=key)["Body"]
     return body.read()
 
 
-# Marker object a stager writes last, after every other object under its snapshot prefix has
-# landed - `list_snapshot_dates` only counts a date as available once this exists, so a loader
-# can never pick up a partially-uploaded snapshot (a stager that dies mid-upload) or one an
-# overlapping stage run is still writing to.
-_SUCCESS_MARKER = "_SUCCESS"
+def download_file(cfg: Spaces, key: str, dest_path: str) -> None:
+    """Stream an object straight to disk via boto3's managed download (bounded memory,
+    multipart-aware) - the loader path for a staged snapshot file, where `object_bytes` would
+    materialize the whole thing in memory first."""
+    client(cfg).download_file(cfg.bucket, key, dest_path)
+
+
+# Per-run isolation (issue #334 PR 1 review): two `stage_snapshot` runs for the same
+# source/date - a deliberate re-stage, or an overlapping/retried run - must never be able to
+# produce a mixed read of one run's objects and another's. Each run uploads under its own
+# unique `run_id` subprefix, so no two runs ever touch the same key; `publish_snapshot` then
+# does the one operation that has to be atomic (a single PUT of a small manifest naming which
+# run_id is current), after every object under that run's prefix has already landed. A reader
+# always resolves the current run_id first and only reads under that run's prefix - it never
+# lists the date prefix directly, so an abandoned/superseded run's leftover objects are just
+# inert, never visible as part of a snapshot.
+_MANIFEST_NAME = "_manifest.json"
+
+
+def new_run_id() -> str:
+    return uuid.uuid4().hex
 
 
 def snapshot_prefix(source: str, snapshot_date: date) -> str:
-    """The staging key prefix for one source's snapshot on a given date - both the GitHub
-    Actions weekly stager (`foray stage-snapshot`) and the droplet-side loader (`foray
-    ingest-bulk`) key off this same layout."""
+    """The fixed per-date key prefix holding a snapshot's manifest (not its data - see
+    `snapshot_run_prefix`)."""
     return f"bulk/{source}/{snapshot_date.isoformat()}/"
 
 
-def mark_snapshot_complete(cfg: Spaces, source: str, snapshot_date: date) -> None:
-    """Write the completion marker for a snapshot - call this last, only after every object the
-    stager is uploading for `snapshot_date` has landed."""
+def snapshot_run_prefix(source: str, snapshot_date: date, run_id: str) -> str:
+    """The key prefix one staging run uploads its data under. Unique per run, so a stager can
+    freely re-upload a date (or two stagers can race for it) without either ever overwriting or
+    partially-shadowing the other's objects."""
+    return f"{snapshot_prefix(source, snapshot_date)}runs/{run_id}/"
+
+
+def publish_snapshot(cfg: Spaces, source: str, snapshot_date: date, run_id: str) -> None:
+    """Atomically make `run_id` the current snapshot for `source`/`snapshot_date`. Call this
+    last, only after every object under `snapshot_run_prefix(source, snapshot_date, run_id)` has
+    landed - the manifest PUT is the one moment a reader can observe a state change, and it's a
+    single object write (atomic on S3-compatible storage), so a reader never sees a run before
+    it's fully uploaded."""
+    manifest_key = f"{snapshot_prefix(source, snapshot_date)}{_MANIFEST_NAME}"
     client(cfg).put_object(
-        Bucket=cfg.bucket, Key=f"{snapshot_prefix(source, snapshot_date)}{_SUCCESS_MARKER}", Body=b""
+        Bucket=cfg.bucket,
+        Key=manifest_key,
+        Body=json.dumps({"run_id": run_id}).encode(),
+        ContentType="application/json",
     )
 
 
+def snapshot_run_id(cfg: Spaces, source: str, snapshot_date: date) -> str | None:
+    """The `run_id` currently published for `source`/`snapshot_date`, or ``None`` if no run has
+    ever been published for that date."""
+    from botocore.exceptions import ClientError
+
+    manifest_key = f"{snapshot_prefix(source, snapshot_date)}{_MANIFEST_NAME}"
+    try:
+        body = object_bytes(cfg, manifest_key)
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
+            return None
+        raise
+    return json.loads(body)["run_id"]
+
+
 def list_snapshot_dates(cfg: Spaces, source: str) -> list[date]:
-    """Every ``YYYY-MM-DD`` staged (and marked complete via `mark_snapshot_complete`) under
-    ``bulk/{source}/``, ascending. Empty if none staged yet, or if the prefix doesn't exist - not
-    an error, since a source's first snapshot has to start somewhere."""
+    """Every ``YYYY-MM-DD`` with a published manifest under ``bulk/{source}/``, ascending. Empty
+    if none staged yet, or if the prefix doesn't exist - not an error, since a source's first
+    snapshot has to start somewhere."""
     prefix = f"bulk/{source}/"
     paginator = client(cfg).get_paginator("list_objects_v2")
     dates: set[date] = set()
-    for page in paginator.paginate(Bucket=cfg.bucket, Prefix=prefix):
-        for obj in page.get("Contents", []):
-            key = obj["Key"]
-            if not key.endswith(f"/{_SUCCESS_MARKER}"):
-                continue
-            raw = key.removeprefix(prefix).removesuffix(f"/{_SUCCESS_MARKER}")
+    for page in paginator.paginate(Bucket=cfg.bucket, Prefix=prefix, Delimiter="/"):
+        for common_prefix in page.get("CommonPrefixes", []):
+            raw = common_prefix["Prefix"].removeprefix(prefix).rstrip("/")
             try:
-                dates.add(date.fromisoformat(raw))
+                snapshot_date = date.fromisoformat(raw)
             except ValueError:
-                logger.warning("spaces: skipping non-date snapshot marker %s under %s", raw, prefix)
+                logger.warning("spaces: skipping non-date prefix %s under %s", raw, prefix)
+                continue
+            if snapshot_run_id(cfg, source, snapshot_date) is not None:
+                dates.add(snapshot_date)
     return sorted(dates)
