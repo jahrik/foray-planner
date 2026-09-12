@@ -87,12 +87,20 @@ CREATE TABLE IF NOT EXISTS public_land (
 );
 
 -- Trails (OSM Overpass): hiking paths, named hiking routes, and trailheads. Keyed by
--- "{source}:{osm_type}/{osm_id}" so re-ingesting the same area is a no-op. Geometry is stored as
--- GeoJSON *text* (LineString/MultiLineString for paths/routes, Point for trailheads); the
--- `geom geography` column (PostGIS Phase 0, migration 17) + its GIST index serve "trails near
--- here" and the exact point-to-trail distance. `center_lat`/`center_lng` stay as a cheap
--- representative point for callers that want one without parsing the geometry. Informational
--- only: links the OSM source; makes no legal-access claim (see AGENTS.md).
+-- "{source}:{osm_type}/{osm_id}" so re-ingesting the same area is a no-op. The `geom geography`
+-- column (PostGIS Phase 0, migration 17) + its GIST index serve "trails near here" and the exact
+-- point-to-trail distance. `center_lat`/`center_lng` stay as a cheap representative point for
+-- callers that want one without parsing the geometry. Informational only: links the OSM source;
+-- makes no legal-access claim (see AGENTS.md).
+--
+-- `geojson` (the actual GeoJSON text - LineString/MultiLineString for paths/routes, Point for
+-- trailheads) moved to a separate `trail_geometry(id, geojson)` table (migration 45, issue #333
+-- PR 2): `queries.trails_near`'s relevance/longest sort fetches up to 500 candidates before
+-- trimming to the card list, and most of those never render geometry - `geom` (small, needed by
+-- every spatial predicate) stays here; `geojson` (large, only needed when a caller actually asks
+-- for it) lives there, joined in on demand. `trail_geometry`'s `AFTER` trigger keeps `geom` here
+-- in sync from there (see `foray_trail_geom_from_geometry`); `cache.upsert_trails` upserts this
+-- table first so that trigger's `UPDATE trails ...` always finds an existing row.
 CREATE TABLE IF NOT EXISTS trails (
     id          TEXT PRIMARY KEY,    -- "{source}:{osm_type}/{osm_id}", e.g. "osm:way/42"
     name        TEXT,
@@ -101,7 +109,11 @@ CREATE TABLE IF NOT EXISTS trails (
     url         TEXT,                -- official source (the OSM element page)
     center_lat  DOUBLE PRECISION,    -- representative point on the trail
     center_lng  DOUBLE PRECISION,
-    geojson     TEXT,                -- GeoJSON text (LineString / MultiLineString / Point)
+    geojson     TEXT,                -- historical only - moved to `trail_geometry` by migration
+                                     -- 45; column dropped there too. Left in this base SCHEMA
+                                     -- (never read after that migration runs) rather than
+                                     -- rewritten, matching how this file treats SCHEMA as frozen
+                                     -- history and _MIGRATIONS as the source of truth.
     connects    TEXT[],              -- trailhead rows only: ids of the path/route trails whose
                                      -- geometry passes within ~35 m of the node, computed at
                                      -- ingest so selecting a trailhead draws its trail straight
@@ -571,10 +583,76 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # issue #333 PR 2: lets scoring.regions._build_phenology_locked warm shared_buffers with the
     # fresh `phenology`/`regions` tables right after the swap - a bundled contrib extension, but
     # not guaranteed superuser-installable on every box (DO's managed PG allowlists it, a local
-    # dev/CI Postgres image might not have the .so at all), so the rebuild degrades gracefully
-    # (see the try/except around the pg_prewarm() calls there) rather than depending on this
-    # migration having actually applied.
-    (44, "CREATE EXTENSION IF NOT EXISTS pg_prewarm"),
+    # dev/CI Postgres image might not have the .so at all). Wrapped in a DO block that swallows
+    # any error (Copilot review, PR #348: a plain `CREATE EXTENSION` failing here - undefined
+    # file, insufficient privilege - would abort `apply_schema()` itself and the box couldn't
+    # start at all, which defeats the whole point of the call-site try/except around
+    # `pg_prewarm()` in regions.py; that one still degrades gracefully on `UndefinedFunction`
+    # for the *rarer* case of this migration itself never having run yet on an old deploy).
+    (
+        44,
+        """
+        DO $$
+        BEGIN
+            CREATE EXTENSION IF NOT EXISTS pg_prewarm;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'pg_prewarm extension unavailable, skipping: %', SQLERRM;
+        END $$;
+        """,
+    ),
+    # issue #333 PR 2: split the (large, avg ~485 B, 550 MB total on this box's 1.19M trail rows)
+    # `geojson` TEXT payload off `trails` into its own 1:1 table. `queries.trails_near`'s
+    # `relevance`/`longest` sort fetches up to 500 candidate rows before trimming to the card
+    # list (`with_geometry=False` already drops it there for exactly this reason) - every other
+    # column on `trails` stays put, so a plain column scan of the "hundreds of candidates" path
+    # no longer drags the biggest column on the table along for rows that never render geometry.
+    # `geom` (the compact PostGIS geography every spatial trails query filters/sorts on) stays on
+    # `trails` untouched - this migration doesn't touch it, so every existing row's already-valid
+    # `geom` survives as-is; only future writes go through the new trigger below.
+    (
+        45,
+        """
+        CREATE TABLE IF NOT EXISTS trail_geometry (
+            id      TEXT PRIMARY KEY REFERENCES trails (id) ON DELETE CASCADE,
+            geojson TEXT
+        );
+        INSERT INTO trail_geometry (id, geojson)
+            SELECT id, geojson FROM trails
+            ON CONFLICT (id) DO NOTHING;
+        DROP TRIGGER IF EXISTS trg_trails_geom ON trails;
+        CREATE OR REPLACE FUNCTION foray_trail_geom_from_geometry() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        DECLARE
+            new_geom geography;
+        BEGIN
+            IF TG_OP = 'UPDATE' AND NEW.geojson IS NOT DISTINCT FROM OLD.geojson THEN
+                RETURN NEW;
+            END IF;
+            IF NEW.geojson IS NULL THEN
+                new_geom := NULL;
+            ELSE
+                BEGIN
+                    new_geom := ST_MakeValid(ST_GeomFromGeoJSON(NEW.geojson))::geography;
+                EXCEPTION WHEN others THEN
+                    new_geom := NULL;
+                    RAISE WARNING 'foray_trail_geom_from_geometry: bad geometry for trails.%: %',
+                        NEW.id, SQLERRM;
+                END;
+            END IF;
+            -- Cross-table side effect (trail_geometry -> trails.geom), not a same-row NEW
+            -- assignment like foray_geom_from_geojson() - geom and geojson now live on
+            -- different tables, so this can't be a plain BEFORE-trigger column derivation.
+            -- Requires the trails row to already exist (cache.upsert_trails upserts trails
+            -- before trail_geometry for exactly this reason).
+            UPDATE trails SET geom = new_geom WHERE id = NEW.id;
+            RETURN NEW;
+        END;
+        $$;
+        CREATE OR REPLACE TRIGGER trg_trail_geometry_geom AFTER INSERT OR UPDATE ON trail_geometry
+            FOR EACH ROW EXECUTE FUNCTION foray_trail_geom_from_geometry();
+        ALTER TABLE trails DROP COLUMN IF EXISTS geojson;
+        """,
+    ),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]
@@ -1042,6 +1120,13 @@ def prune_campsites_outside_radius(
         [source, lng, lat, radius_km * 1000.0],
     )
     con.commit()
+    if result.rowcount:
+        # A run that only shrinks/moves the covered area deletes rows here without ever calling
+        # upsert_campsites - without this, cached access scores could keep crediting a campsite
+        # this exact prune just removed (Copilot review, PR #348). After commit, not before -
+        # this DELETE is already committed by the time any concurrent read could recompute and
+        # repopulate the cache, so there's no invalidate-before-commit race here.
+        _invalidate_rank_cache()
     return result.rowcount
 
 
@@ -1061,6 +1146,8 @@ def prune_campsites_outside_bounds(
         [source, west, south, east, north],
     )
     con.commit()
+    if result.rowcount:
+        _invalidate_rank_cache()  # see prune_campsites_outside_radius
     return result.rowcount
 
 
@@ -1080,9 +1167,16 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
 
     Each tuple is (id, name, kind, source, url, center_lat, center_lng, geojson, connects,
     length_km, attrs) - ``connects`` is set on trailhead rows, ``length_km``/``attrs`` on
-    path/route rows, ``None`` on the other kind.
+    path/route rows, ``None`` on the other kind. External shape is unchanged (still one
+    ``geojson`` element per tuple) despite the write fanning out to two tables internally
+    (issue #333 PR 2 - the ``trail_geometry`` split, migration 45): callers keep passing a
+    single 11-tuple, this just routes ``geojson`` to ``trail_geometry`` instead of `trails`.
+
+    ``trails`` is upserted *before* ``trail_geometry`` - the latter's ``AFTER`` trigger
+    (``foray_trail_geom_from_geometry``) derives ``trails.geom`` from the geojson via an
+    ``UPDATE trails ... WHERE id = NEW.id``, which needs the ``trails`` row to already exist.
     """
-    columns: tuple[LiteralString, ...] = (
+    trails_columns: tuple[LiteralString, ...] = (
         "id",
         "name",
         "kind",
@@ -1090,12 +1184,14 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
         "url",
         "center_lat",
         "center_lng",
-        "geojson",
         "connects",
         "length_km",
         "attrs",
     )
-    result = upsert_rows(con, "trails", columns, rows)
+    trails_rows = [(row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[8], row[9], row[10]) for row in rows]
+    geometry_rows = [(row[0], row[7]) for row in rows]
+    result = upsert_rows(con, "trails", trails_columns, trails_rows)
+    upsert_rows(con, "trail_geometry", ("id", "geojson"), geometry_rows)
     _invalidate_rank_cache()
     return result
 
@@ -1136,7 +1232,15 @@ def replace_fire_lane(con: psycopg.Connection, source_key: str, rows: Sequence[t
 
     Wrapped in one transaction so a reader never sees the lane mid-swap. Returns rows upserted.
     An empty ``rows`` with no prior data is a no-op; an empty ``rows`` after the source
-    legitimately reports zero active fires clears the lane."""
+    legitimately reports zero active fires clears the lane.
+
+    Calls ``upsert_rows`` directly rather than :func:`upsert_fire_perimeters` - that wrapper's
+    own ``_invalidate_rank_cache()`` call would fire *inside* this transaction, before the
+    ``with`` block's implicit commit. A concurrent ranking call in that window would still read
+    the pre-replace lane (transaction isolation), recompute, and cache that stale result under
+    the generation this invalidate already bumped - nothing would ever correct it (Copilot
+    review, PR #348). Invalidating once, after the transaction actually commits, closes that.
+    """
     keep_ids = [row[0] for row in rows]
     with con.transaction():
         if keep_ids:
@@ -1146,7 +1250,8 @@ def replace_fire_lane(con: psycopg.Connection, source_key: str, rows: Sequence[t
             )
         else:
             con.execute("DELETE FROM fire_perimeters WHERE source_key = %s", [source_key])
-        upsert_fire_perimeters(con, rows)
+        upsert_rows(con, "fire_perimeters", _FIRE_COLUMNS, rows)
+    _invalidate_rank_cache()
     return len(rows)
 
 
