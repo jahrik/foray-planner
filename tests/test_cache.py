@@ -676,8 +676,39 @@ def test_point_geom_refreshed_when_coordinates_change(con: psycopg.Connection) -
 
 
 def test_layer_geom_populated_from_geojson(con: psycopg.Connection) -> None:
+    # `public_land` (unlike `trails` since issue #333 PR 2's trail_geometry split) still carries
+    # `geojson` directly and the same-row `foray_geom_from_geojson()` trigger - representative of
+    # `fire_perimeters` too, which shares the same trigger function.
     con.execute(
-        "INSERT INTO trails (id, name, geojson) VALUES ('osm:way/1', 'T', %s)",
+        "INSERT INTO public_land (id, agency, geojson) VALUES ('padus:1', 'A', %s)",
+        ['{"type": "Polygon", "coordinates": [[[-120.0, 45.0], [-120.1, 45.0], [-120.1, 45.1], [-120.0, 45.0]]]}'],
+    )
+
+    got = con.execute("SELECT ST_GeometryType(geom::geometry) FROM public_land WHERE id = 'padus:1'").fetchone()
+    assert got == ("ST_Polygon",)
+
+
+def test_layer_geom_null_and_no_error_on_malformed_geojson(con: psycopg.Connection) -> None:
+    # One bad feature must not abort the batch - it lands with geom NULL (Phase 1 queries skip it).
+    con.execute("INSERT INTO public_land (id, agency, geojson) VALUES ('padus:bad', 'B', %s)", ['{"type": "Nope"}'])
+
+    assert con.execute("SELECT geom FROM public_land WHERE id = 'padus:bad'").fetchone() == (None,)
+
+
+def test_layer_geom_null_when_geojson_absent(con: psycopg.Connection) -> None:
+    con.execute("INSERT INTO public_land (id, agency) VALUES ('padus:n', 'N')")
+
+    assert con.execute("SELECT geom FROM public_land WHERE id = 'padus:n'").fetchone() == (None,)
+
+
+def test_trail_geometry_populates_trails_geom(con: psycopg.Connection) -> None:
+    """``trails.geojson`` moved to ``trail_geometry`` (issue #333 PR 2, migration 45) - a
+    cross-table ``AFTER`` trigger (``foray_trail_geom_from_geometry``) derives ``trails.geom``
+    from it instead of the same-row trigger every other layer table uses. The `trails` row must
+    exist first (``cache.upsert_trails`` always upserts it before ``trail_geometry``)."""
+    con.execute("INSERT INTO trails (id, name) VALUES ('osm:way/1', 'T')")
+    con.execute(
+        "INSERT INTO trail_geometry (id, geojson) VALUES ('osm:way/1', %s)",
         ['{"type": "LineString", "coordinates": [[-120.0, 45.0], [-120.1, 45.1]]}'],
     )
 
@@ -685,17 +716,26 @@ def test_layer_geom_populated_from_geojson(con: psycopg.Connection) -> None:
     assert got == ("ST_LineString",)
 
 
-def test_layer_geom_null_and_no_error_on_malformed_geojson(con: psycopg.Connection) -> None:
-    # One bad feature must not abort the batch - it lands with geom NULL (Phase 1 queries skip it).
-    con.execute("INSERT INTO trails (id, name, geojson) VALUES ('osm:way/bad', 'B', %s)", ['{"type": "Nope"}'])
+def test_trail_geometry_update_refreshes_trails_geom(con: psycopg.Connection) -> None:
+    con.execute("INSERT INTO trails (id, name) VALUES ('osm:way/2', 'T')")
+    con.execute(
+        "INSERT INTO trail_geometry (id, geojson) VALUES ('osm:way/2', %s)",
+        ['{"type": "Point", "coordinates": [-120.0, 45.0]}'],
+    )
+    con.execute(
+        "UPDATE trail_geometry SET geojson = %s WHERE id = 'osm:way/2'",
+        ['{"type": "LineString", "coordinates": [[-120.0, 45.0], [-120.2, 45.2]]}'],
+    )
+
+    got = con.execute("SELECT ST_GeometryType(geom::geometry) FROM trails WHERE id = 'osm:way/2'").fetchone()
+    assert got == ("ST_LineString",)
+
+
+def test_trail_geometry_malformed_geojson_leaves_trails_geom_null(con: psycopg.Connection) -> None:
+    con.execute("INSERT INTO trails (id, name) VALUES ('osm:way/bad', 'B')")
+    con.execute("INSERT INTO trail_geometry (id, geojson) VALUES ('osm:way/bad', %s)", ['{"type": "Nope"}'])
 
     assert con.execute("SELECT geom FROM trails WHERE id = 'osm:way/bad'").fetchone() == (None,)
-
-
-def test_layer_geom_null_when_geojson_absent(con: psycopg.Connection) -> None:
-    con.execute("INSERT INTO trails (id, name) VALUES ('osm:way/n', 'N')")
-
-    assert con.execute("SELECT geom FROM trails WHERE id = 'osm:way/n'").fetchone() == (None,)
 
 
 def test_apply_schema_full_path_heals_a_cleared_middle_migration(con: psycopg.Connection) -> None:

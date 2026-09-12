@@ -20,6 +20,7 @@ import psycopg
 from foray.cache import region_precip
 from foray.geo import haversine_km
 from foray.scoring._sql import (
+    ACCESS_SEARCH_KM,
     BINNED,
     CENTER_LAT,
     CENTER_LNG,
@@ -305,7 +306,16 @@ def trails_near(
     # params are appended in the order their %s appears in the final SQL: GEOG_POINT (CTE) ->
     # obs_join (FROM) -> radius (WHERE) -> kind (WHERE) -> limit (ORDER BY).
     params: list[Any] = [lng, lat]
-    geojson_select: LiteralString = "t.geojson" if with_geometry else "NULL::text"
+    # `geojson` lives in `trail_geometry`, not `trails` (issue #333 PR 2, migration 45) - only
+    # joined when a caller actually wants it, so the common `with_geometry=False` list-view path
+    # (and the up-to-500-row relevance/longest candidate scan before it's trimmed) never touches
+    # that table at all, not even to discard the column.
+    if with_geometry:
+        geojson_select: LiteralString = "g.geojson"
+        geom_join: LiteralString = " LEFT JOIN trail_geometry g ON g.id = t.id"
+    else:
+        geojson_select = "NULL::text"
+        geom_join = ""
     # ``kind`` may name one element class or several, comma-separated (the destination-card
     # trail list asks for ``"trailhead,path,route"`` so a park's marquee named paths show
     # alongside the sparse trailhead nodes - issue #306 C1).
@@ -379,7 +389,7 @@ def trails_near(
                {lead_select},
                {obs_select} AS obs_n,
                t.forage_obs
-        FROM trails t, pt{camp_join}{lead_join}{obs_join}
+        FROM trails t{geom_join}, pt{camp_join}{lead_join}{obs_join}
         WHERE t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s) {kind_filter}
         {order_limit}
         """
@@ -506,9 +516,10 @@ def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
     """
     row = con.execute(
         """
-        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
+        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, g.geojson,
                t.connects, t.length_km, t.attrs, land.agency, land.unit, t.forage_obs
         FROM trails t
+        LEFT JOIN trail_geometry g ON g.id = t.id
         LEFT JOIN LATERAL (
             SELECT pl.agency, pl.unit FROM public_land pl
             WHERE pl.geom IS NOT NULL
@@ -569,8 +580,9 @@ def connected_trails(con: psycopg.Connection, trail_ids: Sequence[str]) -> list[
     if not trail_ids:
         return []
     rows = con.execute(
-        "SELECT id, name, kind, source, url, center_lat, center_lng, geojson, length_km, attrs "
-        "FROM trails WHERE id = ANY(%s)",
+        "SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, g.geojson, "
+        "t.length_km, t.attrs "
+        "FROM trails t LEFT JOIN trail_geometry g ON g.id = t.id WHERE t.id = ANY(%s)",
         [list(trail_ids)],
     ).fetchall()
     by_id = {row[0]: _base_trail(row, distance_km=0.0, camp_distance_km=None) for row in rows}
@@ -592,9 +604,11 @@ def trail_segments_by_name(con: psycopg.Connection, *, name: str, kind: str, ref
     one. The distance bound keeps a coincidentally same-named trail in another state out.
     """
     sql: LiteralString = """
-        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
+        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, g.geojson,
                t.length_km, t.attrs
-        FROM trails t, (SELECT geom FROM trails WHERE id = %s) ref
+        FROM trails t
+        LEFT JOIN trail_geometry g ON g.id = t.id,
+             (SELECT geom FROM trails WHERE id = %s) ref
         WHERE t.name = %s AND t.kind = %s AND t.geom IS NOT NULL
           AND ST_DWithin(t.geom, ref.geom, %s)
         ORDER BY t.geom <-> ref.geom
@@ -603,22 +617,21 @@ def trail_segments_by_name(con: psycopg.Connection, *, name: str, kind: str, ref
     return [_base_trail(row, distance_km=0.0, camp_distance_km=None) for row in rows]
 
 
-# Beyond this, "no trailhead nearby" and "this area isn't mapped yet" are indistinguishable, so
-# region_access returns None (unknown - no score effect) rather than a distance that would
-# always trip the remote penalty. Also bounds the KNN so a stale row from a prior home / a
-# different refresh area can't be the "nearest" match (Copilot review, PR #307).
-_ACCESS_SEARCH_KM = 45.0
-
-
 def region_access(
     con: psycopg.Connection, regions: Sequence[tuple[str, float, float]]
 ) -> dict[str, tuple[float | None, float | None, bool | None]]:
     """Nearest trailhead / campground to each ``(region_id, lat, lng)`` in km (within
-    ``_ACCESS_SEARCH_KM``), plus whether that nearest campsite is free-tagged.
+    ``ACCESS_SEARCH_KM``), plus whether that nearest campsite is free-tagged.
 
     One batched KNN pass off ``ix_trails_geom`` / ``ix_campsites_geom`` - feeds the ``access``
     multiplier and the card why-sentence (issue #306). A region with nothing cached within the
     search radius comes back ``None`` in that slot - treated as "unknown", not "remote".
+
+    Live/on-demand version, scoped to whatever ``regions`` the caller passes - kept for
+    call sites that need a region not yet in the materialized ``regions`` table (or a custom
+    center not on the grid). ``ranking._apply_access`` itself now reads
+    ``regions.cached_region_access`` instead (issue #333 PR 2) - see that function's docstring
+    for why a live per-ranking-call KNN was replaced with a materialized read.
     """
     if not regions:
         return {}
@@ -626,8 +639,8 @@ def region_access(
     params: list[Any] = []
     for region_id, lat, lng in regions:
         params += [region_id, lng, lat]
-    params.append(_ACCESS_SEARCH_KM * 1000.0)
-    params.append(_ACCESS_SEARCH_KM * 1000.0)
+    params.append(ACCESS_SEARCH_KM * 1000.0)
+    params.append(ACCESS_SEARCH_KM * 1000.0)
     sql: LiteralString = f"""
         WITH r(id, g) AS (VALUES {values})
         SELECT r.id, th.dist_km, camp.dist_km, camp.free
@@ -666,9 +679,10 @@ def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: fl
     """
     sql: LiteralString = f"""
         WITH pt AS (SELECT {GEOG_POINT} AS g)
-        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.geojson,
+        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, g.geojson,
                t.length_km, t.attrs, ST_Distance(t.geom, pt.g) / 1000.0 AS dist_km, t.forage_obs
-        FROM trails t, pt
+        FROM trails t
+        LEFT JOIN trail_geometry g ON g.id = t.id, pt
         WHERE t.kind IN ('path', 'road', 'route')
           AND t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s)
         ORDER BY t.geom <-> pt.g

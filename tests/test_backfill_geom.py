@@ -43,8 +43,12 @@ def test_fills_null_point_geom(con: psycopg.Connection) -> None:
 
 
 def test_skips_malformed_geojson_row_without_wedging(con: psycopg.Connection) -> None:
+    # trails.geojson moved to trail_geometry (issue #333 PR 2, migration 45) - trails itself
+    # must exist first for the cross-table trigger, but this test disables triggers and nulls
+    # geom directly right after anyway, so the initial trigger-derived value doesn't matter.
+    con.execute("INSERT INTO trails (id, name) VALUES ('ok', 'T'), ('bad', 'B')")
     con.execute(
-        "INSERT INTO trails (id, name, geojson) VALUES ('ok', 'T', %s), ('bad', 'B', %s)",
+        "INSERT INTO trail_geometry (id, geojson) VALUES ('ok', %s), ('bad', %s)",
         ['{"type": "Point", "coordinates": [-120.0, 45.0]}', '{"type": "Nope"}'],
     )
     _null_the_geom(con, "trails")

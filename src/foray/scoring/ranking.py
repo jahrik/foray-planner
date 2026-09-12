@@ -278,7 +278,15 @@ def _apply_access(con: psycopg.Connection, results: list[RegionScore]) -> None:
     gets a penalty. ``region_access`` returns ``None`` (not a huge distance) when nothing is
     cached within its search radius, so an un-mapped area reads as "unknown" and is left alone
     rather than penalised. Records the distances for the why-sentence; re-normalizes and
-    re-sorts. A no-op when nothing is cached anywhere near the ranked area."""
+    re-sorts. A no-op when nothing is cached anywhere near the ranked area.
+
+    Deliberately still a live call (issue #333 PR 2 considered materializing this into `regions`
+    on the phenology cadence and rejected it): `regions` only refreshes when `build_phenology`
+    runs, which is triggered by new *observation* rows
+    (`cache.maybe_rebuild_phenology`) - a trails/campsites-only refresh (e.g. the coverage-wide
+    camp ingest) touches none of those, so a materialized version could go stale indefinitely.
+    The rank_cache (this same PR) already gives repeat identical queries the caching win; this
+    call only runs on a genuine cache miss."""
     if not results:
         return
     access = region_access(con, [(r.region_id, r.center_lat, r.center_lng) for r in results])
@@ -338,6 +346,9 @@ def rank_destinations(
     cached = rank_cache.get(key, ttl_seconds)
     if cached is not None:
         return cached
+    # Captured *before* computing, not after - `put()` below only accepts this result if no
+    # `invalidate()` ran while it was being computed (Copilot review, PR #348).
+    generation = rank_cache.current_generation()
 
     def keep(clat: float, clng: float) -> tuple[bool, float]:
         dist = haversine_km(home_lat, home_lng, clat, clng)
@@ -357,7 +368,7 @@ def rank_destinations(
     )
     _apply_fire(con, results, taxon_ids=taxon_ids)
     _apply_access(con, results)
-    rank_cache.put(key, results)
+    rank_cache.put(key, results, generation)
     return results
 
 
@@ -398,6 +409,7 @@ def rank_destinations_corridor(
     cached = rank_cache.get(key, ttl_seconds)
     if cached is not None:
         return cached
+    generation = rank_cache.current_generation()
 
     dx, dy = project_to_plane(start_lat, start_lng, dest_lat, dest_lng)
     total_km = haversine_km(start_lat, start_lng, dest_lat, dest_lng)
@@ -432,5 +444,5 @@ def rank_destinations_corridor(
     )
     _apply_fire(con, results, taxon_ids=taxon_ids)
     _apply_access(con, results)
-    rank_cache.put(key, results)
+    rank_cache.put(key, results, generation)
     return results

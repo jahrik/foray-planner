@@ -32,12 +32,17 @@ from foray.sources import inat
 
 router = APIRouter()
 
-# issue #333 PR 2: short client-side cache for the ranking/destination JSON endpoints, following
-# the same constant-plus-header pattern tiles.py/layers.py already use for the tile/satellite
-# binary responses. `private` (not `public`, unlike those) - home lookup is per-device via
+# issue #333 PR 2: marks the ranking/destination JSON endpoints as per-device, following the
+# same constant-plus-header pattern tiles.py/layers.py already use for the tile/satellite binary
+# responses. `private` (not `public`, unlike those) - home lookup is per-device via
 # resolve_device_id's cookie, so a shared/CDN cache serving one device's response to another
-# would be wrong. Only set on success: a 409 ("no data for this area yet") must not be cached.
-_DESTINATIONS_CACHE_CONTROL = "private, max-age=60"
+# would be wrong. No `max-age` (Copilot review, PR #348): `POST /api/location` changes the
+# device's home and immediately triggers a re-fetch of these same URLs - a `max-age=60` would
+# let the browser serve the *previous* home's cached response for up to a minute instead of
+# hitting the (already-fast, thanks to `rank_cache`) server. `no-cache` still names the intent
+# (this is safe for a private single-user cache to keep, just always revalidate) without that
+# risk. Only set on success: a 409 ("no data for this area yet") must not be cached.
+_DESTINATIONS_CACHE_CONTROL = "private, no-cache"
 
 
 @router.get("/api/destinations")

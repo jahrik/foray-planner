@@ -64,7 +64,17 @@ def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
 def _build_phenology_locked(con: psycopg.Connection, cell_deg: float) -> None:
     binned = BINNED.format(cell=cell_deg)
     # A previous crash between the CREATE and the cutover can leave staging tables behind.
-    con.execute("DROP TABLE IF EXISTS phenology_new, regions_new")
+    con.execute("DROP TABLE IF EXISTS phenology_new, regions_new, observations_scoring_new")
+    # issue #333 PR 2: `binned` used to be inlined into *both* CREATE TABLE statements below,
+    # so Postgres re-scanned + re-filtered + re-binned the whole `observations` table twice per
+    # rebuild for identical work. Materializing it once as `observations_scoring` (persisted,
+    # not dropped after use - a future consumer willing to accept staleness up to one rebuild
+    # cycle, unlike the live-freshness-sensitive `recent_counts`/`alerts`/`recent_observations`/
+    # `precise_observations`, which must keep reading `observations` directly) turns that into
+    # one scan feeding both aggregates.
+    con.execute(cast(LiteralString, f"CREATE TABLE observations_scoring_new AS {binned}"))
+    con.execute("CREATE INDEX ix_obs_scoring_region_new ON observations_scoring_new (region_id, taxon_id, month)")
+    con.execute("ANALYZE observations_scoring_new")
     con.execute(
         cast(
             LiteralString,
@@ -74,7 +84,7 @@ def _build_phenology_locked(con: psycopg.Connection, cell_deg: float) -> None:
                    {CENTER_LAT} AS center_lat,
                    {CENTER_LNG} AS center_lng,
                    taxon_id, month, count(*) AS cnt
-            FROM ({binned})
+            FROM observations_scoring_new
             GROUP BY region_id, taxon_id, month
             """,
         )
@@ -92,7 +102,7 @@ def _build_phenology_locked(con: psycopg.Connection, cell_deg: float) -> None:
                    {_PRECIP_OBS_30D} AS precip_obs_30d_mm,
                    count(*) AS n_obs,
                    count(DISTINCT taxon_id) AS n_taxa
-            FROM ({binned})
+            FROM observations_scoring_new
             GROUP BY region_id
             """,
         )
@@ -121,11 +131,14 @@ def _build_phenology_locked(con: psycopg.Connection, cell_deg: float) -> None:
     with con.transaction():
         con.execute("DROP TABLE IF EXISTS phenology")
         con.execute("DROP TABLE IF EXISTS regions")
+        con.execute("DROP TABLE IF EXISTS observations_scoring")
         con.execute("ALTER TABLE phenology_new RENAME TO phenology")
         con.execute("ALTER TABLE regions_new RENAME TO regions")
+        con.execute("ALTER TABLE observations_scoring_new RENAME TO observations_scoring")
         con.execute("ALTER INDEX ix_phenology_taxon_region_new RENAME TO ix_phenology_taxon_region")
         con.execute("ALTER INDEX ix_phenology_region_new RENAME TO ix_phenology_region")
         con.execute("ALTER INDEX ix_regions_region_new RENAME TO ix_regions_region")
+        con.execute("ALTER INDEX ix_obs_scoring_region_new RENAME TO ix_obs_scoring_region")
     # issue #333 PR 2: the swap just replaced both tables' backing files - shared_buffers has
     # nothing cached for them until normal traffic reads it back in page by page. pg_prewarm
     # (migration 44) pulls the new tables straight into cache so the first requests after a

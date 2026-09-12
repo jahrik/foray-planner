@@ -35,11 +35,16 @@ from foray.cache import connect
 # statement text, never request data.
 _POINT_EXPR: LiteralString = "ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography"
 _GEOJSON_EXPR: LiteralString = "ST_MakeValid(ST_GeomFromGeoJSON(geojson))::geography"
+# trails' geojson moved to a separate `trail_geometry` table (issue #333 PR 2, migration 45) -
+# a correlated subquery joins it back for this one table instead of a bare column reference.
+_TRAILS_GEOJSON_EXPR: LiteralString = (
+    "(SELECT ST_MakeValid(ST_GeomFromGeoJSON(tg.geojson))::geography FROM trail_geometry tg WHERE tg.id = trails.id)"
+)
 
 TABLES: dict[LiteralString, tuple[LiteralString, LiteralString]] = {
     "campsites": (_POINT_EXPR, "lat IS NOT NULL AND lng IS NOT NULL"),
     "observations": (_POINT_EXPR, "lat IS NOT NULL AND lng IS NOT NULL"),
-    "trails": (_GEOJSON_EXPR, "geojson IS NOT NULL"),
+    "trails": (_TRAILS_GEOJSON_EXPR, "id IN (SELECT id FROM trail_geometry WHERE geojson IS NOT NULL)"),
     "public_land": (_GEOJSON_EXPR, "geojson IS NOT NULL"),
     "fire_perimeters": (_GEOJSON_EXPR, "geojson IS NOT NULL"),
 }

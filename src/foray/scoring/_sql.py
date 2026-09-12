@@ -49,6 +49,15 @@ CENTER_LNG = "COALESCE(AVG(lng) FILTER (WHERE NOT COALESCE(obscured, false)), AV
 GEOG_POINT = "ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography"
 
 
+# Beyond this, "no trailhead nearby" and "this area isn't mapped yet" are indistinguishable, so
+# a nearest-access lookup should return unknown (no score effect) rather than a distance that
+# would always trip the remote penalty. Also bounds the KNN so a stale row from a prior home / a
+# different refresh area can't be the "nearest" match (Copilot review, PR #307). Shared between
+# ``queries.region_access`` (live, caller-supplied regions) and ``regions.cached_region_access``
+# (materialized during ``build_phenology``, issue #333 PR 2) - both must agree on the cutoff.
+ACCESS_SEARCH_KM = 45.0
+
+
 def sql_in(ids: list[int]) -> str:
     """SQL fragment for ``IN (...)``. An empty list becomes the literal ``NULL`` (matches
     nothing, valid SQL) rather than an empty ``IN ()``, which Postgres rejects as a syntax
