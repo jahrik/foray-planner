@@ -11,6 +11,12 @@ name: Bulk snapshot staging
 # register a stager for at least one source (`foray.ingest_bulk.STAGERS`) - until then this
 # workflow runs and exits cleanly with nothing to do, rather than failing weekly on an
 # unregistered name.
+#
+# Stages into the *same* Space the deployed app reads from (infra/ansible/AGENTS.md,
+# `foray_basemap_space_name`/`foray_basemap_region` - default bucket "foray-basemap", region
+# the droplet's DO region), not a separate one: `vars.FORAY_SPACES_BUCKET`/`FORAY_SPACES_REGION`
+# must be set to those same values (or left unset to use the same defaults) or a staged
+# snapshot lands somewhere `foray ingest-bulk` on the droplet never looks.
 on:
   schedule:
     - cron: "0 9 * * 1" # Monday 09:00 UTC
@@ -43,8 +49,10 @@ jobs:
           DISPATCH_SOURCE: ${{ github.event.inputs.source }}
           FORAY_SPACES__ACCESS_KEY_ID: ${{ secrets.DO_SPACES_KEY }}
           FORAY_SPACES__SECRET_ACCESS_KEY: ${{ secrets.DO_SPACES_SECRET }}
-          FORAY_SPACES__BUCKET: ${{ secrets.FORAY_BULK_SPACE_NAME }}
-          FORAY_SPACES__REGION: ${{ secrets.FORAY_SPACES_REGION }}
+          # Must match the deployed app's Space (infra/ansible defaults: foray-basemap / the
+          # droplet's DO region) - see the comment above.
+          FORAY_SPACES__BUCKET: ${{ vars.FORAY_SPACES_BUCKET || 'foray-basemap' }}
+          FORAY_SPACES__REGION: ${{ vars.FORAY_SPACES_REGION || 'sfo3' }}
         run: |
           set -euo pipefail
           targets="${DISPATCH_SOURCE:-$SOURCES}"

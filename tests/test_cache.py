@@ -536,7 +536,8 @@ def test_save_region_satellite_uploads_to_space_when_configured(
     cfg = Settings(spaces=Spaces(access_key_id="k", secret_access_key="s", bucket="foray-bulk", region="nyc3"))
     uploaded: dict[str, bytes] = {}
 
-    def fake_put_object(spaces_cfg: Spaces, key: str, data: bytes, content_type: str) -> str:
+    def fake_put_object(spaces_cfg: Spaces, key: str, data: bytes, content_type: str, *, public: bool = False) -> str:
+        assert public is True
         uploaded[key] = data
         return f"{spaces_cfg.base_url}/{key}"
 

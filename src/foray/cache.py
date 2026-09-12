@@ -1553,7 +1553,10 @@ def load_region_satellite(con: psycopg.Connection, cfg: Settings, region_id: str
     image, labels, image_url, labels_url = row
     if image_url is not None and labels_url is not None:
         with httpx.Client(timeout=30) as client:
-            return client.get(image_url).content, client.get(labels_url).content
+            image_response, labels_response = client.get(image_url), client.get(labels_url)
+        image_response.raise_for_status()
+        labels_response.raise_for_status()
+        return image_response.content, labels_response.content
     if image is not None and labels is not None:
         return bytes(image), bytes(labels)
     return None
@@ -1561,8 +1564,10 @@ def load_region_satellite(con: psycopg.Connection, cfg: Settings, region_id: str
 
 def save_region_satellite(con: psycopg.Connection, cfg: Settings, region_id: str, image: bytes, labels: bytes) -> None:
     if cfg.spaces.configured:
-        image_url = spaces.put_object(cfg.spaces, f"satellite/{region_id}/image.jpg", image, "image/jpeg")
-        labels_url = spaces.put_object(cfg.spaces, f"satellite/{region_id}/labels.png", labels, "image/png")
+        image_url = spaces.put_object(cfg.spaces, f"satellite/{region_id}/image.jpg", image, "image/jpeg", public=True)
+        labels_url = spaces.put_object(
+            cfg.spaces, f"satellite/{region_id}/labels.png", labels, "image/png", public=True
+        )
         con.execute(
             "INSERT INTO region_satellite (region_id, image_url, labels_url) VALUES (%s, %s, %s) "
             "ON CONFLICT (region_id) DO NOTHING",

@@ -33,14 +33,19 @@ def test_stage_snapshot_unknown_source_raises_keyerror() -> None:
         ingest_bulk.stage_snapshot(_CONFIGURED, "padus")
 
 
-def test_stage_snapshot_calls_registered_stager(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stage_snapshot_calls_registered_stager_then_marks_complete(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[Settings, date]] = []
+    marked: list[tuple[Spaces, str, date]] = []
     monkeypatch.setitem(ingest_bulk.STAGERS, "padus", lambda cfg, d: calls.append((cfg, d)))
+    monkeypatch.setattr(
+        ingest_bulk, "mark_snapshot_complete", lambda spaces_cfg, source, d: marked.append((spaces_cfg, source, d))
+    )
 
     result = ingest_bulk.stage_snapshot(_CONFIGURED, "padus", date(2026, 1, 1))
 
     assert result == date(2026, 1, 1)
     assert calls == [(_CONFIGURED, date(2026, 1, 1))]
+    assert marked == [(_CONFIGURED.spaces, "padus", date(2026, 1, 1))]
 
 
 def test_ingest_bulk_requires_spaces_configured(con: psycopg.Connection) -> None:
