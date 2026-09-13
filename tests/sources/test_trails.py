@@ -8,9 +8,16 @@ import httpx
 import psycopg
 import pytest
 
-from foray.cache import is_ingested, record_ingest, upsert_campsites, upsert_public_land, upsert_trails
+from foray.cache import (
+    backfill_trail_land,
+    is_ingested,
+    record_ingest,
+    upsert_campsites,
+    upsert_public_land,
+    upsert_trails,
+)
 from foray.config import CoverageRegion, Home, Ingest, Settings
-from foray.scoring import get_trail, nearest_trail, trail_land_units, trail_segments_by_name, trails_near
+from foray.scoring import get_trail, nearest_trail, trail_segments_by_name, trails_near
 from foray.sources.trails import (
     _TRAILS_QUERY_VERSION,
     _network_query,
@@ -686,7 +693,7 @@ def test_walk_in_gate_is_overridden_by_an_explicit_foot_no() -> None:
     assert _walk_in({"barrier": "gate", "access": "private", "foot": "yes"}) is True
 
 
-def test_trail_land_units_and_get_trail_tag_the_smallest_owning_unit(con: psycopg.Connection) -> None:
+def test_trail_land_is_persisted_at_ingest_and_tags_the_smallest_owning_unit(con: psycopg.Connection) -> None:
     road = _parse_element(
         {
             "type": "way",
@@ -700,6 +707,7 @@ def test_trail_land_units_and_get_trail_tag_the_smallest_owning_unit(con: psycop
     # A big forest polygon and a small wilderness polygon, both covering the road - smallest wins.
     forest = '{"type":"Polygon","coordinates":[[[-123,47],[-121,47],[-121,48],[-123,48],[-123,47]]]}'
     wild = '{"type":"Polygon","coordinates":[[[-122.4,47.5],[-122.2,47.5],[-122.2,47.7],[-122.4,47.7],[-122.4,47.5]]]}'
+    # upsert_public_land relabels the already-cached road (issue #335 PR 2's `_assign_trail_land`).
     upsert_public_land(
         con,
         [
@@ -707,11 +715,64 @@ def test_trail_land_units_and_get_trail_tag_the_smallest_owning_unit(con: psycop
             ("pl:2", "USFS", "Small Wilderness", "usfs", "u", wild),
         ],
     )
-    assert trail_land_units(con, ["osm:way/1"]) == {"osm:way/1": ("USFS", "Small Wilderness")}
-    assert trail_land_units(con, []) == {}
-    assert trail_land_units(con, ["osm:way/999"]) == {}  # unknown id -> absent, not a null entry
+    (near,) = trails_near(con, lat=47.60, lng=-122.30, radius_km=20.0, kind="road")
+    assert (near.land_agency, near.land_unit) == ("USFS", "Small Wilderness")
     single = get_trail(con, "osm:way/1")
     assert single is not None and (single.land_agency, single.land_unit) == ("USFS", "Small Wilderness")
+
+    # The reverse order also works: a trail ingested after the land is already cached gets
+    # labeled immediately by upsert_trails' own `_assign_trail_land` call, not left NULL until
+    # some later land refresh happens to touch it.
+    other_road = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "track", "name": "FR 13"},
+            "geometry": [{"lat": 47.60, "lon": -122.31}, {"lat": 47.61, "lon": -122.31}],
+        }
+    )
+    assert other_road is not None
+    upsert_trails(con, [other_road])
+    other = get_trail(con, "osm:way/2")
+    assert other is not None and (other.land_agency, other.land_unit) == ("USFS", "Small Wilderness")
+
+    unknown = get_trail(con, "osm:way/999")
+    assert unknown is None
+
+
+def test_backfill_trail_land_labels_trails_a_migration_left_null(con: psycopg.Connection) -> None:
+    """Migration 48 only adds the columns (deliberately no in-migration backfill UPDATE - see
+    its comment) - `backfill_trail_land` is the separate one-time pass that fills them in for
+    trails cached before it shipped. Simulate that starting state (columns present, NULL) rather
+    than relying on the incremental `_assign_trail_land` hooks that a fresh upsert already gets."""
+    roads = [
+        row
+        for way_id, lon in ((1, -122.30), (2, -122.31))
+        if (
+            row := _parse_element(
+                {
+                    "type": "way",
+                    "id": way_id,
+                    "tags": {"highway": "track", "name": f"FR {way_id}"},
+                    "geometry": [{"lat": 47.60, "lon": lon}, {"lat": 47.61, "lon": lon}],
+                }
+            )
+        )
+        is not None
+    ]
+    assert len(roads) == 2
+    upsert_trails(con, roads)
+    wild = '{"type":"Polygon","coordinates":[[[-122.4,47.5],[-122.2,47.5],[-122.2,47.7],[-122.4,47.7],[-122.4,47.5]]]}'
+    upsert_public_land(con, [("pl:1", "USFS", "Small Wilderness", "usfs", "u", wild)])
+    con.execute("UPDATE trails SET land_agency = NULL, land_unit = NULL")
+
+    updated = backfill_trail_land(con, batch_size=1)  # forces >1 page over the 2 rows
+
+    assert updated == 2
+    for way_id in (1, 2):
+        trail = get_trail(con, f"osm:way/{way_id}")
+        assert trail is not None and (trail.land_agency, trail.land_unit) == ("USFS", "Small Wilderness")
+    assert backfill_trail_land(con) == 2  # idempotent re-run
 
 
 def test_backfill_forage_obs_counts_research_grade_fungi_hugging_the_line(con: psycopg.Connection) -> None:

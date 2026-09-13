@@ -142,6 +142,13 @@ backfill-precip: db
 backfill-forage *args: db
     docker compose run --rm app foray backfill-forage {{ args }}
 
+# One-time backfill of trails.land_agency/land_unit (issue #335 PR 2) for trails cached before
+# migration 48 shipped. Batched with a commit per batch - safe to interrupt and re-run.
+[doc('One-time backfill of trails.land_agency/land_unit (issue #335 PR 2)')]
+[group('data')]
+backfill-trail-land *args: db
+    docker compose run --rm app foray backfill-trail-land {{ args }}
+
 # Refresh the recent-rain-per-destination layer (issue #226, Open-Meteo forecast API). Skips
 # region cells refreshed in the last ~20h, so a re-run resumes rather than starting over.
 [doc('Refresh the recent-rain-per-destination layer (issue #226)')]

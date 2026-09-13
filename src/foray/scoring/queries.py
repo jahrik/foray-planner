@@ -299,9 +299,9 @@ def trails_near(
     The ``/api/trails`` list only shows names + distances and fetches real geometry per row via
     ``/api/trails/network``, so shipping every LineString there is megabytes of unused payload.
 
-    Ownership (``land_agency`` / ``land_unit``) is not joined here - the endpoint enriches the
-    final list via ``trail_land_units`` so the spatial join runs for ~20 rows, not the 500
-    ``relevance`` candidates.
+    Ownership (``land_agency`` / ``land_unit``) is read straight off ``trails`` - persisted at
+    ingest time by ``cache._assign_trail_land`` (issue #335 PR 2) rather than joined live here,
+    so it costs nothing extra on the up-to-500-row relevance/longest candidate scan either.
     """
     # params are appended in the order their %s appears in the final SQL: GEOG_POINT (CTE) ->
     # obs_join (FROM) -> radius (WHERE) -> kind (WHERE) -> limit (ORDER BY).
@@ -388,7 +388,8 @@ def trails_near(
                {camp_select},
                {lead_select},
                {obs_select} AS obs_n,
-               t.forage_obs
+               t.forage_obs,
+               t.land_agency, t.land_unit
         FROM trails t{geom_join}, pt{camp_join}{lead_join}{obs_join}
         WHERE t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s) {kind_filter}
         {order_limit}
@@ -397,8 +398,8 @@ def trails_near(
 
     # row layout: [8] this row's own length_km, [9] attrs, [10] unrounded distance, [11] camp
     # distance, [12] best connected length, [13] connects-a-route flag, [14] target-genus obs
-    # count near the line (query-time, genus-filtered), [15] persisted genus-agnostic forage_obs.
-    # Prominence is the lead trail's length (for a trailhead) or the row's own (for a path), plus
+    # count near the line (query-time, genus-filtered), [15] persisted genus-agnostic forage_obs,
+    # [16]/[17] persisted land_agency/land_unit. Prominence is the lead trail's length (for a
     # a route bonus, plus a log-scaled foraging-density term.
     def lead_length(row: Sequence[Any]) -> float:
         return row[12] if row[12] is not None else (row[8] or 0.0)
@@ -442,18 +443,31 @@ def trails_near(
         # dozen "James Irvine Trail" segments. Unnamed rows (name None) are never collapsed.
         seen: set[str] = set()
         candidates = [row for row in candidates if not row[1] or not (row[1] in seen or seen.add(row[1]))]
-    trails = [_base_trail(row, distance_km=row[10], camp_distance_km=row[11], forage_obs=row[15]) for row in candidates]
+    trails = [
+        _base_trail(
+            row,
+            distance_km=row[10],
+            camp_distance_km=row[11],
+            forage_obs=row[15],
+            land_agency=row[16],
+            land_unit=row[17],
+        )
+        for row in candidates
+    ]
     return trails[:limit] if limit is not None else trails
 
 
 def _base_trail(
-    row: Sequence[Any], *, distance_km: float, camp_distance_km: float | None, forage_obs: int | None = None
+    row: Sequence[Any],
+    *,
+    distance_km: float,
+    camp_distance_km: float | None,
+    forage_obs: int | None = None,
+    land_agency: str | None = None,
+    land_unit: str | None = None,
 ) -> Trail:
     """Build a ``Trail`` from the standard 10-column prefix
-    ``(id, name, kind, source, url, center_lat, center_lng, geojson, length_km, attrs)``.
-
-    ``land_agency`` / ``land_unit`` are left unset here - the ``/api/trails`` endpoint enriches
-    the final short list via ``trail_land_units``."""
+    ``(id, name, kind, source, url, center_lat, center_lng, geojson, length_km, attrs)``."""
     tid, name, kind, source, url, clat, clng, geojson, length_km, attrs = row[:10]
     parsed_attrs = json.loads(attrs) if attrs else None
     return Trail(
@@ -471,61 +485,24 @@ def _base_trail(
         attrs=parsed_attrs,
         walk_in=kind == "road" and _walk_in(parsed_attrs),
         forage_obs=forage_obs,
+        land_agency=land_agency,
+        land_unit=land_unit,
     )
-
-
-def trail_land_units(con: psycopg.Connection, trail_ids: Sequence[str]) -> dict[str, tuple[str | None, str | None]]:
-    """``{trail_id: (agency, unit)}`` for the smallest ``public_land`` polygon each trail runs
-    through (a wilderness inside a forest beats the forest). Ids with no cached ownership polygon
-    over them are absent from the map. Run over the ~20-row card list, not the relevance
-    candidate pool - the per-trail spatial join is too slow for 500 rows.
-    """
-    if not trail_ids:
-        return {}
-    rows = con.execute(_TRAIL_LAND_SQL, [list(trail_ids)]).fetchall()
-    return {row[0]: (row[1], row[2]) for row in rows if row[1] is not None}
-
-
-# Matched on the trail's representative point (``center_lat/lng``), not its full line: a
-# ``ST_DWithin(geography, point, 0)`` = point-in-polygon uses the ``public_land`` GIST index the
-# way ``land_near`` does (a geodesic line-vs-multipolygon ``ST_Intersects`` over ~12k
-# national-forest polygons was ~6s *per trail*). ``ST_Area`` is taken planar (``::geometry``,
-# degrees^2) - not a real area but monotonic for "smaller polygon wins" (a wilderness inside a
-# forest). A long trail whose midpoint sits in a different unit than its ends is an accepted
-# imprecision for a "on Six Rivers NF" label.
-_TRAIL_LAND_SQL: LiteralString = """
-    SELECT t.id, land.agency, land.unit
-    FROM trails t
-    LEFT JOIN LATERAL (
-        SELECT pl.agency, pl.unit FROM public_land pl
-        WHERE pl.geom IS NOT NULL
-          AND ST_DWithin(pl.geom, ST_SetSRID(ST_MakePoint(t.center_lng, t.center_lat), 4326)::geography, 0)
-        ORDER BY ST_Area(pl.geom::geometry)
-        LIMIT 1
-    ) land ON true
-    WHERE t.id = ANY(%s)
-    """
 
 
 def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
     """Single trail row by id, or None if not cached. No camp-distance annotation (see ``trails_near``).
 
-    Carries the same ``land_agency`` / ``land_unit`` point-in-``public_land`` join as
-    ``trail_land_units`` so the trail drawn on a card selection labels + styles consistently
-    with its list row.
+    ``land_agency``/``land_unit`` are read straight off ``trails`` (see ``trails_near`` - both
+    persisted at ingest by ``cache._assign_trail_land``, issue #335 PR 2), so this and the list
+    view label consistently by construction rather than by running the same join twice.
     """
     row = con.execute(
         """
         SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, g.geojson,
-               t.connects, t.length_km, t.attrs, land.agency, land.unit, t.forage_obs
+               t.connects, t.length_km, t.attrs, t.land_agency, t.land_unit, t.forage_obs
         FROM trails t
         LEFT JOIN trail_geometry g ON g.id = t.id
-        LEFT JOIN LATERAL (
-            SELECT pl.agency, pl.unit FROM public_land pl
-            WHERE pl.geom IS NOT NULL
-              AND ST_DWithin(pl.geom, ST_SetSRID(ST_MakePoint(t.center_lng, t.center_lat), 4326)::geography, 0)
-            ORDER BY ST_Area(pl.geom::geometry) LIMIT 1
-        ) land ON true
         WHERE t.id = %s
         """,
         [trail_id],

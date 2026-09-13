@@ -310,6 +310,9 @@ def get_trails(
     if is_new:
         set_device_cookie(request, response, device_id)
     with pool.connection() as conn:
+        # land_agency/land_unit ("on Six Rivers NF", and it gates the walk-in map styling) come
+        # straight off trails_near's own result - persisted at ingest (issue #335 PR 2), no
+        # separate enrichment join needed here any more.
         found = scoring.trails_near(
             conn,
             lat=center_lat,
@@ -322,11 +325,6 @@ def get_trails(
             taxon_ids=parse_species(species, conn, device_id) or None,
             with_geometry=False,
         )
-        # Enrich just the returned short list with the public-land unit each trail runs through
-        # (issue A4b) - "on Six Rivers NF" on the row, and it gates the walk-in map styling.
-        land = scoring.trail_land_units(conn, [trail.id for trail in found])
-    for trail in found:
-        trail.land_agency, trail.land_unit = land.get(trail.id, (None, None))
     return [Trail.model_validate(trail) for trail in found]
 
 

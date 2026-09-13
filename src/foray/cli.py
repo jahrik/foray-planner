@@ -7,7 +7,7 @@ import datetime as dt
 import click
 
 from foray import alerting, ingest_bulk, jobs
-from foray.cache import connect, maybe_rebuild_phenology, observation_count, upsert_fungi_genera
+from foray.cache import backfill_trail_land, connect, maybe_rebuild_phenology, observation_count, upsert_fungi_genera
 from foray.config import Settings
 from foray.logging_config import setup_logging
 from foray.refresh import REFRESH_LAYERS, parse_month_list, run_home_refresh
@@ -379,6 +379,21 @@ def backfill_forage_cmd(limit: int | None) -> None:
     try:
         updated = backfill_forage_obs(con, max_trails=limit)
         click.echo(f"Recomputed foraging density for {updated} trails.")
+    finally:
+        con.close()
+
+
+@cli.command("backfill-trail-land")
+@click.option("--batch-size", type=int, default=5000, help="Trails processed per committed batch.")
+def backfill_trail_land_cmd(batch_size: int) -> None:
+    """One-time backfill of `trails.land_agency` / `land_unit` (issue #335 PR 2) for every trail
+    cached before migration 48 shipped - only needs to run once per environment; new trails and
+    land refreshes keep it current from then on (see `cache._assign_trail_land`). Batched with a
+    commit per batch, so it's safe to interrupt and safe to re-run."""
+    con = connect()
+    try:
+        updated = backfill_trail_land(con, batch_size=batch_size)
+        click.echo(f"Backfilled land_agency/land_unit for {updated} trails.")
     finally:
         con.close()
 

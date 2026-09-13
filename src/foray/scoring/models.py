@@ -133,10 +133,11 @@ class Trail:
     # ``motor_vehicle=no``, ...). Walk-in ground is less picked, so the UI badges it and the
     # relevance sort treats it as a plus - see ``queries._walk_in``.
     walk_in: bool = False
-    # The public-land unit the trail runs through, from a spatial join against ``public_land``
-    # (``queries.trail_land_units`` for the list, ``get_trail`` for one). ``agency`` is the owner
-    # ("USFS", "BLM", ...), ``unit`` the area name ("Six Rivers National Forest"). Both ``None``
-    # when no cached ownership polygon contains the trail. Lets the card say "on Six Rivers NF".
+    # The public-land unit the trail runs through - persisted at ingest (``cache._assign_trail_land``,
+    # issue #335 PR 2) from a spatial join against ``public_land``, not recomputed per request.
+    # ``agency`` is the owner ("USFS", "BLM", ...), ``unit`` the area name ("Six Rivers National
+    # Forest"). Both ``None`` when no cached ownership polygon contains the trail. Lets the card
+    # say "on Six Rivers NF".
     land_agency: str | None = None
     land_unit: str | None = None
     # Count of research-grade, non-obscured fungi observations within ~500 m of the trail line
