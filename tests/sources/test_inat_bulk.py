@@ -86,7 +86,8 @@ def _mock_client(zip_bytes: bytes) -> httpx.Client:
         range_header = request.headers["Range"]
         start_s, end_s = range_header.removeprefix("bytes=").split("-")
         start, end = int(start_s), int(end_s)
-        return httpx.Response(206, content=zip_bytes[start : end + 1])
+        content_range = f"bytes {start}-{end}/{len(zip_bytes)}"
+        return httpx.Response(206, headers={"Content-Range": content_range}, content=zip_bytes[start : end + 1])
 
     return _RealClient(transport=httpx.MockTransport(handler))
 
@@ -182,6 +183,34 @@ def test_load_inat_resolves_genus_and_upserts_observations(
         "SELECT row_count FROM ingest_log WHERE key = %s", ["obs:fungi:place:1:2000-01-01:2026-06-01"]
     ).fetchone()
     assert marker == (1,)
+
+
+def test_load_inat_triggers_phenology_rebuild_over_threshold(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upsert_rows(con, "fungi_genera", ("taxon_id", "name"), [(48701, "Amanita")], conflict="taxon_id")
+    payload_rows = [
+        {
+            "id": 1,
+            "genus": "Amanita",
+            "lat": 47.6,
+            "lng": -122.3,
+            "event_date": "2026-06-01",
+            "coordinate_uncertainty_m": None,
+        }
+    ]
+    payload = "\n".join(json.dumps(row) for row in payload_rows).encode()
+    monkeypatch.setattr(
+        inat_bulk.spaces, "download_file", lambda cfg, key, dest: Path(dest).write_bytes(gzip.compress(payload))
+    )
+    rebuilt: list[int] = []
+    monkeypatch.setattr(
+        inat_bulk, "maybe_rebuild_phenology", lambda con, cfg, new_rows: rebuilt.append(new_rows) or True
+    )
+
+    load_inat(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
+
+    assert rebuilt == [1]
 
 
 def test_load_inat_raises_when_genus_catalog_empty(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -49,7 +49,7 @@ import httpx
 import psycopg
 
 from foray import spaces
-from foray.cache import genus_taxon_ids, record_ingest, upsert_observations
+from foray.cache import genus_taxon_ids, insert_observations_if_missing, maybe_rebuild_phenology, record_ingest
 from foray.config import Settings
 from foray.sources.http import USER_AGENT, HttpRangeReader
 from foray.sources.inat import OBSCURED_ACCURACY_HIGH, OBSCURED_ACCURACY_LOW
@@ -152,12 +152,16 @@ def _parse_date(event_date: str | None) -> dt.date | None:
 
 def load_inat(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_id: str) -> None:
     """Loader: resolve each staged row's genus to our catalog's genus-level taxon_id and
-    upsert into ``observations``, exactly matching the shape ``foray.sources.ingest`` writes
+    insert it into ``observations`` if not already cached (``cache.insert_observations_if_missing``
+    - never overwrites an existing row, see that function's docstring for why this must be
+    insert-only rather than an upsert), in the shape ``foray.sources.ingest`` writes
     (``quality_grade="research"`` - the DwC-A dump is already iNat's research-grade export;
     ``obscured`` set via the coordinate-uncertainty fingerprint heuristic, since the dump - like
     the old script's - carries no real obscured flag). Records one whole-kingdom ingest_log
     marker so the nightly incremental crawl (``ingest``/``ingest_region``) treats US coverage
-    as already backfilled through the newest date loaded, and only syncs forward from there.
+    as already backfilled through the newest date loaded, and only syncs forward from there;
+    also triggers the debounced phenology rebuild (``cache.maybe_rebuild_phenology``) since
+    nothing else does after a bulk load this size.
     """
     genera = genus_taxon_ids(con)
     if not genera:
@@ -170,8 +174,8 @@ def load_inat(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
     chunk: list[tuple[Any, ...]] = []
     with tempfile.NamedTemporaryFile(suffix=".jsonl.gz") as tmp:
         spaces.download_file(cfg.spaces, key, tmp.name)
-        with gzip.open(tmp.name, "rt", encoding="utf-8") as f:
-            for line in f:
+        with gzip.open(tmp.name, "rt", encoding="utf-8") as payload_file:
+            for line in payload_file:
                 rec = json.loads(line)
                 taxon_id = genera.get(rec["genus"])
                 if taxon_id is None:
@@ -202,11 +206,11 @@ def load_inat(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
                 if max_date is None or day > max_date:
                     max_date = day
                 if len(chunk) >= _CHUNK_SIZE:
-                    upsert_observations(con, chunk)
+                    insert_observations_if_missing(con, chunk)
                     total += len(chunk)
                     chunk = []
     if chunk:
-        upsert_observations(con, chunk)
+        insert_observations_if_missing(con, chunk)
         total += len(chunk)
     logger.info(
         "inat_bulk: loaded %d observations (%d unknown genus, %d no date)",
@@ -218,3 +222,10 @@ def load_inat(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
         ingest_key = f"obs:fungi:place:{_PLACE_ID_US}:{_SINCE_YEAR_FLOOR}:{max_date.isoformat()}"
         record_ingest(con, ingest_key, total)
         logger.info("inat_bulk: marked place %d covered through %s", _PLACE_ID_US, max_date.isoformat())
+    # A bulk load can seed hundreds of thousands of rows in one pass - unlike the live
+    # ingest/ingest_region path (which each call maybe_rebuild_phenology themselves after every
+    # run), nothing else rebuilds regions/phenology from this loader, so rankings would keep
+    # reading pre-bulk tables until an unrelated ingest happened to cross the threshold on its
+    # own. Feed the same debounced rebuild path directly.
+    if total and maybe_rebuild_phenology(con, cfg, total):
+        logger.info("inat_bulk: phenology rebuild triggered by this load")

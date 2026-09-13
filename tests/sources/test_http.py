@@ -7,8 +7,9 @@ from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 
 import httpx
+import pytest
 
-from foray.sources.http import SOURCE_ERRORS, Throttle, retry_after_seconds
+from foray.sources.http import SOURCE_ERRORS, HttpRangeReader, Throttle, retry_after_seconds
 
 
 def _resp(retry_after: str | None) -> httpx.Response:
@@ -60,3 +61,62 @@ def test_throttle_paces_successive_calls() -> None:
 def test_source_errors_covers_transport_and_decode_failures() -> None:
     assert httpx.HTTPError in SOURCE_ERRORS
     assert {ValueError, KeyError, TypeError} <= set(SOURCE_ERRORS)
+
+
+_CONTENT = b"0123456789" * 5
+
+
+def test_http_range_reader_reads_content_via_valid_206_responses() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"content-length": str(len(_CONTENT))})
+        start, end = (int(part) for part in request.headers["Range"].removeprefix("bytes=").split("-"))
+        return httpx.Response(
+            206,
+            headers={"Content-Range": f"bytes {start}-{end}/{len(_CONTENT)}"},
+            content=_CONTENT[start : end + 1],
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        reader = HttpRangeReader(client, "https://example.test/file")
+        buf = bytearray(4)
+        assert reader.readinto(buf) == 4
+        assert bytes(buf) == _CONTENT[:4]
+        reader.seek(6)
+        buf2 = bytearray(4)
+        assert reader.readinto(buf2) == 4
+        assert bytes(buf2) == _CONTENT[6:10]
+
+
+def test_http_range_reader_retries_transient_error_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"content-length": str(len(_CONTENT))})
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("transient", request=request)
+        return httpx.Response(206, headers={"Content-Range": f"bytes 0-3/{len(_CONTENT)}"}, content=_CONTENT[:4])
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        reader = HttpRangeReader(client, "https://example.test/file")
+        buf = bytearray(4)
+        assert reader.readinto(buf) == 4
+        assert bytes(buf) == _CONTENT[:4]
+    assert calls["n"] == 2
+
+
+def test_http_range_reader_rejects_non_206_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"content-length": str(len(_CONTENT))})
+        return httpx.Response(200, content=_CONTENT)  # ignores Range entirely
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        reader = HttpRangeReader(client, "https://example.test/file", attempts=2)
+        with pytest.raises(OSError, match="expected 206"):
+            reader.readinto(bytearray(4))

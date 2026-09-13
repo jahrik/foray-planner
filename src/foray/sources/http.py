@@ -15,7 +15,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import httpx
 
@@ -99,17 +99,25 @@ class HttpRangeReader(io.RawIOBase):
     request each - a large buffer (a few MB) keeps a sequential member scan to a modest
     request count instead of one per read() call.
 
-    The server must support ``Accept-Ranges: bytes`` (verified against both sources this reads
-    from - static.inaturalist.org and ridb.recreation.gov's downloads - not checked at
-    runtime, since a server that ignores ``Range`` and 200s the whole body would silently
-    corrupt every seek here rather than erroring, and both are known-good CDN-fronted static
-    files, not user-supplied URLs).
+    The server is expected to support ``Accept-Ranges: bytes`` (true of both sources this
+    reads from - static.inaturalist.org and ridb.recreation.gov's downloads) - ``readinto``
+    rejects any response that isn't a real ``206`` with a matching ``Content-Range``, so a
+    proxy/CDN that silently ignores ``Range`` and 200s the whole body fails loudly instead of
+    corrupting every subsequent seek and feeding `zipfile` garbage.
+
+    Each range GET retries transient network errors and 5xx/429 responses with backoff
+    (``_RETRYABLE_STATUS``/``retry_after_seconds``, same policy as the rest of this module) -
+    a scan of the ~29 GB iNat archive makes thousands of these, and one transient blip
+    shouldn't force a restart from byte zero.
     """
 
-    def __init__(self, client: httpx.Client, url: str) -> None:
+    _RETRYABLE_STATUS: ClassVar[set[int]] = {429, 500, 502, 503, 504}
+
+    def __init__(self, client: httpx.Client, url: str, *, attempts: int = 5) -> None:
         self._client = client
         self._url = url
         self._pos = 0
+        self._attempts = attempts
         self._size = int(client.head(url, follow_redirects=True).headers["content-length"])
 
     def readable(self) -> bool:
@@ -132,13 +140,41 @@ class HttpRangeReader(io.RawIOBase):
     def tell(self) -> int:
         return self._pos
 
+    def _get_range(self, start: int, end: int) -> httpx.Response:
+        last_error: Exception | None = None
+        for attempt in range(1, self._attempts + 1):
+            try:
+                resp = self._client.get(self._url, headers={"Range": f"bytes={start}-{end}"})
+            except httpx.TransportError as exc:
+                last_error = exc
+                delay = min(2.0 * 2 ** (attempt - 1), 60.0)
+            else:
+                if resp.status_code == 206 and resp.headers.get("Content-Range", "").endswith(
+                    f"{start}-{end}/{self._size}"
+                ):
+                    return resp
+                # A non-206 (a 200 full-object body from a Range-ignoring proxy, or a mismatched
+                # Content-Range) is never something to accept and decode as this chunk - retry
+                # the retryable statuses, raise immediately on anything else (a real 4xx).
+                if resp.status_code not in self._RETRYABLE_STATUS and resp.status_code != 200:
+                    resp.raise_for_status()
+                last_error = OSError(
+                    f"HttpRangeReader: expected 206 bytes {start}-{end}/{self._size} from {self._url}, "
+                    f"got {resp.status_code} (Content-Range={resp.headers.get('Content-Range')!r}) - "
+                    "server may not support byte ranges"
+                )
+                delay = retry_after_seconds(resp, attempt)
+            if attempt < self._attempts:
+                time.sleep(delay)
+        assert last_error is not None
+        raise last_error
+
     def readinto(self, buffer: WriteableBuffer) -> int:
         buffer = memoryview(buffer)
         if self._pos >= self._size:
             return 0
         end = min(self._pos + len(buffer), self._size) - 1
-        resp = self._client.get(self._url, headers={"Range": f"bytes={self._pos}-{end}"})
-        resp.raise_for_status()
+        resp = self._get_range(self._pos, end)
         data = resp.content
         buffer[: len(data)] = data
         self._pos += len(data)
