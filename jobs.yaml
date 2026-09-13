@@ -101,14 +101,20 @@ jobs:
   # before doing any real work), so daily is cheap insurance against missing a stage. Requires
   # `FORAY_SPACES__*` configured; unconfigured, the CLI command raises and this job just fails
   # loudly in job_runs rather than silently skipping (see foray.ingest_bulk).
+  # `window: night` (not `any`, despite being a no-op most days): the day it actually has a new
+  # snapshot to load it can insert hundreds of thousands of rows in one pass (`load_inat`'s
+  # `insert_observations_if_missing` is safe to run alongside `ingest`/`resync` at any hour -
+  # it never overwrites a row either already has - but it's still coverage-wide-sized write
+  # volume, the same class as `layers-land`/`dispersed-coverage` below, not `any`'s "light,
+  # externally-paced" jobs).
   - name: ingest-bulk-inat
     command: ingest-bulk inat
     interval_hours: 24
-    window: any
+    window: night
     writer: true
 
   - name: ingest-bulk-ridb
     command: ingest-bulk ridb
     interval_hours: 24
-    window: any
+    window: night
     writer: true

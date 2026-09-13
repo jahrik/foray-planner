@@ -815,6 +815,45 @@ def copy_upsert(
     return len(rows)
 
 
+def copy_insert_ignore(
+    con: psycopg.Connection,
+    table: LiteralString,
+    columns: Sequence[LiteralString],
+    rows: Sequence[tuple[Any, ...]],
+    *,
+    conflict: LiteralString = "id",
+) -> int:
+    """Like :func:`copy_upsert`, but ``ON CONFLICT (conflict) DO NOTHING`` instead of updating -
+    a row already present is left completely untouched. For a bulk historical loader
+    (``foray.sources.inat_bulk.load_inat``, issue #334 PR 2) reading from a dated snapshot that
+    can be days-to-weeks old: unlike the live ingest/resync/revalidate paths (which always carry
+    iNat's *current* truth, so overwriting is correct), an older snapshot value must never win
+    over a row a live path already wrote or corrected since - insert-only makes that regression
+    structurally impossible instead of relying on job scheduling to avoid the overlap. Rows this
+    skips are exactly the ones already covered by ordinary ingest; nothing is lost. Returns the
+    number of rows attempted (not the number actually inserted - some may already exist).
+    """
+    if not rows:
+        return 0
+    key_idx = list(columns).index(conflict)
+    deduped = list({row[key_idx]: row for row in rows}.values())
+    collist = ", ".join(columns)
+    create_stg: LiteralString = (
+        f"CREATE TEMP TABLE _copy_stg ON COMMIT DROP AS SELECT {collist} FROM {table} WITH NO DATA"
+    )
+    copy_in: LiteralString = f"COPY _copy_stg ({collist}) FROM STDIN"
+    insert_select: LiteralString = (
+        f"INSERT INTO {table} ({collist}) SELECT {collist} FROM _copy_stg ON CONFLICT ({conflict}) DO NOTHING"
+    )
+    with con.transaction(), con.cursor() as cur:
+        cur.execute(create_stg)
+        with cur.copy(copy_in) as copy:
+            for row in deduped:
+                copy.write_row(row)
+        cur.execute(insert_select)
+    return len(rows)
+
+
 def _schema_is_current(con: psycopg.Connection) -> bool:
     """True when ``SCHEMA`` at ``SCHEMA_VERSION`` and every ``_MIGRATIONS`` entry are already
     applied on ``con`` - the fast-path guard that lets ``apply_schema`` skip re-executing the
@@ -1026,6 +1065,29 @@ def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
         "obscured",
     )
     return copy_upsert(con, "observations", columns, rows, coalesce=set(columns) - {"id"})
+
+
+def insert_observations_if_missing(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
+    """Insert observation tuples that aren't already cached; leaves an existing row completely
+    untouched. See :func:`copy_insert_ignore` for why the bulk iNat loader
+    (``foray.sources.inat_bulk.load_inat``) needs insert-only rather than :func:`upsert_observations`'s
+    overwrite semantics. Same column shape/order as ``upsert_observations``. Returns rows
+    attempted (not the count actually inserted).
+    """
+    columns: tuple[LiteralString, ...] = (
+        "id",
+        "taxon_id",
+        "lat",
+        "lng",
+        "observed_on",
+        "month",
+        "quality_grade",
+        "positional_accuracy",
+        "place_guess",
+        "uri",
+        "obscured",
+    )
+    return copy_insert_ignore(con, "observations", columns, rows)
 
 
 def suspect_genus_taxon_ids(con: psycopg.Connection, ratio: float = 3.0) -> list[int]:

@@ -86,13 +86,6 @@ genera-once: (_playbook "genera-once")
 [group('deploy-once')]
 ingest-once: (_playbook "ingest-once")
 
-# One-off: push the already-filtered, already-verified data/inat_us_observations.jsonl (see
-# `just bulk-filter`) to the droplet and load it - the fast path for issue #79 Phase 3b instead
-# of waiting on the nightly ingest cron. Run `just ansible genera-once` first if the catalog
-# hasn't been warmed yet.
-[doc('Push the filtered bulk JSONL to the droplet and load it')]
-[group('deploy-once')]
-bulk-load-once: (_playbook "bulk-load-once")
 
 # One-time: clear the whole per-observation elevation backlog by sampling local Copernicus
 # GLO-90 tiles on the droplet, instead of trickling through Open-Meteo's ~10k/day free tier for

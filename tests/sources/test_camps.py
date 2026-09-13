@@ -565,7 +565,14 @@ def test_stage_ridb_uploads_filtered_rows_as_gzip_jsonl(monkeypatch: pytest.Monk
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == camps.RIDB_FULL_EXPORT_URL
-        return httpx.Response(200, content=zip_bytes)
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"content-length": str(len(zip_bytes))})
+        start, end = (int(part) for part in request.headers["Range"].removeprefix("bytes=").split("-"))
+        return httpx.Response(
+            206,
+            headers={"Content-Range": f"bytes {start}-{end}/{len(zip_bytes)}"},
+            content=zip_bytes[start : end + 1],
+        )
 
     uploaded: dict[str, bytes] = {}
 

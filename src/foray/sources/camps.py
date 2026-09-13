@@ -44,7 +44,7 @@ from foray import cache, spaces
 from foray.cache import upsert_campsites
 from foray.config import CoverageRegion, Settings, coverage_envelope
 from foray.geo import KM_PER_DEG_LAT, haversine_km
-from foray.sources.http import SOURCE_ERRORS, USER_AGENT, Throttle, retry_after_seconds
+from foray.sources.http import SOURCE_ERRORS, USER_AGENT, HttpRangeReader, Throttle, retry_after_seconds
 from foray.sources.ingest_base import run_area_ingest
 
 logger = logging.getLogger(__name__)
@@ -586,20 +586,18 @@ def _iter_bulk_campsite_rows(zf: zipfile.ZipFile) -> Iterator[tuple[Any, ...]]:
 
 
 def stage_ridb(cfg: Settings, snapshot_date: date, run_id: str, *, client: httpx.Client | None = None) -> None:
-    """Stager: download the RIDB full export, filter to camping facilities, upload as gzipped
-    JSON Lines under this run's Space prefix. Runs in GitHub Actions (no DB, no API key).
-    ``client`` is injectable (matches ``fetch_campsites``) so tests never hit the real URL."""
+    """Stager: stream-filter the live RIDB full export to camping facilities and upload as
+    gzipped JSON Lines under this run's Space prefix. Runs in GitHub Actions (no DB, no API
+    key). Uses ``HttpRangeReader`` (like ``inat_bulk.stage_inat``) rather than downloading the
+    ~235 MB zip to runner disk first - ``client`` is injectable so tests never hit the real
+    URL."""
     owns = client is None
-    client = client or httpx.Client(timeout=300.0)
+    client = client or httpx.Client(timeout=120.0)
     try:
-        with tempfile.NamedTemporaryFile(suffix=".zip") as tmp:
-            with client.stream("GET", RIDB_FULL_EXPORT_URL, follow_redirects=True) as resp:
-                resp.raise_for_status()
-                for chunk in resp.iter_bytes(1024 * 1024):
-                    tmp.write(chunk)
-            tmp.flush()
-            with zipfile.ZipFile(tmp.name) as zf:
-                rows = list(_iter_bulk_campsite_rows(zf))
+        reader = HttpRangeReader(client, RIDB_FULL_EXPORT_URL)
+        buffered = io.BufferedReader(reader, buffer_size=8 * 1024 * 1024)
+        with zipfile.ZipFile(buffered) as zf:
+            rows = list(_iter_bulk_campsite_rows(zf))
     finally:
         if owns:
             client.close()
@@ -618,8 +616,13 @@ def load_ridb(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
     key = spaces.snapshot_run_prefix("ridb", snapshot_date, run_id) + "campsites.jsonl.gz"
     with tempfile.NamedTemporaryFile(suffix=".jsonl.gz") as tmp:
         spaces.download_file(cfg.spaces, key, tmp.name)
-        with gzip.open(tmp.name, "rt", encoding="utf-8") as f:
-            rows = [tuple(json.loads(line)) for line in f if line.strip()]
+        with gzip.open(tmp.name, "rt", encoding="utf-8") as payload_file:
+            rows = [tuple(json.loads(line)) for line in payload_file if line.strip()]
     upsert_campsites(con, rows)
     pruned = cache.prune_campsites_missing_from(con, "ridb", [row[0] for row in rows])
+    # `/healthz/data` (issue #332) computes campground freshness from the newest `fetched_at`
+    # across every `camps:`-prefixed ingest_log key (`latest_ingest_at`) - without this, a
+    # successful bulk load would still read as stale there even though the live crawl above is
+    # now permanently skipped in its favor.
+    cache.record_ingest(con, f"camps:ridb:bulk:{snapshot_date.isoformat()}", len(rows))
     logger.info("camps: loaded %d ridb facilities from the bulk snapshot (pruned %d stale)", len(rows), pruned)

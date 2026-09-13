@@ -13,10 +13,12 @@ from foray.cache import (
     add_genus,
     apply_schema,
     connection,
+    copy_insert_ignore,
     copy_upsert,
     delete_observations,
     forget_ingest,
     genus_taxon_ids,
+    insert_observations_if_missing,
     is_ingested,
     latest_ingest_at,
     latest_job_run,
@@ -448,6 +450,37 @@ def test_copy_upsert_dedups_a_repeated_conflict_key_within_one_batch(con: psycop
     assert copy_upsert(con, "campsites", cols, [("x:1", "First"), ("x:1", "Second")]) == 2
     # One row, and the last occurrence in the batch wins - matches executemany's row-by-row order.
     assert con.execute("SELECT name FROM campsites WHERE id = 'x:1'").fetchall() == [("Second",)]
+
+
+def test_copy_insert_ignore_empty_is_a_noop(con: psycopg.Connection) -> None:
+    assert copy_insert_ignore(con, "campsites", ("id", "name"), []) == 0
+
+
+def test_copy_insert_ignore_never_overwrites_an_existing_row(con: psycopg.Connection) -> None:
+    cols = ("id", "name")
+    upsert_rows(con, "campsites", cols, [("x:1", "Original")])
+
+    copy_insert_ignore(con, "campsites", cols, [("x:1", "Would-be overwrite"), ("x:2", "New")])
+
+    assert con.execute("SELECT name FROM campsites WHERE id = 'x:1'").fetchone() == ("Original",)
+    assert con.execute("SELECT name FROM campsites WHERE id = 'x:2'").fetchone() == ("New",)
+
+
+def test_insert_observations_if_missing_leaves_existing_row_untouched(con: psycopg.Connection) -> None:
+    _insert(con, _ROW)  # taxon_id=111, quality_grade="needs_id" - already revalidated, say
+    stale_bulk_row = (_ROW[0], 999, 40.0, -100.0, dt.date(2020, 1, 1), 1, "research", 5, None, "u", None)
+
+    inserted = insert_observations_if_missing(con, [stale_bulk_row])
+
+    assert inserted == 1  # rows attempted, not rows actually written
+    row = con.execute("SELECT taxon_id, quality_grade FROM observations WHERE id = %s", [_ROW[0]]).fetchone()
+    assert row == (111, "needs_id")  # untouched by the "stale" bulk row
+
+
+def test_insert_observations_if_missing_inserts_new_rows(con: psycopg.Connection) -> None:
+    new_row = (2, 222, 47.6, -122.3, dt.date(2022, 4, 15), 4, "research", None, None, "u", None)
+    insert_observations_if_missing(con, [new_row])
+    assert con.execute("SELECT taxon_id FROM observations WHERE id = 2").fetchone() == (222,)
 
 
 def test_copy_upsert_fires_the_geom_trigger_on_the_insert_select(con: psycopg.Connection) -> None:
