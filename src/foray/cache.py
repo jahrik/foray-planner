@@ -766,6 +766,12 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         49,
         """
         ALTER TABLE public_land ADD COLUMN IF NOT EXISTS area_deg2 DOUBLE PRECISION;
+        -- Backfill before the trigger below exists, not after: a plain UPDATE once the trigger
+        -- is live would fire it too, recomputing ST_Area(geom::geometry) a second time for the
+        -- same row - undermining the "computed once per write" point of this migration, and
+        -- needlessly decompressing the biggest geometries twice during the deploy itself
+        -- (a Copilot review catch, PR #354).
+        UPDATE public_land SET area_deg2 = ST_Area(geom::geometry) WHERE geom IS NOT NULL;
         CREATE OR REPLACE FUNCTION foray_public_land_area() RETURNS trigger
         LANGUAGE plpgsql AS $$
         BEGIN
@@ -775,7 +781,6 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         $$;
         CREATE OR REPLACE TRIGGER trg_public_land_geom_area BEFORE INSERT OR UPDATE ON public_land
             FOR EACH ROW EXECUTE FUNCTION foray_public_land_area();
-        UPDATE public_land SET area_deg2 = ST_Area(geom::geometry) WHERE geom IS NOT NULL;
         """,
     ),
 ]
