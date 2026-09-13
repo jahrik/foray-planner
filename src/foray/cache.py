@@ -16,7 +16,7 @@ import datetime as dt
 import logging
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from typing import Any, LiteralString, cast
+from typing import Any, LiteralString
 
 import httpx
 import psycopg
@@ -1732,27 +1732,31 @@ def refresh_backfill_queue(con: psycopg.Connection, kind: str, cell_deg: float) 
     if kind not in _BACKFILL_ELIGIBLE:
         raise ValueError(f"unknown backfill kind {kind!r} (expected one of {sorted(_BACKFILL_ELIGIBLE)})")
     eligible_sql = _BACKFILL_ELIGIBLE[kind]
-    cell_sql = f"(floor(lat / {cell_deg}))::int::text || '_' || (floor(lng / {cell_deg}))::int::text"
+    # A literal (no interpolation) - cell_deg rides through as a bound %s param below instead
+    # (Copilot review, PR #351: f-string-interpolating a float into SQL text works but invites
+    # exactly this kind of question; parameterizing removes the doubt for free here).
+    cell_sql: LiteralString = "(floor(lat / %s))::int::text || '_' || (floor(lng / %s))::int::text"
     con.execute(
-        cast(
-            LiteralString,
-            f"""
-            WITH eligible AS (
-                SELECT id, {cell_sql} AS region_id FROM observations WHERE {eligible_sql}
-            ),
-            activity AS (
-                SELECT {cell_sql} AS region_id, count(*) AS recent_count
-                FROM observations
-                WHERE quality_grade = 'research' AND observed_on >= (CURRENT_DATE - %s * INTERVAL '1 day')
-                GROUP BY 1
-            )
-            INSERT INTO backfill_queue (kind, obs_id, priority)
-            SELECT %s, e.id, COALESCE(a.recent_count, 0)
-            FROM eligible e LEFT JOIN activity a USING (region_id)
-            ON CONFLICT (kind, obs_id) DO UPDATE SET priority = EXCLUDED.priority
-            """,
+        f"""
+        WITH eligible AS (
+            SELECT id, {cell_sql} AS region_id FROM observations WHERE {eligible_sql}
         ),
-        [_BACKFILL_ACTIVITY_WINDOW_DAYS, kind],
+        activity AS (
+            SELECT {cell_sql} AS region_id, count(*) AS recent_count
+            FROM observations
+            WHERE quality_grade = 'research' AND observed_on >= (CURRENT_DATE - %s * INTERVAL '1 day')
+                  AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180
+                  AND NOT COALESCE(obscured, false)
+            GROUP BY 1
+        )
+        INSERT INTO backfill_queue (kind, obs_id, priority)
+        SELECT %s, e.id, COALESCE(a.recent_count, 0)
+        FROM eligible e LEFT JOIN activity a USING (region_id)
+        ON CONFLICT (kind, obs_id) DO UPDATE SET priority = EXCLUDED.priority
+        """,
+        # Matches placeholder order left-to-right: eligible's cell_sql (lat, lng), activity's
+        # cell_sql (lat, lng), the activity window, then the INSERT's `kind` literal.
+        [cell_deg, cell_deg, cell_deg, cell_deg, _BACKFILL_ACTIVITY_WINDOW_DAYS, kind],
     )
     result = con.execute(
         f"""
@@ -1783,25 +1787,39 @@ def dequeue_backfill_batch(con: psycopg.Connection, kind: str, limit: int) -> li
     ``claimed_at``) needs no separate "stale claim" recovery: a row this call fails to enrich
     (the caller's HTTP call errors) just gets re-queued on the next ``refresh_backfill_queue``
     pass, since it's still eligible in ``observations``.
+
+    The returned list is in priority order (highest first) - ``DELETE ... RETURNING`` doesn't
+    itself guarantee that (a `CTE`'s `ORDER BY`/`LIMIT` shapes *which* rows are matched, not the
+    order the final statement returns them in), so the claimed rows carry an explicit rank
+    (`row_number()`) and are re-sorted by it in Python after the round-trip (Copilot review,
+    PR #351).
     """
     if limit <= 0:
         return []
     rows = con.execute(
         """
-        WITH claimed AS (
-            SELECT obs_id FROM backfill_queue
+        WITH candidates AS (
+            -- FOR UPDATE can't share a CTE with a window function, so the lock+limit
+            -- happens here and the row_number() ranking happens in a separate CTE over
+            -- this already-small, already-locked result.
+            SELECT obs_id, priority, enqueued_at FROM backfill_queue
             WHERE kind = %s
             ORDER BY priority DESC, enqueued_at ASC
             LIMIT %s
             FOR UPDATE SKIP LOCKED
+        ),
+        claimed AS (
+            SELECT obs_id, row_number() OVER (ORDER BY priority DESC, enqueued_at ASC) AS rank
+            FROM candidates
         )
         DELETE FROM backfill_queue q USING claimed c
         WHERE q.kind = %s AND q.obs_id = c.obs_id
-        RETURNING q.obs_id
+        RETURNING q.obs_id, c.rank
         """,
         [kind, limit, kind],
     ).fetchall()
-    return [obs_id for (obs_id,) in rows]
+    rows.sort(key=lambda row: row[1])
+    return [obs_id for obs_id, _rank in rows]
 
 
 def job_run_drain_rate(con: psycopg.Connection, job: str, *, sample_runs: int = 5) -> float | None:
@@ -1886,7 +1904,14 @@ def observations_missing_elevation(
     obs_ids = dequeue_backfill_batch(con, "elevation", limit)
     if not obs_ids:
         return []
-    rows = con.execute("SELECT id, lat, lng FROM observations WHERE id = ANY(%s)", [obs_ids]).fetchall()
+    # unnest(...) WITH ORDINALITY + ORDER BY, not `id = ANY(%s)` - the latter doesn't preserve
+    # the input array's order, which would silently discard dequeue_backfill_batch's priority
+    # ranking before the caller ever sees it (Copilot review, PR #351).
+    rows = con.execute(
+        "SELECT o.id, o.lat, o.lng FROM unnest(%s::bigint[]) WITH ORDINALITY AS t(id, ord) "
+        "JOIN observations o ON o.id = t.id ORDER BY t.ord",
+        [obs_ids],
+    ).fetchall()
     return [(int(obs_id), float(lat), float(lng)) for obs_id, lat, lng in rows]
 
 
@@ -1997,7 +2022,13 @@ def observations_missing_precip(
     obs_ids = dequeue_backfill_batch(con, "precip", limit)
     if not obs_ids:
         return []
-    rows = con.execute("SELECT id, lat, lng, observed_on FROM observations WHERE id = ANY(%s)", [obs_ids]).fetchall()
+    # unnest(...) WITH ORDINALITY, not `id = ANY(%s)` - see the matching note in
+    # observations_missing_elevation.
+    rows = con.execute(
+        "SELECT o.id, o.lat, o.lng, o.observed_on FROM unnest(%s::bigint[]) WITH ORDINALITY AS t(id, ord) "
+        "JOIN observations o ON o.id = t.id ORDER BY t.ord",
+        [obs_ids],
+    ).fetchall()
     return [(int(obs_id), float(lat), float(lng), observed_on) for obs_id, lat, lng, observed_on in rows]
 
 

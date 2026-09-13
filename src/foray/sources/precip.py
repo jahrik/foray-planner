@@ -169,6 +169,14 @@ def fetch_recent_precip_batch(
     finally:
         if owns:
             client.close()
+    # Open-Meteo's multi-location array response only kicks in for 2+ locations - a single
+    # center gets the plain single-location object shape back (verified live 2026-09-13),
+    # which would otherwise iterate the dict's *keys* below instead of one location entry
+    # (Copilot review, PR #351).
+    if isinstance(payload, dict):
+        payload = [payload]
+    if len(payload) != len(centers):
+        raise ValueError(f"expected {len(centers)} location(s) in the response, got {len(payload)}")
     results: list[dict[dt.date, float | None]] = []
     for entry in payload:
         daily = entry.get("daily") or {}

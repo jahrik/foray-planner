@@ -106,6 +106,24 @@ def test_recent_batch_returns_one_series_per_center_in_order() -> None:
     assert results == [{dt.date(2026, 1, 1): 1.0}, {dt.date(2026, 1, 1): 2.0}]
 
 
+def test_recent_batch_single_center_unwraps_the_bare_object_response() -> None:
+    # Open-Meteo only returns the multi-location JSON array for 2+ locations - a single
+    # center gets the plain single-location object shape back (real behavior, verified live).
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"daily": {"time": ["2026-01-01"], "precipitation_sum": [5.0]}})
+
+    results = precip.fetch_recent_precip_batch([(45.0, -122.0)], client=_client(handler))
+    assert results == [{dt.date(2026, 1, 1): 5.0}]
+
+
+def test_recent_batch_raises_on_a_center_count_mismatch() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"daily": {"time": [], "precipitation_sum": []}}])
+
+    with pytest.raises(ValueError, match="expected 2"):
+        precip.fetch_recent_precip_batch([(45.0, -122.0), (10.0, 20.0)], client=_client(handler))
+
+
 def test_recent_batch_empty_input_makes_no_request() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError("should not be called for an empty batch")
