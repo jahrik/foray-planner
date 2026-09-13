@@ -384,15 +384,15 @@ def backfill_forage_cmd(limit: int | None) -> None:
 
 
 @cli.command("backfill-trail-land")
-@click.option("--batch-size", type=click.IntRange(min=1), default=5000, help="Trails processed per committed batch.")
-def backfill_trail_land_cmd(batch_size: int) -> None:
+def backfill_trail_land_cmd() -> None:
     """One-time backfill of `trails.land_agency` / `land_unit` (issue #335 PR 2) for every trail
     cached before migration 48 shipped - only needs to run once per environment; new trails and
-    land refreshes keep it current from then on (see `cache._assign_trail_land`). Batched with a
-    commit per batch, so it's safe to interrupt and safe to re-run."""
+    land refreshes keep it current from then on (see `cache._assign_trail_land`). Polygon-driven
+    (one committed UPDATE per public_land polygon, smallest first - see `backfill_trail_land`'s
+    docstring), so it's safe to interrupt and safe to re-run."""
     con = connect()
     try:
-        updated = backfill_trail_land(con, batch_size=batch_size)
+        updated = backfill_trail_land(con)
         click.echo(f"Backfilled land_agency/land_unit for {updated} trails.")
     finally:
         con.close()
