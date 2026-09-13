@@ -400,7 +400,8 @@ def trails_near(
     # distance, [12] best connected length, [13] connects-a-route flag, [14] target-genus obs
     # count near the line (query-time, genus-filtered), [15] persisted genus-agnostic forage_obs,
     # [16]/[17] persisted land_agency/land_unit. Prominence is the lead trail's length (for a
-    # a route bonus, plus a log-scaled foraging-density term.
+    # trailhead) or the row's own (for a path), plus a route bonus, plus a log-scaled
+    # foraging-density term.
     def lead_length(row: Sequence[Any]) -> float:
         return row[12] if row[12] is not None else (row[8] or 0.0)
 

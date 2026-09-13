@@ -388,6 +388,9 @@ _CONCURRENT_INDEXES: list[LiteralString | tuple[LiteralString, str]] = [
 # wilderness inside a forest beats the forest). Shared between the one-time migration backfill
 # below and `_assign_trail_land`'s incremental recompute so the two queries can't drift apart.
 # References `t2` - the caller's outer query must alias the trails row that way.
+# Default page size for every trail<->land relabeling write (below) - bounds a single UPDATE to
+# this many rows regardless of how many trails a land or trail upsert batch could otherwise touch.
+_TRAIL_LAND_BATCH_SIZE = 5000
 _TRAIL_LAND_JOIN: LiteralString = """
     LEFT JOIN LATERAL (
         SELECT pl.agency, pl.unit FROM public_land pl
@@ -1350,25 +1353,41 @@ def _assign_trail_land(
     return result.rowcount
 
 
-def backfill_trail_land(con: psycopg.Connection, *, batch_size: int = 5000) -> int:
-    """One-time backfill of ``trails.land_agency`` / ``land_unit`` for every trail cached before
-    migration 48 shipped (issue #335 PR 2's ``foray backfill-trail-land`` CLI command).
+def _assign_trail_land_paged(
+    con: psycopg.Connection,
+    *,
+    bbox: tuple[float, float, float, float] | None = None,
+    batch_size: int = _TRAIL_LAND_BATCH_SIZE,
+) -> int:
+    """Page :func:`_assign_trail_land` over every trail in ``bbox`` (or the whole table when
+    ``bbox`` is ``None``), ``batch_size`` ids at a time - each page its own committed UPDATE via
+    ``_assign_trail_land``, never one UPDATE spanning however many trails the box covers.
 
-    Migration 48 only adds the columns - deliberately no backfill UPDATE there, see its comment
-    in ``_MIGRATIONS``. ``_assign_trail_land`` keeps *new* writes current from then on, but a
-    trail already cached (and whose ingest marker already says "done", so it won't naturally
-    re-upsert) needs this run once. Walks the table in id-ordered pages, each page its own
-    autocommitted UPDATE (``con`` is autocommit) rather than one table-wide transaction - safe to
-    interrupt (whatever already committed stays done) and safe to re-run (relabeling an
-    already-labeled trail is a no-op in effect). Returns rows visited.
+    A Copilot review catch on PR #353: ``upsert_public_land`` used to hand ``_assign_trail_land``
+    a raw bbox straight through, and a coverage-wide land refresh's bbox can span most of the
+    country - that recreated the exact unbatched, un-interruptible write migration 48 was split
+    up to avoid, just one call site later. This is also what :func:`backfill_trail_land` uses
+    for its full-table pass (``bbox=None``).
     """
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be positive, got {batch_size}")
+    where: LiteralString
+    bbox_params: list[Any]
+    if bbox is not None:
+        min_lng, min_lat, max_lng, max_lat = bbox
+        where = "AND center_lng BETWEEN %s AND %s AND center_lat BETWEEN %s AND %s"
+        bbox_params = [min_lng, max_lng, min_lat, max_lat]
+    else:
+        where = ""
+        bbox_params = []
     last_id = ""
     visited = 0
     while True:
         batch_ids = [
             row[0]
             for row in con.execute(
-                "SELECT id FROM trails WHERE id > %s ORDER BY id LIMIT %s", [last_id, batch_size]
+                f"SELECT id FROM trails WHERE id > %s {where} ORDER BY id LIMIT %s",
+                [last_id, *bbox_params, batch_size],
             ).fetchall()
         ]
         if not batch_ids:
@@ -1376,28 +1395,70 @@ def backfill_trail_land(con: psycopg.Connection, *, batch_size: int = 5000) -> i
         _assign_trail_land(con, trail_ids=batch_ids)
         visited += len(batch_ids)
         last_id = batch_ids[-1]
-        logger.info("land: backfilled trail<->land for %d trails so far", visited)
+
+
+def backfill_trail_land(con: psycopg.Connection, *, batch_size: int = _TRAIL_LAND_BATCH_SIZE) -> int:
+    """One-time backfill of ``trails.land_agency`` / ``land_unit`` for every trail cached before
+    migration 48 shipped (issue #335 PR 2's ``foray backfill-trail-land`` CLI command).
+
+    Migration 48 only adds the columns - deliberately no backfill UPDATE there, see its comment
+    in ``_MIGRATIONS``. ``_assign_trail_land`` keeps *new* writes current from then on, but a
+    trail already cached (and whose ingest marker already says "done", so it won't naturally
+    re-upsert) needs this run once. Delegates to :func:`_assign_trail_land_paged`, each page its
+    own autocommitted UPDATE (``con`` is autocommit) rather than one table-wide transaction - safe
+    to interrupt (whatever already committed stays done) and safe to re-run (relabeling an
+    already-labeled trail is a no-op in effect). Returns rows visited.
+    """
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be positive, got {batch_size}")
+    visited = _assign_trail_land_paged(con, batch_size=batch_size)
+    logger.info("land: backfilled trail<->land for %d trails", visited)
+    return visited
+
+
+def _public_land_bbox(con: psycopg.Connection, ids: Sequence[str]) -> tuple[float, float, float, float] | None:
+    """Bounding box of the cached ``public_land`` rows named by ``ids``, or ``None`` if none of
+    them currently have a row (either they're new, or - called before the upsert - never existed)."""
+    row = con.execute(
+        "SELECT ST_XMin(e), ST_YMin(e), ST_XMax(e), ST_YMax(e) "
+        "FROM (SELECT ST_Extent(geom::geometry) AS e FROM public_land WHERE id = ANY(%s)) box",
+        [list(ids)],
+    ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return cast(tuple[float, float, float, float], row)
+
+
+def _union_bbox(
+    a: tuple[float, float, float, float] | None, b: tuple[float, float, float, float] | None
+) -> tuple[float, float, float, float] | None:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
 
 
 def upsert_public_land(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
     """Upsert public-land polygons, refreshing existing rows in place. Returns rows attempted.
 
     Each tuple is (id, agency, unit, source, url, geojson). Relabels any trail that may fall
-    inside the newly-upserted footprint (see :func:`_assign_trail_land`) - scoped to the bbox
-    of just the rows upserted here, not every cached polygon, so a home-radius land refresh
-    doesn't force a full-table trail scan.
+    inside the changed footprint (see :func:`_assign_trail_land_paged`) - scoped to the union of
+    the *pre*- and *post*-upsert bbox of just the rows upserted here, not every cached polygon,
+    so a home-radius land refresh doesn't force a full-table trail scan. The pre-upsert bbox
+    matters too (a Copilot review catch, PR #353): a polygon that shrank or moved would otherwise
+    leave a trail in its *old* footprint mislabeled forever, since the new bbox alone never covers
+    where that trail actually sits.
     """
     columns: tuple[LiteralString, ...] = ("id", "agency", "unit", "source", "url", "geojson")
-    result = upsert_rows(con, "public_land", columns, rows)
     ids = [row[0] for row in rows]
+    old_bbox = _public_land_bbox(con, ids) if ids else None
+    result = upsert_rows(con, "public_land", columns, rows)
     if ids:
-        bbox = con.execute(
-            "SELECT ST_XMin(e), ST_YMin(e), ST_XMax(e), ST_YMax(e) "
-            "FROM (SELECT ST_Extent(geom::geometry) AS e FROM public_land WHERE id = ANY(%s)) box",
-            [ids],
-        ).fetchone()
-        if bbox is not None and bbox[0] is not None:
-            _assign_trail_land(con, bbox=cast(tuple[float, float, float, float], bbox))
+        new_bbox = _public_land_bbox(con, ids)
+        bbox = _union_bbox(old_bbox, new_bbox)
+        if bbox is not None:
+            _assign_trail_land_paged(con, bbox=bbox)
     _invalidate_rank_cache()
     return result
 
@@ -1432,7 +1493,9 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
     geometry_rows = [(row[0], row[7]) for row in rows]
     result = upsert_rows(con, "trails", trails_columns, trails_rows)
     upsert_rows(con, "trail_geometry", ("id", "geojson"), geometry_rows)
-    _assign_trail_land(con, trail_ids=[row[0] for row in rows])
+    ids = [row[0] for row in rows]
+    for i in range(0, len(ids), _TRAIL_LAND_BATCH_SIZE):
+        _assign_trail_land(con, trail_ids=ids[i : i + _TRAIL_LAND_BATCH_SIZE])
     _invalidate_rank_cache()
     return result
 
