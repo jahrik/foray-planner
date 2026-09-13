@@ -8,10 +8,11 @@ import httpx
 import psycopg
 import pytest
 
-from foray.cache import is_ingested, upsert_public_land
+from foray.cache import is_ingested, record_ingest, upsert_public_land
 from foray.config import CoverageRegion, Settings, coverage_envelope
 from foray.scoring import land_near
 from foray.sources.land import (
+    _LAND_SOURCES_VERSION,
     SOURCES,
     LandSource,
     _bounds,
@@ -124,9 +125,20 @@ def test_padus_id_is_stable_and_independent_of_objectid() -> None:
     # PAD-US's OBJECTID isn't stable across releases (issue #335) - the id must be derived
     # from content instead, and the same content must always hash to the same id.
     props = {"Mang_Name": "SPR", "Unit_Nm": "Prairie Creek Redwoods State Park", "OBJECTID": 189457}
+    bounds = (-124.05, 41.30, -123.95, 41.40)
     same_props_new_objectid = {**props, "OBJECTID": 999999}
-    assert _padus_id(props) == _padus_id(same_props_new_objectid)
-    assert _padus_id({"Mang_Name": "NPS", "Unit_Nm": "Redwood National Park"}) != _padus_id(props)
+    assert _padus_id(props, bounds) == _padus_id(same_props_new_objectid, bounds)
+    assert _padus_id({"Mang_Name": "NPS", "Unit_Nm": "Redwood National Park"}, bounds) != _padus_id(props, bounds)
+
+
+def test_padus_id_disambiguates_identically_named_features_by_location() -> None:
+    # A Copilot review catch (PR #352): PAD-US has many distinct polygons sharing the generic
+    # Unit_Nm "Unnamed site - Other State" - a unit-name-only hash collapsed them onto one id,
+    # so `_fetch_public_land_envelope`'s id-keyed dedup silently dropped all but the last.
+    props = {"Mang_Name": "OTHS", "Unit_Nm": "Unnamed site - Other State"}
+    here = (-124.05, 41.30, -123.95, 41.40)
+    elsewhere = (-120.05, 38.30, -119.95, 38.40)
+    assert _padus_id(props, here) != _padus_id(props, elsewhere)
 
 
 def test_padus_out_fields_include_mang_name_alongside_id_and_name() -> None:
@@ -137,18 +149,47 @@ def test_padus_out_fields_include_mang_name_alongside_id_and_name() -> None:
 
 def test_parse_feature_uses_padus_make_id_and_agency_of() -> None:
     padus = next(source for source in SOURCES if source.key == "padus")
-    row = _parse_feature(
-        padus,
-        {
-            "properties": {"OBJECTID": 189457, "Mang_Name": "SPR", "Unit_Nm": "Prairie Creek Redwoods State Park"},
-            "geometry": _polygon(41.35, -124.0),
-        },
-    )
+    props = {"OBJECTID": 189457, "Mang_Name": "SPR", "Unit_Nm": "Prairie Creek Redwoods State Park"}
+    geometry = _polygon(41.35, -124.0)
+    row = _parse_feature(padus, {"properties": props, "geometry": geometry})
+    bounds = _bounds(geometry["coordinates"])
     assert row is not None
-    assert row[0] == f"padus:{_padus_id({'Mang_Name': 'SPR', 'Unit_Nm': 'Prairie Creek Redwoods State Park'})}"
+    assert bounds is not None
+    assert row[0] == f"padus:{_padus_id(props, bounds)}"
     assert row[1] == "State Park and Recreation"
     assert row[2] == "Prairie Creek Redwoods State Park"
     assert row[3] == "padus"
+
+
+def test_fetch_public_land_does_not_collide_padus_features_sharing_a_generic_name() -> None:
+    # End-to-end regression for the same Copilot catch, through the dedup path in
+    # `_fetch_public_land_envelope` rather than `_padus_id` in isolation.
+    padus = next(source for source in SOURCES if source.key == "padus")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(request.url.params.get("resultOffset", "0"))
+        if offset > 0:
+            return httpx.Response(200, json={"type": "FeatureCollection", "features": []})
+        return httpx.Response(
+            200,
+            json={
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "properties": {"OBJECTID": 1, "Mang_Name": "OTHS", "Unit_Nm": "Unnamed site - Other State"},
+                        "geometry": _polygon(41.35, -124.0),
+                    },
+                    {
+                        "properties": {"OBJECTID": 2, "Mang_Name": "OTHS", "Unit_Nm": "Unnamed site - Other State"},
+                        "geometry": _polygon(38.35, -120.0),
+                    },
+                ],
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    rows = fetch_public_land(lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, client=client, sources=(padus,))
+    assert len(rows) == 2  # both survive the id-keyed dedup instead of one overwriting the other
 
 
 def test_fetch_public_land_dedupes_and_skips_a_failing_source() -> None:
@@ -292,7 +333,31 @@ def test_ingest_public_land_coverage_upserts_and_records_ingest(con: psycopg.Con
     cfg = Settings(coverage=[CoverageRegion(name="Washington", place_id=46, bbox=(-124.8, 45.5, -116.9, 49.0))])
     count = ingest_public_land_coverage(cfg, con, client=client, sources=(BLM, USFS))
     assert count == 1
-    assert is_ingested(con, "land:coverage")
+    assert is_ingested(con, f"land:coverage:v{_LAND_SOURCES_VERSION}")
     # Second call skips before ever opening a client - if it didn't, this would try (and fail)
     # to reach the real ArcGIS services, since no client is passed here.
     assert ingest_public_land_coverage(cfg, con, sources=(BLM, USFS)) == 0
+
+
+def test_ingest_public_land_coverage_reruns_past_an_unversioned_marker(con: psycopg.Connection) -> None:
+    # A Copilot review catch (PR #352): adding PAD-US to SOURCES without versioning the marker
+    # would leave a deployment that already recorded the pre-PAD-US "land:coverage" key stuck
+    # skipping forever - PAD-US would never be fetched. The versioned key must not match it.
+    record_ingest(con, "land:coverage", 1)  # simulate a pre-#335 deployment's marker
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(request.url.params.get("resultOffset", "0"))
+        if offset > 0:
+            return httpx.Response(200, json={"type": "FeatureCollection", "features": []})
+        return httpx.Response(
+            200,
+            json={
+                "type": "FeatureCollection",
+                "features": [{"properties": {"OBJECTID": 1}, "geometry": _polygon(47.6, -122.3)}],
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    cfg = Settings(coverage=[CoverageRegion(name="Washington", place_id=46, bbox=(-124.8, 45.5, -116.9, 49.0))])
+    assert ingest_public_land_coverage(cfg, con, client=client, sources=(BLM,)) == 1
+    assert is_ingested(con, f"land:coverage:v{_LAND_SOURCES_VERSION}")

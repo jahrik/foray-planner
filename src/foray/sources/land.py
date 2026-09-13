@@ -58,6 +58,13 @@ _PAGE_SIZE = 1000
 # MultiPolygons small enough to cache and render on a phone; ownership shading needs no more.
 _SIMPLIFY_DEG = 0.005
 
+# Bump when the SOURCES tuple changes in a way that needs a re-pull (e.g. adding PAD-US here,
+# issue #335 PR 1, a Copilot review catch on PR #352): both the coverage-wide marker
+# (``land:coverage:v{N}``) and the home-radius prefix (``land:v{N}:``) below fold this in, so
+# an existing deployment that already recorded the unversioned markers re-fetches once instead
+# of silently keeping the new source's data missing forever.
+_LAND_SOURCES_VERSION = 2
+
 
 @dataclass(frozen=True)
 class LandSource:
@@ -72,8 +79,9 @@ class LandSource:
     id_field: str = "OBJECTID"  # stable per-feature id (matched case-insensitively)
     extra_fields: tuple[str, ...] = ()  # additional outFields a custom id/agency needs
     # PAD-US's OBJECTID isn't stable across releases (issue #335) - a source that needs a
-    # feature id built from other properties sets this instead of relying on id_field.
-    make_id: Callable[[dict[str, Any]], str] | None = None
+    # feature id built from other properties (plus the geometry bounds, to disambiguate
+    # features that share a generic name) sets this instead of relying on id_field.
+    make_id: Callable[[dict[str, Any], tuple[float, float, float, float]], str] | None = None
     # PAD-US's agency is a coded value (e.g. "SPR"), not a display name - a source that needs
     # to resolve one sets this instead of using the static `agency` field.
     agency_of: Callable[[dict[str, Any]], str] | None = None
@@ -150,11 +158,21 @@ def _padus_agency(props: dict[str, Any]) -> str:
     return _PADUS_AGENCY_NAMES.get(code, code)
 
 
-def _padus_id(props: dict[str, Any]) -> str:
-    """A feature id independent of `OBJECTID`, which isn't stable across PAD-US releases."""
+def _padus_id(props: dict[str, Any], bounds: tuple[float, float, float, float]) -> str:
+    """A feature id independent of `OBJECTID`, which isn't stable across PAD-US releases.
+
+    Unit name alone collides: many small unnamed parcels share the generic `Unit_Nm`
+    "Unnamed site - Other State" (a real Copilot review catch, PR #352 - the earlier
+    name-only hash mapped every one of those onto the same cache row, silently dropping
+    all but the last). Folding in the geometry's centroid (rounded to ~100 m, coarser than
+    server-side simplification jitter between releases) disambiguates distinct polygons
+    while keeping the same real-world feature's id stable release to release.
+    """
     code = str(_get(props, "Mang_Name") or "unk").strip().lower()
     unit = str(_get(props, "Unit_Nm") or "").strip().lower()
-    digest = hashlib.sha1(unit.encode("utf-8")).hexdigest()[:10]
+    min_lng, min_lat, max_lng, max_lat = bounds
+    centroid = f"{(min_lat + max_lat) / 2:.3f}:{(min_lng + max_lng) / 2:.3f}"
+    digest = hashlib.sha1(f"{unit}:{centroid}".encode()).hexdigest()[:10]
     return f"{code}:{digest}"
 
 
@@ -253,13 +271,15 @@ def _parse_feature(source: LandSource, feature: dict[str, Any]) -> tuple[Any, ..
     if not geometry or not geometry.get("coordinates"):
         return None
     props = feature.get("properties") or {}
-    feature_id = source.make_id(props) if source.make_id else _get(props, source.id_field)
-    if feature_id in (None, ""):
-        return None
     # A geometry whose coords contain no numeric pair is junk - drop it here rather than let
     # the geom trigger silently store NULL. (The bbox is no longer persisted since issue #268
-    # PR 5; the `geom` GIST index serves "land near here".)
-    if _bounds(geometry["coordinates"]) is None:
+    # PR 5; the `geom` GIST index serves "land near here".) Computed once and reused as the
+    # `make_id` discriminator below rather than walking the coordinate tree twice.
+    bounds = _bounds(geometry["coordinates"])
+    if bounds is None:
+        return None
+    feature_id = source.make_id(props, bounds) if source.make_id else _get(props, source.id_field)
+    if feature_id in (None, ""):
         return None
     name = _get(props, source.name_field)
     unit = str(name).strip() if name not in (None, "") else source.fallback_name
@@ -380,7 +400,7 @@ def ingest_public_land(
     return run_area_ingest(
         cfg,
         con,
-        prefix="land:",
+        prefix=f"land:v{_LAND_SOURCES_VERSION}:",
         label="land",
         noun="Public land",
         fetch=lambda **kw: fetch_public_land(client=client, sources=sources, **kw),
@@ -397,23 +417,28 @@ def ingest_public_land_coverage(
     sources: Iterable[LandSource] = SOURCES,
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
-    """Ingest BLM/USFS ownership across all of ``cfg.coverage`` in one envelope query.
+    """Ingest BLM/USFS/tribal/PAD-US ownership across all of ``cfg.coverage`` in one envelope
+    query.
 
     A single request covers the whole union bbox - ArcGIS's own pagination (see
     ``_iter_features``) already handles arbitrarily many results, so there's no need to chunk
-    by region the way ``trails.py`` has to for Overpass. One-shot: skips entirely once
-    ``land:coverage`` is in ``ingest_log``, same as the home-radius path.
+    by region the way ``trails.py`` has to for Overpass. One-shot per ``SOURCES`` version:
+    skips once ``land:coverage:v{N}`` is in ``ingest_log``, same self-heal as trails/camps/
+    dispersed - bumping ``_LAND_SOURCES_VERSION`` re-pulls every region on the next
+    ``refresh --with land --all`` cron.
     """
+    key = f"land:coverage:v{_LAND_SOURCES_VERSION}"
     with connection(con) as database:
-        if is_ingested(database, "land:coverage"):
-            logger.info("land: coverage-wide ownership already ingested, skipping")
+        if is_ingested(database, key):
+            logger.info("land: coverage-wide ownership already ingested at v%d, skipping", _LAND_SOURCES_VERSION)
             if progress_cb:
                 progress_cb("Public land already cached, skipping…", 100.0)
             return 0
         envelope = coverage_envelope(cfg.coverage)
-        logger.info("land: fetching BLM/USFS ownership across %d coverage regions…", len(cfg.coverage))
+        logger.info("land: fetching ownership across %d coverage regions…", len(cfg.coverage))
         rows = _fetch_public_land_envelope(envelope, client=client, sources=sources, progress_cb=progress_cb)
         upsert_public_land(database, rows)
-        record_ingest(database, "land:coverage", len(rows))
+        record_ingest(database, key, len(rows))
+        database.execute("DELETE FROM ingest_log WHERE key LIKE %s AND key <> %s", ["land:coverage:v%", key])
         logger.info("land: cached %d public-land units (coverage-wide)", len(rows))
         return len(rows)
