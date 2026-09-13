@@ -496,7 +496,7 @@ def test_copy_upsert_fires_the_geom_trigger_on_the_insert_select(con: psycopg.Co
     assert row == (47.6, -122.3)
 
 
-def _research_row(obs_id: int, lat: float, lng: float, observed_on: dt.date) -> tuple:
+def _research_row(obs_id: int, lat: float, lng: float, observed_on: dt.date, *, obscured: bool = False) -> tuple:
     return (
         obs_id,
         111,
@@ -508,7 +508,7 @@ def _research_row(obs_id: int, lat: float, lng: float, observed_on: dt.date) -> 
         10,
         None,
         f"https://inaturalist.org/observations/{obs_id}",
-        False,
+        obscured,
     )
 
 
@@ -567,6 +567,23 @@ def test_refresh_backfill_queue_prioritizes_recently_active_cells(con: psycopg.C
     assert claimed == [1, 2]  # id 1's cell has 3 recent observations vs id 2's cell's 1
 
 
+def test_refresh_backfill_queue_activity_score_excludes_obscured_rows(con: psycopg.Connection) -> None:
+    # id 1's cell has one real neighbor (id 3) and one obscured "neighbor" (id 4, iNat's
+    # randomized decoy coordinate for some other true location) - the obscured row must not
+    # inflate id 1's activity score, since its coordinate isn't real signal about this cell.
+    upsert_observations(
+        con,
+        [
+            _research_row(1, 47.6, -122.3, _TODAY),
+            _research_row(3, 47.61, -122.31, _TODAY),
+            _research_row(4, 47.62, -122.32, _TODAY, obscured=True),
+        ],
+    )
+    refresh_backfill_queue(con, "elevation", _CELL)
+    priority = con.execute("SELECT priority FROM backfill_queue WHERE kind = 'elevation' AND obs_id = 1").fetchone()
+    assert priority == (2,)  # counts id 1 + id 3 only, not the obscured id 4
+
+
 def test_refresh_backfill_queue_removes_rows_no_longer_eligible(con: psycopg.Connection) -> None:
     upsert_observations(con, [_research_row(1, 47.6, -122.3, _TODAY)])
     refresh_backfill_queue(con, "elevation", _CELL)
@@ -605,6 +622,38 @@ def test_dequeue_backfill_batch_removes_claimed_rows(con: psycopg.Connection) ->
 
 def test_dequeue_backfill_batch_zero_limit_returns_empty(con: psycopg.Connection) -> None:
     assert dequeue_backfill_batch(con, "elevation", 0) == []
+
+
+def test_dequeue_backfill_batch_preserves_priority_order(con: psycopg.Connection) -> None:
+    con.execute(
+        "INSERT INTO backfill_queue (kind, obs_id, priority) VALUES "
+        "('elevation', 1, 1), ('elevation', 2, 9), ('elevation', 3, 5)"
+    )
+    assert dequeue_backfill_batch(con, "elevation", 10) == [2, 3, 1]
+
+
+def test_observations_missing_elevation_join_preserves_priority_order(con: psycopg.Connection) -> None:
+    # Three isolated cells, given three different real activity levels (extra already-enriched
+    # neighbors in ids 2 and 3's cells) so refresh_backfill_queue computes genuinely different
+    # priorities - id 1's cell is quietest, id 2's the busiest. Verifies the full
+    # observations_missing_elevation(near=None) path - refresh + dequeue + the
+    # unnest(...) WITH ORDINALITY join - doesn't scramble the priority ordering along the way.
+    rows = [
+        _research_row(1, 47.6, -122.3, _TODAY),  # quietest cell: just this row
+        _research_row(2, 10.0, 10.0, _TODAY),
+        _research_row(20, 10.01, 10.01, _TODAY),
+        _research_row(21, 10.02, 10.02, _TODAY),
+        _research_row(22, 10.03, 10.03, _TODAY),  # id 2's cell: busiest (4 rows)
+        _research_row(3, -30.1, -60.1, _TODAY),
+        _research_row(30, -30.11, -60.11, _TODAY),  # id 3's cell: middling (2 rows)
+    ]
+    upsert_observations(con, rows)
+    for obs_id in (20, 21, 22, 30):
+        _set_enrichment(con, obs_id, elevation_m=100)  # already enriched - not eligible itself
+
+    pending = observations_missing_elevation(con, 10, cell_deg=_CELL)
+
+    assert [obs_id for obs_id, *_ in pending] == [2, 3, 1]
 
 
 def test_observations_missing_elevation_without_near_uses_the_queue(con: psycopg.Connection) -> None:
