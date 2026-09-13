@@ -384,7 +384,7 @@ def backfill_forage_cmd(limit: int | None) -> None:
 
 
 @cli.command("backfill-trail-land")
-@click.option("--batch-size", type=int, default=5000, help="Trails processed per committed batch.")
+@click.option("--batch-size", type=click.IntRange(min=1), default=5000, help="Trails processed per committed batch.")
 def backfill_trail_land_cmd(batch_size: int) -> None:
     """One-time backfill of `trails.land_agency` / `land_unit` (issue #335 PR 2) for every trail
     cached before migration 48 shipped - only needs to run once per environment; new trails and

@@ -740,6 +740,34 @@ def test_trail_land_is_persisted_at_ingest_and_tags_the_smallest_owning_unit(con
     assert unknown is None
 
 
+def test_upsert_public_land_clears_a_stale_label_when_a_polygon_shrinks_away(con: psycopg.Connection) -> None:
+    """A Copilot review catch (PR #353): relabeling only the *new* upsert's bbox would leave a
+    trail's old label stale forever if the polygon that used to cover it shrinks or moves away -
+    the new (smaller/relocated) bbox never includes the trail's actual location, so nothing tells
+    it its old label is gone. The relabel must also scope to the *pre*-upsert footprint."""
+    road = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "track", "name": "FR 12"},
+            "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.30}],
+        }
+    )
+    assert road is not None
+    upsert_trails(con, [road])
+    wide = '{"type":"Polygon","coordinates":[[[-123,47],[-121,47],[-121,48],[-123,48],[-123,47]]]}'
+    upsert_public_land(con, [("pl:1", "USFS", "Big National Forest", "usfs", "u", wide)])
+    labeled = get_trail(con, "osm:way/1")
+    assert labeled is not None and (labeled.land_agency, labeled.land_unit) == ("USFS", "Big National Forest")
+
+    # Same polygon id, shrunk down to a spot nowhere near the road.
+    shrunk = '{"type":"Polygon","coordinates":[[[10,10],[11,10],[11,11],[10,11],[10,10]]]}'
+    upsert_public_land(con, [("pl:1", "USFS", "Big National Forest", "usfs", "u", shrunk)])
+
+    cleared = get_trail(con, "osm:way/1")
+    assert cleared is not None and (cleared.land_agency, cleared.land_unit) == (None, None)
+
+
 def test_backfill_trail_land_labels_trails_a_migration_left_null(con: psycopg.Connection) -> None:
     """Migration 48 only adds the columns (deliberately no in-migration backfill UPDATE - see
     its comment) - `backfill_trail_land` is the separate one-time pass that fills them in for
