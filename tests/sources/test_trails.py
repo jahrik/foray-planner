@@ -794,13 +794,49 @@ def test_backfill_trail_land_labels_trails_a_migration_left_null(con: psycopg.Co
     upsert_public_land(con, [("pl:1", "USFS", "Small Wilderness", "usfs", "u", wild)])
     con.execute("UPDATE trails SET land_agency = NULL, land_unit = NULL")
 
-    updated = backfill_trail_land(con, batch_size=1)  # forces >1 page over the 2 rows
+    updated = backfill_trail_land(con)
 
     assert updated == 2
     for way_id in (1, 2):
         trail = get_trail(con, f"osm:way/{way_id}")
         assert trail is not None and (trail.land_agency, trail.land_unit) == ("USFS", "Small Wilderness")
-    assert backfill_trail_land(con) == 2  # idempotent re-run
+    # A re-run finds nothing left NULL - the polygon-driven pass only fills unlabeled trails,
+    # unlike the point-driven `_assign_trail_land` the incremental hooks use.
+    assert backfill_trail_land(con) == 0
+
+
+def test_backfill_trail_land_is_polygon_driven_and_still_picks_the_smallest_unit(
+    con: psycopg.Connection,
+) -> None:
+    """The polygon-driven backfill (issue #335 PR 2 follow-up, migration 49) processes
+    `public_land` smallest-area-first and only fills a still-NULL label - verify that ordering
+    (not insertion order) is what decides the winner for a trail under two overlapping polygons."""
+    road = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "track", "name": "FR 12"},
+            "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.30}],
+        }
+    )
+    assert road is not None
+    upsert_trails(con, [road])
+    forest = '{"type":"Polygon","coordinates":[[[-123,47],[-121,47],[-121,48],[-123,48],[-123,47]]]}'
+    wild = '{"type":"Polygon","coordinates":[[[-122.4,47.5],[-122.2,47.5],[-122.2,47.7],[-122.4,47.7],[-122.4,47.5]]]}'
+    # Insert the *bigger* polygon first - if the backfill were insertion-ordered rather than
+    # area-ordered, the forest (not the wilderness) would win.
+    upsert_public_land(
+        con,
+        [
+            ("pl:big", "USFS", "Big National Forest", "usfs", "u", forest),
+            ("pl:small", "USFS", "Small Wilderness", "usfs", "u", wild),
+        ],
+    )
+    con.execute("UPDATE trails SET land_agency = NULL, land_unit = NULL")
+
+    assert backfill_trail_land(con) == 1
+    trail = get_trail(con, "osm:way/1")
+    assert trail is not None and (trail.land_agency, trail.land_unit) == ("USFS", "Small Wilderness")
 
 
 def test_backfill_forage_obs_counts_research_grade_fungi_hugging_the_line(con: psycopg.Connection) -> None:

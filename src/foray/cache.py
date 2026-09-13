@@ -87,6 +87,9 @@ CREATE TABLE IF NOT EXISTS public_land (
     source      TEXT,                -- "blm", "usfs"
     url         TEXT,                -- official source (the ArcGIS service)
     geojson     TEXT                 -- polygon geometry as GeoJSON text
+    -- area_deg2 added by migration 49, issue #335 PR 2 follow-up: planar area of `geom`,
+    -- computed once per polygon write (trg_public_land_geom_area) instead of recomputed from
+    -- scratch on every trail<->land lookup - see that migration's comment for why.
 );
 
 -- Trails (OSM Overpass): hiking paths, named hiking routes, and trailheads. Keyed by
@@ -314,7 +317,7 @@ CREATE TABLE IF NOT EXISTS meta (
 # Bump whenever the SCHEMA string above OR the CONCURRENTLY index set in apply_schema changes,
 # so a running instance re-executes them once on its next apply_schema. (New _MIGRATIONS
 # entries are tracked separately by version and don't need a bump.)
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # Fixed advisory-lock key so two processes starting together (API + scheduler) serialize on
 # the full apply_schema path instead of racing CREATE INDEX CONCURRENTLY.
@@ -374,6 +377,22 @@ _CONCURRENT_INDEXES: list[LiteralString | tuple[LiteralString, str]] = [
         "trails_geom_notnull",
     ),
     ("DROP INDEX CONCURRENTLY IF EXISTS ix_trails_geom", "trails_geom_notnull"),
+    # issue #335 PR 2 follow-up: `backfill_trail_land`'s polygon-driven pass needs to find, for
+    # one `public_land` polygon at a time, every trail whose representative point falls inside
+    # it - without this expression index that's a seq scan of the whole trails table per polygon
+    # (confirmed live: an `EXPLAIN ANALYZE` without it showed a `Seq Scan on trails` per polygon,
+    # ~2.1M rows visited 11,757 times). A dedicated index rather than reusing
+    # `ix_trails_geom_notnull`: this table's `geom` is the trail's actual line/point geometry, not
+    # `(center_lng, center_lat)` - the two disagree for a path/route/road row (see the "accepted
+    # imprecision" note on `_TRAIL_LAND_JOIN`'s callers), and this feature has always kept that
+    # specific, deliberate "representative point" semantic. Indexed on the `::geography` cast, not
+    # bare `geometry` - the query's `ST_DWithin` call casts to geography (matching
+    # `_TRAIL_LAND_JOIN` everywhere else), and Postgres will only use an expression index when the
+    # indexed expression appears verbatim in the query; a first attempt at this index (geometry,
+    # uncast) silently went unused for exactly that reason and the seq scan above went unnoticed
+    # until a live `EXPLAIN ANALYZE` caught it.
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_trails_center_point_geog ON trails "
+    "USING GIST ((ST_SetSRID(ST_MakePoint(center_lng, center_lat), 4326)::geography))",
 ]
 
 # Schema changes past the initial CREATE TABLE/INDEX IF NOT EXISTS baseline above, applied in
@@ -387,7 +406,10 @@ _CONCURRENT_INDEXES: list[LiteralString | tuple[LiteralString, str]] = [
 # issue #335 PR 2) - the smallest polygon covering a trail's representative point wins (a
 # wilderness inside a forest beats the forest). Shared between the one-time migration backfill
 # below and `_assign_trail_land`'s incremental recompute so the two queries can't drift apart.
-# References `t2` - the caller's outer query must alias the trails row that way.
+# References `t2` - the caller's outer query must alias the trails row that way. Orders by
+# `pl.area_deg2` (migration 49) - a column computed once per polygon write, not
+# `ST_Area(pl.geom::geometry)` recomputed from scratch on every lookup (measured ~19ms/row at
+# table scale, dominated by decompressing hundred-KB+ BLM/USFS polygons - see migration 49).
 # Default page size for every trail<->land relabeling write (below) - bounds a single UPDATE to
 # this many rows regardless of how many trails a land or trail upsert batch could otherwise touch.
 _TRAIL_LAND_BATCH_SIZE = 5000
@@ -396,7 +418,7 @@ _TRAIL_LAND_JOIN: LiteralString = """
         SELECT pl.agency, pl.unit FROM public_land pl
         WHERE pl.geom IS NOT NULL
           AND ST_DWithin(pl.geom, ST_SetSRID(ST_MakePoint(t2.center_lng, t2.center_lat), 4326)::geography, 0)
-        ORDER BY ST_Area(pl.geom::geometry) LIMIT 1
+        ORDER BY pl.area_deg2 LIMIT 1
     ) pl ON true
 """
 _MIGRATIONS: list[tuple[int, LiteralString]] = [
@@ -724,6 +746,37 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         48,
         "ALTER TABLE trails ADD COLUMN IF NOT EXISTS land_agency TEXT; "
         "ALTER TABLE trails ADD COLUMN IF NOT EXISTS land_unit TEXT",
+    ),
+    # issue #335 PR 2 follow-up: `_TRAIL_LAND_JOIN`'s `ORDER BY ST_Area(pl.geom::geometry)` -
+    # "smallest polygon wins" - recomputed that area from scratch on every single trail<->land
+    # lookup, for every candidate polygon overlapping the point, by decompressing the full
+    # geometry (BLM/USFS polygons run to hundreds of KB - Tongass National Forest alone measured
+    # ~21ms just to compute its area once). At table scale (`backfill_trail_land`,
+    # `_assign_trail_land_paged`) that's the entire cost: `EXPLAIN ANALYZE` on a real 5000-row
+    # batch showed 97s total, ~19ms/row, essentially all of it in this one computation - the
+    # `id = ANY(...)` lookup itself took 110ms for all 5000. This inherited an old-code smell:
+    # `trail_land_units`'s original docstring already flagged the same live `ST_Area` call as
+    # "too slow for 500 rows" and scoped it to a ~20-row card list only - PR 2 then ran that exact
+    # per-lookup cost across the whole table without also fixing the cost itself.
+    # `area_deg2` computes the area once, at write time (`trg_public_land_geom_area`, chained
+    # after the existing `trg_public_land_geom` by trigger-name sort order so `NEW.geom` is
+    # already set), off ~12k `public_land` rows instead of millions of trail lookups - a plain
+    # numeric column sort at read time instead of a per-candidate geometry decompress + area calc.
+    (
+        49,
+        """
+        ALTER TABLE public_land ADD COLUMN IF NOT EXISTS area_deg2 DOUBLE PRECISION;
+        CREATE OR REPLACE FUNCTION foray_public_land_area() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            NEW.area_deg2 := CASE WHEN NEW.geom IS NULL THEN NULL ELSE ST_Area(NEW.geom::geometry) END;
+            RETURN NEW;
+        END;
+        $$;
+        CREATE OR REPLACE TRIGGER trg_public_land_geom_area BEFORE INSERT OR UPDATE ON public_land
+            FOR EACH ROW EXECUTE FUNCTION foray_public_land_area();
+        UPDATE public_land SET area_deg2 = ST_Area(geom::geometry) WHERE geom IS NOT NULL;
+        """,
     ),
 ]
 
@@ -1397,22 +1450,60 @@ def _assign_trail_land_paged(
         last_id = batch_ids[-1]
 
 
-def backfill_trail_land(con: psycopg.Connection, *, batch_size: int = _TRAIL_LAND_BATCH_SIZE) -> int:
+def backfill_trail_land(con: psycopg.Connection) -> int:
     """One-time backfill of ``trails.land_agency`` / ``land_unit`` for every trail cached before
     migration 48 shipped (issue #335 PR 2's ``foray backfill-trail-land`` CLI command).
 
     Migration 48 only adds the columns - deliberately no backfill UPDATE there, see its comment
     in ``_MIGRATIONS``. ``_assign_trail_land`` keeps *new* writes current from then on, but a
     trail already cached (and whose ingest marker already says "done", so it won't naturally
-    re-upsert) needs this run once. Delegates to :func:`_assign_trail_land_paged`, each page its
-    own autocommitted UPDATE (``con`` is autocommit) rather than one table-wide transaction - safe
-    to interrupt (whatever already committed stays done) and safe to re-run (relabeling an
-    already-labeled trail is a no-op in effect). Returns rows visited.
+    re-upsert) needs this run once.
+
+    Polygon-driven, not trail-driven - a second perf fix on top of migration 49's ``area_deg2``.
+    The point-driven ``_assign_trail_land`` decompresses every *candidate* polygon's full
+    geometry for every trail it's tested against - for a handful of huge polygons (Tongass
+    National Forest alone is ~430 KB of GeoJSON) shared by thousands of trails, that repeats the
+    same expensive decompression once per trail underneath it (measured ~19ms/trail at table
+    scale even after migration 49). This instead walks ``public_land`` once, smallest-area-first
+    (so a wilderness inside a forest still wins), and for each polygon labels every *unlabeled*
+    trail inside it in one UPDATE - each polygon's geometry is decompressed once total, not once
+    per trail. ``WHERE t.land_agency IS NULL`` is what makes "smallest first, never overwrite"
+    equivalent to "smallest polygon wins": a trail already labeled by an earlier (smaller)
+    polygon in this same pass is left alone.
+
+    This is correct specifically *because* every trail starts NULL going into a backfill - the
+    ongoing incremental hooks (``upsert_trails``, ``upsert_public_land``) still use the
+    point-driven ``_assign_trail_land``, which unconditionally overwrites and so stays correct
+    when a polygon shrinks or moves after already labeling a trail (see ``upsert_public_land``'s
+    pre/post bbox union). Needs ``ix_trails_center_point_geog`` (a CONCURRENTLY-built expression
+    index, ``_CONCURRENT_INDEXES``) to find each polygon's candidate trails without a table scan;
+    degrades to a slower plan without it - ``apply_schema`` treats every ``_CONCURRENT_INDEXES``
+    entry as a query-speed optimization, never a correctness dependency.
+
+    Each polygon's UPDATE is its own autocommitted statement (``con`` is autocommit) - safe to
+    interrupt (whatever already committed stays done) and safe to re-run (an already-labeled
+    trail is skipped, not re-touched). Returns rows labeled.
     """
-    if batch_size < 1:
-        raise ValueError(f"batch_size must be positive, got {batch_size}")
-    visited = _assign_trail_land_paged(con, batch_size=batch_size)
-    logger.info("land: backfilled trail<->land for %d trails", visited)
+    land_ids = [
+        row[0]
+        for row in con.execute(
+            "SELECT id FROM public_land WHERE geom IS NOT NULL ORDER BY area_deg2 ASC NULLS LAST"
+        ).fetchall()
+    ]
+    visited = 0
+    for land_id in land_ids:
+        result = con.execute(
+            """
+            UPDATE trails t SET land_agency = pl.agency, land_unit = pl.unit
+            FROM public_land pl
+            WHERE pl.id = %s
+              AND t.land_agency IS NULL
+              AND ST_DWithin(pl.geom, ST_SetSRID(ST_MakePoint(t.center_lng, t.center_lat), 4326)::geography, 0)
+            """,
+            [land_id],
+        )
+        visited += result.rowcount
+    logger.info("land: backfilled trail<->land for %d trails across %d public_land polygons", visited, len(land_ids))
     return visited
 
 
