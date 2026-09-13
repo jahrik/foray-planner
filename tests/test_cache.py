@@ -12,14 +12,17 @@ from foray.cache import (
     _schema_is_current,
     add_genus,
     apply_schema,
+    backfill_queue_depth,
     connection,
     copy_insert_ignore,
     copy_upsert,
     delete_observations,
+    dequeue_backfill_batch,
     forget_ingest,
     genus_taxon_ids,
     insert_observations_if_missing,
     is_ingested,
+    job_run_drain_rate,
     latest_ingest_at,
     latest_job_run,
     latest_obs_date,
@@ -34,8 +37,10 @@ from foray.cache import (
     observation_ids_for_genus,
     observation_taxon_ids,
     observations_missing_elevation,
+    observations_missing_precip,
     record_ingest,
     record_job_run,
+    refresh_backfill_queue,
     remove_genus,
     save_region_place,
     save_region_satellite,
@@ -489,6 +494,154 @@ def test_copy_upsert_fires_the_geom_trigger_on_the_insert_select(con: psycopg.Co
     _insert(con, _ROW)
     row = con.execute("SELECT ST_Y(geom::geometry), ST_X(geom::geometry) FROM observations WHERE id = 1").fetchone()
     assert row == (47.6, -122.3)
+
+
+def _research_row(obs_id: int, lat: float, lng: float, observed_on: dt.date) -> tuple:
+    return (
+        obs_id,
+        111,
+        lat,
+        lng,
+        observed_on,
+        observed_on.month,
+        "research",
+        10,
+        None,
+        f"https://inaturalist.org/observations/{obs_id}",
+        False,
+    )
+
+
+def _set_enrichment(
+    con: psycopg.Connection,
+    obs_id: int,
+    *,
+    elevation_m: int | None = None,
+    precip_7d_mm: float | None = None,
+    precip_30d_mm: float | None = None,
+) -> None:
+    con.execute(
+        "UPDATE observations SET elevation_m = %s, precip_7d_mm = %s, precip_30d_mm = %s WHERE id = %s",
+        [elevation_m, precip_7d_mm, precip_30d_mm, obs_id],
+    )
+
+
+# --- backfill_queue (issue #334 PR 3) ---
+
+_CELL = 0.25
+_TODAY = dt.date(2026, 9, 1)
+
+
+def test_refresh_backfill_queue_queues_eligible_elevation_rows(con: psycopg.Connection) -> None:
+    upsert_observations(con, [_research_row(1, 47.6, -122.3, _TODAY)])
+    depth = refresh_backfill_queue(con, "elevation", _CELL)
+    assert depth == 1
+    assert backfill_queue_depth(con, "elevation") == 1
+
+
+def test_refresh_backfill_queue_skips_already_enriched_rows(con: psycopg.Connection) -> None:
+    upsert_observations(con, [_research_row(1, 47.6, -122.3, _TODAY)])
+    _set_enrichment(con, 1, elevation_m=100)
+    assert refresh_backfill_queue(con, "elevation", _CELL) == 0
+
+
+def test_refresh_backfill_queue_prioritizes_recently_active_cells(con: psycopg.Connection) -> None:
+    # id 1 sits in a cell with two other recent observations (active); id 2 sits alone in a
+    # far-away, quiet cell. Both are missing elevation - the active cell's row should outrank
+    # the quiet one regardless of id/insertion order.
+    upsert_observations(
+        con,
+        [
+            _research_row(1, 47.6, -122.3, _TODAY),
+            _research_row(2, 10.0, 10.0, _TODAY),
+            _research_row(3, 47.61, -122.31, _TODAY),  # same cell as 1, already has elevation
+            _research_row(4, 47.62, -122.32, _TODAY),  # same cell as 1, already has elevation
+        ],
+    )
+    _set_enrichment(con, 3, elevation_m=50)
+    _set_enrichment(con, 4, elevation_m=60)
+
+    refresh_backfill_queue(con, "elevation", _CELL)
+
+    claimed = dequeue_backfill_batch(con, "elevation", 10)
+    assert claimed == [1, 2]  # id 1's cell has 3 recent observations vs id 2's cell's 1
+
+
+def test_refresh_backfill_queue_removes_rows_no_longer_eligible(con: psycopg.Connection) -> None:
+    upsert_observations(con, [_research_row(1, 47.6, -122.3, _TODAY)])
+    refresh_backfill_queue(con, "elevation", _CELL)
+    assert backfill_queue_depth(con, "elevation") == 1
+
+    _set_enrichment(con, 1, elevation_m=100)  # no longer missing elevation
+    assert refresh_backfill_queue(con, "elevation", _CELL) == 0
+    assert backfill_queue_depth(con, "elevation") == 0
+
+
+def test_refresh_backfill_queue_removes_deleted_observations(con: psycopg.Connection) -> None:
+    upsert_observations(con, [_research_row(1, 47.6, -122.3, _TODAY)])
+    refresh_backfill_queue(con, "elevation", _CELL)
+    delete_observations(con, [1])
+    assert refresh_backfill_queue(con, "elevation", _CELL) == 0
+    assert backfill_queue_depth(con, "elevation") == 0
+
+
+def test_refresh_backfill_queue_rejects_unknown_kind(con: psycopg.Connection) -> None:
+    with pytest.raises(ValueError, match="unknown backfill kind"):
+        refresh_backfill_queue(con, "bogus", _CELL)
+
+
+def test_dequeue_backfill_batch_removes_claimed_rows(con: psycopg.Connection) -> None:
+    upsert_observations(con, [_research_row(1, 47.6, -122.3, _TODAY), _research_row(2, 10.0, 10.0, _TODAY)])
+    refresh_backfill_queue(con, "elevation", _CELL)
+
+    first = dequeue_backfill_batch(con, "elevation", 1)
+    assert len(first) == 1
+    assert backfill_queue_depth(con, "elevation") == 1
+
+    second = dequeue_backfill_batch(con, "elevation", 10)
+    assert set(first) | set(second) == {1, 2}
+    assert backfill_queue_depth(con, "elevation") == 0
+
+
+def test_dequeue_backfill_batch_zero_limit_returns_empty(con: psycopg.Connection) -> None:
+    assert dequeue_backfill_batch(con, "elevation", 0) == []
+
+
+def test_observations_missing_elevation_without_near_uses_the_queue(con: psycopg.Connection) -> None:
+    upsert_observations(con, [_research_row(1, 47.6, -122.3, _TODAY)])
+    pending = observations_missing_elevation(con, 10, cell_deg=_CELL)
+    assert [obs_id for obs_id, *_ in pending] == [1]
+    # Still missing elevation, so it's found (and re-queued) again - each call re-derives the
+    # queue from observations (the source of truth), it doesn't just drain a fixed snapshot.
+    assert [obs_id for obs_id, *_ in observations_missing_elevation(con, 10, cell_deg=_CELL)] == [1]
+    # Once actually enriched, it stops appearing.
+    _set_enrichment(con, 1, elevation_m=100)
+    assert observations_missing_elevation(con, 10, cell_deg=_CELL) == []
+
+
+def test_observations_missing_precip_without_near_uses_the_queue(con: psycopg.Connection) -> None:
+    upsert_observations(con, [_research_row(1, 47.6, -122.3, _TODAY)])
+    pending = observations_missing_precip(con, 10, cell_deg=_CELL)
+    assert [obs_id for obs_id, *_ in pending] == [1]
+
+
+def test_job_run_drain_rate_none_when_never_run(con: psycopg.Connection) -> None:
+    assert job_run_drain_rate(con, "no-such-job") is None
+
+
+def test_job_run_drain_rate_averages_recent_successful_runs(con: psycopg.Connection) -> None:
+    now = dt.datetime.now(dt.UTC)
+    # Two successful runs: 100 rows in 1h, then 200 rows in 2h -> 300 rows / 3h = 100 rows/hr.
+    record_job_run(
+        con, "elevation-backfill", started_at=now, ended_at=now, status="ok", rows=100, duration_ms=3_600_000
+    )
+    record_job_run(
+        con, "elevation-backfill", started_at=now, ended_at=now, status="ok", rows=200, duration_ms=7_200_000
+    )
+    # A failed run must not skew the average.
+    record_job_run(con, "elevation-backfill", started_at=now, ended_at=now, status="error", rows=None, duration_ms=None)
+
+    assert job_run_drain_rate(con, "elevation-backfill") == pytest.approx(100.0)
 
 
 def test_connection_passes_through_a_caller_owned_connection(con: psycopg.Connection) -> None:

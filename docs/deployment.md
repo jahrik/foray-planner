@@ -99,10 +99,13 @@ managed Postgres instance - same image, same DB, spins up, runs, exits:
 | `foray-revalidate` | `revalidate` | weekly | night |
 | `foray-resync` | `resync --batch-size 2000` | hourly | any |
 | `foray-elevation-backfill` | `backfill-elevation --limit 20000 --no-rebuild` (issue #36) | hourly | any |
+| `foray-elevation-backfill-dem` | `backfill-elevation-dem` (issue #334 PR 3) | daily | night |
 | `foray-precip-backfill` | `backfill-precip` (issue #226) | daily | any |
 | `foray-refresh-precip` | `refresh-precip` (issue #226) | daily | any |
 | `foray-fire` | `fire` (issue #227) | daily | any |
 | `foray-forage-backfill` | `backfill-forage --limit 20000` (issue #330) | every 6h | any |
+| `foray-ingest-bulk-inat` | `ingest-bulk inat` (issue #334 PR 2) | daily | night |
+| `foray-ingest-bulk-ridb` | `ingest-bulk ridb` (issue #334 PR 2) | daily | night |
 
 `window: night` jobs (coverage-wide / heavy) only start inside a 02:00-05:00
 America/Los_Angeles window (`foray_night_window_*` in `infra/ansible/defaults/main.yml`);
@@ -113,33 +116,32 @@ night-window jobs starting close together can't put more than a few concurrent w
 
 The elevation backfill drains the per-observation elevation backlog from Open-Meteo's free
 DEM; each run enriches as many rows as the free tier allows before it rate-limits, then exits
-(`lookup_batch` backs off on `Retry-After` first).
+(`lookup_batch` backs off on `Retry-After` first). Open-Meteo's free tier caps at ~10k
+points/day, so this alone would take ~200 days to clear a fresh multi-million-row backlog.
 
-Open-Meteo's free tier caps at ~10k points/day, so a fresh multi-million-row backlog would
-take ~200 days to clear at that pace. To clear it in one pass instead, run
-`just ansible backfill-elevation-dem-once` (tag `foray:backfill-elevation-dem-once`): it
-downloads ~5 GB of Copernicus GLO-90 tiles onto the droplet, samples the same DEM locally for
-every outstanding row, then removes the tiles. Writes go through a `COPY` into a TEMP table
-plus one `UPDATE ... FROM` per batch (`--batch-size`), with `--sleep` pacing, a short
-`lock_timeout` (a batch that can't get its lock is left for a re-run), and
-`synchronous_commit = off`. The Ansible task passes `--no-rebuild` - like the hourly cron, it
-leaves the phenology rematerialize to the next daily ingest, so region elevation means land
-within a day. A partial run is safe to repeat: run the target again to finish the rest.
-See `scripts/backfill_elevation_dem.py`.
+`foray-elevation-backfill-dem` (issue #334 PR 3, `foray.sources.elevation_dem`) is the
+steady-state fix: it samples the same DEM (Copernicus GLO-90, ~90 m) from local Cloud-Optimized
+GeoTIFF tiles pulled from the public AWS mirror instead of calling Open-Meteo at all, so it
+isn't rate-limited. Writes go through a `COPY` into a TEMP table plus one `UPDATE ... FROM` per
+batch (`--batch-size`), with `--sleep` pacing, a short `lock_timeout` (a batch that can't get
+its lock is left for a re-run), and `synchronous_commit = off`. Scheduled daily in the night
+window, it only touches whatever cells that day's *new* eligible rows fall in (a scheduled
+job's container gets no persistent volume - see `templates/foray-job.service.j2` - so there's
+no tile cache carried between runs), not the whole historical footprint: the one-time
+historical backlog was already cleared by hand before this became a recurring job.
 
-Even set-based, a full ~1.8M-row pass saturates the 1-vCPU managed Postgres enough to starve
-the live `/api/destinations` query, so run it inside a **maintenance window**:
+A manual catch-up run (e.g. after a long outage, or seeding a new droplet) uses the same CLI
+command directly rather than a separate Ansible task:
 
 ```sh
-ssh root@<droplet> 'touch /opt/foray-planner/www/maintenance.on'   # Caddy now serves the 503 page
-ssh root@<droplet> 'docker stop foray-planner'                     # free the DB of the app's queries
-FORAY_DROPLET_IP=<droplet> just ansible backfill-elevation-dem-once
-ssh root@<droplet> 'docker start foray-planner'
-ssh root@<droplet> 'rm /opt/foray-planner/www/maintenance.on'
+docker run --rm --env-file /opt/foray-planner/foray.env <image> foray backfill-elevation-dem --sleep 0.25
 ```
 
-The next deploy clears `maintenance.on` on its own (see `tasks/deploy/caddy.yml`), so a
-forgotten flag heals at the next push.
+Even set-based, a from-scratch multi-million-row pass saturates the 1-vCPU managed Postgres
+enough to starve the live `/api/destinations` query - wrap a large manual catch-up in a
+maintenance window the same way as any other heavy one-off write (`touch
+/opt/foray-planner/www/maintenance.on`, stop the app container, run the catch-up, restart,
+remove the flag - the next deploy also clears it on its own).
 
 ### Maintenance mode
 
@@ -243,7 +245,6 @@ just ansible deploy
 | `foray:cron` | Update scheduled-job systemd timer/service units (tag kept as `foray:cron`) |
 | `foray:ingest-once` | Manual/opt-in full data ingest (`just ansible ingest-once`) - not part of `foray:deploy` or the `foray` umbrella; the daily `foray-ingest` cron job already keeps data fresh, so this only exists for warming a fresh droplet's data immediately instead of waiting for the next cron run. **Run this only after the first `foray:deploy`** - it depends on the env file that deploy renders (`/opt/foray-planner/foray.env`) and fails fast with a clear message if that hasn't happened yet. |
 | `foray:build-basemap-once` | Manual/opt-in (`just ansible build-basemap-once`) - `pmtiles extract` a CONUS bbox from Protomaps' daily planet build and upload it to the basemap Space. Runs on the control node (the extract is ~15-40 GB), not the droplet. Needs `DO_SPACES_KEY` / `DO_SPACES_SECRET`. Re-run monthly to refresh. |
-| `foray:backfill-elevation-dem-once` | Manual/opt-in one-pass elevation backfill (`just ansible backfill-elevation-dem-once`) - samples local Copernicus GLO-90 tiles on the droplet to clear the whole elevation backlog at once, instead of the hourly `foray-elevation-backfill` job trickling through Open-Meteo's ~10k/day free tier. Downloads ~5 GB of tiles, then removes them. Set-based `COPY` + `UPDATE ... FROM` writes with `--sleep` pacing and a short `lock_timeout` so the live site keeps serving; `--no-rebuild` (daily ingest rematerializes phenology). Safe to re-run to finish a partial pass. Same env-file dependency and fail-fast as `foray:ingest-once`, plus a free-disk precheck. |
 | `foray:backfill-satellite-once` | Manual/opt-in one-off satellite-fill backfill (`just ansible backfill-satellite-once`, issue #293) - runs `foray backfill-satellite` on the droplet. Esri's tile CDN throttles a wide fan-out, so the run paces itself + retries and takes tens of minutes at national scale; the task fails (non-zero exit) if failures dominate, so re-run until clean. A plain run only fetches regions still missing from `region_satellite`; pass `-e foray_satellite_backfill_args=--refresh` to `TRUNCATE` the table first and re-fetch every region (needed after a change to what a region's raster should contain - bbox, zoom, tile sources, compositing in `sources/satellite.py`). Browsers pick up changed rasters within a day (`Cache-Control: max-age=86400`, not `immutable`). Same env-file dependency and fail-fast as `foray:ingest-once`. |
 | `foray:firewall-allow-runner` / `foray:firewall-revoke-runner` | CI-internal only - adds/removes the GitHub Actions runner's own IP from the live SSH firewall rule around an automated `foray:deploy` run (see below). Not something an operator runs directly. |
 

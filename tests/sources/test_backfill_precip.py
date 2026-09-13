@@ -133,13 +133,14 @@ def test_refresh_precipitation_populates_the_layer_and_flows_to_ranking(
     _seed_obs(con, [(i, GENUS, LAT, LNG, dt.date(2026, 5, 15), 5, False) for i in range(1, 6)])
     build_phenology(con, CELL)
 
-    def fake_recent(
-        clat: float, clng: float, *, past_days: int = 30, client: object = None
-    ) -> dict[dt.date, float | None]:
+    def fake_recent_batch(
+        centers: list[tuple[float, float]], *, past_days: int = 30, client: object = None
+    ) -> list[dict[dt.date, float | None]]:
         today = dt.date.today()
-        return {today - dt.timedelta(days=i): 3.0 for i in range(past_days + 1)}
+        series: dict[dt.date, float | None] = {today - dt.timedelta(days=i): 3.0 for i in range(past_days + 1)}
+        return [series for _ in centers]
 
-    monkeypatch.setattr(precip, "fetch_recent_precip", fake_recent)
+    monkeypatch.setattr(precip, "fetch_recent_precip_batch", fake_recent_batch)
     written = ingest.refresh_precipitation(con, Settings())
     assert written >= 1
 
@@ -234,12 +235,12 @@ def test_refresh_precipitation_skips_fresh_regions_and_batches(
         [region_id],
     )
 
-    def fake_recent(
-        clat: float, clng: float, *, past_days: int = 30, client: object = None
-    ) -> dict[dt.date, float | None]:
+    def fake_recent_batch(
+        centers: list[tuple[float, float]], *, past_days: int = 30, client: object = None
+    ) -> list[dict[dt.date, float | None]]:
         raise AssertionError("should not fetch a region refreshed moments ago")
 
-    monkeypatch.setattr(precip, "fetch_recent_precip", fake_recent)
+    monkeypatch.setattr(precip, "fetch_recent_precip_batch", fake_recent_batch)
     assert ingest.refresh_precipitation(con, Settings()) == 0
 
 

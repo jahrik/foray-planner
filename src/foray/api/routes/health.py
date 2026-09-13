@@ -1,13 +1,19 @@
-"""``/healthz`` (liveness) + ``/healthz/data`` (freshness) - issue #332.
+"""``/healthz`` (liveness) + ``/healthz/data`` (freshness) - issue #332. ``/healthz/backlog``
+(issue #334 PR 3) is the backlog/drain-rate gauge that issue's E4 asked for.
 
-Neither existed before this; cron jobs and the API both ran with no automated signal beyond
-"did the process crash". ``/healthz`` answers "is this process able to serve a request at
-all" (no DB round trip - a slow/down Postgres shouldn't make the load balancer kill an
-otherwise-healthy API container). ``/healthz/data`` answers "is the data behind it fresh",
+Neither of the first two existed before #332; cron jobs and the API both ran with no automated
+signal beyond "did the process crash". ``/healthz`` answers "is this process able to serve a
+request at all" (no DB round trip - a slow/down Postgres shouldn't make the load balancer kill
+an otherwise-healthy API container). ``/healthz/data`` answers "is the data behind it fresh",
 reusing ``/api/coverage``'s per-region latest-ingest-timestamp logic (``cache.latest_ingest_at``,
 generalized from that route's inline query) for the layers that mark their ingests in
 ``ingest_log``, and the newest ``job_runs`` success for the two that don't (fire's replace-
 semantics refresh, the recent-rain-per-destination layer - see ``foray.jobs``).
+
+``/healthz/backlog`` answers a different question - not "is this stale" but "how much is
+outstanding and how fast is it draining" - for the two backfills issue #334 PR 3 put behind an
+activity-weighted priority queue (``cache.backfill_queue``). Informational only: nothing here
+ever 503s, since a nonzero backlog is normal operation, not a failure.
 """
 
 from __future__ import annotations
@@ -20,8 +26,8 @@ from psycopg_pool import ConnectionPool
 
 from foray.api.deps import get_pool, get_state
 from foray.api.state import AppState
-from foray.api_models import DataHealthResponse, LayerFreshnessResponse, StatusResponse
-from foray.cache import latest_ingest_at, latest_successful_job_run
+from foray.api_models import BacklogResponse, DataHealthResponse, LayerFreshnessResponse, StatusResponse
+from foray.cache import backfill_queue_depth, job_run_drain_rate, latest_ingest_at, latest_successful_job_run
 from foray.config import Settings
 
 router = APIRouter()
@@ -106,3 +112,29 @@ def healthz_data(
     if not ok:
         response.status_code = 503
     return DataHealthResponse(ok=ok, layers=layers)
+
+
+# (kind, the job whose job_runs feeds the drain rate). elevation-backfill-dem, not
+# elevation-backfill, since the DEM job is the one actually expected to drain the bulk of the
+# elevation backlog day to day (issue #334 PR 3) - the Open-Meteo job's own rate is a near-zero
+# trickle once the DEM job has run.
+_BACKLOG_SPECS = [
+    ("elevation", "elevation-backfill-dem"),
+    ("precip", "precip-backfill"),
+]
+
+
+@router.get("/healthz/backlog")
+def healthz_backlog(pool: ConnectionPool = Depends(get_pool)) -> list[BacklogResponse]:
+    """Backfill-queue depth + recent drain rate per kind (issue #334 PR 3) - never a failing
+    check (no 503 here), just the numbers behind "is this catching up"."""
+    with pool.connection() as conn:
+        return [
+            BacklogResponse(
+                kind=kind,
+                backlog=backfill_queue_depth(conn, kind),
+                drain_rate_per_hour=job_run_drain_rate(conn, job),
+                job=job,
+            )
+            for kind, job in _BACKLOG_SPECS
+        ]

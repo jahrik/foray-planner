@@ -16,13 +16,14 @@ import datetime as dt
 import logging
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from typing import Any, LiteralString
+from typing import Any, LiteralString, cast
 
 import httpx
 import psycopg
 
 from foray import spaces
 from foray.config import Settings
+from foray.defaults import CELL_DEG as _DEFAULT_CELL_DEG
 from foray.geo import haversine_km
 
 logger = logging.getLogger(__name__)
@@ -673,6 +674,20 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         "ALTER TABLE region_satellite ALTER COLUMN labels DROP NOT NULL; "
         "ALTER TABLE region_satellite ADD COLUMN IF NOT EXISTS image_url TEXT; "
         "ALTER TABLE region_satellite ADD COLUMN IF NOT EXISTS labels_url TEXT",
+    ),
+    # issue #334 PR 3: activity-weighted backfill priority queue - the hourly/daily elevation
+    # and precip backfill crons used to drain their backlog in pure ORDER BY id / observed_on
+    # order (oldest first), so a long-dormant region's rows enriched before a currently-active
+    # one's - backwards from what actually matters for what travelers see on a card today.
+    # `refresh_backfill_queue` (re)populates this from `observations` (the source of truth,
+    # re-derived each call rather than incrementally maintained - see that function's
+    # docstring for why); `dequeue_backfill_batch` claims the highest-priority rows.
+    (
+        47,
+        "CREATE TABLE IF NOT EXISTS backfill_queue ("
+        "kind TEXT NOT NULL, obs_id BIGINT NOT NULL, priority DOUBLE PRECISION NOT NULL, "
+        "enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (kind, obs_id)); "
+        "CREATE INDEX IF NOT EXISTS ix_backfill_queue_priority ON backfill_queue (kind, priority DESC)",
     ),
 ]
 
@@ -1667,9 +1682,149 @@ def save_region_satellite(con: psycopg.Connection, cfg: Settings, region_id: str
 # range-scans ix_observations_lat_lng instead of sorting the whole backlog.
 _NEAR_WINDOW_DEG = 15.0
 
+# Same research-grade/non-obscured/in-range filters `observations_missing_elevation` and
+# `observations_missing_precip` already apply, factored out so `refresh_backfill_queue` stays
+# byte-for-byte in sync with what those functions consider eligible - a divergence here would
+# either queue rows that can never be drained (they'd need a `near` call to touch them) or,
+# worse, silently exclude rows a caller expects the cron sweep to reach.
+_BACKFILL_ELIGIBLE: dict[str, LiteralString] = {
+    "elevation": (
+        "elevation_m IS NULL AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180 "
+        "AND quality_grade = 'research' AND NOT COALESCE(obscured, false)"
+    ),
+    "precip": (
+        "(precip_7d_mm IS NULL OR precip_30d_mm IS NULL) AND observed_on >= DATE '1940-02-01' "
+        "AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180 "
+        "AND quality_grade = 'research' AND NOT COALESCE(obscured, false)"
+    ),
+}
+
+# How far back "recent activity" looks when scoring a grid cell's priority - roughly a season,
+# long enough that a cell with a real active community of observers doesn't look dormant
+# between visits, short enough that a cell nobody has photographed in years sinks to the
+# bottom rather than coasting on activity from long ago.
+_BACKFILL_ACTIVITY_WINDOW_DAYS = 180
+
+
+def refresh_backfill_queue(con: psycopg.Connection, kind: str, cell_deg: float) -> int:
+    """(Re)populate ``backfill_queue`` for ``kind`` (``"elevation"`` or ``"precip"``) from
+    ``observations`` - the priority behind issue #334 PR 3's "prioritize backfill by region
+    activity, not strict staleness order" (TODO.md E4).
+
+    Re-derived from scratch each call rather than incrementally maintained (enqueue-on-ingest,
+    dequeue-on-enrich): every ingest/bulk-load/revalidate/resync path would otherwise need to
+    remember to keep the queue in sync, and one that forgot would silently leave rows stuck.
+    Instead this is the same self-healing shape ``scoring.regions.build_phenology`` and the
+    coverage-wide ingests already use - re-derive from the source of truth every time, so a row
+    enriched some other way (a live Refresh's ``near`` path, ``backfill-elevation-dem``), no
+    longer eligible (revalidate found it non-research), or deleted outright simply stops
+    reappearing, no separate cleanup pass needed. Cost is bounded by the *backlog* size, not the
+    whole table, via the same partial indexes (``ix_observations_elevation_missing`` /
+    ``ix_observations_precip_missing``) the un-queued query used - only the activity-scoring
+    join scans a wider (but time-bounded) window.
+
+    Priority is the count of research-grade observations in the same grid cell (``cell_deg``
+    binning, matching ``regions``/``phenology``) observed within the last
+    ``_BACKFILL_ACTIVITY_WINDOW_DAYS`` days - a cell with recent activity outranks one that has
+    been quiet, regardless of which specific row is older. Returns the number of rows now
+    queued for ``kind``.
+    """
+    if kind not in _BACKFILL_ELIGIBLE:
+        raise ValueError(f"unknown backfill kind {kind!r} (expected one of {sorted(_BACKFILL_ELIGIBLE)})")
+    eligible_sql = _BACKFILL_ELIGIBLE[kind]
+    cell_sql = f"(floor(lat / {cell_deg}))::int::text || '_' || (floor(lng / {cell_deg}))::int::text"
+    con.execute(
+        cast(
+            LiteralString,
+            f"""
+            WITH eligible AS (
+                SELECT id, {cell_sql} AS region_id FROM observations WHERE {eligible_sql}
+            ),
+            activity AS (
+                SELECT {cell_sql} AS region_id, count(*) AS recent_count
+                FROM observations
+                WHERE quality_grade = 'research' AND observed_on >= (CURRENT_DATE - %s * INTERVAL '1 day')
+                GROUP BY 1
+            )
+            INSERT INTO backfill_queue (kind, obs_id, priority)
+            SELECT %s, e.id, COALESCE(a.recent_count, 0)
+            FROM eligible e LEFT JOIN activity a USING (region_id)
+            ON CONFLICT (kind, obs_id) DO UPDATE SET priority = EXCLUDED.priority
+            """,
+        ),
+        [_BACKFILL_ACTIVITY_WINDOW_DAYS, kind],
+    )
+    result = con.execute(
+        f"""
+        DELETE FROM backfill_queue q
+        WHERE q.kind = %s
+          AND NOT EXISTS (SELECT 1 FROM observations o WHERE o.id = q.obs_id AND {eligible_sql})
+        """,
+        [kind],
+    )
+    if result.rowcount:
+        logger.info("backfill_queue: dropped %d %s row(s) no longer eligible", result.rowcount, kind)
+    return backfill_queue_depth(con, kind)
+
+
+def backfill_queue_depth(con: psycopg.Connection, kind: str) -> int:
+    """Current ``backfill_queue`` row count for ``kind`` - the "backlog" gauge for
+    ``/healthz/backlog`` and the CLI's own progress output."""
+    row = con.execute("SELECT count(*) FROM backfill_queue WHERE kind = %s", [kind]).fetchone()
+    return row[0] if row else 0
+
+
+def dequeue_backfill_batch(con: psycopg.Connection, kind: str, limit: int) -> list[int]:
+    """Claim (and remove) up to ``limit`` observation ids for ``kind``, highest priority first.
+
+    ``FOR UPDATE SKIP LOCKED`` makes concurrent claims (an inline post-ingest top-up racing the
+    scheduled drain) safe without blocking each other - a row already claimed by one caller is
+    simply invisible to the other, not waited on. Removing on claim (rather than marking
+    ``claimed_at``) needs no separate "stale claim" recovery: a row this call fails to enrich
+    (the caller's HTTP call errors) just gets re-queued on the next ``refresh_backfill_queue``
+    pass, since it's still eligible in ``observations``.
+    """
+    if limit <= 0:
+        return []
+    rows = con.execute(
+        """
+        WITH claimed AS (
+            SELECT obs_id FROM backfill_queue
+            WHERE kind = %s
+            ORDER BY priority DESC, enqueued_at ASC
+            LIMIT %s
+            FOR UPDATE SKIP LOCKED
+        )
+        DELETE FROM backfill_queue q USING claimed c
+        WHERE q.kind = %s AND q.obs_id = c.obs_id
+        RETURNING q.obs_id
+        """,
+        [kind, limit, kind],
+    ).fetchall()
+    return [obs_id for (obs_id,) in rows]
+
+
+def job_run_drain_rate(con: psycopg.Connection, job: str, *, sample_runs: int = 5) -> float | None:
+    """Average rows/hour across the last ``sample_runs`` successful ``job_runs`` for ``job`` -
+    the "drain rate" half of issue #334 PR 3's backlog/drain-rate exposure (``/healthz/backlog``).
+    ``None`` if ``job`` has never succeeded, or every sampled run recorded no duration (can't
+    compute a rate)."""
+    rows = con.execute(
+        "SELECT rows, duration_ms FROM job_runs WHERE job = %s AND status = 'ok' "
+        "AND rows IS NOT NULL AND duration_ms > 0 ORDER BY started_at DESC LIMIT %s",
+        [job, sample_runs],
+    ).fetchall()
+    if not rows:
+        return None
+    total_rows = sum(r for r, _ in rows)
+    total_ms = sum(ms for _, ms in rows)
+    if total_ms <= 0:
+        return None
+    return total_rows / (total_ms / 3_600_000.0)
+
 
 def observations_missing_elevation(
-    con: psycopg.Connection, limit: int, *, near: tuple[float, float] | None = None
+    con: psycopg.Connection, limit: int, *, near: tuple[float, float] | None = None, cell_deg: float = _DEFAULT_CELL_DEG
 ) -> list[tuple[int, float, float]]:
     """Up to ``limit`` research-grade observations with in-range coordinates but no elevation
     yet (issue #36). Non-research-grade rows are skipped - scoring only ever reads research-grade
@@ -1680,25 +1835,29 @@ def observations_missing_elevation(
 
     ``near`` (a ``(lat, lng)``) restricts the queue to a bounding box around that point and
     orders it by squared planar distance, so a Refresh drains the cells the visitor is actually
-    looking at first instead of the oldest-id rows scattered nationwide. The box (a) keeps
-    Postgres range-scanning ``ix_observations_lat_lng`` instead of sorting the whole
-    missing-elevation backlog on every call, and (b) is wide enough (`_NEAR_WINDOW_DEG`, ~1600
-    km) to cover the home radius and any plausible corridor trip - rows further out aren't on
-    the visitor's cards anyway, and the whole-backlog drain (the hourly prod cron) passes no
-    ``near`` and stays ``ORDER BY id``. The degree-space distance is a cheap proxy: it only
-    decides ordering within the box, and iNat fungal data is effectively all mid-latitude. A box
-    that straddles the antimeridian is split into its two wrapped longitude ranges."""
-    box_sql: LiteralString = ""
-    box_params: list[float] = []
+    looking at first instead of whatever the activity-weighted queue ranks highest nationwide.
+    The box (a) keeps Postgres range-scanning ``ix_observations_lat_lng`` instead of sorting the
+    whole missing-elevation backlog on every call, and (b) is wide enough (`_NEAR_WINDOW_DEG`,
+    ~1600 km) to cover the home radius and any plausible corridor trip - rows further out aren't
+    on the visitor's cards anyway. The degree-space distance is a cheap proxy: it only decides
+    ordering within the box, and iNat fungal data is effectively all mid-latitude. A box that
+    straddles the antimeridian is split into its two wrapped longitude ranges.
+
+    Without ``near`` (the hourly prod cron's whole-backlog drain), rows come from
+    ``backfill_queue`` instead of a plain scan - see :func:`refresh_backfill_queue` for the
+    activity-weighted priority behind that (issue #334 PR 3) and ``cell_deg`` for its region
+    binning."""
     if near is not None:
         plat, plng = near
         lo_lng, hi_lng = plng - _NEAR_WINDOW_DEG, plng + _NEAR_WINDOW_DEG
-        box_params = [plat - _NEAR_WINDOW_DEG, plat + _NEAR_WINDOW_DEG]
+        box_params: list[float] = [plat - _NEAR_WINDOW_DEG, plat + _NEAR_WINDOW_DEG]
         if lo_lng < -180.0 or hi_lng > 180.0:
             # The box straddles the antimeridian (a visitor in the western Aleutians). Split the
             # longitude test into its two wrapped ranges so Postgres still range-scans
             # ix_observations_lat_lng instead of matching nothing on the out-of-range bound.
-            box_sql = " AND lat BETWEEN %s AND %s AND (lng BETWEEN %s AND 180 OR lng BETWEEN -180 AND %s) "
+            box_sql: LiteralString = (
+                " AND lat BETWEEN %s AND %s AND (lng BETWEEN %s AND 180 OR lng BETWEEN -180 AND %s) "
+            )
             box_params += [(lo_lng + 180.0) % 360.0 - 180.0, (hi_lng + 180.0) % 360.0 - 180.0]
         else:
             box_sql = " AND lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s "
@@ -1709,22 +1868,25 @@ def observations_missing_elevation(
             "ORDER BY (lat - %s) * (lat - %s) + power(LEAST(ABS(lng - %s), 360.0 - ABS(lng - %s)), 2)"
         )
         order_params: list[float] = [plat, plat, plng, plng]
-    else:
-        order_sql = "ORDER BY id"
-        order_params = []
-    rows = con.execute(
-        """
-        SELECT id, lat, lng FROM observations
-        WHERE elevation_m IS NULL
-              AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180
-              AND quality_grade = 'research'
-              AND NOT COALESCE(obscured, false)
-        """
-        + box_sql
-        + order_sql
-        + " LIMIT %s",
-        [*box_params, *order_params, limit],
-    ).fetchall()
+        rows = con.execute(
+            """
+            SELECT id, lat, lng FROM observations
+            WHERE elevation_m IS NULL
+                  AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180
+                  AND quality_grade = 'research'
+                  AND NOT COALESCE(obscured, false)
+            """
+            + box_sql
+            + order_sql
+            + " LIMIT %s",
+            [*box_params, *order_params, limit],
+        ).fetchall()
+        return [(int(obs_id), float(lat), float(lng)) for obs_id, lat, lng in rows]
+    refresh_backfill_queue(con, "elevation", cell_deg)
+    obs_ids = dequeue_backfill_batch(con, "elevation", limit)
+    if not obs_ids:
+        return []
+    rows = con.execute("SELECT id, lat, lng FROM observations WHERE id = ANY(%s)", [obs_ids]).fetchall()
     return [(int(obs_id), float(lat), float(lng)) for obs_id, lat, lng in rows]
 
 
@@ -1785,13 +1947,12 @@ def upsert_precip_days(con: psycopg.Connection, cell_id: str, days: Mapping[dt.d
 
 
 def observations_missing_precip(
-    con: psycopg.Connection, limit: int, *, near: tuple[float, float] | None = None
+    con: psycopg.Connection, limit: int, *, near: tuple[float, float] | None = None, cell_deg: float = _DEFAULT_CELL_DEG
 ) -> list[tuple[int, float, float, dt.date]]:
     """Up to ``limit`` research-grade, non-obscured observations with coordinates and an
     ``observed_on`` but at least one of ``precip_7d_mm`` / ``precip_30d_mm`` still unset
     (issue #226). Same research-grade/obscured/in-range filters as
-    :func:`observations_missing_elevation`; ordered by ``near`` (planar distance) when given,
-    else oldest ``observed_on`` first so a cell's history fills in order.
+    :func:`observations_missing_elevation`; ordered by ``near`` (planar distance) when given.
 
     ``precip_7d_mm IS NULL OR precip_30d_mm IS NULL`` is the pending sentinel: a row whose 7 d
     sum lands but whose 30 d sum still touches an ERA5-null day is written partially (7 d only)
@@ -1799,30 +1960,44 @@ def observations_missing_precip(
 
     Observations dated before ERA5's coverage (1940) are excluded - Open-Meteo's archive has no
     data for them and, left in, one such row 400s the archive request for its whole grid cell
-    and wedges the backfill (same reasoning as the lat/lng-range filter)."""
-    box_sql: LiteralString = ""
-    params: list[Any] = []
-    order_sql: LiteralString = "ORDER BY observed_on"
+    and wedges the backfill (same reasoning as the lat/lng-range filter).
+
+    Without ``near`` (the hourly prod cron's whole-backlog drain), rows come from the
+    activity-weighted ``backfill_queue`` instead of oldest-``observed_on``-first - see
+    :func:`observations_missing_elevation`'s matching note (issue #334 PR 3). ``backfill_precip``
+    re-sorts each cell's members by ``observed_on`` itself once grouped, so the queue's return
+    order not being date-sorted doesn't matter here."""
     if near is not None:
         plat, plng = near
-        box_sql = " AND lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s "
-        params += [plat - _NEAR_WINDOW_DEG, plat + _NEAR_WINDOW_DEG, plng - _NEAR_WINDOW_DEG, plng + _NEAR_WINDOW_DEG]
-        order_sql = "ORDER BY (lat - %s) * (lat - %s) + (lng - %s) * (lng - %s)"
+        box_sql: LiteralString = " AND lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s "
+        params: list[Any] = [
+            plat - _NEAR_WINDOW_DEG,
+            plat + _NEAR_WINDOW_DEG,
+            plng - _NEAR_WINDOW_DEG,
+            plng + _NEAR_WINDOW_DEG,
+        ]
+        order_sql: LiteralString = "ORDER BY (lat - %s) * (lat - %s) + (lng - %s) * (lng - %s)"
         params += [plat, plat, plng, plng]
-    rows = con.execute(
-        """
-        SELECT id, lat, lng, observed_on FROM observations
-        WHERE (precip_7d_mm IS NULL OR precip_30d_mm IS NULL)
-              AND observed_on >= DATE '1940-02-01'
-              AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180
-              AND quality_grade = 'research'
-              AND NOT COALESCE(obscured, false)
-        """
-        + box_sql
-        + order_sql
-        + " LIMIT %s",
-        [*params, limit],
-    ).fetchall()
+        rows = con.execute(
+            """
+            SELECT id, lat, lng, observed_on FROM observations
+            WHERE (precip_7d_mm IS NULL OR precip_30d_mm IS NULL)
+                  AND observed_on >= DATE '1940-02-01'
+                  AND lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180
+                  AND quality_grade = 'research'
+                  AND NOT COALESCE(obscured, false)
+            """
+            + box_sql
+            + order_sql
+            + " LIMIT %s",
+            [*params, limit],
+        ).fetchall()
+        return [(int(obs_id), float(lat), float(lng), observed_on) for obs_id, lat, lng, observed_on in rows]
+    refresh_backfill_queue(con, "precip", cell_deg)
+    obs_ids = dequeue_backfill_batch(con, "precip", limit)
+    if not obs_ids:
+        return []
+    rows = con.execute("SELECT id, lat, lng, observed_on FROM observations WHERE id = ANY(%s)", [obs_ids]).fetchall()
     return [(int(obs_id), float(lat), float(lng), observed_on) for obs_id, lat, lng, observed_on in rows]
 
 

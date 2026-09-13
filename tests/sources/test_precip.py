@@ -15,6 +15,7 @@ from foray.sources import precip
 # this module exercises the real client against a MockTransport, so it puts them back.
 _REAL_ARCHIVE = precip.fetch_archive_precip
 _REAL_RECENT = precip.fetch_recent_precip
+_REAL_RECENT_BATCH = precip.fetch_recent_precip_batch
 
 
 @pytest.fixture(autouse=True)
@@ -22,6 +23,7 @@ def _real_client(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(precip._throttle, "min_interval", 0.0)
     monkeypatch.setattr(precip, "fetch_archive_precip", _REAL_ARCHIVE)
     monkeypatch.setattr(precip, "fetch_recent_precip", _REAL_RECENT)
+    monkeypatch.setattr(precip, "fetch_recent_precip_batch", _REAL_RECENT_BATCH)
 
 
 def _client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
@@ -86,6 +88,48 @@ def test_window_sum_totals_the_span() -> None:
     series = {dt.date(2026, 6, 10) - dt.timedelta(days=i): float(i) for i in range(10)}
     # days 2026-06-10, -09, ..., -04  (7 days) -> 0+1+2+3+4+5+6
     assert precip.window_sum(series, dt.date(2026, 6, 10), 7) == 21.0
+
+
+def test_recent_batch_returns_one_series_per_center_in_order() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["latitude"] == "45.0000,10.0000"
+        assert request.url.params["longitude"] == "-122.0000,20.0000"
+        return httpx.Response(
+            200,
+            json=[
+                {"daily": {"time": ["2026-01-01"], "precipitation_sum": [1.0]}},
+                {"daily": {"time": ["2026-01-01"], "precipitation_sum": [2.0]}},
+            ],
+        )
+
+    results = precip.fetch_recent_precip_batch([(45.0, -122.0), (10.0, 20.0)], client=_client(handler))
+    assert results == [{dt.date(2026, 1, 1): 1.0}, {dt.date(2026, 1, 1): 2.0}]
+
+
+def test_recent_batch_empty_input_makes_no_request() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("should not be called for an empty batch")
+
+    assert precip.fetch_recent_precip_batch([], client=_client(handler)) == []
+
+
+def test_recent_batch_rejects_over_max_batch() -> None:
+    with pytest.raises(ValueError, match="at most"):
+        precip.fetch_recent_precip_batch([(0.0, 0.0)] * (precip.MAX_BATCH + 1))
+
+
+def test_recent_batch_retries_a_429_then_succeeds() -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        return httpx.Response(200, json=[{"daily": {"time": ["2026-01-01"], "precipitation_sum": [0.4]}}])
+
+    results = precip.fetch_recent_precip_batch([(0.0, 0.0)], client=_client(handler))
+    assert results == [{dt.date(2026, 1, 1): 0.4}]
+    assert calls["n"] == 2
 
 
 def test_window_sum_is_none_when_a_day_is_missing() -> None:
