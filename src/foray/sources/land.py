@@ -7,13 +7,21 @@ ownership layers as GeoJSON and caches the polygons for the map. It reports owne
 the official source - nothing more; it makes no claim about whether camping is permitted
 anywhere (see AGENTS.md).
 
-Three authoritative ArcGIS layers, queried with an envelope around home:
+Four authoritative ArcGIS layers, queried with an envelope around home:
 
 * **BLM Surface Management Agency** - national ownership layer; filtered to the BLM-managed
   polygons (``ADMIN_AGENCY_CODE='BLM'``).
 * **USFS Administrative Forest Boundaries** - national forest units (good ``FORESTNAME``).
 * **Census TIGERweb AIANNH** - federal American Indian reservations (sovereign nation land, not
   a federal land-management agency, but the same "who manages the ground" question applies).
+* **PAD-US Fee Managers** (USGS) - the national ownership standard, filling the gap the three
+  sources above leave: state parks, NPS units, and other non-BLM/USFS/tribal land show no
+  ownership label at all today (issue #335) - every trail inside a National or State Park,
+  including all of Prairie Creek. Filtered to government-managed polygons (``Mang_Type`` in
+  FED/STAT/LOC/DIST/JNT/TRIB - private/NGO land is excluded, both to cut the national dataset's
+  size and because it isn't the "who manages the ground for camping" question this module
+  answers) and kept running alongside BLM/USFS/tribal rather than replacing them (issue #335 PR
+  1; a cutover that drops the redundant sources is a follow-up once coverage is compared).
 
 Geometry is generalized server-side (``maxAllowableOffset``) so the cached polygons stay light
 enough for the field map, and stored as GeoJSON text (see ``cache.public_land``); the ``geom``
@@ -27,6 +35,7 @@ rather than aborting the whole refresh.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from collections.abc import Callable, Iterable, Iterator
@@ -61,15 +70,97 @@ class LandSource:
     name_field: str  # property holding the unit name (matched case-insensitively)
     fallback_name: str  # used when the name property is absent/blank
     id_field: str = "OBJECTID"  # stable per-feature id (matched case-insensitively)
+    extra_fields: tuple[str, ...] = ()  # additional outFields a custom id/agency needs
+    # PAD-US's OBJECTID isn't stable across releases (issue #335) - a source that needs a
+    # feature id built from other properties sets this instead of relying on id_field.
+    make_id: Callable[[dict[str, Any]], str] | None = None
+    # PAD-US's agency is a coded value (e.g. "SPR"), not a display name - a source that needs
+    # to resolve one sets this instead of using the static `agency` field.
+    agency_of: Callable[[dict[str, Any]], str] | None = None
 
     @property
     def source_url(self) -> str:
         """Human-facing link to the source service (drop the `/query` verb)."""
         return self.query_url.removesuffix("/query")
 
+    @property
+    def out_fields(self) -> str:
+        """ArcGIS `outFields` value - id/name plus whatever a custom id/agency needs."""
+        fields = dict.fromkeys((self.id_field, self.name_field, *self.extra_fields))
+        return ",".join(fields)
 
-# The two dispersed-camping-relevant ownership layers. Endpoints confirmed against the live
-# services; if either moves, only these constants change.
+
+# PAD-US's Manager Name is a coded value (e.g. "SPR", "NPS"), not a display name - this is
+# its published coded-value domain (PAD-US Data Manual Table 5 / the "Agency Name" domain on
+# the Fee_Managers_PADUS layer, confirmed live 2026-09-12).
+_PADUS_AGENCY_NAMES: dict[str, str] = {
+    "TVA": "Tennessee Valley Authority",
+    "BLM": "Bureau of Land Management",
+    "BOEM": "Bureau of Ocean Energy Management",
+    "USBR": "Bureau of Reclamation",
+    "FWS": "U.S. Fish and Wildlife Service",
+    "USFS": "Forest Service",
+    "DOD": "Department of Defense",
+    "USACE": "Army Corps of Engineers",
+    "DOE": "Department of Energy",
+    "NPS": "National Park Service",
+    "NRCS": "Natural Resources Conservation Service",
+    "ARS": "Agricultural Research Service",
+    "BIA": "Bureau of Indian Affairs",
+    "NOAA": "National Oceanic and Atmospheric Administration",
+    "BPA": "Bonneville Power Administration",
+    "OTHF": "Other or Unknown Federal Land",
+    "TRIB": "American Indian Lands",
+    "SPR": "State Park and Recreation",
+    "SDC": "State Department of Conservation",
+    "SLB": "State Land Board",
+    "SFW": "State Fish and Wildlife",
+    "SDNR": "State Department of Natural Resources",
+    "SDOL": "State Department of Land",
+    "OTHS": "Other or Unknown State Land",
+    "REG": "Regional Agency Land",
+    "RWD": "Regional Water Districts",
+    "CITY": "City Land",
+    "CNTY": "County Land",
+    "UNKL": "Other or Unknown Local Government",
+    "NGO": "Non-Governmental Organization",
+    "PVT": "Private",
+    "JNT": "Joint",
+    "OTHR": "Other",
+    "UNK": "Unknown",
+    "VI": "U.S. Virgin Islands Government",
+    "AS": "American Samoa Government",
+    "GU": "Guam Government",
+    "MP": "Mariana Islands Government",
+    "PR": "Puerto Rico Government",
+    "FM": "Federated States of Micronesia Government",
+    "MH": "Marshall Islands Government",
+    "PW": "Palau Government",
+    "UM": "U.S. Minor Outlying Islands Government",
+    "DESG": "Designation",
+}
+
+
+def _padus_agency(props: dict[str, Any]) -> str:
+    """Resolve PAD-US's coded `Mang_Name` to a display agency name."""
+    code = _get(props, "Mang_Name")
+    if not code:
+        return "PAD-US"
+    code = str(code).strip()
+    return _PADUS_AGENCY_NAMES.get(code, code)
+
+
+def _padus_id(props: dict[str, Any]) -> str:
+    """A feature id independent of `OBJECTID`, which isn't stable across PAD-US releases."""
+    code = str(_get(props, "Mang_Name") or "unk").strip().lower()
+    unit = str(_get(props, "Unit_Nm") or "").strip().lower()
+    digest = hashlib.sha1(unit.encode("utf-8")).hexdigest()[:10]
+    return f"{code}:{digest}"
+
+
+# Four ownership layers - BLM/USFS/tribal cover the agencies dispersed camping cares about
+# most; PAD-US backstops everything else (state parks, NPS, ...). Endpoints confirmed against
+# the live services; if one moves, only these constants change.
 SOURCES: tuple[LandSource, ...] = (
     LandSource(
         key="blm",
@@ -97,6 +188,21 @@ SOURCES: tuple[LandSource, ...] = (
         where="1=1",
         name_field="NAME",
         fallback_name="Tribal land",
+    ),
+    # PAD-US 4.1 Fee Managers (USGS, no key) - the national ownership backstop; see module
+    # docstring. Confirmed live 2026-09-12: `Mang_Type` values seen include FED/STAT/NGO/TRIB.
+    LandSource(
+        key="padus",
+        agency="PAD-US",
+        query_url=(
+            "https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/services/Fee_Managers_PADUS/FeatureServer/0/query"
+        ),
+        where="Mang_Type IN ('FED','STAT','LOC','DIST','JNT','TRIB')",
+        name_field="Unit_Nm",
+        fallback_name="Protected area",
+        extra_fields=("Mang_Name",),
+        make_id=_padus_id,
+        agency_of=_padus_agency,
     ),
 )
 
@@ -147,7 +253,7 @@ def _parse_feature(source: LandSource, feature: dict[str, Any]) -> tuple[Any, ..
     if not geometry or not geometry.get("coordinates"):
         return None
     props = feature.get("properties") or {}
-    feature_id = _get(props, source.id_field)
+    feature_id = source.make_id(props) if source.make_id else _get(props, source.id_field)
     if feature_id in (None, ""):
         return None
     # A geometry whose coords contain no numeric pair is junk - drop it here rather than let
@@ -157,9 +263,10 @@ def _parse_feature(source: LandSource, feature: dict[str, Any]) -> tuple[Any, ..
         return None
     name = _get(props, source.name_field)
     unit = str(name).strip() if name not in (None, "") else source.fallback_name
+    agency = source.agency_of(props) if source.agency_of else source.agency
     return (
         f"{source.key}:{feature_id}",
-        source.agency,
+        agency,
         unit,
         source.key,
         source.source_url,
@@ -184,7 +291,7 @@ def _iter_features(
                 "inSR": "4326",
                 "outSR": "4326",
                 "spatialRel": "esriSpatialRelIntersects",
-                "outFields": f"{source.id_field},{source.name_field}",
+                "outFields": source.out_fields,
                 "returnGeometry": "true",
                 "maxAllowableOffset": _SIMPLIFY_DEG,
                 "resultOffset": offset,
