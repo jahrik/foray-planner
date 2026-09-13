@@ -40,6 +40,7 @@ from foray.cache import (
     upsert_region_precip,
 )
 from foray.config import CoverageRegion, Settings
+from foray.defaults import CELL_DEG as _DEFAULT_CELL_DEG
 from foray.geo import grid_cell, grid_cell_center
 from foray.sources import elevation, precip
 from foray.sources.inat import FUNGI_TAXON_ID, fetch_observations, iter_observations
@@ -221,7 +222,11 @@ def _consume_observations(
 
 
 def backfill_elevations(
-    db: psycopg.Connection, *, max_points: int | None = None, near: tuple[float, float] | None = None
+    db: psycopg.Connection,
+    *,
+    max_points: int | None = None,
+    near: tuple[float, float] | None = None,
+    cell_deg: float = _DEFAULT_CELL_DEG,
 ) -> int:
     """Enrich observations that have coordinates but no `elevation_m` yet (issue #36), pulling
     ground elevation from Open-Meteo's DEM in batches of `elevation.MAX_BATCH`.
@@ -233,14 +238,16 @@ def backfill_elevations(
     outstanding); the ingest path passes a small cap so a perpetual backlog does not turn every
     run into a rate-limit round-trip. `near` (a `(lat, lng)`) prioritises rows closest to that
     point - the post-ingest top-up passes the visitor's home so a Refresh fills the destination
-    cells on screen, not oldest-id rows nationwide.
+    cells on screen, not the activity-weighted queue's national ranking. `cell_deg` only matters
+    without `near` - it's the region binning `cache.observations_missing_elevation` scores
+    backfill_queue priority by (issue #334 PR 3); pass `cfg.cell_deg` when available.
     """
     updated = 0
     while max_points is None or updated < max_points:
         limit = elevation.MAX_BATCH
         if max_points is not None:
             limit = min(limit, max_points - updated)
-        pending = observations_missing_elevation(db, limit, near=near)
+        pending = observations_missing_elevation(db, limit, near=near, cell_deg=cell_deg)
         if not pending:
             break
         try:
@@ -303,7 +310,7 @@ def backfill_precip(
     Best-effort: an HTTP/network failure stops the run early (rows deferred), never raises -
     callers wire this in after ingest where it must not fail the ingest. ``max_cells`` caps the
     work per call; ``near`` prioritises the cells around a point (a Refresh)."""
-    pending = observations_missing_precip(db, _PRECIP_SCAN_LIMIT, near=near)
+    pending = observations_missing_precip(db, _PRECIP_SCAN_LIMIT, near=near, cell_deg=cell_deg)
     if not pending:
         return 0
     by_cell: dict[str, list[tuple[int, dt.date]]] = {}
@@ -378,41 +385,52 @@ def refresh_precipitation(db: psycopg.Connection, cfg: Settings, *, client: http
     Open-Meteo's forecast API and store the 7 / 14 / 30 d totals ending today. Also caches the
     daily values (forecast source) in ``precip_daily``.
 
-    Returns region rows written. Best-effort per cell: a cell's HTTP failure is logged and
-    skipped. Rows are flushed to ``precipitation`` in batches, so an interrupted run (there can
-    be thousands of cells, and Open-Meteo throttles) still leaves partial data visible and the
+    Every stale region wants the *same* window (trailing 30 days ending today), so region
+    centers are batched ``precip.MAX_BATCH`` at a time into one forecast-API call each (issue
+    #334 PR 3) instead of one call per region - the antecedent-rainfall backfill can't do this
+    (each cell needs its own historical date range), but the recent-rain refresh's shared
+    "ending today" window is exactly the shape batching wants. A batch's HTTP failure costs
+    that whole batch, not just one region - a real trade-off for far fewer requests overall;
+    see :func:`foray.sources.precip.fetch_recent_precip_batch`.
+
+    Returns region rows written. Rows are flushed to ``precipitation`` in batches, so an
+    interrupted run (there can be thousands of cells) still leaves partial data visible and the
     next run resumes from the unrefreshed cells."""
     region_ids = stale_precip_region_ids(db, _PRECIP_LAYER_TTL_HOURS)
     if not region_ids:
         logger.info("precip: recent-rain layer already fresh (or no regions) - nothing to do")
         return 0
     today = dt.date.today()
-    batch: list[tuple[str, float | None, float | None, float | None]] = []
+    write_batch: list[tuple[str, float | None, float | None, float | None]] = []
     written = 0
 
     def flush() -> None:
-        nonlocal written, batch
-        written += upsert_region_precip(db, batch)
-        batch = []
+        nonlocal written, write_batch
+        written += upsert_region_precip(db, write_batch)
+        write_batch = []
 
-    for region_id in region_ids:
-        center_lat, center_lng = grid_cell_center(region_id, cfg.cell_deg)
+    for fetch_start in range(0, len(region_ids), precip.MAX_BATCH):
+        fetch_group = region_ids[fetch_start : fetch_start + precip.MAX_BATCH]
+        centers = [grid_cell_center(region_id, cfg.cell_deg) for region_id in fetch_group]
         try:
-            series = precip.fetch_recent_precip(center_lat, center_lng, past_days=30, client=client)
+            series_list = precip.fetch_recent_precip_batch(centers, past_days=30, client=client)
         except (httpx.HTTPError, ValueError) as error:
-            logger.warning("precip: region %s recent-rain fetch failed (%s) - skipping", region_id, error)
-            continue
-        upsert_precip_days(db, region_id, series, precip.FORECAST_SOURCE)
-        batch.append(
-            (
-                region_id,
-                precip.window_sum(series, today, 7),
-                precip.window_sum(series, today, 14),
-                precip.window_sum(series, today, 30),
+            logger.warning(
+                "precip: recent-rain fetch failed for a batch of %d regions (%s) - skipping", len(fetch_group), error
             )
-        )
-        if len(batch) >= _PRECIP_LAYER_BATCH:
-            flush()
+            continue
+        for region_id, series in zip(fetch_group, series_list, strict=True):
+            upsert_precip_days(db, region_id, series, precip.FORECAST_SOURCE)
+            write_batch.append(
+                (
+                    region_id,
+                    precip.window_sum(series, today, 7),
+                    precip.window_sum(series, today, 14),
+                    precip.window_sum(series, today, 30),
+                )
+            )
+            if len(write_batch) >= _PRECIP_LAYER_BATCH:
+                flush()
     flush()
     logger.info("precip: refreshed recent rainfall for %d/%d stale regions", written, len(region_ids))
     return written
@@ -491,7 +509,7 @@ def ingest(
         len(counts),
         skipped_no_genus,
     )
-    backfill_elevations(db, max_points=_INGEST_ELEVATION_POINTS, near=(home.lat, home.lng))
+    backfill_elevations(db, max_points=_INGEST_ELEVATION_POINTS, near=(home.lat, home.lng), cell_deg=cfg.cell_deg)
     backfill_precip(db, cell_deg=cfg.cell_deg, max_cells=_INGEST_PRECIP_CELLS, near=(home.lat, home.lng))
     return counts
 
@@ -559,7 +577,7 @@ def ingest_region(
         len(counts),
         skipped_no_genus,
     )
-    backfill_elevations(db, max_points=_INGEST_ELEVATION_POINTS)
+    backfill_elevations(db, max_points=_INGEST_ELEVATION_POINTS, cell_deg=cfg.cell_deg)
     backfill_precip(db, cell_deg=cfg.cell_deg, max_cells=_INGEST_PRECIP_CELLS)
     return counts
 

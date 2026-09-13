@@ -144,7 +144,7 @@ def test_backfill_elevation_rebuild_flag(con: psycopg.Connection, env_config, mo
     """`--rebuild` (default) makes it *eligible* to debounce-rebuild (issue #332 PR 2's
     `maybe_rebuild_phenology`); `--no-rebuild` skips that call entirely."""
     monkeypatch.setattr(cli_module, "connect", lambda: _CloseTrackingConnection(con))
-    monkeypatch.setattr(cli_module, "backfill_elevations", lambda con, max_points=None: 5)
+    monkeypatch.setattr(cli_module, "backfill_elevations", lambda con, *, max_points=None, cell_deg=0.25: 5)
     rebuilds: list[int] = []
     monkeypatch.setattr(
         cli_module, "maybe_rebuild_phenology", lambda con, cfg, new_rows: rebuilds.append(new_rows) or True
@@ -156,6 +156,51 @@ def test_backfill_elevation_rebuild_flag(con: psycopg.Connection, env_config, mo
 
     assert runner.invoke(cli, ["backfill-elevation"]).exit_code == 0
     assert rebuilds == [5]
+
+
+def test_backfill_elevation_dem_rebuild_flag_and_exit_code(con: psycopg.Connection, env_config, monkeypatch) -> None:
+    from foray.sources.elevation_dem import DemBackfillResult
+
+    monkeypatch.setattr(cli_module, "connect", lambda: _CloseTrackingConnection(con))
+    results = iter(
+        [
+            DemBackfillResult(
+                filled=5,
+                no_value=0,
+                stalled=0,
+                tiles_downloaded=1,
+                tiles_cached=0,
+                tiles_ocean=0,
+                tiles_failed=0,
+                remaining=0,
+            ),
+            DemBackfillResult(
+                filled=3,
+                no_value=0,
+                stalled=1,
+                tiles_downloaded=0,
+                tiles_cached=1,
+                tiles_ocean=0,
+                tiles_failed=0,
+                remaining=2,
+            ),
+        ]
+    )
+    monkeypatch.setattr(cli_module.elevation_dem, "backfill_elevation_dem", lambda con, **kwargs: next(results))
+    rebuilds: list[int] = []
+    monkeypatch.setattr(
+        cli_module, "maybe_rebuild_phenology", lambda con, cfg, new_rows: rebuilds.append(new_rows) or True
+    )
+    runner = CliRunner()
+
+    ok = runner.invoke(cli, ["backfill-elevation-dem"])
+    assert ok.exit_code == 0
+    assert rebuilds == [5]
+
+    # A stalled batch (still eligible rows left) exits non-zero so job_runs/alerting sees it as
+    # needing a re-run, even though it did make partial progress.
+    stalled = runner.invoke(cli, ["backfill-elevation-dem"])
+    assert stalled.exit_code != 0
 
 
 def test_backfill_precip_rebuild_flag(con: psycopg.Connection, env_config, monkeypatch) -> None:

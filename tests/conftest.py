@@ -41,6 +41,7 @@ _TABLES = (
     "precipitation",
     "fire_perimeters",
     "job_runs",
+    "backfill_queue",
 )
 
 _TEST_DB_NAME = "foray_test"
@@ -111,5 +112,9 @@ def _no_precip_network(monkeypatch: pytest.MonkeyPatch) -> None:
     def blocked(*_args: object, **_kwargs: object) -> dict[object, object]:
         raise httpx.ConnectError("network disabled in tests")
 
+    def blocked_batch(*_args: object, **_kwargs: object) -> list[object]:
+        raise httpx.ConnectError("network disabled in tests")
+
     monkeypatch.setattr(precip, "fetch_archive_precip", blocked)
     monkeypatch.setattr(precip, "fetch_recent_precip", blocked)
+    monkeypatch.setattr(precip, "fetch_recent_precip_batch", blocked_batch)

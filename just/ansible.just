@@ -86,14 +86,6 @@ genera-once: (_playbook "genera-once")
 [group('deploy-once')]
 ingest-once: (_playbook "ingest-once")
 
-
-# One-time: clear the whole per-observation elevation backlog by sampling local Copernicus
-# GLO-90 tiles on the droplet, instead of trickling through Open-Meteo's ~10k/day free tier for
-# ~200 days. Downloads ~5GB of tiles to the droplet, samples, then removes them.
-[doc('One-pass elevation backfill from Copernicus GLO-90 tiles on the droplet')]
-[group('deploy-once')]
-backfill-elevation-dem-once: (_playbook "backfill-elevation-dem-once")
-
 # Manual/opt-in only - there's no recurring cron for this (unlike ingest/layers/elevation).
 # Without it, region_satellite (#293) only fills lazily, one cold cache-miss at a time, as real
 # requests hit new regions. Use this to warm every region's satellite fill immediately after a

@@ -12,7 +12,7 @@ from foray.config import Settings
 from foray.logging_config import setup_logging
 from foray.refresh import REFRESH_LAYERS, parse_month_list, run_home_refresh
 from foray.scoring import build_phenology, plan_route
-from foray.sources import fire, geocode, satellite
+from foray.sources import elevation_dem, fire, geocode, satellite
 from foray.sources.camps import ingest_campgrounds, ingest_campgrounds_coverage
 from foray.sources.dispersed import ingest_dispersed, ingest_dispersed_coverage
 from foray.sources.inat import InatQuotaExceeded, iter_fungi_genera
@@ -297,11 +297,49 @@ def backfill_elevation_cmd(ctx: click.Context, limit: int | None, rebuild: bool)
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
-        updated = backfill_elevations(con, max_points=limit)
+        updated = backfill_elevations(con, max_points=limit, cell_deg=cfg.cell_deg)
         click.echo(f"Enriched {updated} observations with elevation.")
         if updated and rebuild and maybe_rebuild_phenology(con, cfg, updated):
             click.echo("Rebuilding phenology…")
         jobs.emit_rows(updated)
+    finally:
+        con.close()
+
+
+@cli.command("backfill-elevation-dem")
+@click.option("--dry-run", is_flag=True, help="Download tiles + report what would be filled, write nothing.")
+@click.option("--workers", type=int, default=12, help="Concurrent tile downloads (default 12).")
+@click.option("--batch-size", type=int, default=5000, help="Rows per COPY + UPDATE batch (default 5000).")
+@click.option("--sleep", "sleep_s", type=float, default=0.0, metavar="SECONDS", help="Pause between write batches.")
+@click.option("--max-cells", type=int, default=0, metavar="N", help="Stop after N tiles with missing rows (0 = all).")
+@click.option(
+    "--rebuild/--no-rebuild",
+    default=True,
+    help="Rebuild phenology afterward so cards pick up the new region means (default).",
+)
+@click.pass_context
+def backfill_elevation_dem_cmd(
+    ctx: click.Context, dry_run: bool, workers: int, batch_size: int, sleep_s: float, max_cells: int, rebuild: bool
+) -> None:
+    """Fill in `elevation_m` from local Copernicus GLO-90 DEM tiles (issue #334 PR 3) instead
+    of Open-Meteo's rate-limited free tier - see `foray.sources.elevation_dem`. Ingest and
+    `backfill-elevation` keep running independently; this is the steady-state fast path for the
+    same backlog, not a replacement CLI command."""
+    cfg = ctx.obj["cfg"]
+    con = connect()
+    try:
+        result = elevation_dem.backfill_elevation_dem(
+            con, dry_run=dry_run, workers=workers, batch_size=batch_size, sleep_s=sleep_s, max_cells=max_cells
+        )
+        click.echo(
+            f"{'DRY RUN - ' if dry_run else ''}Filled {result.filled} rows "
+            f"({result.no_value} no DEM value, {result.stalled} stalled); {result.remaining} still missing."
+        )
+        if result.filled and rebuild and not dry_run and maybe_rebuild_phenology(con, cfg, result.filled):
+            click.echo("Rebuilding phenology…")
+        jobs.emit_rows(result.filled)
+        if not result.ok:
+            raise click.ClickException("some tiles failed to fetch or a batch stalled - re-run to finish")
     finally:
         con.close()
 

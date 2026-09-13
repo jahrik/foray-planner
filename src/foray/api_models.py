@@ -334,3 +334,13 @@ class LayerFreshnessResponse(BaseModel):
 class DataHealthResponse(BaseModel):
     ok: bool
     layers: list[LayerFreshnessResponse]
+
+
+class BacklogResponse(BaseModel):
+    """One backfill kind's queue depth + drain rate, as reported by ``/healthz/backlog``
+    (issue #334 PR 3) - "is this catching up" answerable without a database console."""
+
+    kind: str
+    backlog: int
+    drain_rate_per_hour: float | None
+    job: str

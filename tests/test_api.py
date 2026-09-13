@@ -1154,3 +1154,28 @@ def test_healthz_data_ok_when_every_layer_is_fresh(
     body = response.json()
     assert body["ok"] is True
     assert all(not layer["stale"] for layer in body["layers"])
+
+
+def test_healthz_backlog_reports_zero_depth_with_no_queue(client: TestClient) -> None:
+    response = client.get("/healthz/backlog")
+    assert response.status_code == 200
+    body = response.json()
+    assert {row["kind"] for row in body} == {"elevation", "precip"}
+    assert all(row["backlog"] == 0 for row in body)
+    assert all(row["drain_rate_per_hour"] is None for row in body)
+
+
+def test_healthz_backlog_reflects_queue_depth_and_drain_rate(client: TestClient, con: psycopg.Connection) -> None:
+    con.execute("INSERT INTO backfill_queue (kind, obs_id, priority) VALUES ('elevation', 1, 5), ('elevation', 2, 3)")
+    con.execute(
+        "INSERT INTO job_runs (job, started_at, ended_at, status, rows, duration_ms) VALUES "
+        "('elevation-backfill-dem', now(), now(), 'ok', 100, 3600000)"
+    )
+
+    response = client.get("/healthz/backlog")
+
+    assert response.status_code == 200
+    by_kind = {row["kind"]: row for row in response.json()}
+    assert by_kind["elevation"]["backlog"] == 2
+    assert by_kind["elevation"]["drain_rate_per_hour"] == pytest.approx(100.0)
+    assert by_kind["precip"]["backlog"] == 0

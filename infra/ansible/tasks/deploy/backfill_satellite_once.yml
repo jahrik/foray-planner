@@ -3,8 +3,8 @@
 # destination's satellite fill never pays a cold-cache tile-stitch on a live request. Esri's
 # tile CDN throttles a wide fan-out, so `foray backfill-satellite` paces itself and retries -
 # a full national-scale run is tens of minutes, and the CLI exits non-zero (failing this task)
-# if failures dominate, so re-run until it's clean. No downtime handling needed unlike
-# backfill-elevation-dem-once. Safe to re-run - a plain run only fetches regions still missing;
+# if failures dominate, so re-run until it's clean. No disk-space precheck needed unlike a
+# tile-cache-backed job. Safe to re-run - a plain run only fetches regions still missing;
 # pass foray_satellite_backfill_args=--refresh to clear the table first and re-fetch everything
 # (after a change to what a region's raster should contain - bbox, zoom, tiles, compositing).
 - name: Check for the deploy-rendered env file

@@ -1,52 +1,49 @@
-#!/usr/bin/env python3
-"""One-off: backfill `observations.elevation_m` from local Copernicus GLO-90 DEM tiles.
+"""Steady-state `observations.elevation_m` backfill from local Copernicus GLO-90 DEM tiles
+(issue #334 PR 3 - promoted from the one-off `scripts/backfill_elevation_dem.py`, issue #236).
 
-The hourly `foray-backfill-elevation` cron drains the backlog through Open-Meteo's free
-elevation API, but that tier caps at ~10k points/day - against a multi-million-row backlog
-that is ~200 days of trickle. This script samples the *same* DEM (Copernicus GLO-90, ~90 m,
-nearest-cell - so values stay consistent with rows already enriched via `foray.sources.elevation`)
-from 1x1 degree Cloud-Optimized GeoTIFF tiles instead, pulled once from the public AWS Open
-Data mirror (`s3://copernicus-dem-90m`, no credentials) into a local cache. The whole backlog
-then clears in one pass: minutes of CPU once the tiles are down.
+The Open-Meteo-backed hourly cron (`foray.sources.elevation`) drains the backlog through a
+free tier capped at ~10k points/day - against a multi-million-row backlog that was ~200 days
+of trickle (see `project_dem_backfill_prod_too_slow`). This module samples the *same* DEM
+(Copernicus GLO-90, ~90 m, nearest-cell - so values stay consistent with rows already enriched
+via Open-Meteo) from 1x1 degree Cloud-Optimized GeoTIFF tiles instead, pulled from the public
+AWS Open Data mirror (`s3://copernicus-dem-90m`, no credentials) into a local cache.
 
-Connects to Postgres via `foray.cache.connect()`, i.e. the standard PG* env vars - point it at
-prod by exporting PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE (e.g.
-`set -a; source foray.env; set +a`) or leave unset for local dev. Tiles cache under
-`FORAY_DEM_CACHE` (default `~/.cache/foray/dem`); set it to a mounted volume when running in
-the container so a re-run does not re-download.
+Was a one-shot ansible task (`infra/ansible/tasks/deploy/backfill_elevation_dem_once.yml`,
+now retired) run once to clear the historical backlog. As a scheduled `foray` job
+(`backfill-elevation-dem` in jobs.yaml) it now also keeps the *steady-state* trickle of newly-
+ingested rows off the Open-Meteo free tier entirely - the daily volume of new eligible rows is
+small enough that a fresh, uncached run (no persistent tile-cache volume needed for a scheduled
+container - see jobs.yaml's comment) only touches whatever few cells today's new rows fall in,
+not the whole historical footprint the original bulk clear needed.
 
 Idempotent and resumable: only rows where `elevation_m IS NULL` are touched, and cached tiles
-plus `.missing` markers (for the all-ocean cells the mirror does not publish) are reused.
+plus `.missing` markers (for the all-ocean cells the mirror does not publish) are reused within
+one run.
 
 Writes are set-based: each cell's sampled values go through a `COPY` into a TEMP table and a
-single `UPDATE ... FROM`, chunked at `--batch-size`, with `synchronous_commit = off` and a
-short `lock_timeout` on the session. A naive `executemany` of ~1.8M single-row UPDATEs runs
-at ~180 rows/s against a network-attached managed Postgres and starves the live server of
-locks and WAL bandwidth (it took prod's `/api/destinations` down once); this stays out of
-its way. Use `--sleep` to pace batches further and `--max-cells` to run in slices.
-
-Usage: `just ansible backfill-elevation-dem-once` (prod), or
-`uv run --with rasterio python scripts/backfill_elevation_dem.py [--dry-run] [--no-rebuild]`.
+single `UPDATE ... FROM`, chunked at `batch_size`, with `synchronous_commit = off` and a short
+`lock_timeout` on the session. A naive `executemany` of ~1.8M single-row UPDATEs runs at
+~180 rows/s against a network-attached managed Postgres and starves the live server of locks
+and WAL bandwidth (it took prod's `/api/destinations` down once, see git history); this stays
+out of its way.
 """
 
 from __future__ import annotations
 
-import argparse
+import logging
 import math
 import os
-import sys
 import time
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 import psycopg
 import rasterio
 
-from foray.cache import connect
-from foray.config import Settings
-from foray.scoring import build_phenology
+logger = logging.getLogger(__name__)
 
 TILE_BUCKET = "https://copernicus-dem-90m.s3.amazonaws.com"
 TILE_PREFIX = "Copernicus_DSM_COG_30"
@@ -62,6 +59,24 @@ ELIGIBLE = (
     "elevation_m IS NULL AND quality_grade = 'research' AND NOT COALESCE(obscured, false) "
     "AND lat >= -90 AND lat < 90 AND lng >= -180 AND lng < 180"
 )
+
+
+@dataclass
+class DemBackfillResult:
+    filled: int
+    no_value: int
+    stalled: int
+    tiles_downloaded: int
+    tiles_cached: int
+    tiles_ocean: int
+    tiles_failed: int
+    remaining: int
+
+    @property
+    def ok(self) -> bool:
+        """False if a re-run is needed to finish the job (a tile failed to fetch, or a batch
+        stalled on a lock) - mirrors the original script's non-zero exit code convention."""
+        return not self.tiles_failed and not self.stalled
 
 
 def cache_dir() -> Path:
@@ -135,8 +150,8 @@ def apply_updates(
                 with cur.copy("COPY _elev_batch (id, elevation_m) FROM STDIN") as copy:
                     for obs_id, value in batch:
                         copy.write_row((obs_id, value))
-                # AND elevation_m IS NULL: never clobber a value the hourly Open-Meteo cron
-                # may have written into this cell since the rows were selected.
+                # AND elevation_m IS NULL: never clobber a value the Open-Meteo cron may have
+                # written into this cell since the rows were selected.
                 cur.execute(
                     "UPDATE observations o SET elevation_m = t.elevation_m "
                     "FROM _elev_batch t WHERE o.id = t.id AND o.elevation_m IS NULL"
@@ -144,71 +159,58 @@ def apply_updates(
             applied += len(batch)
         except psycopg.OperationalError as exc:  # lock_timeout / statement_timeout / transient
             stalled += len(batch)
-            print(f"  ! batch of {len(batch)} stalled, left for re-run: {exc}")
+            logger.warning("elevation_dem: batch of %d stalled, left for re-run: %s", len(batch), exc)
         if sleep_s:
             time.sleep(sleep_s)
     return applied, stalled
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dry-run", action="store_true", help="download tiles + report, write nothing")
-    parser.add_argument("--workers", type=int, default=12, help="concurrent tile downloads (default 12)")
-    parser.add_argument("--batch-size", type=int, default=5000, help="rows per COPY + UPDATE batch (default 5000)")
-    parser.add_argument(
-        "--sleep", type=float, default=0.0, metavar="SECONDS", help="pause between write batches (default 0)"
-    )
-    parser.add_argument(
-        "--max-cells",
-        type=int,
-        default=0,
-        metavar="N",
-        help="stop after N cells with missing rows (0 = all); for running prod in slices",
-    )
-    parser.add_argument(
-        "--no-rebuild",
-        dest="rebuild",
-        action="store_false",
-        help="skip the phenology rebuild afterward (region means then wait for the next ingest/refresh)",
-    )
-    args = parser.parse_args()
-
+def backfill_elevation_dem(
+    con: psycopg.Connection,
+    *,
+    dry_run: bool = False,
+    workers: int = 12,
+    batch_size: int = 5000,
+    sleep_s: float = 0.0,
+    max_cells: int = 0,
+) -> DemBackfillResult:
+    """Sample local GLO-90 tiles for every eligible row missing elevation, writing set-based.
+    ``max_cells`` (0 = all) caps how many 1x1 degree cells this call processes, for running a
+    single invocation in slices. Downloads whatever tiles aren't already cached under
+    ``FORAY_DEM_CACHE`` (or the platform cache dir default) first, with ``workers`` concurrent
+    fetches."""
     cache = cache_dir()
-    con = connect()
-
     cells = con.execute(
         f"SELECT DISTINCT floor(lat)::int, floor(lng)::int FROM observations WHERE {ELIGIBLE} ORDER BY 1, 2"
     ).fetchall()
     total_missing = (con.execute(f"SELECT count(*) FROM observations WHERE {ELIGIBLE}").fetchone() or (0,))[0]
-    print(f"{total_missing:,} rows missing elevation across {len(cells)} tiles; cache {cache}")
+    logger.info("elevation_dem: %d rows missing elevation across %d tiles; cache %s", total_missing, len(cells), cache)
     if not cells:
-        return 0
+        return DemBackfillResult(0, 0, 0, 0, 0, 0, 0, 0)
 
     started = time.monotonic()
     tiles = {tile_id(south, west) for south, west in cells}
     counts = {"downloaded": 0, "cached": 0, "ocean": 0, "error": 0}
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(fetch_tile, cache, tid) for tid in tiles]
-        for done, future in enumerate(as_completed(futures), 1):
+        for future in as_completed(futures):
             tid, status = future.result()
             key = status if status in counts else "error"
             counts[key] += 1
             if key == "error":
-                print(f"  ! {tid}: {status}")
-            if done % 200 == 0 or done == len(tiles):
-                print(f"  tiles {done}/{len(tiles)}  {counts}")
-    cache_gb = sum(p.stat().st_size for p in cache.glob("*.tif")) / 1e9
-    print(f"tiles ready in {time.monotonic() - started:.0f}s ({cache_gb:.1f} GB cached)")
-    if counts["error"]:
-        print(f"WARNING: {counts['error']} tiles failed to fetch - re-run to retry them")
+                logger.warning("elevation_dem: tile %s: %s", tid, status)
+    logger.info(
+        "elevation_dem: tiles ready in %.0fs (%s)",
+        time.monotonic() - started,
+        counts,
+    )
 
-    if not args.dry_run:
+    if not dry_run:
         # Yield rather than queue behind the live server: a batch that can't get its lock in
-        # 5s is left for a re-run (apply_updates counts it as stalled -> non-zero exit).
+        # 5s is left for a re-run (apply_updates counts it as stalled).
         con.execute("SET lock_timeout = '5s'")
         con.execute("SET statement_timeout = '120s'")
 
-    started = time.monotonic()
     filled = no_value = stalled = 0
     processed_cells = 0
     for south, west in cells:
@@ -234,31 +236,31 @@ def main() -> int:
         if not updates:
             continue
         processed_cells += 1
-        if args.dry_run:
+        if dry_run:
             filled += len(updates)
         else:
-            applied, cell_stalled = apply_updates(con, updates, batch_size=args.batch_size, sleep_s=args.sleep)
+            applied, cell_stalled = apply_updates(con, updates, batch_size=batch_size, sleep_s=sleep_s)
             filled += applied
             stalled += cell_stalled
-        if filled % 100_000 < len(updates):
-            print(f"  filled {filled:,} / {total_missing:,}  ({time.monotonic() - started:.0f}s)")
-        if args.max_cells and processed_cells >= args.max_cells:
-            print(f"stopping after {processed_cells} cells (--max-cells); re-run for the rest")
+        if max_cells and processed_cells >= max_cells:
+            logger.info("elevation_dem: stopping after %d cells (max_cells) - re-run for the rest", processed_cells)
             break
 
-    print(f"{'DRY RUN - ' if args.dry_run else ''}filled {filled:,} rows; {no_value:,} had no DEM value (ocean/edge)")
-    if stalled:
-        print(f"WARNING: {stalled:,} rows stalled on a lock - re-run to finish them")
-    if filled and args.rebuild and not args.dry_run:
-        print("Rebuilding phenology so region elevation means pick up the new values…")
-        build_phenology(con, Settings().cell_deg)
     remaining = (con.execute(f"SELECT count(*) FROM observations WHERE {ELIGIBLE}").fetchone() or (0,))[0]
-    print(f"eligible rows still missing elevation: {remaining:,}")
-    # Non-zero exit if any tile failed to fetch or any batch stalled, so the Ansible task (and
-    # an operator) sees the run as incomplete and knows to re-run - what succeeded is already
-    # written and a re-run only retries the rest.
-    return 1 if counts["error"] or stalled else 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    logger.info(
+        "elevation_dem: %sfilled %d rows; %d had no DEM value; %d eligible rows still missing elevation",
+        "DRY RUN - " if dry_run else "",
+        filled,
+        no_value,
+        remaining,
+    )
+    return DemBackfillResult(
+        filled=filled,
+        no_value=no_value,
+        stalled=stalled,
+        tiles_downloaded=counts["downloaded"],
+        tiles_cached=counts["cached"],
+        tiles_ocean=counts["ocean"],
+        tiles_failed=counts["error"],
+        remaining=remaining,
+    )

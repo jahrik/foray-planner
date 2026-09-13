@@ -209,17 +209,6 @@
         - "foray:ingest-once"
         - never
 
-    - name: Include one-off DEM elevation backfill task
-      ansible.builtin.include_tasks:
-        file: tasks/deploy/backfill_elevation_dem_once.yml
-        apply:
-          tags:
-            - "foray:backfill-elevation-dem-once"
-            - never
-      tags:
-        - "foray:backfill-elevation-dem-once"
-        - never
-
     - name: Include one-off satellite backfill task
       ansible.builtin.include_tasks:
         file: tasks/deploy/backfill_satellite_once.yml

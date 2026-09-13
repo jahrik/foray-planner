@@ -7,17 +7,23 @@ Two endpoints, one shape - a daily ``precipitation_sum`` series for a single poi
   value for yet; this module passes that through as ``None`` (never ``0.0``) so the caller can
   refuse to record a partial-window sum.
 * :func:`fetch_recent_precip` - the **Forecast API** with ``past_days``, for the recent-rain
-  per-destination layer (Part 2).
+  per-destination layer (Part 2). :func:`fetch_recent_precip_batch` is the multi-point form
+  (issue #334 PR 3) - every region's recent-rain refresh wants the *same* trailing window
+  ending today, so up to ``MAX_BATCH`` region centers ride in one request instead of one each,
+  the same win :mod:`foray.sources.elevation` gets from batching coordinates.
 
-Free, no key - same provider as :mod:`foray.sources.elevation`. Each call is a full series for
-one point+range (no multi-point batching), so the throttle paces by request, not by point.
+Free, no key - same provider as :mod:`foray.sources.elevation`. The archive antecedent-rainfall
+path (:func:`fetch_archive_precip`) stays per-point: each observation's window is grouped by
+grid cell already (``ingest.backfill_precip``), but different cells need different date ranges
+(each cell's own oldest-pending-observation date), so there's no shared window to batch across
+cells the way the recent-rain refresh has.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 import httpx
 
@@ -111,6 +117,70 @@ def fetch_recent_precip(
         },
         client=client,
     )
+
+
+# Open-Meteo's forecast API accepts comma-separated latitude/longitude for multiple locations
+# in one request, one date range shared by all of them (verified live 2026-09-13: a 2-location
+# request returns a JSON array, one object per location, each with its own `daily` series, in
+# request order). No documented per-request location cap like the elevation endpoint's 100;
+# 50 is a conservative choice - a big enough win to matter, small enough that a batch never
+# ends up carrying more series than can comfortably sit in memory or one response body.
+MAX_BATCH = 50
+
+
+def fetch_recent_precip_batch(
+    centers: Sequence[tuple[float, float]], *, past_days: int = 30, client: httpx.Client | None = None
+) -> list[dict[dt.date, float | None]]:
+    """Batched form of :func:`fetch_recent_precip` - one forecast-API call for up to
+    ``MAX_BATCH`` centers sharing the same trailing-``past_days`` window (issue #334 PR 3),
+    instead of one call per center. Returns one series per input center, in the same order.
+
+    Paced the same as a single-point call (one ``_throttle`` unit, not one per center) - the
+    whole point of batching is fewer requests for the same rate-limit budget, so metering by
+    request count here (not by point count, unlike `elevation.lookup_batch`) is what actually
+    realizes that win.
+    """
+    if not centers:
+        return []
+    if len(centers) > MAX_BATCH:
+        raise ValueError(f"at most {MAX_BATCH} points per request, got {len(centers)}")
+    for lat, lng in centers:
+        _check_coords(lat, lng)
+    params = {
+        "latitude": ",".join(f"{lat:.4f}" for lat, _ in centers),
+        "longitude": ",".join(f"{lng:.4f}" for _, lng in centers),
+        "past_days": past_days,
+        "forecast_days": 1,
+        "daily": "precipitation_sum",
+        "timezone": "GMT",
+    }
+    owns = client is None
+    client = client or httpx.Client(timeout=30.0, headers={"User-Agent": USER_AGENT})
+    try:
+        for attempt in range(_MAX_RETRIES + 1):
+            _throttle.wait()
+            resp = client.get(FORECAST_URL, params=params)
+            if resp.status_code == 429 and attempt < _MAX_RETRIES:
+                time.sleep(retry_after_seconds(resp, attempt, cap=_MAX_RETRY_WAIT_S))
+                continue
+            resp.raise_for_status()
+            break
+        payload = resp.json()
+    finally:
+        if owns:
+            client.close()
+    results: list[dict[dt.date, float | None]] = []
+    for entry in payload:
+        daily = entry.get("daily") or {}
+        dates = daily.get("time") or []
+        values = daily.get("precipitation_sum") or []
+        results.append(
+            {
+                dt.date.fromisoformat(iso): (float(value) if value is not None else None)
+                for iso, value in zip(dates, values, strict=False)
+            }
+        )
+    return results
 
 
 def window_sum(series: Mapping[dt.date, float | None], end: dt.date, days: int) -> float | None:

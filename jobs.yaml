@@ -72,6 +72,18 @@ jobs:
     window: any
     writer: true
 
+  # Steady-state DEM path (issue #334 PR 3, foray.sources.elevation_dem): samples local
+  # Copernicus GLO-90 tiles instead of calling Open-Meteo, so it isn't rate-limited - the
+  # elevation-backfill job above becomes a near-zero-cost safety net for whatever this can't
+  # reach (obscured/non-research/exact-boundary rows, or a tile the mirror doesn't publish).
+  # window: night since a run downloads tiles + does set-based COPY/UPDATE writes - same class
+  # as the coverage-wide jobs below, not `any`'s light/externally-paced jobs.
+  - name: elevation-backfill-dem
+    command: backfill-elevation-dem
+    interval_hours: 24
+    window: night
+    writer: true
+
   - name: precip-backfill
     command: backfill-precip
     interval_hours: 24

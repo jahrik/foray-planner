@@ -88,17 +88,6 @@ foray_night_window_randomized_delay_sec: "10800"
 # Light/any-window jobs get a much smaller jitter - they're meant to run close to on-schedule.
 foray_job_randomized_delay_sec: "300"
 
-# One-time foray:backfill-elevation-dem-once (clears the whole elevation backlog from local
-# Copernicus GLO-90 tiles instead of Open-Meteo's ~10k/day free tier - see
-# scripts/backfill_elevation_dem.py). The tile cache is a throwaway working set: bind-mounted
-# here, removed after the run unless foray_dem_once_keep_cache is set (useful only to avoid a
-# re-download when retrying a partially failed run).
-foray_dem_once_cache_dir: /opt/foray-planner/dem-cache
-# The real working set is ~4.7 GB of tiles; 6 leaves headroom without tripping on a droplet
-# that is merely low, not out of room (the 8 GB guess blocked a run at 7.8 GB free).
-foray_dem_once_min_free_gb: "6"
-foray_dem_once_keep_cache: false
-
 # One-time foray:resync-once catch-up - much larger than the recurring cron's batch size since
 # this runs once, synchronously, until the whole table is
 # caught up. Overrideable per droplet size/table growth (Copilot review, PR #185).
