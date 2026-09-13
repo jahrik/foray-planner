@@ -143,6 +143,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/healthz/backlog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Healthz Backlog
+         * @description Backfill-queue depth + recent drain rate per kind (issue #334 PR 3) - never a failing
+         *     check (no 503 here), just the numbers behind "is this catching up".
+         */
+        get: operations["healthz_backlog_healthz_backlog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/destinations": {
         parameters: {
             query?: never;
@@ -630,6 +651,21 @@ export interface components {
              * @default []
              */
             fire_nearby: components["schemas"]["FireNear"][];
+        };
+        /**
+         * BacklogResponse
+         * @description One backfill kind's queue depth + drain rate, as reported by ``/healthz/backlog``
+         *     (issue #334 PR 3) - "is this catching up" answerable without a database console.
+         */
+        BacklogResponse: {
+            /** Kind */
+            kind: string;
+            /** Backlog */
+            backlog: number;
+            /** Drain Rate Per Hour */
+            drain_rate_per_hour: number | null;
+            /** Job */
+            job: string;
         };
         /** CalendarBucket */
         CalendarBucket: {
@@ -1322,6 +1358,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DataHealthResponse"];
+                };
+            };
+        };
+    };
+    healthz_backlog_healthz_backlog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BacklogResponse"][];
                 };
             };
         };
