@@ -12,10 +12,13 @@ from foray.cache import is_ingested, upsert_public_land
 from foray.config import CoverageRegion, Settings, coverage_envelope
 from foray.scoring import land_near
 from foray.sources.land import (
+    SOURCES,
     LandSource,
     _bounds,
     _envelope,
     _get,
+    _padus_agency,
+    _padus_id,
     _parse_feature,
     fetch_public_land,
     ingest_public_land_coverage,
@@ -103,6 +106,49 @@ def test_parse_feature_builds_row_and_falls_back_on_missing_name() -> None:
 def test_parse_feature_skips_missing_geometry_or_id() -> None:
     assert _parse_feature(BLM, {"properties": {"OBJECTID": 1}, "geometry": None}) is None
     assert _parse_feature(BLM, {"properties": {}, "geometry": _polygon(47.6, -122.3)}) is None
+
+
+def test_padus_source_is_registered_alongside_blm_usfs_tribal() -> None:
+    keys = {source.key for source in SOURCES}
+    assert keys == {"blm", "usfs", "tribal", "padus"}
+
+
+def test_padus_agency_resolves_coded_value_and_falls_back_to_the_raw_code() -> None:
+    assert _padus_agency({"Mang_Name": "SPR"}) == "State Park and Recreation"
+    assert _padus_agency({"Mang_Name": "NPS"}) == "National Park Service"
+    assert _padus_agency({"Mang_Name": "XYZ"}) == "XYZ"  # unknown code -> passthrough
+    assert _padus_agency({}) == "PAD-US"  # missing code -> generic label
+
+
+def test_padus_id_is_stable_and_independent_of_objectid() -> None:
+    # PAD-US's OBJECTID isn't stable across releases (issue #335) - the id must be derived
+    # from content instead, and the same content must always hash to the same id.
+    props = {"Mang_Name": "SPR", "Unit_Nm": "Prairie Creek Redwoods State Park", "OBJECTID": 189457}
+    same_props_new_objectid = {**props, "OBJECTID": 999999}
+    assert _padus_id(props) == _padus_id(same_props_new_objectid)
+    assert _padus_id({"Mang_Name": "NPS", "Unit_Nm": "Redwood National Park"}) != _padus_id(props)
+
+
+def test_padus_out_fields_include_mang_name_alongside_id_and_name() -> None:
+    padus = next(source for source in SOURCES if source.key == "padus")
+    fields = set(padus.out_fields.split(","))
+    assert {"OBJECTID", "Unit_Nm", "Mang_Name"} <= fields
+
+
+def test_parse_feature_uses_padus_make_id_and_agency_of() -> None:
+    padus = next(source for source in SOURCES if source.key == "padus")
+    row = _parse_feature(
+        padus,
+        {
+            "properties": {"OBJECTID": 189457, "Mang_Name": "SPR", "Unit_Nm": "Prairie Creek Redwoods State Park"},
+            "geometry": _polygon(41.35, -124.0),
+        },
+    )
+    assert row is not None
+    assert row[0] == f"padus:{_padus_id({'Mang_Name': 'SPR', 'Unit_Nm': 'Prairie Creek Redwoods State Park'})}"
+    assert row[1] == "State Park and Recreation"
+    assert row[2] == "Prairie Creek Redwoods State Park"
+    assert row[3] == "padus"
 
 
 def test_fetch_public_land_dedupes_and_skips_a_failing_source() -> None:
