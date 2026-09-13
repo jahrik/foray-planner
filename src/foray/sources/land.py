@@ -20,8 +20,13 @@ Four authoritative ArcGIS layers, queried with an envelope around home:
   including all of Prairie Creek. Filtered to government-managed polygons (``Mang_Type`` in
   FED/STAT/LOC/DIST/JNT/TRIB - private/NGO land is excluded, both to cut the national dataset's
   size and because it isn't the "who manages the ground for camping" question this module
-  answers) and kept running alongside BLM/USFS/tribal rather than replacing them (issue #335 PR
-  1; a cutover that drops the redundant sources is a follow-up once coverage is compared).
+  answers) and kept running alongside BLM/USFS/tribal, not replacing them: issue #335 PR 2
+  checked live (two test envelopes, a PostGIS area-intersection comparison) whether this layer
+  could retire the direct BLM/USFS sources and found it can't - PAD-US's Fee Managers cut only
+  covered 2.6%-30% of BLM's own Surface Management Agency layer's area (most BLM-administered
+  land in the West isn't fee-simple BLM title, so it's outside a *fee managers* layer entirely)
+  and 72%-88% of USFS's boundary layer. Dropping either would be a real coverage regression, not
+  a redundancy cleanup, so all four sources stay.
 
 Geometry is generalized server-side (``maxAllowableOffset``) so the cached polygons stay light
 enough for the field map, and stored as GeoJSON text (see ``cache.public_land``); the ``geom``

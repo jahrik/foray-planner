@@ -16,7 +16,7 @@ import datetime as dt
 import logging
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from typing import Any, LiteralString
+from typing import Any, LiteralString, cast
 
 import httpx
 import psycopg
@@ -131,6 +131,9 @@ CREATE TABLE IF NOT EXISTS trails (
                                      -- card shows. Refreshed in rotation by `backfill_forage_obs`.
     forage_obs_at TIMESTAMPTZ        -- when forage_obs was last computed (NULLs go first in the
                                      -- backfill rotation); staleness is fine, it drifts slowly
+    -- land_agency / land_unit added by migration 48, issue #335 PR 2: the public-land unit a
+    -- trail's representative point falls inside, persisted at ingest instead of recomputed via a
+    -- live point-in-polygon join on every request (see queries.trails_near / get_trail history).
 );
 
 -- Wildfire perimeters + points (issue #227). An active fire and a recent burn scar are the
@@ -379,6 +382,20 @@ _CONCURRENT_INDEXES: list[LiteralString | tuple[LiteralString, str]] = [
 # each is individually idempotent, but that stops scaling as more get added over the project's
 # life. New migrations: append a new (version, statement) tuple, never edit/reorder an existing
 # one (already-applied versions are looked up by number, not by content).
+
+# The public-land point-in-polygon join trails.land_agency / land_unit persist (migration 48,
+# issue #335 PR 2) - the smallest polygon covering a trail's representative point wins (a
+# wilderness inside a forest beats the forest). Shared between the one-time migration backfill
+# below and `_assign_trail_land`'s incremental recompute so the two queries can't drift apart.
+# References `t2` - the caller's outer query must alias the trails row that way.
+_TRAIL_LAND_JOIN: LiteralString = """
+    LEFT JOIN LATERAL (
+        SELECT pl.agency, pl.unit FROM public_land pl
+        WHERE pl.geom IS NOT NULL
+          AND ST_DWithin(pl.geom, ST_SetSRID(ST_MakePoint(t2.center_lng, t2.center_lat), 4326)::geography, 0)
+        ORDER BY ST_Area(pl.geom::geometry) LIMIT 1
+    ) pl ON true
+"""
 _MIGRATIONS: list[tuple[int, LiteralString]] = [
     (1, "ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION"),
     (2, "ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION"),
@@ -688,6 +705,22 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         "kind TEXT NOT NULL, obs_id BIGINT NOT NULL, priority DOUBLE PRECISION NOT NULL, "
         "enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (kind, obs_id)); "
         "CREATE INDEX IF NOT EXISTS ix_backfill_queue_priority ON backfill_queue (kind, priority DESC)",
+    ),
+    # issue #335 PR 2: persist the trail<->land-unit join instead of recomputing it live on every
+    # `/api/trails` and trail-selection request (`queries.trail_land_units` / `get_trail`'s old
+    # LATERAL point-in-polygon join, now retired). Columns only, deliberately no backfill UPDATE
+    # here - a one-transaction UPDATE across every existing trail (~1.9M rows, same scale as
+    # migration 45's trail_geometry split) is exactly the write-load mistake this project already
+    # made once with the DEM elevation backfill: unattended (this runs inside cd.yml's
+    # migrate-once deploy gate), all-or-nothing, and impossible to watch or safely interrupt.
+    # `cache.backfill_trail_land` does the actual one-time backfill instead, as a separate
+    # manually-run, batched, resumable pass; `_assign_trail_land` keeps new writes current from
+    # here on - see `upsert_trails` (a new trail has no label yet) and `upsert_public_land` (a
+    # land polygon changing may relabel existing trails).
+    (
+        48,
+        "ALTER TABLE trails ADD COLUMN IF NOT EXISTS land_agency TEXT; "
+        "ALTER TABLE trails ADD COLUMN IF NOT EXISTS land_unit TEXT",
     ),
 ]
 
@@ -1268,13 +1301,103 @@ def prune_campsites_missing_from(con: psycopg.Connection, source: str, ids: Sequ
     return result.rowcount
 
 
+def _assign_trail_land(
+    con: psycopg.Connection,
+    *,
+    trail_ids: Sequence[str] | None = None,
+    bbox: tuple[float, float, float, float] | None = None,
+) -> int:
+    """(Re)compute and persist ``trails.land_agency`` / ``land_unit`` (issue #335 PR 2) -
+    this used to be a live point-in-polygon join run on every ``/api/trails`` request
+    (``queries.trail_land_units`` / ``get_trail``, now retired in favor of reading these
+    columns straight off ``trails``).
+
+    ``trail_ids`` scopes to a just-upserted batch (called from :func:`upsert_trails` - a
+    brand-new trail has no label yet). ``bbox`` scopes to the footprint of just-upserted land
+    polygons (called from :func:`upsert_public_land` - an existing trail's label may have
+    changed if a polygon covering it was added/changed); a trail whose representative point
+    sits outside that box can't have been affected. Passing neither recomputes every trail -
+    the one-time migration 48 backfill does this directly in SQL instead, since it runs before
+    any Python code needing this function exists.
+    """
+    if trail_ids is not None and not trail_ids:
+        return 0
+    where: LiteralString
+    params: list[Any]
+    if trail_ids is not None:
+        where = "WHERE t2.id = ANY(%s)"
+        params = [list(trail_ids)]
+    elif bbox is not None:
+        min_lng, min_lat, max_lng, max_lat = bbox
+        where = "WHERE t2.center_lng BETWEEN %s AND %s AND t2.center_lat BETWEEN %s AND %s"
+        params = [min_lng, max_lng, min_lat, max_lat]
+    else:
+        where = ""
+        params = []
+    result = con.execute(
+        f"""
+        UPDATE trails t SET land_agency = land.agency, land_unit = land.unit
+        FROM (
+            SELECT t2.id, pl.agency, pl.unit
+            FROM trails t2
+            {_TRAIL_LAND_JOIN}
+            {where}
+        ) land
+        WHERE land.id = t.id
+        """,
+        params,
+    )
+    return result.rowcount
+
+
+def backfill_trail_land(con: psycopg.Connection, *, batch_size: int = 5000) -> int:
+    """One-time backfill of ``trails.land_agency`` / ``land_unit`` for every trail cached before
+    migration 48 shipped (issue #335 PR 2's ``foray backfill-trail-land`` CLI command).
+
+    Migration 48 only adds the columns - deliberately no backfill UPDATE there, see its comment
+    in ``_MIGRATIONS``. ``_assign_trail_land`` keeps *new* writes current from then on, but a
+    trail already cached (and whose ingest marker already says "done", so it won't naturally
+    re-upsert) needs this run once. Walks the table in id-ordered pages, each page its own
+    autocommitted UPDATE (``con`` is autocommit) rather than one table-wide transaction - safe to
+    interrupt (whatever already committed stays done) and safe to re-run (relabeling an
+    already-labeled trail is a no-op in effect). Returns rows visited.
+    """
+    last_id = ""
+    visited = 0
+    while True:
+        batch_ids = [
+            row[0]
+            for row in con.execute(
+                "SELECT id FROM trails WHERE id > %s ORDER BY id LIMIT %s", [last_id, batch_size]
+            ).fetchall()
+        ]
+        if not batch_ids:
+            return visited
+        _assign_trail_land(con, trail_ids=batch_ids)
+        visited += len(batch_ids)
+        last_id = batch_ids[-1]
+        logger.info("land: backfilled trail<->land for %d trails so far", visited)
+
+
 def upsert_public_land(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
     """Upsert public-land polygons, refreshing existing rows in place. Returns rows attempted.
 
-    Each tuple is (id, agency, unit, source, url, geojson).
+    Each tuple is (id, agency, unit, source, url, geojson). Relabels any trail that may fall
+    inside the newly-upserted footprint (see :func:`_assign_trail_land`) - scoped to the bbox
+    of just the rows upserted here, not every cached polygon, so a home-radius land refresh
+    doesn't force a full-table trail scan.
     """
     columns: tuple[LiteralString, ...] = ("id", "agency", "unit", "source", "url", "geojson")
     result = upsert_rows(con, "public_land", columns, rows)
+    ids = [row[0] for row in rows]
+    if ids:
+        bbox = con.execute(
+            "SELECT ST_XMin(e), ST_YMin(e), ST_XMax(e), ST_YMax(e) "
+            "FROM (SELECT ST_Extent(geom::geometry) AS e FROM public_land WHERE id = ANY(%s)) box",
+            [ids],
+        ).fetchone()
+        if bbox is not None and bbox[0] is not None:
+            _assign_trail_land(con, bbox=cast(tuple[float, float, float, float], bbox))
     _invalidate_rank_cache()
     return result
 
@@ -1309,6 +1432,7 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
     geometry_rows = [(row[0], row[7]) for row in rows]
     result = upsert_rows(con, "trails", trails_columns, trails_rows)
     upsert_rows(con, "trail_geometry", ("id", "geojson"), geometry_rows)
+    _assign_trail_land(con, trail_ids=[row[0] for row in rows])
     _invalidate_rank_cache()
     return result
 
