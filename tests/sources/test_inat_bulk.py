@@ -157,6 +157,45 @@ def test_stage_inat_uploads_filtered_rows(monkeypatch: pytest.MonkeyPatch) -> No
     assert [row["id"] for row in rows] == [1]
 
 
+def test_stage_inat_retries_after_a_transport_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    zip_bytes = _dwca_zip([_dwca_row(1, genus="Amanita")])
+    uploaded: dict[str, bytes] = {}
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"content-length": str(len(zip_bytes))})
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise httpx.ReadError("simulated dropped connection", request=request)
+        return httpx.Response(200, content=zip_bytes)
+
+    def fake_upload_file(cfg: Spaces, key: str, src_path: str, content_type: str) -> None:
+        uploaded[key] = Path(src_path).read_bytes()
+
+    monkeypatch.setattr(inat_bulk.spaces, "upload_file", fake_upload_file)
+    monkeypatch.setattr(inat_bulk.httpx, "Client", lambda **kw: _RealClient(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(inat_bulk.time, "sleep", lambda seconds: None)
+
+    stage_inat(Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
+
+    assert attempts["n"] == 2  # first attempt dropped, second succeeded
+    assert len(uploaded) == 1
+
+
+def test_stage_inat_raises_after_exhausting_all_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"content-length": "0"})
+        raise httpx.ReadError("simulated dropped connection", request=request)
+
+    monkeypatch.setattr(inat_bulk.httpx, "Client", lambda **kw: _RealClient(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(inat_bulk.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(httpx.ReadError):
+        stage_inat(Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
+
+
 def test_load_inat_resolves_genus_and_upserts_observations(
     con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:

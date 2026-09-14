@@ -430,18 +430,24 @@ checking the issue's own text first - see AGENTS.md's Conventions section.
   it existed. Skipped when Spaces isn't configured (local dev).
 - **Registered sources (issue #334 PR 2):**
   - **`inat`** (`foray.sources.inat_bulk`) - iNaturalist's own complete GBIF Darwin Core Archive
-    export (`static.inaturalist.org/observations/gbif-observations-dwca.zip`, ~29 GB, refreshed
-    at least daily), streamed via HTTP range reads (`foray.sources.http.HttpRangeReader`) -
-    never downloaded whole. Filtered to `kingdom == "Fungi"` + `countryCode == "US"` rows at
-    stage time (no DB needed there); the loader resolves each row's genus name to our catalog's
-    genus-level `taxon_id` (`fungi_genera`) and upserts into `observations`, exactly like the
-    live `ingest`/`ingest_region` path. Replaces the old manual
+    export (`static.inaturalist.org/observations/gbif-observations-dwca.zip`, ~29 GB, regenerated
+    weekly - iNaturalist's own developer docs and GBIF's dataset registration both confirm this,
+    not daily as earlier docs here assumed), streamed as a single continuous GET and parsed
+    forward-only via `stream_unzip` - never downloaded whole. Range reads
+    (`foray.sources.http.HttpRangeReader`) were the original approach but got 403'd by
+    `static.inaturalist.org`'s CDN partway through a scan (issue found 2026-09-14); iNaturalist's
+    own docs say large downloads should go through GBIF instead of this file, and a single GET is
+    the same access pattern the retired manual `curl -L` workflow used, which never tripped it -
+    see `inat_bulk`'s module docstring for the full writeup. Filtered to `kingdom == "Fungi"` +
+    `countryCode == "US"` rows at stage time (no DB needed there); the loader resolves each row's
+    genus name to our catalog's genus-level `taxon_id` (`fungi_genera`) and upserts into
+    `observations`, exactly like the live `ingest`/`ingest_region` path. Replaces the old manual
     `just bulk-download`/`bulk-filter`/`bulk-load` + `scripts/inat_dwca_filter.py` /
     `load_inat_bulk.py` pair and the one-off `infra/ansible/tasks/deploy/bulk_load_once.yml`
     task - use `just bulk-stage inat` / `just bulk-load inat` (or the scheduled
     `ingest-bulk-inat` job) instead. Chosen over the AWS Open Data dump
     (`inaturalist-open-data`) because that dump only carries `observation_uuid`, never the
-    numeric `id` this project's schema keys `observations` on.
+    numeric `id` this project's schema keys `observations` on (re-verified live 2026-09-14).
   - **`ridb`** (`foray.sources.camps`) - RIDB's full CSV export
     (`ridb.recreation.gov/downloads/RIDBFullExport_V1_CSV.zip`, public, no API key, refreshed
     at least daily), filtered to camping facilities and upserted into `campsites`, then pruned
