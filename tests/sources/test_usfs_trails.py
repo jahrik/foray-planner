@@ -159,6 +159,45 @@ def test_stage_usfs_trails_pages_until_transfer_limit_clears(monkeypatch: pytest
     assert len(ids) == 1001
 
 
+def test_iter_pages_keeps_paging_on_a_transfer_limit_page_shorter_than_page_size() -> None:
+    # ArcGIS sets exceededTransferLimit when EITHER the record-count limit or the response's
+    # transfer-size limit is hit - a page truncated by size can carry fewer than _PAGE_SIZE
+    # features and still have more data waiting at the next offset. Stopping on "short page"
+    # alone (the original logic) would silently drop the remainder - a Copilot review catch.
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(request.url.params.get("resultOffset", "0"))
+        if offset == 0:
+            return httpx.Response(
+                200,
+                json={
+                    "type": "FeatureCollection",
+                    "features": [{"properties": {"TRAIL_CN": "1"}, "geometry": _line(HOME_LAT, HOME_LNG)}],
+                    "exceededTransferLimit": True,  # size-truncated, well under _PAGE_SIZE
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "type": "FeatureCollection",
+                "features": [{"properties": {"TRAIL_CN": "2"}, "geometry": _line(HOME_LAT, HOME_LNG)}],
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    pages = list(_iter_pages(client))
+    ids = {feature["properties"]["TRAIL_CN"] for page in pages for feature in page}
+    assert ids == {"1", "2"}  # both pages read, not just the first
+
+
+def test_iter_pages_requests_outsr_4326() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params.get("outSR") == "4326"
+        return httpx.Response(200, json={"type": "FeatureCollection", "features": []})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    list(_iter_pages(client))
+
+
 def test_stage_usfs_trails_propagates_a_later_page_failure_without_publishing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -288,5 +327,5 @@ def test_prune_trails_missing_from_does_nothing_when_ids_is_empty(con: psycopg.C
     assert row is not None
     upsert_trails(con, [row])
     assert prune_trails_missing_from(con, "usfs", []) == 0
-    ids = {r[0] for r in con.execute("SELECT id FROM trails WHERE source = 'usfs'").fetchall()}
+    ids = {row[0] for row in con.execute("SELECT id FROM trails WHERE source = 'usfs'").fetchall()}
     assert ids == {"usfs:trail/1"}
