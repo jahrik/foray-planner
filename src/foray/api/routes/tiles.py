@@ -73,9 +73,13 @@ def get_satellite_tile(z: int, x: int, y: int) -> Response:
     return Response(content=content, media_type=content_type, headers={"Cache-Control": _TILE_CACHE_CONTROL})
 
 
-# One process-lifetime client for the martin proxy below, same reasoning as `_client` above -
-# reused across the concurrent tile fan-out a viewport pan/zoom generates.
-_martin_client = httpx.Client(timeout=10.0)
+# Async, unlike `_client` above: a trails viewport pan/zoom fans out to far more concurrent
+# tile requests than the 3-service satellite basemap ever does, and route handlers are plain
+# `def`s Starlette runs in AnyIO's worker thread pool - capped at 12 tokens (api/app.py), sized
+# to the DB pool. A sync martin fetch blocking one of those for up to `timeout` seconds could
+# starve ordinary DB-bound API requests during a heavy pan (Copilot review, PR #368). `async def`
+# below awaits this client instead of occupying a thread-pool token while it waits on I/O.
+_martin_client = httpx.AsyncClient(timeout=10.0)
 
 # Vector tiles change whenever a trails ingest/backfill runs (unlike Esri's imagery, which is
 # effectively static), so this stays well short of the satellite proxy's week-long cache - long
@@ -89,7 +93,7 @@ _TRAILS_TILE_CACHE_CONTROL = "public, max-age=3600"
     response_class=Response,
     responses={200: {"content": {"application/vnd.mapbox-vector-tile": {}}}},
 )
-def get_trails_tile(z: int, x: int, y: int, state: AppState = Depends(get_state)) -> Response:
+async def get_trails_tile(z: int, x: int, y: int, state: AppState = Depends(get_state)) -> Response:
     """One trails vector tile (issue #336 PR 1), proxied same-origin from the martin tile server
     so the frontend never talks to the docker-internal `martin_url` host directly."""
     if not state.cfg.martin_url:
@@ -97,7 +101,7 @@ def get_trails_tile(z: int, x: int, y: int, state: AppState = Depends(get_state)
     if not _in_range(z, x, y):
         raise HTTPException(400, "tile coordinates out of range")
     try:
-        upstream = _martin_client.get(f"{state.cfg.martin_url}/trails/{z}/{x}/{y}")
+        upstream = await _martin_client.get(f"{state.cfg.martin_url}/trails/{z}/{x}/{y}")
         upstream.raise_for_status()
     except httpx.HTTPError as error:
         logger.warning("trails tile proxy: fetch failed for %d/%d/%d (%s)", z, x, y, error)

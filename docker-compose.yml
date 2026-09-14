@@ -34,9 +34,11 @@ x-spaces-env: &spaces-env
 # martin (below) is a standard part of this stack now, always reachable by its compose service
 # name - not opt-in the way FORAY_BASEMAP_URL is, since there's no external archive to point at
 # instead. FORAY_MARTIN_URL still exists so a `.env` can blank it out to disable the trails
-# vector-tile route/layer without stopping the container.
+# vector-tile route/layer without stopping the container - the `-` form (not `:-`) so an
+# explicitly empty FORAY_MARTIN_URL in .env stays empty instead of falling back to the default
+# (Copilot review, PR #368).
 x-martin-env: &martin-env
-  FORAY_MARTIN_URL: ${FORAY_MARTIN_URL:-http://martin:3000}
+  FORAY_MARTIN_URL: ${FORAY_MARTIN_URL-http://martin:3000}
 
 x-runtime-build: &runtime-build
   context: .
@@ -81,8 +83,6 @@ services:
       <<: [*postgres-env, *ridb-env, *basemap-env, *spaces-env, *martin-env]
     depends_on:
       <<: *depends-postgres
-      martin:
-        condition: service_started
     command: ["foray", "serve", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
       test: ["CMD", "python", "scripts/healthcheck.py"]
@@ -96,6 +96,13 @@ services:
   # (api/routes/tiles.py) rather than exposing this container to the browser directly. Config
   # (infra/martin-config.yaml) is the same file prod mounts - only `trails` is published, not
   # martin's full auto-discovered table set.
+  #
+  # Depends on `app` being healthy, not just `postgres` - the `trails` table itself is created
+  # by the app's startup migration chain (api/app.py's lifespan calls apply_schema before the
+  # healthcheck passes), not by the postgis image's init. Waiting only on postgres let martin
+  # start against a schema that didn't have `trails` yet on a fresh volume (Copilot review, PR
+  # #368). `app` itself no longer depends on `martin` - nothing at app startup needs it up, the
+  # proxy route just calls out to it lazily per request.
   martin:
     image: ghcr.io/maplibre/martin:v0.15.0
     environment:
@@ -106,7 +113,8 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      <<: *depends-postgres
+      app:
+        condition: service_healthy
 
   # Runs the same `jobs.yaml` manifest the prod systemd timers are generated from (issue #332
   # PR 2) - `foray scheduler` (src/foray/schedule.py). Per-job cadence lives in jobs.yaml now,
