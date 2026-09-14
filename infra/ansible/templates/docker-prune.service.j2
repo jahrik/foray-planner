@@ -5,6 +5,15 @@
 # with "no space left on device" pulling the new image, discovered only by reading a failed
 # CD run's logs rather than any alert. `docker image prune -a` only removes images with no
 # container currently using them, so this can never touch what's actually running.
+#
+# `--filter until=24h` (a Copilot review catch, PR #355): a `docker pull` followed by
+# `docker run`/container creation is two steps, not one - between them a freshly pulled image
+# has zero container references and looks exactly like the stale images this exists to remove.
+# Every `foray-*.service` job's `--pull always` and the deploy path's image pull both have that
+# gap. Real coordination (a lock shared with every job + the deploy playbook) is more machinery
+# than a housekeeping prune warrants; skipping anything pulled in the last day is enough since
+# nothing legitimately stale is ever less than a day old, and docker-prune.timer.j2 also moves
+# this outside the 02:00-05:00 night-job window as the other half of the fix.
 [Unit]
 Description=Prune unused Docker images (disk-space self-heal)
 After=docker.service
@@ -12,4 +21,4 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/docker image prune -a -f
+ExecStart=/usr/bin/docker image prune -a -f --filter "until=24h"
