@@ -1686,26 +1686,41 @@ _MTBS_UPDATE: dict[str, LiteralString] = {
         "severity_moderate_acres = %s, severity_high_acres = %s, dominant_severity = %s, "
         "mtbs_fire_id = COALESCE(%s, mtbs_fire_id) WHERE mtbs_fire_id = %s"
     ),
+    # issue #335 PR 4 (RAVG): no shared id field exists between RAVG's export and our
+    # WFIGS-derived rows (checked live - see foray.sources.ravg's module docstring), so this
+    # source enriches by normalized name + year instead. `match_value` is a `(name, year)` pair,
+    # not a scalar - `apply_fire_severity` branches on that below rather than this dict alone.
+    "name_year": (
+        "UPDATE fire_perimeters SET severity_unburned_acres = %s, severity_low_acres = %s, "
+        "severity_moderate_acres = %s, severity_high_acres = %s, dominant_severity = %s, "
+        "mtbs_fire_id = COALESCE(%s, mtbs_fire_id) "
+        "WHERE upper(regexp_replace(name, '\\s+FIRE$', '', 'i')) = %s AND fire_year = %s"
+    ),
 }
 
 
 def apply_fire_severity(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
-    """Write MTBS burn-severity enrichment onto existing fire rows (issue #227), matched by
-    ``irwin_id`` or ``mtbs_fire_id``. Tuple:
-    ``(match_key, match_value, unburned, low, moderate, high, dominant, mtbs_fire_id)`` where
-    ``match_key`` is ``"irwin_id"`` or ``"mtbs_fire_id"``. Returns the total number of perimeter
-    rows updated (a single MTBS row can match more than one, e.g. the same ``irwin_id`` in both
-    the active and history lanes during the brief overlap window)."""
+    """Write burn-severity enrichment onto existing fire rows (issue #227, extended by #335 PR 4),
+    matched by ``irwin_id``, ``mtbs_fire_id``, or (RAVG) a normalized ``name_year`` pair. Tuple:
+    ``(match_key, match_value, unburned, low, moderate, high, dominant, mtbs_fire_id)`` -
+    ``match_value`` is a scalar id for ``"irwin_id"``/``"mtbs_fire_id"``, or a
+    ``(normalized_name, fire_year)`` pair for ``"name_year"``. Returns the total number of
+    perimeter rows updated (a single source row can match more than one, e.g. the same fire
+    present in both the active and history lanes during the brief overlap window)."""
     updated = 0
     for match_key, match_value, unburned, low, moderate, high, dominant, mtbs_fire_id in rows:
         if match_key not in _MTBS_UPDATE:
             raise ValueError(f"bad MTBS match key: {match_key!r}")
-        if match_value in (None, ""):
-            continue
-        result = con.execute(
-            _MTBS_UPDATE[match_key],
-            [unburned, low, moderate, high, dominant, mtbs_fire_id, match_value],
-        )
+        if match_key == "name_year":
+            name, year = match_value
+            if not name or year is None:
+                continue
+            params = [unburned, low, moderate, high, dominant, mtbs_fire_id, name, year]
+        else:
+            if match_value in (None, ""):
+                continue
+            params = [unburned, low, moderate, high, dominant, mtbs_fire_id, match_value]
+        result = con.execute(_MTBS_UPDATE[match_key], params)
         updated += result.rowcount or 0
     if updated:
         _invalidate_rank_cache()

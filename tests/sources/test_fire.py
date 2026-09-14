@@ -1,5 +1,6 @@
 """Wildfire ingest (issue #227): feature parsing, the active lane's replace semantics, the
-MTBS severity join, and refresh_fire end to end against mocked ArcGIS services."""
+severity join (issue #335 PR 4 - now RAVG-fed, see test_ravg.py for its own stager/loader), and
+refresh_fire end to end against mocked ArcGIS services."""
 
 from __future__ import annotations
 
@@ -115,6 +116,26 @@ def test_apply_fire_severity_joins_on_irwin_id(con: psycopg.Connection) -> None:
     assert row == ("low", 300.0, "MT-EVENT-1")
 
 
+def test_apply_fire_severity_joins_on_name_year(con: psycopg.Connection) -> None:
+    # issue #335 PR 4 (RAVG) - no shared id field with our WFIGS-derived rows, so this source
+    # matches on a normalized name + year instead. Also checks the "Fire" suffix is normalized
+    # away, since RAVG and WFIGS disagree on carrying it.
+    con.execute(
+        "INSERT INTO fire_perimeters (id, source_key, name, status, fire_year) "
+        "VALUES ('perimeter_history:2', 'perimeter_history', 'No Man Fire', 'historical', %s)",
+        [THIS_YEAR - 1],
+    )
+    updated = cache.apply_fire_severity(
+        con, [("name_year", ("NO MAN", THIS_YEAR - 1), 0.0, 50.0, 20.0, 5.0, "low", None)]
+    )
+    assert updated == 1
+    row = con.execute(
+        "SELECT dominant_severity, severity_low_acres FROM fire_perimeters WHERE id = %s",
+        ["perimeter_history:2"],
+    ).fetchone()
+    assert row == ("low", 50.0)
+
+
 def test_refresh_fire_end_to_end(con: psycopg.Connection) -> None:
     active = _geojson(
         _feature({"OBJECTID": 1, "poly_IncidentName": "Active One", "irwin_IrwinID": "{A1}", "poly_GISAcres": 500})
@@ -128,26 +149,19 @@ def test_refresh_fire_end_to_end(con: psycopg.Connection) -> None:
             geometry={"type": "Point", "coordinates": [-121.0, 44.0]},
         )
     )
-    mtbs = _geojson(
-        _feature(
-            {"Irwin_ID": "{H1}", "Event_ID": "MT1", "Acres_Low": 200.0, "Acres_Moderate": 50.0, "Acres_High": 10.0}
-        )
-    )
     client = httpx.Client(
         transport=_transport(
             {
                 "Perimeters_Current": active,
                 "Incident_Locations_Current": points,
                 "InterAgencyFirePerimeterHistory": history,
-                "MTBS": mtbs,
             }
         )
     )
     counts = fire.refresh_fire(con, _cfg(), client=client)
-    assert counts == {"active": 1, "points": 1, "history": 1, "severity": 1}
-    rows = {r[0]: r for r in con.execute("SELECT id, status, dominant_severity FROM fire_perimeters")}
+    assert counts == {"active": 1, "points": 1, "history": 1}
+    rows = {r[0]: r for r in con.execute("SELECT id, status FROM fire_perimeters")}
     assert rows["wfigs_active:1"][1] == "active"
-    assert rows["perimeter_history:10"][2] == "low"  # MTBS severity joined by irwin id
 
 
 def test_refresh_fire_empty_response_guard_keeps_cached_active_rows(con: psycopg.Connection) -> None:
