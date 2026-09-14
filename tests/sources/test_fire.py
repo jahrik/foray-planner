@@ -151,6 +151,40 @@ def test_apply_fire_severity_joins_on_name_year(con: psycopg.Connection) -> None
     assert row == ("low", 50.0)
 
 
+def test_apply_fire_severity_name_year_skips_ambiguous_matches(con: psycopg.Connection) -> None:
+    # Two unrelated fires nationwide can share a common name in the same year (Copilot review,
+    # PR #366) - different irwin_id (or both NULL, different id) means "different fire", and the
+    # update must not guess which one RAVG's row was actually about.
+    con.execute(
+        "INSERT INTO fire_perimeters (id, source_key, name, status, fire_year) "
+        "VALUES ('perimeter_history:or', 'perimeter_history', 'Bear Fire', 'historical', %s), "
+        "('perimeter_history:ca', 'perimeter_history', 'Bear Fire', 'historical', %s)",
+        [THIS_YEAR - 1, THIS_YEAR - 1],
+    )
+    updated = cache.apply_fire_severity(
+        con, [("name_year", ("BEAR", THIS_YEAR - 1), 0.0, 50.0, 20.0, 5.0, "low", None)]
+    )
+    assert updated == 0
+    rows = con.execute("SELECT dominant_severity FROM fire_perimeters WHERE name = 'Bear Fire'").fetchall()
+    assert all(row[0] is None for row in rows)
+
+
+def test_apply_fire_severity_name_year_updates_both_lanes_of_the_same_fire(con: psycopg.Connection) -> None:
+    # The active/history lanes can carry the same real fire twice during the brief overlap
+    # window - both rows share irwin_id, so this is NOT the ambiguous-match case above and both
+    # should still be updated.
+    con.execute(
+        "INSERT INTO fire_perimeters (id, source_key, name, status, fire_year, irwin_id) "
+        "VALUES ('wfigs_active:1', 'wfigs_active', 'Rabbit Fire', 'active', %s, '{X-1}'), "
+        "('perimeter_history:1', 'perimeter_history', 'Rabbit Fire', 'historical', %s, '{X-1}')",
+        [THIS_YEAR - 1, THIS_YEAR - 1],
+    )
+    updated = cache.apply_fire_severity(
+        con, [("name_year", ("RABBIT", THIS_YEAR - 1), 0.0, 50.0, 20.0, 5.0, "low", None)]
+    )
+    assert updated == 2
+
+
 def test_refresh_fire_end_to_end(con: psycopg.Connection) -> None:
     active = _geojson(
         _feature({"OBJECTID": 1, "poly_IncidentName": "Active One", "irwin_IrwinID": "{A1}", "poly_GISAcres": 500})

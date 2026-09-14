@@ -120,28 +120,43 @@ def _iter_pages(client: httpx.Client) -> Iterator[list[dict[str, Any]]]:
             return
 
 
+def _get(attrs: dict[str, Any], field: str) -> Any:
+    """Case-insensitive attribute lookup (mirrors `usfs_trails._get`/`fire.py._get`) - ArcGIS
+    services aren't guaranteed to echo `outFields` back in the exact casing requested (EDW
+    services commonly return uppercase field names), so a plain lowercase `.get` can silently
+    see every row as missing `fire_name`/`fire_year` and trigger the zero-row-refusal path
+    (Copilot review, PR #366)."""
+    if field in attrs:
+        return attrs[field]
+    lowered = field.lower()
+    for key, value in attrs.items():
+        if key.lower() == lowered:
+            return value
+    return None
+
+
 def _parse_feature(feature: dict[str, Any]) -> dict[str, Any] | None:
     attrs = feature.get("attributes") or {}
-    fire_name = attrs.get("fire_name")
-    fire_year_raw = attrs.get("fire_year")
+    fire_name = _get(attrs, "fire_name")
+    fire_year_raw = _get(attrs, "fire_year")
     if not fire_name or fire_year_raw in (None, ""):
         return None
     try:
         fire_year = int(fire_year_raw)
     except (TypeError, ValueError):
         return None
-    tree_acres = attrs.get("tree_acres")
+    tree_acres = _get(attrs, "tree_acres")
     if tree_acres in (None, 0):
         # No forested acres assessed - RAVG has nothing to say about this fire's severity.
         return None
     return {
-        "event_id": attrs.get("event_id"),
+        "event_id": _get(attrs, "event_id"),
         "fire_name": str(fire_name).strip(),
         "fire_year": fire_year,
-        "acres": attrs.get("acres"),
+        "acres": _get(attrs, "acres"),
         "tree_acres": tree_acres,
-        "tree_ac_50": attrs.get("tree_ac_50") or 0.0,
-        "tree_ac_75": attrs.get("tree_ac_75") or 0.0,
+        "tree_ac_50": _get(attrs, "tree_ac_50") or 0.0,
+        "tree_ac_75": _get(attrs, "tree_ac_75") or 0.0,
     }
 
 

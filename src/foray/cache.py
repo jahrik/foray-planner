@@ -1690,11 +1690,20 @@ _MTBS_UPDATE: dict[str, LiteralString] = {
     # WFIGS-derived rows (checked live - see foray.sources.ravg's module docstring), so this
     # source enriches by normalized name + year instead. `match_value` is a `(name, year)` pair,
     # not a scalar - `apply_fire_severity` branches on that below rather than this dict alone.
+    # Name + year alone isn't a unique key (two unrelated fires nationwide can share a common
+    # name like "Bear" in the same year - Copilot review, PR #366), so the WHERE clause also
+    # requires every currently-matching row to resolve to the same underlying fire -
+    # `COALESCE(irwin_id, id)` groups the active/history-lane duplicate rows a single real fire
+    # legitimately has (they share `irwin_id`) while still telling two genuinely different fires
+    # apart (different `irwin_id`, or both NULL and therefore different `id`). Ambiguous matches
+    # are skipped entirely rather than guessed at.
     "name_year": (
         "UPDATE fire_perimeters SET severity_unburned_acres = %s, severity_low_acres = %s, "
         "severity_moderate_acres = %s, severity_high_acres = %s, dominant_severity = %s, "
         "mtbs_fire_id = COALESCE(%s, mtbs_fire_id) "
-        "WHERE upper(regexp_replace(name, '\\s+FIRE$', '', 'i')) = %s AND fire_year = %s"
+        "WHERE upper(regexp_replace(name, '\\s+FIRE$', '', 'i')) = %s AND fire_year = %s "
+        "AND (SELECT count(DISTINCT COALESCE(f2.irwin_id, f2.id)) FROM fire_perimeters f2 "
+        "WHERE upper(regexp_replace(f2.name, '\\s+FIRE$', '', 'i')) = %s AND f2.fire_year = %s) = 1"
     ),
 }
 
@@ -1715,7 +1724,7 @@ def apply_fire_severity(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
             name, year = match_value
             if not name or year is None:
                 continue
-            params = [unburned, low, moderate, high, dominant, mtbs_fire_id, name, year]
+            params = [unburned, low, moderate, high, dominant, mtbs_fire_id, name, year, name, year]
         else:
             if match_value in (None, ""):
                 continue

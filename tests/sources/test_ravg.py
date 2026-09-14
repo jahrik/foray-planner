@@ -60,6 +60,28 @@ def test_parse_feature_derives_severity_inputs() -> None:
     assert row["tree_ac_75"] == 98.79
 
 
+def test_parse_feature_is_case_insensitive_to_arcgis_field_casing() -> None:
+    # EDW services commonly echo outFields back uppercase regardless of the requested casing -
+    # a plain lowercase .get would see every row as missing fire_name/fire_year (Copilot review).
+    row = _parse_feature(
+        {
+            "attributes": {
+                "EVENT_ID": "OR1",
+                "FIRE_NAME": "No Man",
+                "FIRE_YEAR": "2024",
+                "ACRES": 100.0,
+                "TREE_ACRES": 90.0,
+                "TREE_AC_50": 20.0,
+                "TREE_AC_75": 5.0,
+            }
+        }
+    )
+    assert row is not None
+    assert row["fire_name"] == "No Man"
+    assert row["fire_year"] == 2024
+    assert row["tree_ac_75"] == 5.0
+
+
 def test_parse_feature_skips_fires_with_no_forested_acres_assessed() -> None:
     assert _parse_feature({"attributes": {"fire_name": "Desert Fire", "fire_year": "2024", "tree_acres": 0}}) is None
     assert _parse_feature({"attributes": {"fire_name": "Desert Fire", "fire_year": "2024"}}) is None
