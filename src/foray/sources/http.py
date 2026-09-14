@@ -109,15 +109,31 @@ class HttpRangeReader(io.RawIOBase):
     (``_RETRYABLE_STATUS``/``retry_after_seconds``, same policy as the rest of this module) -
     a scan of the ~29 GB iNat archive makes thousands of these, and one transient blip
     shouldn't force a restart from byte zero.
+
+    ``throttle`` paces successive range GETs (see ``Throttle``) - a plain, unthrottled scan of
+    the ~29 GB iNat archive fires thousands of sequential range requests at the CDN as fast as
+    ``zipfile``'s reads demand, which is enough for ``static.inaturalist.org`` to 403 the client
+    outright partway through (seen in production - issue tracked in TODO.md, not a rate-limit
+    response with ``Retry-After``, a hard block). RIDB's ~235 MB export never triggers this at
+    the same unthrottled rate - it only needs a few dozen requests total. ``None`` (the default)
+    keeps the old unpaced behavior for callers that don't need it.
     """
 
     _RETRYABLE_STATUS: ClassVar[set[int]] = {429, 500, 502, 503, 504}
 
-    def __init__(self, client: httpx.Client, url: str, *, attempts: int = 5) -> None:
+    def __init__(
+        self,
+        client: httpx.Client,
+        url: str,
+        *,
+        attempts: int = 5,
+        throttle: Throttle | None = None,
+    ) -> None:
         self._client = client
         self._url = url
         self._pos = 0
         self._attempts = attempts
+        self._throttle = throttle
         self._size = int(client.head(url, follow_redirects=True).headers["content-length"])
 
     def readable(self) -> bool:
@@ -143,6 +159,8 @@ class HttpRangeReader(io.RawIOBase):
     def _get_range(self, start: int, end: int) -> httpx.Response:
         last_error: Exception | None = None
         for attempt in range(1, self._attempts + 1):
+            if self._throttle is not None:
+                self._throttle.wait()
             try:
                 resp = self._client.get(self._url, headers={"Range": f"bytes={start}-{end}"})
             except httpx.TransportError as exc:

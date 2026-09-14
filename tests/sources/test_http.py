@@ -108,6 +108,28 @@ def test_http_range_reader_retries_transient_error_then_succeeds(monkeypatch: py
     assert calls["n"] == 2
 
 
+def test_http_range_reader_paces_requests_via_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
+    waits: list[float] = []
+    monkeypatch.setattr(Throttle, "wait", lambda self, units=1.0: waits.append(units))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"content-length": str(len(_CONTENT))})
+        start, end = (int(part) for part in request.headers["Range"].removeprefix("bytes=").split("-"))
+        return httpx.Response(
+            206,
+            headers={"Content-Range": f"bytes {start}-{end}/{len(_CONTENT)}"},
+            content=_CONTENT[start : end + 1],
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        reader = HttpRangeReader(client, "https://example.test/file", throttle=Throttle(0.05))
+        reader.readinto(bytearray(4))
+        reader.seek(6)
+        reader.readinto(bytearray(4))
+    assert len(waits) == 2
+
+
 def test_http_range_reader_rejects_non_206_response(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 

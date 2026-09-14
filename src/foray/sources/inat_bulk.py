@@ -51,7 +51,7 @@ import psycopg
 from foray import spaces
 from foray.cache import genus_taxon_ids, insert_observations_if_missing, maybe_rebuild_phenology, record_ingest
 from foray.config import Settings
-from foray.sources.http import USER_AGENT, HttpRangeReader
+from foray.sources.http import USER_AGENT, HttpRangeReader, Throttle
 from foray.sources.inat import OBSCURED_ACCURACY_HIGH, OBSCURED_ACCURACY_LOW
 
 logger = logging.getLogger(__name__)
@@ -76,12 +76,23 @@ _COL_GENUS = 37
 _PLACE_ID_US = 1
 _SINCE_YEAR_FLOOR = "2000-01-01"
 
-_BUFFER_SIZE = 8 * 1024 * 1024
+# 64 MiB, not http.py's usual 8 MiB (see camps.py's RIDB reader) - the ~29 GB DwC-A scan makes
+# thousands of range GETs at 8 MiB each, which is what got the client 403'd by
+# static.inaturalist.org partway through a run (seen in production, see HttpRangeReader's
+# docstring); an 8x larger buffer cuts the request count (and _RANGE_MIN_INTERVAL's added wall
+# time) by the same factor for the same bytes read.
+_BUFFER_SIZE = 64 * 1024 * 1024
 _CHUNK_SIZE = 5000
+
+# Paces successive range GETs against static.inaturalist.org - see HttpRangeReader's docstring.
+# 0.25s is a guess at "comfortably under whatever burst threshold triggered the 403", not a
+# documented limit (iNat doesn't publish one for this static export); revisit if staging still
+# gets blocked, or relax it if a run comfortably completes with room to spare.
+_RANGE_MIN_INTERVAL = 0.25
 
 
 def _open_observations_csv(client: httpx.Client) -> tuple[zipfile.ZipFile, io.TextIOWrapper]:
-    reader = HttpRangeReader(client, DWCA_URL)
+    reader = HttpRangeReader(client, DWCA_URL, throttle=Throttle(_RANGE_MIN_INTERVAL))
     buffered = io.BufferedReader(reader, buffer_size=_BUFFER_SIZE)
     zf = zipfile.ZipFile(buffered)
     raw = zf.open(DWCA_ENTRY)
