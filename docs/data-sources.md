@@ -478,5 +478,19 @@ checking the issue's own text first - see AGENTS.md's Conventions section.
     the droplet. `length_km` is recomputed from geometry, never trusted from the source;
     `attrs` carries `trail_class`/`trail_surface`/`managing_org`/`national_trail_designation`
     plus a `tracktype` grade derived by inverting USFS's 1-5 trail-class scale onto OSM's
-    `gradeN` convention. MVUM roads (the OHV-legality/open-season matrix) and OSM/USFS dedup
-    at read time are a follow-up (PR 3b, not started).
+    `gradeN` convention.
+  - **`usfs_mvum`** (`foray.sources.usfs_mvum`, issue #335 PR 3b) - the USFS EDW Motor Vehicle
+    Use Map roads layer (`EDW_MVUM_01/MapServer/1`, public, no key), filtered to `SYMBOL` values
+    1/2/3/4/11/12 (the only values the service documents as Forest Service System roads carrying
+    OHV-legality data) and upserted into `trails` (`source='usfs_mvum'`, `kind='road'`) - a
+    distinct `source` from `usfs_trails`'s `'usfs'` precisely so each loader's
+    prune-to-exactly-what's-listed step only ever touches its own rows. `attrs.motor_vehicle` is
+    synthesized to `"no"` when none of the standard vehicle classes (`PassengerVehicle`/
+    `HighClearanceVehicle`/`Truck`) are open but at least one vehicle-class field carries data -
+    reusing the OSM-derived `motor_vehicle`/`access` vocab `scoring.queries._walk_in` already
+    reads, so that function needs no source-specific branch. `attrs.tracktype` inverts
+    `OperationalMaintLevel` (1 primitive -> 5 paved) the same way `usfs_trails` inverts
+    `TRAIL_CLASS`. OSM/USFS dedup happens at read time, not ingest: `trails_near`/`nearest_trail`
+    drop an OSM `path`/`road` row whenever a `source LIKE 'usfs%'` row of the same `kind` sits
+    within 15 m (`scoring.queries._USFS_DEDUP_FILTER`) - the USFS layer is authoritative
+    (access matrix, official class/name) where OSM is a crowdsourced guess.

@@ -133,10 +133,20 @@ jobs:
 
   # USFS Trail_NFS (issue #335 PR 3a) - "via `ingest-bulk`" per the issue, not a live
   # coverage-wide crawl on the droplet: GitHub Actions stages the whole national table
-  # (.github/workflows/bulk-load.yml, once `usfs_trails` is added to the
-  # FORAY_BULK_SOURCES repo variable), this just loads whatever's newest-published.
+  # (.github/workflows/bulk-load.yml - defaults to staging every `ingest_bulk.STAGERS`-registered
+  # source, so no FORAY_BULK_SOURCES repo-variable change was needed, see #357), this just loads
+  # whatever's newest-published.
   - name: ingest-bulk-usfs-trails
     command: ingest-bulk usfs_trails
+    interval_hours: 24
+    window: night
+    writer: true
+
+  # USFS MVUM roads (issue #335 PR 3b) - the road counterpart to Trail_NFS above, same
+  # ingest-bulk split. Carries the per-vehicle-class OHV-legality/open-season matrix that OSM's
+  # trails.py can only guess at via barrier nodes and access/motor_vehicle tags.
+  - name: ingest-bulk-usfs-mvum
+    command: ingest-bulk usfs_mvum
     interval_hours: 24
     window: night
     writer: true
