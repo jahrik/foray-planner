@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pytest
 from botocore.exceptions import ClientError
 
@@ -67,6 +69,8 @@ class _FakeS3Client:
         self.put_calls: list[dict[str, Any]] = []
         self.get_calls: list[str] = []
         self.list_calls = 0
+        self.delete_calls: list[dict[str, Any]] = []
+        self.upload_calls: list[tuple[str, str, str, dict[str, Any] | None]] = []
 
     def put_object(self, **kwargs: Any) -> None:
         self.put_calls.append(kwargs)
@@ -87,14 +91,32 @@ class _FakeS3Client:
 
         return {"Body": _Body(self._objects[key])}
 
+    def upload_file(self, filename: str, bucket: str, key: str, ExtraArgs: dict[str, Any] | None = None) -> None:
+        with Path(filename).open("rb") as f:
+            self._objects[key] = f.read()
+        self.upload_calls.append((filename, bucket, key, ExtraArgs))
+
+    def download_file(self, bucket: str, key: str, dest_path: str) -> None:
+        with Path(dest_path).open("wb") as f:
+            f.write(self._objects[key])
+
+    def delete_objects(self, **kwargs: Any) -> None:
+        self.delete_calls.append(kwargs)
+        for obj in kwargs["Delete"]["Objects"]:
+            self._objects.pop(obj["Key"], None)
+
     def get_paginator(self, name: str) -> Any:
         assert name == "list_objects_v2"
-        prefixes = self._date_prefixes
         self.list_calls += 1
+        outer = self
 
         class _Paginator:
             def paginate(self, **kwargs: Any) -> list[dict[str, Any]]:
-                return [{"CommonPrefixes": [{"Prefix": prefix} for prefix in prefixes]}]
+                if kwargs.get("Delimiter") == "/":
+                    return [{"CommonPrefixes": [{"Prefix": prefix} for prefix in outer._date_prefixes]}]
+                prefix = kwargs.get("Prefix", "")
+                contents = [{"Key": key} for key in outer._objects if key.startswith(prefix)]
+                return [{"Contents": contents}]
 
         return _Paginator()
 
@@ -139,6 +161,29 @@ def test_object_bytes_reads_from_the_space(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(spaces, "client", lambda cfg: fake)
 
     assert spaces.object_bytes(_CONFIGURED, "bulk/padus/2026-01-08/data.gpkg") == b"object-bytes"
+
+
+def test_upload_file_streams_via_boto3_upload_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    calls: list[tuple[str, str, str, dict[str, Any] | None]] = []
+
+    class _FakeUploadClient:
+        def upload_file(self, filename: str, bucket: str, key: str, ExtraArgs: dict[str, Any] | None = None) -> None:
+            calls.append((filename, bucket, key, ExtraArgs))
+
+    monkeypatch.setattr(spaces, "client", lambda cfg: _FakeUploadClient())
+    src = tmp_path / "snapshot.parquet"
+    src.write_bytes(b"parquet-bytes")
+
+    spaces.upload_file(_CONFIGURED, "bulk/padus/2026-01-08/runs/run-1/data.parquet", str(src), "application/x-parquet")
+
+    assert calls == [
+        (
+            str(src),
+            "foray-bulk",
+            "bulk/padus/2026-01-08/runs/run-1/data.parquet",
+            {"ContentType": "application/x-parquet"},
+        )
+    ]
 
 
 def test_download_file_streams_via_boto3_download_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -296,3 +341,80 @@ def test_latest_snapshot_date_cache_is_scoped_per_source(monkeypatch: pytest.Mon
     )
     monkeypatch.setattr(spaces, "client", lambda cfg: fake_padus)
     assert spaces.latest_snapshot_date(_CONFIGURED, "padus") == date(2026, 2, 1)
+
+
+_ROW_SCHEMA = pa.schema([("id", pa.string()), ("value", pa.int64())])
+
+
+def test_write_then_read_snapshot_parquet_round_trips_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeS3Client(date_prefixes=[])
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
+    rows = [{"id": f"row-{i}", "value": i} for i in range(3)]
+
+    count = spaces.write_snapshot_parquet(
+        _CONFIGURED, "padus", date(2026, 1, 8), "run-1", "data.parquet", rows, _ROW_SCHEMA
+    )
+
+    assert count == 3
+    assert len(fake.upload_calls) == 1
+    key = "bulk/padus/2026-01-08/runs/run-1/data.parquet"
+    assert key in fake._objects
+
+    batches = list(spaces.read_snapshot_parquet(_CONFIGURED, "padus", date(2026, 1, 8), "run-1", "data.parquet"))
+
+    assert [row for batch in batches for row in batch] == rows
+
+
+def test_write_snapshot_parquet_batches_across_row_groups(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Rows beyond one row group still all land in the file - the batching loop's tail-flush path.
+    fake = _FakeS3Client(date_prefixes=[])
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
+    monkeypatch.setattr(spaces, "_PARQUET_ROW_GROUP_SIZE", 2)
+    rows = [{"id": f"row-{i}", "value": i} for i in range(5)]
+
+    spaces.write_snapshot_parquet(_CONFIGURED, "padus", date(2026, 1, 8), "run-1", "data.parquet", rows, _ROW_SCHEMA)
+
+    batches = list(
+        spaces.read_snapshot_parquet(_CONFIGURED, "padus", date(2026, 1, 8), "run-1", "data.parquet", batch_size=2)
+    )
+    assert [row for batch in batches for row in batch] == rows
+    assert len(batches) == 3  # 2 + 2 + 1
+
+
+def test_prune_other_snapshots_keeps_only_the_published_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeS3Client(
+        date_prefixes=[],
+        objects={
+            "bulk/padus/2026-01-01/runs/old-run/data.parquet": b"stale-week",
+            "bulk/padus/2026-01-08/_manifest.json": b'{"run_id": "run-2"}',
+            "bulk/padus/2026-01-08/runs/run-1/data.parquet": b"orphaned-same-day-rerun",
+            "bulk/padus/2026-01-08/runs/run-2/data.parquet": b"keep-me",
+            "bulk/ridb/2026-01-08/runs/run-x/data.parquet": b"different-source-untouched",
+        },
+    )
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
+
+    deleted = spaces.prune_other_snapshots(_CONFIGURED, "padus", date(2026, 1, 8), "run-2")
+
+    assert deleted == 2  # old-run (stale week) + run-1 (orphaned same-day rerun)
+    assert set(fake._objects) == {
+        "bulk/padus/2026-01-08/_manifest.json",
+        "bulk/padus/2026-01-08/runs/run-2/data.parquet",
+        "bulk/ridb/2026-01-08/runs/run-x/data.parquet",
+    }
+
+
+def test_prune_other_snapshots_is_a_noop_when_nothing_is_stale(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeS3Client(
+        date_prefixes=[],
+        objects={
+            "bulk/padus/2026-01-08/_manifest.json": b'{"run_id": "run-1"}',
+            "bulk/padus/2026-01-08/runs/run-1/data.parquet": b"keep-me",
+        },
+    )
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
+
+    deleted = spaces.prune_other_snapshots(_CONFIGURED, "padus", date(2026, 1, 8), "run-1")
+
+    assert deleted == 0
+    assert fake.delete_calls == []

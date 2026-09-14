@@ -14,11 +14,16 @@ from __future__ import annotations
 
 import json
 import logging
+import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Iterable, Iterator
 from datetime import date
 from typing import Any
+
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from foray.config import Spaces
 
@@ -74,6 +79,14 @@ def download_file(cfg: Spaces, key: str, dest_path: str) -> None:
     multipart-aware) - the loader path for a staged snapshot file, where `object_bytes` would
     materialize the whole thing in memory first."""
     client(cfg).download_file(cfg.bucket, key, dest_path)
+
+
+def upload_file(cfg: Spaces, key: str, src_path: str, content_type: str) -> None:
+    """Stream a local file straight to `key` via boto3's managed upload (bounded memory,
+    multipart-aware) - `download_file`'s counterpart, for a stager that streamed its Parquet
+    snapshot to a local tempfile (`ingest_bulk.write_snapshot_parquet`) rather than building it
+    in an in-memory buffer first."""
+    client(cfg).upload_file(src_path, cfg.bucket, key, ExtraArgs={"ContentType": content_type})
 
 
 # Per-run isolation (issue #334 PR 1 review): two `stage_snapshot` runs for the same
@@ -205,3 +218,108 @@ def latest_snapshot_date(cfg: Spaces, source: str) -> date | None:
     with _latest_snapshot_cache_lock:
         _latest_snapshot_cache[cache_key] = (now, result)
     return result
+
+
+def prune_other_snapshots(cfg: Spaces, source: str, keep_date: date, keep_run_id: str) -> int:
+    """Delete every object under `bulk/{source}/` except the one just-published run (issue #359
+    PR 3) - both stale prior-week dates and any orphaned same-day re-stage run. Only ever called
+    *after* `publish_snapshot` has succeeded (never before - pruning first risks a concurrent
+    loader losing the snapshot it's mid-download of, since `list_snapshot_dates`/
+    `latest_snapshot_date` resolve the manifest first but a loader's actual `download_file` calls
+    happen afterward, against keys this would have already deleted). Retention here is one
+    snapshot per source, not history - minimizes the monthly Spaces bill rather than preserving
+    old runs (a deliberate choice, not an oversight - see this module's per-run-isolation
+    docstring for why an orphaned run's objects were left in place before this existed).
+
+    Returns the number of objects deleted. One recursive listing (no ``Delimiter``, unlike
+    `_candidate_snapshot_dates`) plus batched `delete_objects` calls (S3's 1000-key cap per
+    call)."""
+    keep_prefix = snapshot_run_prefix(source, keep_date, keep_run_id)
+    manifest_key = f"{snapshot_prefix(source, keep_date)}{_MANIFEST_NAME}"
+    prefix = f"bulk/{source}/"
+    s3 = client(cfg)
+    paginator = s3.get_paginator("list_objects_v2")
+    doomed: list[str] = []
+    for page in paginator.paginate(Bucket=cfg.bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if key == manifest_key or key.startswith(keep_prefix):
+                continue
+            doomed.append(key)
+    for start in range(0, len(doomed), 1000):
+        batch = doomed[start : start + 1000]
+        s3.delete_objects(Bucket=cfg.bucket, Delete={"Objects": [{"Key": key} for key in batch]})
+    if doomed:
+        logger.info("spaces: pruned %d stale object(s) under %s, keeping %s", len(doomed), prefix, keep_prefix)
+    return len(doomed)
+
+
+# The standard bulk-snapshot format (issue #359 PR 1/2), replacing the jsonl.gz pattern
+# `inat_bulk`/`camps`/`usfs_trails` independently converged on. 5000 matches `inat_bulk`'s old
+# DB-chunk-insert batch size - large enough for Parquet's columnar/dictionary encoding to pay
+# off, small enough that a stager/loader never buffers more than one batch's worth of rows.
+# Lives here, not `ingest_bulk.py`, because `ingest_bulk` imports every stager/loader module for
+# its STAGERS/LOADERS registry - a stager importing these back from `ingest_bulk` would be a
+# circular import.
+_PARQUET_ROW_GROUP_SIZE = 5000
+
+
+def write_snapshot_parquet(
+    cfg: Spaces,
+    source: str,
+    snapshot_date: date,
+    run_id: str,
+    filename: str,
+    rows: Iterable[dict[str, Any]],
+    schema: pa.Schema,
+) -> int:
+    """Stream `rows` (each a dict keyed by `schema`'s field names) into a Parquet file and
+    upload it under this run's Space prefix - the shared write path every stager uses instead of
+    each hand-rolling its own tempfile/gzip/put_object dance. Batches rows into
+    `_PARQUET_ROW_GROUP_SIZE`-row `pyarrow.RecordBatch`es and streams them to a local tempfile via
+    `pyarrow.parquet.ParquetWriter`, then uploads that file via `upload_file` (bounded memory,
+    multipart-aware) rather than building the whole encoded snapshot in memory first - matters
+    most for `inat`, whose Fungi/US subset can run into the hundreds of thousands of rows even
+    after streaming the source 29 GB archive down to just that.
+
+    Returns the number of rows written."""
+    count = 0
+    batch: list[dict[str, Any]] = []
+    with tempfile.NamedTemporaryFile(suffix=".parquet") as tmp:
+        writer = pq.ParquetWriter(tmp.name, schema)
+        try:
+            for row in rows:
+                batch.append(row)
+                count += 1
+                if len(batch) >= _PARQUET_ROW_GROUP_SIZE:
+                    writer.write_batch(pa.RecordBatch.from_pylist(batch, schema=schema))
+                    batch = []
+            if batch:
+                writer.write_batch(pa.RecordBatch.from_pylist(batch, schema=schema))
+        finally:
+            writer.close()
+        key = snapshot_run_prefix(source, snapshot_date, run_id) + filename
+        upload_file(cfg, key, tmp.name, "application/vnd.apache.parquet")
+    return count
+
+
+def read_snapshot_parquet(
+    cfg: Spaces,
+    source: str,
+    snapshot_date: date,
+    run_id: str,
+    filename: str,
+    *,
+    batch_size: int = _PARQUET_ROW_GROUP_SIZE,
+) -> Iterator[list[dict[str, Any]]]:
+    """Download one staged Parquet snapshot file and yield it back in `batch_size`-row batches of
+    plain dicts - `write_snapshot_parquet`'s read-side counterpart. A loader's existing chunked
+    upsert/insert loop needs no change beyond swapping its jsonl-parsing loop for this;
+    `download_file` streams the object straight to a local tempfile first (bounded memory,
+    multipart-aware), same as the old jsonl.gz loaders did."""
+    key = snapshot_run_prefix(source, snapshot_date, run_id) + filename
+    with tempfile.NamedTemporaryFile(suffix=".parquet") as tmp:
+        download_file(cfg, key, tmp.name)
+        parquet_file = pq.ParquetFile(tmp.name)
+        for record_batch in parquet_file.iter_batches(batch_size=batch_size):
+            yield record_batch.to_pylist()

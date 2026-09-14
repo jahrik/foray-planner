@@ -24,11 +24,8 @@ prunes any ``usfs``-sourced trail the newest snapshot no longer lists (a decommi
 
 from __future__ import annotations
 
-import gzip
-import io
 import json
 import logging
-import tempfile
 from collections.abc import Iterator
 from datetime import date
 from itertools import pairwise
@@ -36,6 +33,8 @@ from typing import Any
 
 import httpx
 import psycopg
+import pyarrow as pa
+import shapely
 
 from foray import cache, spaces
 from foray.cache import record_ingest, upsert_trails
@@ -66,6 +65,50 @@ _FIELDS = (
     "MANAGING_ORG",
     "NATIONAL_TRAIL_DESIGNATION",
 )
+
+_BULK_SNAPSHOT_FILENAME = "trails.parquet"
+# Same order as `_parse_feature`'s tuple, except `geometry_wkb` (WKB bytes) replaces that
+# tuple's `geojson` (GeoJSON text) element - issue #359's geometry-encoding decision, compact
+# and PostGIS-native, but the `trail_geometry` table's insert trigger
+# (`foray_trail_geom_from_geometry`) still wants GeoJSON text, so `load_usfs_trails` converts
+# back via `_wkb_to_geojson` before calling `upsert_trails` rather than this format change
+# reaching that far.
+_TRAIL_COLUMNS = (
+    "id",
+    "name",
+    "kind",
+    "source",
+    "url",
+    "center_lat",
+    "center_lng",
+    "geometry_wkb",
+    "connects",
+    "length_km",
+    "attrs",
+)
+_BULK_SNAPSHOT_SCHEMA = pa.schema(
+    [
+        ("id", pa.string()),
+        ("name", pa.string()),
+        ("kind", pa.string()),
+        ("source", pa.string()),
+        ("url", pa.string()),
+        ("center_lat", pa.float64()),
+        ("center_lng", pa.float64()),
+        ("geometry_wkb", pa.binary()),
+        ("connects", pa.string()),
+        ("length_km", pa.float64()),
+        ("attrs", pa.string()),
+    ]
+)
+
+
+def _geojson_to_wkb(geojson_text: str) -> bytes:
+    return shapely.to_wkb(shapely.from_geojson(geojson_text))
+
+
+def _wkb_to_geojson(wkb_bytes: bytes) -> str:
+    return shapely.to_geojson(shapely.from_wkb(bytes(wkb_bytes)), indent=None)
 
 
 def _get(props: dict[str, Any], field: str) -> Any:
@@ -253,12 +296,12 @@ def _iter_pages(client: httpx.Client) -> Iterator[list[dict[str, Any]]]:
 
 
 def stage_usfs_trails(cfg: Settings, snapshot_date: date, run_id: str, *, client: httpx.Client | None = None) -> None:
-    """Stager: pull the whole national Trail_NFS foot-trail table and upload it as gzipped JSON
-    Lines under this run's Space prefix. Runs in GitHub Actions (no DB) - the droplet never
-    touches the live ArcGIS service (issue #335 PR 3a: this source is "via `ingest-bulk`", not a
-    live per-request/coverage crawl on the 1-vCPU box). Each line is one trails row tuple, JSON-
-    encoded (``geojson``/``attrs`` stay as their already-JSON-encoded string elements), so
-    ``load_usfs_trails`` can load it with no reparsing.
+    """Stager: pull the whole national Trail_NFS foot-trail table and upload it as a Parquet file
+    under this run's Space prefix. Runs in GitHub Actions (no DB) - the droplet never touches the
+    live ArcGIS service (issue #335 PR 3a: this source is "via `ingest-bulk`", not a live
+    per-request/coverage crawl on the 1-vCPU box). ``geometry_wkb``/``attrs`` stay as their
+    already-encoded bytes/JSON-string elements, so ``load_usfs_trails`` can load them with no
+    reparsing beyond the WKB->GeoJSON conversion (`_wkb_to_geojson`) `upsert_trails` needs.
 
     Unlike the live/best-effort area ingests, a fetch failure here is **not** swallowed - it's
     left to propagate (matching `camps.stage_ridb`/`inat_bulk.stage_inat`, neither of which
@@ -284,38 +327,44 @@ def stage_usfs_trails(cfg: Settings, snapshot_date: date, run_id: str, *, client
             client.close()
     if not by_id:
         raise RuntimeError("usfs_trails: stage fetched zero rows - refusing to publish an empty snapshot")
-    buf = io.BytesIO()
-    with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
-        gz.write("\n".join(json.dumps(row) for row in by_id.values()).encode())
-    key = spaces.snapshot_run_prefix("usfs_trails", snapshot_date, run_id) + "trails.jsonl.gz"
-    spaces.put_object(cfg.spaces, key, buf.getvalue(), "application/gzip")
-    logger.info("usfs_trails: staged %d USFS foot trails", len(by_id))
+    dict_rows = (
+        dict(zip(_TRAIL_COLUMNS, (*row[:7], _geojson_to_wkb(row[7]), *row[8:]), strict=True)) for row in by_id.values()
+    )
+    count = spaces.write_snapshot_parquet(
+        cfg.spaces, "usfs_trails", snapshot_date, run_id, _BULK_SNAPSHOT_FILENAME, dict_rows, _BULK_SNAPSHOT_SCHEMA
+    )
+    logger.info("usfs_trails: staged %d USFS foot trails", count)
 
 
 def load_usfs_trails(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_id: str) -> None:
     """Loader: load the newest staged Trail_NFS snapshot into ``trails`` and prune any ``usfs``
     row the export no longer lists (a decommissioned trail) - the export is authoritative and
     complete, like RIDB's full facility list (``camps.load_ridb``)."""
-    key = spaces.snapshot_run_prefix("usfs_trails", snapshot_date, run_id) + "trails.jsonl.gz"
     total = 0
     ids: list[str] = []
-    chunk: list[tuple[Any, ...]] = []
-    with tempfile.NamedTemporaryFile(suffix=".jsonl.gz") as tmp:
-        spaces.download_file(cfg.spaces, key, tmp.name)
-        with gzip.open(tmp.name, "rt", encoding="utf-8") as payload_file:
-            for line in payload_file:
-                if not line.strip():
-                    continue
-                row = tuple(json.loads(line))
-                chunk.append(row)
-                ids.append(row[0])
-                if len(chunk) >= _CHUNK_SIZE:
-                    upsert_trails(con, chunk)
-                    total += len(chunk)
-                    chunk = []
-    if chunk:
-        upsert_trails(con, chunk)
-        total += len(chunk)
+    for batch in spaces.read_snapshot_parquet(
+        cfg.spaces, "usfs_trails", snapshot_date, run_id, _BULK_SNAPSHOT_FILENAME, batch_size=_CHUNK_SIZE
+    ):
+        chunk = [
+            (
+                rec["id"],
+                rec["name"],
+                rec["kind"],
+                rec["source"],
+                rec["url"],
+                rec["center_lat"],
+                rec["center_lng"],
+                _wkb_to_geojson(rec["geometry_wkb"]),
+                rec["connects"],
+                rec["length_km"],
+                rec["attrs"],
+            )
+            for rec in batch
+        ]
+        ids.extend(row[0] for row in chunk)
+        if chunk:
+            upsert_trails(con, chunk)
+            total += len(chunk)
     pruned = cache.prune_trails_missing_from(con, "usfs", ids)
     # Namespaced under "trails:" (not "usfs_trails:") so /healthz/data's freshness reporting
     # (which reads every `trails:`-prefixed ingest_log key) picks this load up, same as

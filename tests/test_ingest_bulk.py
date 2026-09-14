@@ -45,6 +45,7 @@ def test_inat_and_ridb_stagers_and_loaders_are_registered() -> None:
 def test_stage_snapshot_calls_registered_stager_then_publishes_its_run(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[Settings, date, str]] = []
     published: list[tuple[Spaces, str, date, str]] = []
+    pruned: list[tuple[Spaces, str, date, str]] = []
     monkeypatch.setitem(
         ingest_bulk.STAGERS, "padus", lambda cfg, snapshot_date, run_id: calls.append((cfg, snapshot_date, run_id))
     )
@@ -52,6 +53,11 @@ def test_stage_snapshot_calls_registered_stager_then_publishes_its_run(monkeypat
         ingest_bulk,
         "publish_snapshot",
         lambda spaces_cfg, source, snapshot_date, run_id: published.append((spaces_cfg, source, snapshot_date, run_id)),
+    )
+    monkeypatch.setattr(
+        ingest_bulk,
+        "prune_other_snapshots",
+        lambda spaces_cfg, source, snapshot_date, run_id: pruned.append((spaces_cfg, source, snapshot_date, run_id)),
     )
 
     result = ingest_bulk.stage_snapshot(_CONFIGURED, "padus", date(2026, 1, 1))
@@ -61,6 +67,9 @@ def test_stage_snapshot_calls_registered_stager_then_publishes_its_run(monkeypat
     cfg, snapshot_date, run_id = calls[0]
     assert (cfg, snapshot_date) == (_CONFIGURED, date(2026, 1, 1))
     assert published == [(_CONFIGURED.spaces, "padus", date(2026, 1, 1), run_id)]
+    # Pruning must happen after publish, not before - see prune_other_snapshots' docstring for
+    # why pruning first would risk a concurrent loader losing the snapshot it's mid-download of.
+    assert pruned == [(_CONFIGURED.spaces, "padus", date(2026, 1, 1), run_id)]
 
 
 def test_ingest_bulk_requires_spaces_configured(con: psycopg.Connection) -> None:

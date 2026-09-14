@@ -402,6 +402,18 @@ checking the issue's own text first - see AGENTS.md's Conventions section.
   the app image (for #335's shapefile/GeoPackage sources) and DuckDB (for querying staged
   Parquet/GPKG directly) are there for the sources that need them; `inat`/`ridb` (below) need
   neither - both stream-filter their source over plain HTTP.
+- **Storage format (issue #359):** Parquet is the standard bulk-snapshot format - columnar +
+  dictionary/RLE encoding beats the earlier ad hoc gzipped-JSON-Lines pattern for repeated values
+  (source names, enums, coordinates), and it's directly queryable with DuckDB. `foray.spaces`
+  owns the shared codec (`write_snapshot_parquet`/`read_snapshot_parquet` - a stager hands over
+  rows + a `pyarrow.Schema`, a loader gets back the same rows in batches), so every registered
+  source uses the same read/write path instead of each hand-rolling its own tempfile/gzip
+  dance. A geometry column is WKB bytes, not GeoJSON text (compact, and PostGIS reads it
+  natively) - a loader converts it back to the GeoJSON text a table's `ST_GeomFromGeoJSON`
+  insert trigger expects (`usfs_trails._wkb_to_geojson`) rather than that format change reaching
+  the trigger itself. Retention is one snapshot per source, not history -
+  `foray.spaces.prune_other_snapshots` deletes every other object under `bulk/{source}/` right
+  after a new run publishes, to keep the monthly Spaces bill from growing unbounded.
 - **Loading (droplet, `foray ingest-bulk <source>`):** finds the newest *published* snapshot
   date (`foray.spaces.list_snapshot_dates`, which only counts a date once its manifest exists)
   and skips it if it's not newer than what's already loaded (`meta` key `bulk_snapshot:{source}`).

@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import csv
-import gzip
 import io
-import json
 import zipfile
 from datetime import date
 from pathlib import Path
 
 import httpx
 import psycopg
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from foray import spaces
@@ -118,6 +118,13 @@ def test_iter_fungi_us_rows_filters_kingdom_country_and_missing_coords() -> None
     assert rows[0]["lat"] == 47.6
 
 
+def _write_parquet_bytes(rows: list[dict], schema: pa.Schema) -> bytes:
+    buf = pa.BufferOutputStream()
+    with pq.ParquetWriter(buf, schema) as writer:
+        writer.write_table(pa.Table.from_pylist(rows, schema=schema))
+    return buf.getvalue().to_pybytes()
+
+
 def test_parse_date_handles_missing_and_malformed() -> None:
     assert _parse_date(None) is None
     assert _parse_date("") is None
@@ -129,19 +136,18 @@ def test_stage_inat_uploads_filtered_rows(monkeypatch: pytest.MonkeyPatch) -> No
     zip_bytes = _dwca_zip([_dwca_row(1, genus="Amanita"), _dwca_row(2, kingdom="Plantae")])
     uploaded: dict[str, bytes] = {}
 
-    def fake_put_object(cfg: Spaces, key: str, data: bytes, content_type: str, **kwargs: object) -> str:
-        uploaded[key] = data
-        return f"https://space/{key}"
+    def fake_upload_file(cfg: Spaces, key: str, src_path: str, content_type: str) -> None:
+        uploaded[key] = Path(src_path).read_bytes()
 
-    monkeypatch.setattr(inat_bulk.spaces, "put_object", fake_put_object)
+    monkeypatch.setattr(inat_bulk.spaces, "upload_file", fake_upload_file)
     monkeypatch.setattr(inat_bulk.httpx, "Client", lambda **kw: _mock_client(zip_bytes))
 
     stage_inat(Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
 
     assert len(uploaded) == 1
     ((key, data),) = uploaded.items()
-    assert key == spaces.snapshot_run_prefix("inat", date(2026, 1, 1), "run1") + "fungi_us.jsonl.gz"
-    rows = [json.loads(line) for line in gzip.decompress(data).decode().splitlines()]
+    assert key == spaces.snapshot_run_prefix("inat", date(2026, 1, 1), "run1") + "fungi_us.parquet"
+    rows = pq.read_table(pa.BufferReader(data)).to_pylist()
     assert [row["id"] for row in rows] == [1]
 
 
@@ -168,10 +174,10 @@ def test_load_inat_resolves_genus_and_upserts_observations(
         },
         {"id": 3, "genus": "Amanita", "lat": 47.6, "lng": -122.3, "event_date": None, "coordinate_uncertainty_m": None},
     ]
-    payload = "\n".join(json.dumps(row) for row in payload_rows).encode()
+    payload = _write_parquet_bytes(payload_rows, inat_bulk._SNAPSHOT_SCHEMA)
 
     def fake_download_file(cfg: Spaces, key: str, dest_path: str) -> None:
-        Path(dest_path).write_bytes(gzip.compress(payload))
+        Path(dest_path).write_bytes(payload)
 
     monkeypatch.setattr(inat_bulk.spaces, "download_file", fake_download_file)
 
@@ -199,10 +205,8 @@ def test_load_inat_triggers_phenology_rebuild_over_threshold(
             "coordinate_uncertainty_m": None,
         }
     ]
-    payload = "\n".join(json.dumps(row) for row in payload_rows).encode()
-    monkeypatch.setattr(
-        inat_bulk.spaces, "download_file", lambda cfg, key, dest: Path(dest).write_bytes(gzip.compress(payload))
-    )
+    payload = _write_parquet_bytes(payload_rows, inat_bulk._SNAPSHOT_SCHEMA)
+    monkeypatch.setattr(inat_bulk.spaces, "download_file", lambda cfg, key, dest: Path(dest).write_bytes(payload))
     rebuilt: list[int] = []
     monkeypatch.setattr(
         inat_bulk, "maybe_rebuild_phenology", lambda con, cfg, new_rows: rebuilt.append(new_rows) or True
