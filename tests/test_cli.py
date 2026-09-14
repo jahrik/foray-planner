@@ -4,6 +4,7 @@ monkeypatched to record calls)."""
 from __future__ import annotations
 
 import json
+from datetime import date
 
 import psycopg
 import pytest
@@ -270,6 +271,30 @@ def test_stage_snapshot_cmd_without_spaces_configured_fails_clean(env_config) ->
     result = CliRunner().invoke(cli, ["stage-snapshot", "padus"])
     assert result.exit_code != 0
     assert "FORAY_SPACES" in result.output
+
+
+def test_stage_snapshot_cmd_requires_exactly_one_of_source_or_all(env_config) -> None:
+    result = CliRunner().invoke(cli, ["stage-snapshot"])
+    assert result.exit_code != 0
+    result = CliRunner().invoke(cli, ["stage-snapshot", "padus", "--all"])
+    assert result.exit_code != 0
+
+
+def test_stage_snapshot_cmd_all_stages_every_registered_source(env_config, monkeypatch) -> None:
+    staged: list[str] = []
+    monkeypatch.setattr(
+        cli_module.ingest_bulk,
+        "STAGERS",
+        {"inat": None, "ridb": None},
+    )
+    monkeypatch.setattr(
+        cli_module.ingest_bulk,
+        "stage_snapshot",
+        lambda cfg, source: staged.append(source) or date(2026, 1, 1),
+    )
+    result = CliRunner().invoke(cli, ["stage-snapshot", "--all"])
+    assert result.exit_code == 0
+    assert staged == ["inat", "ridb"]
 
 
 def test_ingest_bulk_cmd_without_spaces_configured_fails_clean(

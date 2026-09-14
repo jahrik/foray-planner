@@ -440,21 +440,32 @@ def backfill_satellite_cmd(ctx: click.Context, limit: int | None, concurrency: i
 
 
 @cli.command("stage-snapshot")
-@click.argument("source")
+@click.argument("source", required=False)
+@click.option("--all", "stage_all", is_flag=True, help="Stage every source registered in ingest_bulk.STAGERS.")
 @click.pass_context
-def stage_snapshot_cmd(ctx: click.Context, source: str) -> None:
-    """Fetch + upload today's snapshot for a bulk data `source` to the DO Space
-    (`bulk/{source}/{date}/`), without touching Postgres - the GitHub Actions weekly workflow's
-    job (`.github/workflows/bulk-load.yml`), kept off the droplet since a source snapshot (iNat
-    GBIF DwC-A, RIDB, PAD-US, ...) can be tens of GB. `foray ingest-bulk` loads whatever's
-    staged here into the database separately. Registered sources: `inat`, `ridb` (issue #334
-    PR 2); PR 3/#335 add more."""
+def stage_snapshot_cmd(ctx: click.Context, source: str | None, stage_all: bool) -> None:
+    """Fetch + upload today's snapshot for a bulk data `source` (or every registered source, with
+    `--all`) to the DO Space (`bulk/{source}/{date}/`), without touching Postgres - the GitHub
+    Actions weekly workflow's job (`.github/workflows/bulk-load.yml`), kept off the droplet since
+    a source snapshot (iNat GBIF DwC-A, RIDB, PAD-US, ...) can be tens of GB. `foray ingest-bulk`
+    loads whatever's staged here into the database separately. `--all` stages whatever's
+    currently registered (`inat`, `ridb`, `usfs_trails`) without needing the source named here -
+    a newly-registered source is picked up automatically, nothing to keep in sync."""
     cfg = ctx.obj["cfg"]
-    try:
-        snapshot_date = ingest_bulk.stage_snapshot(cfg, source)
-    except (KeyError, RuntimeError) as exc:
-        raise click.ClickException(str(exc)) from None
-    click.echo(f"Staged {source} snapshot {snapshot_date.isoformat()}.")
+    if stage_all:
+        if source is not None:
+            raise click.UsageError("pass exactly one of SOURCE or --all")
+        sources = sorted(ingest_bulk.STAGERS)
+    else:
+        if source is None:
+            raise click.UsageError("pass exactly one of SOURCE or --all")
+        sources = [source]
+    for name in sources:
+        try:
+            snapshot_date = ingest_bulk.stage_snapshot(cfg, name)
+        except (KeyError, RuntimeError) as exc:
+            raise click.ClickException(str(exc)) from None
+        click.echo(f"Staged {name} snapshot {snapshot_date.isoformat()}.")
 
 
 @cli.command("ingest-bulk")
