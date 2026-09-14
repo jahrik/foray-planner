@@ -1,0 +1,31 @@
+---
+# Vector tile server for our own PostGIS layers (issue #336 PR 1) - see docker-compose.yml and
+# infra/martin-config.yaml for the shared config this mirrors. The app proxies
+# `/api/tiles/trails/...` to this container over the docker network (FORAY_MARTIN_URL in
+# foray.env.j2); nothing public ever talks to martin directly, so no Caddy route and no
+# published port.
+
+- name: Copy the martin tile server config
+  # playbook_dir is the running playbook's directory (site.yml, infra/ansible) - same pattern
+  # systemd_jobs.yml uses to read the repo-root jobs.yaml.
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../martin-config.yaml"
+    dest: /opt/foray-planner/martin-config.yaml
+    mode: "0600"
+    owner: root
+    group: root
+  notify: restart martin
+
+- name: Run the martin container
+  community.docker.docker_container:
+    name: "{{ foray_martin_container_name }}"
+    image: "{{ foray_martin_image }}"
+    state: started
+    restart_policy: unless-stopped
+    command: ["--config", "/config.yaml"]
+    env:
+      DATABASE_URL: "postgres://{{ foray_db_user }}:{{ foray_db_password }}@{{ foray_db_host }}:{{ foray_db_port }}/{{ foray_do_db_name }}"
+    volumes:
+      - /opt/foray-planner/martin-config.yaml:/config.yaml:ro
+    networks:
+      - name: "{{ foray_docker_network }}"

@@ -31,6 +31,13 @@ x-spaces-env: &spaces-env
   FORAY_SPACES__BUCKET: ${FORAY_SPACES_BUCKET:-foray-basemap}
   FORAY_SPACES__REGION: ${FORAY_SPACES_REGION:-sfo3}
 
+# martin (below) is a standard part of this stack now, always reachable by its compose service
+# name - not opt-in the way FORAY_BASEMAP_URL is, since there's no external archive to point at
+# instead. FORAY_MARTIN_URL still exists so a `.env` can blank it out to disable the trails
+# vector-tile route/layer without stopping the container.
+x-martin-env: &martin-env
+  FORAY_MARTIN_URL: ${FORAY_MARTIN_URL:-http://martin:3000}
+
 x-runtime-build: &runtime-build
   context: .
   target: runtime
@@ -71,9 +78,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      <<: [*postgres-env, *ridb-env, *basemap-env, *spaces-env]
+      <<: [*postgres-env, *ridb-env, *basemap-env, *spaces-env, *martin-env]
     depends_on:
       <<: *depends-postgres
+      martin:
+        condition: service_started
     command: ["foray", "serve", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
       test: ["CMD", "python", "scripts/healthcheck.py"]
@@ -81,6 +90,23 @@ services:
       timeout: 5s
       start_period: 15s
       retries: 3
+
+  # Vector tile server for our own PostGIS layers (issue #336 PR 1) - reads `trails` straight
+  # out of Postgres and serves MVT tiles; the app proxies `/api/tiles/trails/...` to it
+  # (api/routes/tiles.py) rather than exposing this container to the browser directly. Config
+  # (infra/martin-config.yaml) is the same file prod mounts - only `trails` is published, not
+  # martin's full auto-discovered table set.
+  martin:
+    image: ghcr.io/maplibre/martin:v0.15.0
+    environment:
+      DATABASE_URL: postgres://foray:${POSTGRES_PASSWORD:-foray}@postgres:5432/foray
+    volumes:
+      - ./infra/martin-config.yaml:/config.yaml:ro
+    command: ["--config", "/config.yaml"]
+    ports:
+      - "3000:3000"
+    depends_on:
+      <<: *depends-postgres
 
   # Runs the same `jobs.yaml` manifest the prod systemd timers are generated from (issue #332
   # PR 2) - `foray scheduler` (src/foray/schedule.py). Per-job cadence lives in jobs.yaml now,

@@ -39,6 +39,9 @@ class ConfigResponse(BaseModel):
     # Same-origin {z}/{x}/{y} template for the full-map satellite basemap toggle; empty when
     # disabled (see Settings.satellite_tiles_url).
     satellite_tiles_url: str = ""
+    # Same-origin {z}/{x}/{y} template for our own trails vector tiles (issue #336), proxied to
+    # the martin tile server; empty when no martin instance is configured (Settings.martin_url).
+    trails_tiles_url: str = ""
 
 
 class GenusResult(BaseModel):

@@ -484,6 +484,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tiles/trails/{z}/{x}/{y}.pbf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Trails Tile
+         * @description One trails vector tile (issue #336 PR 1), proxied same-origin from the martin tile server
+         *     so the frontend never talks to the docker-internal `martin_url` host directly.
+         */
+        get: operations["get_trails_tile_api_tiles_trails__z___x___y__pbf_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/plan": {
         parameters: {
             query?: never;
@@ -731,6 +752,11 @@ export interface components {
              * @default
              */
             satellite_tiles_url: string;
+            /**
+             * Trails Tiles Url
+             * @default
+             */
+            trails_tiles_url: string;
         };
         /** CoverageRegionResponse */
         CoverageRegionResponse: {
@@ -1873,6 +1899,39 @@ export interface operations {
                 };
                 content: {
                     "image/jpeg": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trails_tile_api_tiles_trails__z___x___y__pbf_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                z: number;
+                x: number;
+                y: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.mapbox-vector-tile": unknown;
                 };
             };
             /** @description Validation Error */

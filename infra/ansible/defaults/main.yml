@@ -48,6 +48,13 @@ foray_app_image: ghcr.io/jahrik/foray-planner:latest
 foray_app_container_name: foray-planner
 foray_docker_network: foray-net
 
+# Trails vector tile server (issue #336 PR 1) - internal only, no published port; the app
+# reaches it at foray_martin_url over foray_docker_network. Pin the same tag docker-compose.yml
+# uses for local dev.
+foray_martin_image: ghcr.io/maplibre/martin:v0.15.0
+foray_martin_container_name: foray-planner-martin
+foray_martin_url: "http://{{ foray_martin_container_name }}:3000"
+
 # Caddy terminates TLS on 80/443 and reverse-proxies to the app container over the
 # foray_docker_network - the app container itself no longer publishes a host port.
 foray_domain: forayplanner.com

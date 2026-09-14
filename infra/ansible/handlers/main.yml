@@ -33,3 +33,19 @@
     networks:
       - name: "{{ foray_docker_network }}"
   listen: restart caddy
+
+- name: Restart martin
+  community.docker.docker_container:
+    name: "{{ foray_martin_container_name }}"
+    image: "{{ foray_martin_image }}"
+    state: started
+    restart: true
+    restart_policy: unless-stopped
+    command: ["--config", "/config.yaml"]
+    env:
+      DATABASE_URL: "postgres://{{ foray_db_user }}:{{ foray_db_password }}@{{ foray_db_host }}:{{ foray_db_port }}/{{ foray_do_db_name }}"
+    volumes:
+      - /opt/foray-planner/martin-config.yaml:/config.yaml:ro
+    networks:
+      - name: "{{ foray_docker_network }}"
+  listen: restart martin
