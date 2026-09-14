@@ -48,6 +48,15 @@ jobs:
     window: night
     writer: true
 
+  # One-shot in practice: usfs_trails.py's version marker makes every run after the first a
+  # no-op until _USFS_TRAILS_VERSION bumps (issue #335 PR 3) - kept on the same weekly cadence
+  # as the other coverage-wide jobs so a version bump self-heals without a manual re-run.
+  - name: usfs-trails-coverage
+    command: usfs-trails
+    interval_hours: 168
+    window: night
+    writer: true
+
   - name: genera
     command: genera-refresh
     interval_hours: 168
