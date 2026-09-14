@@ -1596,6 +1596,26 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
     return result
 
 
+def prune_trails_missing_from(con: psycopg.Connection, source: str, ids: Sequence[str]) -> int:
+    """Delete ``source`` trails whose id isn't in ``ids``. Returns rows deleted.
+
+    For a source loaded from an authoritative full dump (the USFS Trail_NFS bulk snapshot,
+    issue #335 PR 3a) every row it lists is the complete truth, same as
+    ``prune_campsites_missing_from`` for the RIDB bulk snapshot - a trail the export no longer
+    lists (decommissioned, rerouted onto a new id) has to go. Deletes nothing if ``ids`` is
+    empty - an empty load is far more likely a bug than a real "zero trails" result, and wiping
+    every cached row of a source on that basis would be worse than leaving stale ones.
+    ``trail_geometry`` cascades via its FK (``ON DELETE CASCADE``), so no separate delete there.
+    """
+    if not ids:
+        return 0
+    result = con.execute("DELETE FROM trails WHERE source = %s AND id <> ALL(%s)", [source, list(ids)])
+    con.commit()
+    if result.rowcount:
+        _invalidate_rank_cache()
+    return result.rowcount
+
+
 _FIRE_COLUMNS: tuple[LiteralString, ...] = (
     "id",
     "source_key",

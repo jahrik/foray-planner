@@ -48,15 +48,6 @@ jobs:
     window: night
     writer: true
 
-  # One-shot in practice: usfs_trails.py's version marker makes every run after the first a
-  # no-op until _USFS_TRAILS_VERSION bumps (issue #335 PR 3) - kept on the same weekly cadence
-  # as the other coverage-wide jobs so a version bump self-heals without a manual re-run.
-  - name: usfs-trails-coverage
-    command: usfs-trails
-    interval_hours: 168
-    window: night
-    writer: true
-
   - name: genera
     command: genera-refresh
     interval_hours: 168
@@ -136,6 +127,16 @@ jobs:
 
   - name: ingest-bulk-ridb
     command: ingest-bulk ridb
+    interval_hours: 24
+    window: night
+    writer: true
+
+  # USFS Trail_NFS (issue #335 PR 3a) - "via `ingest-bulk`" per the issue, not a live
+  # coverage-wide crawl on the droplet: GitHub Actions stages the whole national table
+  # (.github/workflows/bulk-load.yml, once `usfs_trails` is added to the
+  # FORAY_BULK_SOURCES repo variable), this just loads whatever's newest-published.
+  - name: ingest-bulk-usfs-trails
+    command: ingest-bulk usfs_trails
     interval_hours: 24
     window: night
     writer: true

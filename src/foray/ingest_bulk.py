@@ -25,7 +25,7 @@ from typing import LiteralString
 import psycopg
 
 from foray.config import Settings
-from foray.sources import camps, inat_bulk
+from foray.sources import camps, inat_bulk, usfs_trails
 from foray.spaces import list_snapshot_dates, new_run_id, publish_snapshot, snapshot_run_id
 
 logger = logging.getLogger(__name__)
@@ -44,10 +44,12 @@ Loader = Callable[[psycopg.Connection, Settings, date, str], None]
 STAGERS: dict[str, Stager] = {
     "ridb": camps.stage_ridb,
     "inat": inat_bulk.stage_inat,
+    "usfs_trails": usfs_trails.stage_usfs_trails,
 }
 LOADERS: dict[str, Loader] = {
     "ridb": camps.load_ridb,
     "inat": inat_bulk.load_inat,
+    "usfs_trails": usfs_trails.load_usfs_trails,
 }
 
 

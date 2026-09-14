@@ -1,4 +1,4 @@
-"""Authoritative USFS foot-trail ingest from the Trail_NFS ArcGIS layer (issue #335 PR 3).
+"""Bulk-snapshot USFS Trail_NFS loader (issue #335 PR 3a).
 
 OSM can't reliably give legal-access or seasonal attributes for national-forest trails; today's
 proxies for that in ``trails.py`` are all OSM-derived guesses (``ref``/``operator`` heuristics,
@@ -8,27 +8,38 @@ trails OSM is missing entirely (e.g. Lost Man Creek Trail). This module pulls th
 (``EDW_TrailNFSPublish_01/MapServer/0``); the MVUM roads layer (which carries the OHV-legality /
 open-season matrix) and OSM/USFS dedup are follow-up PRs - see TODO.md R2.
 
+Issue #335 specifies this source goes "via `ingest-bulk`" (the #334 bulk-snapshot pipeline), not
+a live per-request/coverage fetch on the droplet - the national feature service is queried here
+(``_iter_pages``, no geometry filter - the whole ``TRAIL_TYPE='TERRA'`` table, paged), but that
+query runs in the **stager** (``stage_usfs_trails``), which GitHub Actions runs on its own
+schedule (``.github/workflows/bulk-load.yml``), never the 1-vCPU droplet. The **loader**
+(``load_usfs_trails``) just downloads the staged snapshot and upserts it - the same
+stage/load split ``inat_bulk``/``camps.stage_ridb``/``load_ridb`` already use.
+
 Rows land in the same ``trails`` table as the OSM ingest (``source='usfs'`` keeps them distinct;
 ``kind='path'`` so ``trails_near``/``nearest_trail`` - which filter on ``kind``, not ``source`` -
-pick them up unchanged). This is envelope + paging over one ArcGIS layer for the whole configured
-coverage, cloning ``land.py``'s pattern (a national service, not tileable the way Overpass is) -
-NOT ``trails.py``'s per-region Overpass tiling. One-shot per ``_USFS_TRAILS_VERSION``: skips once
-``usfs_trails:coverage:v{N}`` is in ``ingest_log``, same self-heal pattern as land/camps/dispersed.
+pick them up unchanged). The export is authoritative and complete, like RIDB's, so a load also
+prunes any ``usfs``-sourced trail the newest snapshot no longer lists (a decommissioned trail).
 """
 
 from __future__ import annotations
 
+import gzip
+import io
 import json
 import logging
-from collections.abc import Callable, Iterator
+import tempfile
+from collections.abc import Iterator
+from datetime import date
 from itertools import pairwise
 from typing import Any
 
 import httpx
 import psycopg
 
-from foray.cache import connection, is_ingested, record_ingest, upsert_trails
-from foray.config import Settings, coverage_envelope
+from foray import cache, spaces
+from foray.cache import record_ingest, upsert_trails
+from foray.config import Settings
 from foray.geo import haversine_km
 from foray.sources.http import SOURCE_ERRORS, USER_AGENT
 
@@ -44,6 +55,7 @@ _PAGE_SIZE = 1000
 # detail is unnecessary for the map and would balloon the cached geometry.
 _SIMPLIFY_DEG = 0.0001
 _MAX_POINTS_PER_LINE = 60
+_CHUNK_SIZE = 5000
 
 _ID_FIELD = "TRAIL_CN"
 _FIELDS = (
@@ -54,11 +66,6 @@ _FIELDS = (
     "MANAGING_ORG",
     "NATIONAL_TRAIL_DESIGNATION",
 )
-
-# Bump when `_WHERE`/`_FIELDS` changes what's pulled, or `_attrs` changes what's kept - both the
-# coverage-wide marker below fold this in so an already-ingested deployment re-pulls once, same
-# idea as `land._LAND_SOURCES_VERSION` / `trails._TRAILS_QUERY_VERSION`.
-_USFS_TRAILS_VERSION = 1
 
 
 def _get(props: dict[str, Any], field: str) -> Any:
@@ -185,14 +192,11 @@ def _parse_feature(feature: dict[str, Any]) -> tuple[Any, ...] | None:
     )
 
 
-def _iter_pages(client: httpx.Client, envelope: tuple[float, float, float, float]) -> Iterator[list[dict[str, Any]]]:
-    """Yield each ArcGIS response page (<= `_PAGE_SIZE` features) for the envelope, paging until
-    exhausted - one page at a time, not the whole national result, so a caller can upsert and
-    discard each page rather than holding the full ~78k-feature national result in memory (a live
-    count against the real service, checked 2026-09-14: 78,149 TERRA features - smaller than
-    PAD-US's Fee Managers count of 214,108, which already ingests coverage-wide from this same
-    droplet, see `land.py`)."""
-    xmin, ymin, xmax, ymax = envelope
+def _iter_pages(client: httpx.Client) -> Iterator[list[dict[str, Any]]]:
+    """Yield each ArcGIS response page (<= `_PAGE_SIZE` features) of the whole national
+    ``TRAIL_TYPE='TERRA'`` table (no geometry filter - the full bulk export, like RIDB's full
+    CSV), paging until exhausted. A live count against the real service (checked 2026-09-14):
+    78,149 features."""
     offset = 0
     while True:
         resp = client.get(
@@ -200,11 +204,6 @@ def _iter_pages(client: httpx.Client, envelope: tuple[float, float, float, float
             params={
                 "f": "geojson",
                 "where": _WHERE,
-                "geometry": f"{xmin},{ymin},{xmax},{ymax}",
-                "geometryType": "esriGeometryEnvelope",
-                "inSR": "4326",
-                "outSR": "4326",
-                "spatialRel": "esriSpatialRelIntersects",
                 "outFields": _out_fields(),
                 "returnGeometry": "true",
                 "maxAllowableOffset": _SIMPLIFY_DEG,
@@ -224,98 +223,63 @@ def _iter_pages(client: httpx.Client, envelope: tuple[float, float, float, float
             return
 
 
-def _parse_page(features: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
-    """One ArcGIS page -> trails row tuples, deduped by id within the page."""
-    by_id: dict[str, tuple[Any, ...]] = {}
-    for feature in features:
-        row = _parse_feature(feature)
-        if row is not None:
-            by_id[row[0]] = row
-    return list(by_id.values())
-
-
-def fetch_usfs_trails(
-    envelope: tuple[float, float, float, float],
-    *,
-    client: httpx.Client | None = None,
-    progress_cb: Callable[[str, float], None] | None = None,
-) -> list[tuple[Any, ...]]:
-    """Fetch USFS foot trails within an (xmin, ymin, xmax, ymax) envelope, deduped by id.
-
-    Best-effort like the other area sources: a failing/malformed response is logged and yields
-    whatever was already parsed rather than aborting the whole ingest. For a small envelope
-    (state-sized or smaller); the coverage-wide national pull uses
-    ``ingest_usfs_trails_coverage``'s own page-at-a-time loop instead, to keep memory bounded.
+def stage_usfs_trails(cfg: Settings, snapshot_date: date, run_id: str, *, client: httpx.Client | None = None) -> None:
+    """Stager: pull the whole national Trail_NFS foot-trail table and upload it as gzipped JSON
+    Lines under this run's Space prefix. Runs in GitHub Actions (no DB) - the droplet never
+    touches the live ArcGIS service (issue #335 PR 3a: this source is "via `ingest-bulk`", not a
+    live per-request/coverage crawl on the 1-vCPU box). Each line is one trails row tuple, JSON-
+    encoded (``geojson``/``attrs`` stay as their already-JSON-encoded string elements), so
+    ``load_usfs_trails`` can load it with no reparsing.
     """
     owns = client is None
-    client = client or httpx.Client(timeout=60.0)
+    client = client or httpx.Client(timeout=120.0)
     by_id: dict[str, tuple[Any, ...]] = {}
     try:
-        if progress_cb:
-            progress_cb("Fetching USFS trails…", 0.0)
-        for page in _iter_pages(client, envelope):
-            for row in _parse_page(page):
-                by_id[row[0]] = row
+        for page in _iter_pages(client):
+            for feature in page:
+                row = _parse_feature(feature)
+                if row is not None:
+                    by_id[row[0]] = row
     except SOURCE_ERRORS as error:
-        logger.warning("usfs_trails: fetch failed (%s) - keeping %d rows parsed so far", error, len(by_id))
+        logger.warning("usfs_trails: stage fetch failed (%s) - keeping %d rows parsed so far", error, len(by_id))
     finally:
         if owns:
             client.close()
-    return list(by_id.values())
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
+        gz.write("\n".join(json.dumps(row) for row in by_id.values()).encode())
+    key = spaces.snapshot_run_prefix("usfs_trails", snapshot_date, run_id) + "trails.jsonl.gz"
+    spaces.put_object(cfg.spaces, key, buf.getvalue(), "application/gzip")
+    logger.info("usfs_trails: staged %d USFS foot trails", len(by_id))
 
 
-def ingest_usfs_trails_coverage(
-    cfg: Settings,
-    con: psycopg.Connection | None = None,
-    *,
-    client: httpx.Client | None = None,
-    progress_cb: Callable[[str, float], None] | None = None,
-) -> int:
-    """Ingest USFS Trail_NFS foot trails across all of ``cfg.coverage`` in one envelope query.
-
-    Upserts each ArcGIS page as it arrives (see ``_iter_pages``) rather than accumulating the
-    whole national result before one upsert - bounds memory to one page (<= `_PAGE_SIZE` rows)
-    at a time regardless of how large the national result is.
-
-    One-shot per ``_USFS_TRAILS_VERSION``, same self-heal pattern as
-    ``land.ingest_public_land_coverage``: skips once ``usfs_trails:coverage:v{N}`` is recorded,
-    bumping the version re-pulls on the next run. A mid-stream failure is *not* recorded as done
-    (unlike a full in-memory fetch, a partial page-streamed pull has already written its
-    successful pages, but the run must still be retried to pick up the rest) - same
-    don't-mark-done-on-partial-failure rule ``trails.ingest_trails_region`` uses per region.
-    """
-    key = f"usfs_trails:coverage:v{_USFS_TRAILS_VERSION}"
-    with connection(con) as database:
-        if is_ingested(database, key):
-            logger.info("usfs_trails: coverage already ingested at v%d, skipping", _USFS_TRAILS_VERSION)
-            if progress_cb:
-                progress_cb("USFS trails already cached, skipping…", 100.0)
-            return 0
-        envelope = coverage_envelope(cfg.coverage)
-        logger.info("usfs_trails: fetching Trail_NFS across %d coverage regions…", len(cfg.coverage))
-        owns = client is None
-        client = client or httpx.Client(timeout=60.0)
-        total = 0
-        try:
-            for page in _iter_pages(client, envelope):
-                rows = _parse_page(page)
-                if rows:
-                    upsert_trails(database, rows)
-                    total += len(rows)
-                if progress_cb:
-                    progress_cb(f"Cached {total} USFS trails so far…", 0.0)
-        except SOURCE_ERRORS as error:
-            logger.warning(
-                "usfs_trails: coverage fetch failed (%s) after caching %d rows - "
-                "not recording as done, will retry next run",
-                error,
-                total,
-            )
-            return total
-        finally:
-            if owns:
-                client.close()
-        record_ingest(database, key, total)
-        database.execute("DELETE FROM ingest_log WHERE key LIKE %s AND key <> %s", ["usfs_trails:coverage:v%", key])
-        logger.info("usfs_trails: cached %d USFS trails (coverage-wide)", total)
-        return total
+def load_usfs_trails(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_id: str) -> None:
+    """Loader: load the newest staged Trail_NFS snapshot into ``trails`` and prune any ``usfs``
+    row the export no longer lists (a decommissioned trail) - the export is authoritative and
+    complete, like RIDB's full facility list (``camps.load_ridb``)."""
+    key = spaces.snapshot_run_prefix("usfs_trails", snapshot_date, run_id) + "trails.jsonl.gz"
+    total = 0
+    ids: list[str] = []
+    chunk: list[tuple[Any, ...]] = []
+    with tempfile.NamedTemporaryFile(suffix=".jsonl.gz") as tmp:
+        spaces.download_file(cfg.spaces, key, tmp.name)
+        with gzip.open(tmp.name, "rt", encoding="utf-8") as payload_file:
+            for line in payload_file:
+                if not line.strip():
+                    continue
+                row = tuple(json.loads(line))
+                chunk.append(row)
+                ids.append(row[0])
+                if len(chunk) >= _CHUNK_SIZE:
+                    upsert_trails(con, chunk)
+                    total += len(chunk)
+                    chunk = []
+    if chunk:
+        upsert_trails(con, chunk)
+        total += len(chunk)
+    pruned = cache.prune_trails_missing_from(con, "usfs", ids)
+    # Namespaced under "trails:" (not "usfs_trails:") so /healthz/data's freshness reporting
+    # (which reads every `trails:`-prefixed ingest_log key) picks this load up, same as
+    # camps.load_ridb's `camps:ridb:bulk:{date}` marker for the campgrounds layer.
+    record_ingest(con, f"trails:usfs:bulk:{snapshot_date.isoformat()}", total)
+    logger.info("usfs_trails: loaded %d USFS trails from the bulk snapshot (pruned %d stale)", total, pruned)
