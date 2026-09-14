@@ -110,7 +110,7 @@ def test_attrs_returns_none_when_nothing_present() -> None:
 
 
 def test_parse_feature_builds_row_and_falls_back_on_missing_name() -> None:
-    row = _parse_feature({"properties": {"RTE_CN": "42", "ID": "300"}, "geometry": _line(HOME_LAT, HOME_LNG)})
+    row = _parse_feature({"properties": {"OBJECTID": "42", "ID": "300"}, "geometry": _line(HOME_LAT, HOME_LNG)})
     assert row is not None
     assert row[0] == "usfs:road/42"
     assert row[1] == "FR 300"  # name absent -> fallback built from the route number
@@ -122,14 +122,37 @@ def test_parse_feature_builds_row_and_falls_back_on_missing_name() -> None:
 
 
 def test_parse_feature_falls_back_to_generic_name_with_no_route_number() -> None:
-    row = _parse_feature({"properties": {"RTE_CN": "42"}, "geometry": _line(HOME_LAT, HOME_LNG)})
+    row = _parse_feature({"properties": {"OBJECTID": "42"}, "geometry": _line(HOME_LAT, HOME_LNG)})
     assert row is not None
     assert row[1] == "USFS road"
 
 
 def test_parse_feature_skips_missing_geometry_or_id() -> None:
-    assert _parse_feature({"properties": {"RTE_CN": "1"}, "geometry": None}) is None
+    assert _parse_feature({"properties": {"OBJECTID": "1"}, "geometry": None}) is None
     assert _parse_feature({"properties": {}, "geometry": _line(HOME_LAT, HOME_LNG)}) is None
+
+
+def test_parse_feature_keeps_distinct_segments_sharing_one_route_number() -> None:
+    # A Copilot review catch: RTE_CN is a route-level id shared by every physical segment of a
+    # route (confirmed live - e.g. "TRAIL RIVER ROAD" split into a 0.2mi and a 0.303mi segment,
+    # two different OBJECTIDs, both RTE_CN=168010270), so it can't be the row id without silently
+    # collapsing segments. OBJECTID (per-feature) is the id; RTE_CN is kept as attrs.route_cn.
+    segment_a = _parse_feature(
+        {
+            "properties": {"OBJECTID": "1001", "RTE_CN": "168010270", "NAME": "TRAIL RIVER ROAD"},
+            "geometry": _line(41.0, -124.0),
+        }
+    )
+    segment_b = _parse_feature(
+        {
+            "properties": {"OBJECTID": "1002", "RTE_CN": "168010270", "NAME": "TRAIL RIVER ROAD"},
+            "geometry": _line(41.1, -124.0),
+        }
+    )
+    assert segment_a is not None and segment_b is not None
+    assert segment_a[0] == "usfs:road/1001"
+    assert segment_b[0] == "usfs:road/1002"  # distinct ids - neither overwrites the other
+    assert json.loads(segment_a[10])["route_cn"] == "168010270"
 
 
 def test_iter_pages_requests_the_system_road_symbol_filter() -> None:
@@ -152,8 +175,8 @@ def test_stage_usfs_mvum_uploads_deduped_rows_as_parquet(monkeypatch: pytest.Mon
             json={
                 "type": "FeatureCollection",
                 "features": [
-                    {"properties": {"RTE_CN": "7"}, "geometry": _line(HOME_LAT, HOME_LNG)},
-                    {"properties": {"RTE_CN": "7"}, "geometry": _line(HOME_LAT, HOME_LNG)},  # dupe
+                    {"properties": {"OBJECTID": "7"}, "geometry": _line(HOME_LAT, HOME_LNG)},
+                    {"properties": {"OBJECTID": "7"}, "geometry": _line(HOME_LAT, HOME_LNG)},  # dupe
                 ],
             },
         )
@@ -201,11 +224,11 @@ def test_stage_usfs_mvum_refuses_to_publish_a_zero_row_result(monkeypatch: pytes
 
 
 def test_load_usfs_mvum_upserts_and_prunes_stale_rows(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
-    stale = _parse_feature({"properties": {"RTE_CN": "gone"}, "geometry": _line(40.0, -120.0)})
+    stale = _parse_feature({"properties": {"OBJECTID": "gone"}, "geometry": _line(40.0, -120.0)})
     assert stale is not None
     upsert_trails(con, [stale])
 
-    fresh = _parse_feature({"properties": {"RTE_CN": "9"}, "geometry": _line(HOME_LAT, HOME_LNG)})
+    fresh = _parse_feature({"properties": {"OBJECTID": "9"}, "geometry": _line(HOME_LAT, HOME_LNG)})
     assert fresh is not None
     payload = _write_snapshot([fresh])
     monkeypatch.setattr(
@@ -248,7 +271,7 @@ def test_load_usfs_mvum_does_not_prune_usfs_trail_nfs_rows(
 def test_load_usfs_mvum_records_ingest_under_the_trails_prefix(
     con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    row = _parse_feature({"properties": {"RTE_CN": "1"}, "geometry": _line(HOME_LAT, HOME_LNG)})
+    row = _parse_feature({"properties": {"OBJECTID": "1"}, "geometry": _line(HOME_LAT, HOME_LNG)})
     assert row is not None
     payload = _write_snapshot([row])
     monkeypatch.setattr(
@@ -263,7 +286,7 @@ def test_load_usfs_mvum_records_ingest_under_the_trails_prefix(
 
 
 def test_prune_trails_missing_from_does_nothing_when_ids_is_empty(con: psycopg.Connection) -> None:
-    row = _parse_feature({"properties": {"RTE_CN": "1"}, "geometry": _line(HOME_LAT, HOME_LNG)})
+    row = _parse_feature({"properties": {"OBJECTID": "1"}, "geometry": _line(HOME_LAT, HOME_LNG)})
     assert row is not None
     upsert_trails(con, [row])
     assert prune_trails_missing_from(con, "usfs_mvum", []) == 0

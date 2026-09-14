@@ -707,7 +707,7 @@ def test_trails_near_dedupes_an_osm_road_against_its_usfs_mvum_twin(con: psycopg
     )
     mvum_row = parse_mvum(
         {
-            "properties": {"RTE_CN": "300", "NAME": "FR 300"},
+            "properties": {"OBJECTID": "300", "NAME": "FR 300"},
             "geometry": {
                 "type": "LineString",
                 "coordinates": [[-122.30004, 47.60004], [-122.30004, 47.60104]],
@@ -746,7 +746,7 @@ def test_nearest_trail_dedupes_an_osm_road_against_its_usfs_mvum_twin(con: psyco
     )
     mvum_row = parse_mvum(
         {
-            "properties": {"RTE_CN": "300", "NAME": "FR 300"},
+            "properties": {"OBJECTID": "300", "NAME": "FR 300"},
             "geometry": {
                 "type": "LineString",
                 "coordinates": [[-122.30004, 47.60004], [-122.30004, 47.60104]],
