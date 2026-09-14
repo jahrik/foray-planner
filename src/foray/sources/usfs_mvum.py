@@ -58,9 +58,16 @@ _SIMPLIFY_DEG = 0.0001
 _MAX_POINTS_PER_LINE = 60
 _CHUNK_SIZE = 5000
 
-_ID_FIELD = "rte_cn"
+# `OBJECTID`, not `RTE_CN` - a Copilot review catch: `RTE_CN` is a route-level identifier shared
+# by every segment of a route (checked live - a 2000-row sample had 89 route numbers spread
+# across 2+ distinct segments/OBJECTIDs each, e.g. "TRAIL RIVER ROAD" split into a 0.2 mi and a
+# 0.303 mi segment under the same RTE_CN), so keying rows on it would silently collapse those
+# segments into one, losing real road geometry. `OBJECTID` is the per-feature ArcGIS key;
+# `RTE_CN` is kept as an informational `attrs.route_cn` instead (`_attrs` below).
+_ID_FIELD = "objectid"
 _FIELDS = (
     _ID_FIELD,
+    "rte_cn",
     "id",
     "name",
     "operationalmaintlevel",
@@ -213,6 +220,7 @@ def _attrs(props: dict[str, Any]) -> dict[str, str] | None:
     if ref not in (None, ""):
         picked["ref"] = str(ref)
     for field, key in (
+        ("RTE_CN", "route_cn"),
         ("SURFACETYPE", "road_surface"),
         ("JURISDICTION", "managing_org"),
     ):
@@ -231,8 +239,8 @@ def _parse_feature(feature: dict[str, Any]) -> tuple[Any, ...] | None:
     if not lines:
         return None
     props = feature.get("properties") or {}
-    rte_cn = _get(props, _ID_FIELD)
-    if rte_cn in (None, ""):
+    objectid = _get(props, _ID_FIELD)
+    if objectid in (None, ""):
         return None
     thinned = [_sample(line, _MAX_POINTS_PER_LINE) for line in lines if line]
     flat = [point for line in thinned for point in line]
@@ -252,7 +260,7 @@ def _parse_feature(feature: dict[str, Any]) -> tuple[Any, ...] | None:
         name = str(name).strip()
     attrs = _attrs(props)
     return (
-        f"usfs:road/{rte_cn}",
+        f"usfs:road/{objectid}",
         name,
         "road",
         "usfs_mvum",
