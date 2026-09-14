@@ -69,6 +69,21 @@ def test_feature_row_parses_an_active_perimeter() -> None:
     assert row[9] == 12000.5  # gis_acres
 
 
+def test_feature_row_reads_the_history_layers_incident_field() -> None:
+    # InterAgencyFirePerimeterHistory's actual name field is "INCIDENT", not any of the
+    # WFIGS-current-style candidates - discovered live 2026-09-14 debugging why local dev's
+    # entire history lane had fallen through to "Unnamed fire" (issue #335 PR 4's RAVG join
+    # never matched anything as a result).
+    row = fire._feature_row(
+        source_key=fire.LANE_HISTORY,
+        feature=_feature({"OBJECTID": 1, "INCIDENT": "Big Bug", "FIRE_YEAR": THIS_YEAR}),
+        status="historical",
+        is_point=False,
+    )
+    assert row is not None
+    assert row[4] == "Big Bug"
+
+
 def test_replace_fire_lane_drops_contained_fires(con: psycopg.Connection) -> None:
     def make(fire_id: str) -> tuple[Any, ...]:
         return (

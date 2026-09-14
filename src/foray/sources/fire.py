@@ -178,7 +178,13 @@ def _feature_row(
     # The bbox itself is no longer persisted (issue #268 PR 5 - the `geom` GIST index serves
     # "fire near here"); its centroid is still the representative `center_lat`/`center_lng`.
     min_lng, min_lat, max_lng, max_lat = bounds
-    name = _get(props, "poly_IncidentName", "IncidentName", "FIRE_NAME", "attr_IncidentName") or "Unnamed fire"
+    # "INCIDENT" is the InterAgencyFirePerimeterHistory layer's actual name field (confirmed
+    # live 2026-09-14 while debugging why the RAVG severity join - issue #335 PR 4 - never
+    # matched anything against local dev's history rows: every one of them had fallen through
+    # to "Unnamed fire" because none of the other candidate field names exist on that layer).
+    name = (
+        _get(props, "poly_IncidentName", "IncidentName", "FIRE_NAME", "attr_IncidentName", "INCIDENT") or "Unnamed fire"
+    )
     fire_year = _get(props, "attr_FireDiscoveryDateTime", "FIRE_YEAR", "FIRE_YEAR_INT")
     year = None
     if isinstance(fire_year, (int, str)) and str(fire_year)[:4].isdigit() and len(str(fire_year)) == 4:

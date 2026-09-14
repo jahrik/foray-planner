@@ -518,17 +518,15 @@ def refresh_precip_cmd(ctx: click.Context) -> None:
 @cli.command("fire")
 @click.pass_context
 def fire_cmd(ctx: click.Context) -> None:
-    """Refresh wildfire perimeters + recent burn scars (issue #227) from the NIFC / MTBS ArcGIS
-    services: active fires (replace semantics), the last 3+current fire years of history, and
-    MTBS burn severity. Runs on its own scheduler cadence (FORAY_FIRE_INTERVAL_HOURS)."""
+    """Refresh wildfire perimeters + recent burn scars (issue #227) from the NIFC ArcGIS
+    services: active fires (replace semantics) and the last 3+current fire years of history.
+    Burn-severity enrichment is a separate bulk source (`ingest-bulk ravg`, issue #335 PR 4), not
+    part of this refresh. Runs on its own scheduler cadence (FORAY_FIRE_INTERVAL_HOURS)."""
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
         counts = fire.refresh_fire(con, cfg)
-        click.echo(
-            f"Fire: {counts['active']} active + {counts['points']} points, "
-            f"{counts['history']} historical, MTBS severity on {counts['severity']}."
-        )
+        click.echo(f"Fire: {counts['active']} active + {counts['points']} points, {counts['history']} historical.")
     finally:
         con.close()
 
