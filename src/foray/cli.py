@@ -27,7 +27,6 @@ from foray.sources.ingest import (
 )
 from foray.sources.land import ingest_public_land, ingest_public_land_coverage
 from foray.sources.trails import backfill_forage_obs, ingest_trails, ingest_trails_region
-from foray.sources.usfs_trails import ingest_usfs_trails_coverage
 
 
 @click.group()
@@ -239,28 +238,6 @@ def trails_cmd(ctx: click.Context, all_coverage: bool, force: bool) -> None:
         else:
             count = ingest_trails(cfg, con)
             click.echo(f"Cached {count} trails within {cfg.home.radius_km} km of home.")
-    finally:
-        con.close()
-
-
-@cli.command("usfs-trails")
-@click.pass_context
-def usfs_trails_cmd(ctx: click.Context) -> None:
-    """Ingest authoritative USFS foot trails (Trail_NFS) across all coverage regions.
-
-    Coverage-wide only - a national ArcGIS service, no home-radius mode (issue #335 PR 3).
-    One-shot per query version: re-run is a no-op once ingested, same self-heal pattern as
-    `land --all`.
-    """
-    cfg = ctx.obj["cfg"]
-    if not cfg.coverage:
-        raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
-    if not any(r.bbox for r in cfg.coverage):
-        raise click.UsageError("No coverage region has a bbox (needed for usfs-trails).")
-    con = connect()
-    try:
-        count = ingest_usfs_trails_coverage(cfg, con)
-        click.echo(f"Cached {count} USFS trails (coverage-wide).")
     finally:
         con.close()
 

@@ -420,3 +420,16 @@ itself.
     ever loaded, `ingest_campgrounds`/`ingest_campgrounds_coverage` (the live per-state/
     coverage-wide RIDB crawl) skip themselves automatically - no separate flag, just a check
     against `meta`.
+  - **`usfs_trails`** (`foray.sources.usfs_trails`, issue #335 PR 3a) - the USFS EDW
+    `Trail_NFS` foot/stock trail layer (`EDW_TrailNFSPublish_01/MapServer/0`, public, no key),
+    queried without a geometry filter (the whole `TRAIL_TYPE='TERRA'` table, ArcGIS
+    `resultOffset` paging - 78,149 features as of 2026-09-14) and upserted into `trails`
+    (`source='usfs'`, `kind='path'`), pruned to exactly what the export lists. Unlike
+    `land.py`'s BLM/USFS/PAD-US ownership layers (queried live, coverage-envelope-scoped, on
+    the droplet), issue #335 specifies this source goes through the bulk pipeline rather than
+    a live crawl - the stager runs the same ArcGIS paging, just from GitHub Actions instead of
+    the droplet. `length_km` is recomputed from geometry, never trusted from the source;
+    `attrs` carries `trail_class`/`trail_surface`/`managing_org`/`national_trail_designation`
+    plus a `tracktype` grade derived by inverting USFS's 1-5 trail-class scale onto OSM's
+    `gradeN` convention. MVUM roads (the OHV-legality/open-season matrix) and OSM/USFS dedup
+    at read time are a follow-up (PR 3b, not started).
