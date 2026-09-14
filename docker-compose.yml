@@ -19,6 +19,18 @@ x-ridb-env: &ridb-env
 x-basemap-env: &basemap-env
   FORAY_BASEMAP_URL: ${FORAY_BASEMAP_URL:-}
 
+# DO Spaces access for the bulk-snapshot pipeline (issue #334) - `just bulk-stage`/`bulk-load`,
+# and now `usfs_trails` (issue #335 PR 3a). DO_SPACES_KEY/DO_SPACES_SECRET are the credential
+# names already used everywhere else (.env, .github/workflows/bulk-load.yml's GitHub secrets) -
+# translated to the FORAY_SPACES__* shape `config.Settings.spaces` parses only here, at the
+# point it reaches the container, same as that workflow already does. Bucket/region default to
+# the same Space the basemap archive uses (infra/ansible/AGENTS.md).
+x-spaces-env: &spaces-env
+  FORAY_SPACES__ACCESS_KEY_ID: ${DO_SPACES_KEY:-}
+  FORAY_SPACES__SECRET_ACCESS_KEY: ${DO_SPACES_SECRET:-}
+  FORAY_SPACES__BUCKET: ${FORAY_SPACES_BUCKET:-foray-basemap}
+  FORAY_SPACES__REGION: ${FORAY_SPACES_REGION:-sfo3}
+
 x-runtime-build: &runtime-build
   context: .
   target: runtime
@@ -59,7 +71,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      <<: [*postgres-env, *ridb-env, *basemap-env]
+      <<: [*postgres-env, *ridb-env, *basemap-env, *spaces-env]
     depends_on:
       <<: *depends-postgres
     command: ["foray", "serve", "--host", "0.0.0.0", "--port", "8000"]
@@ -78,7 +90,7 @@ services:
     build:
       <<: *runtime-build
     environment:
-      <<: [*postgres-env, *ridb-env]
+      <<: [*postgres-env, *ridb-env, *spaces-env]
     depends_on:
       <<: *depends-postgres
     command: ["foray", "scheduler"]
