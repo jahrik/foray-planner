@@ -191,6 +191,7 @@ on its next cycle.
 | `FORAY_COVERAGE` | No | JSON array of `{name, place_id}` for state-level ingest regions. Defaults to WA/OR/ID. |
 | `FORAY_INGEST_INTERVAL_HOURS` | No | Scheduler: hours between observation ingests (default: 24). |
 | `FORAY_LAYERS_INTERVAL_HOURS` | No | Scheduler: hours between layer refreshes (default: 168). |
+| `FORAY_MARTIN_URL` | No | Internal base URL of the martin trails vector-tile server (issue #336), e.g. `http://martin:3000`. Empty = the trails vector-tile source is disabled; the GeoJSON `/api/trails` API still works either way. Ansible sets this automatically for the prod martin container it deploys alongside the app - see below. |
 
 Secrets go in the instance environment or a gitignored `.env` file locally.
 **Never commit them.**

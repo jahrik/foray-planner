@@ -1,0 +1,37 @@
+# martin (https://github.com/maplibre/martin) tile server config - issue #336 PR 1.
+#
+# Explicit `tables:` list rather than martin's default auto-discovery: auto-discovery would
+# publish every geometry column in the database (observations included - obscured/rare-species
+# coordinates), which is exactly what we don't want on a tile endpoint. Only `trails` is
+# published here; land/fire get their own entries in a later PR (#336 PR 2) once the frontend
+# cutover lands.
+#
+# Shared verbatim between local dev (docker-compose.yml) and prod
+# (infra/ansible/tasks/deploy/martin.yml) - see AGENTS.md "dev must mirror prod".
+postgres:
+  connection_string: '${DATABASE_URL}'
+  tables:
+    trails:
+      schema: public
+      table: trails
+      srid: 4326
+      geometry_column: geom
+      extent: 4096
+      buffer: 64
+      clip_geom: true
+      # No id_column: martin's MVT feature id must be integer, but trails.id is text
+      # ("osm:way/42" - source-prefixed so OSM and USFS ids never collide, cache.py). Carried
+      # as a property instead so it's still readable for a later promoteId cutover (issue #336
+      # PR 2 - MapLibre's promoteId works off any property, not just the numeric tile id).
+      #
+      # geom is nullable until a row's first ingest write (cache.py's BEFORE trigger) - martin
+      # only needs to know it may encounter a NULL, no WHERE clause required here.
+      properties:
+        id: text
+        name: text
+        kind: text
+        source: text
+        length_km: float8
+        land_agency: text
+        land_unit: text
+        forage_obs: int4

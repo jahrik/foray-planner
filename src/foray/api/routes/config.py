@@ -34,4 +34,5 @@ def get_config(
         basemap_url=cfg.basemap_url,
         terrain_url=cfg.terrain_url,
         satellite_tiles_url=cfg.satellite_tiles_url,
+        trails_tiles_url=cfg.trails_tiles_url if cfg.martin_url else "",
     )

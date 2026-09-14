@@ -146,14 +146,27 @@ async function applyVectorBasemap(theme: "dark" | "light"): Promise<void> {
   if (!map || !state.basemapUrl) return;
   if (basemap.hasVectorBasemap()) {
     if (tileTheme === theme) return; // already showing the right style
-    basemap.setVectorBasemapTheme(state.basemapUrl, state.terrainUrl, state.satelliteTilesUrl, theme);
+    basemap.setVectorBasemapTheme(
+      state.basemapUrl,
+      state.terrainUrl,
+      state.satelliteTilesUrl,
+      state.trailsTilesUrl,
+      theme,
+    );
     tileTheme = theme;
     return;
   }
   if (vectorMounting) return;
   vectorMounting = true;
   try {
-    basemap.mountVectorBasemap(map, state.basemapUrl, state.terrainUrl, state.satelliteTilesUrl, theme);
+    basemap.mountVectorBasemap(
+      map,
+      state.basemapUrl,
+      state.terrainUrl,
+      state.satelliteTilesUrl,
+      state.trailsTilesUrl,
+      theme,
+    );
   } catch (error) {
     vectorMounting = false; // let a later setTiles() retry
     throw error;
@@ -573,6 +586,7 @@ export function setSatelliteBasemapEnabled(on: boolean): void {
       state.basemapUrl,
       state.terrainUrl,
       state.satelliteTilesUrl,
+      state.trailsTilesUrl,
       currentTheme(),
       on,
     );

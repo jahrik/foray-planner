@@ -137,6 +137,17 @@
         - foray
         - "foray:deploy"
 
+    - name: Include martin (trails vector tile server) tasks
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/martin.yml
+        apply:
+          tags:
+            - foray
+            - "foray:deploy"
+      tags:
+        - foray
+        - "foray:deploy"
+
     - name: Include one-shot schema migration task
       ansible.builtin.include_tasks:
         file: tasks/deploy/migrate.yml

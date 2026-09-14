@@ -31,6 +31,7 @@ import mlcontour from "maplibre-contour";
 import { Protocol } from "pmtiles";
 import { applyForayRoadStyle } from "./basemap-roads";
 import { roadsAndLabelsOnly, satelliteImageryLayer, satelliteSource } from "./basemap-satellite";
+import { trailsLayer, trailsSource } from "./basemap-trails";
 import {
   applyTerrainLayers,
   CONTOUR_LAYER_IDS,
@@ -93,6 +94,7 @@ function buildStyle(
   url: string,
   terrainUrl: string,
   satelliteUrl: string,
+  trailsUrl: string,
   theme: "dark" | "light",
 ): StyleSpecification {
   const useSatellite = satelliteBasemapEnabled && !!satelliteUrl;
@@ -118,6 +120,11 @@ function buildStyle(
     layers = applyTerrainLayers(layers, theme, contoursVisible, !useSatellite);
   }
 
+  if (trailsUrl) {
+    Object.assign(sources, trailsSource(trailsUrl));
+    layers = [...layers, trailsLayer(theme)];
+  }
+
   return {
     version: 8,
     glyphs: `${ASSETS}/fonts/{fontstack}/{range}.pbf`,
@@ -135,13 +142,14 @@ export function mountVectorBasemap(
   url: string,
   terrainUrl: string,
   satelliteUrl: string,
+  trailsUrl: string,
   theme: "dark" | "light",
 ): L.MaplibreGL {
   if (!protocolRegistered) {
     addProtocol("pmtiles", new Protocol().tile);
     protocolRegistered = true;
   }
-  glLayer = L.maplibreGL({ style: buildStyle(url, terrainUrl, satelliteUrl, theme) }).addTo(map);
+  glLayer = L.maplibreGL({ style: buildStyle(url, terrainUrl, satelliteUrl, trailsUrl, theme) }).addTo(map);
   return glLayer;
 }
 
@@ -152,9 +160,10 @@ export function setVectorBasemapTheme(
   url: string,
   terrainUrl: string,
   satelliteUrl: string,
+  trailsUrl: string,
   theme: "dark" | "light",
 ): void {
-  glLayer?.getMaplibreMap().setStyle(buildStyle(url, terrainUrl, satelliteUrl, theme));
+  glLayer?.getMaplibreMap().setStyle(buildStyle(url, terrainUrl, satelliteUrl, trailsUrl, theme));
 }
 
 /** The Layers-pill "Satellite basemap" toggle: swap the whole style between the vector map and
@@ -164,11 +173,12 @@ export function setSatelliteBasemapMode(
   url: string,
   terrainUrl: string,
   satelliteUrl: string,
+  trailsUrl: string,
   theme: "dark" | "light",
   on: boolean,
 ): void {
   satelliteBasemapEnabled = on;
-  glLayer?.getMaplibreMap().setStyle(buildStyle(url, terrainUrl, satelliteUrl, theme));
+  glLayer?.getMaplibreMap().setStyle(buildStyle(url, terrainUrl, satelliteUrl, trailsUrl, theme));
 }
 
 export function hasVectorBasemap(): boolean {

@@ -13,8 +13,10 @@ from __future__ import annotations
 import logging
 
 import httpx
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 
+from foray.api.deps import get_state
+from foray.api.state import AppState
 from foray.sources import satellite
 from foray.sources.http import Throttle
 
@@ -69,3 +71,39 @@ def get_satellite_tile(z: int, x: int, y: int) -> Response:
         logger.warning("satellite tile proxy: fetch failed for %d/%d/%d (%s)", z, x, y, error)
         raise HTTPException(502, "satellite imagery temporarily unavailable") from None
     return Response(content=content, media_type=content_type, headers={"Cache-Control": _TILE_CACHE_CONTROL})
+
+
+# One process-lifetime client for the martin proxy below, same reasoning as `_client` above -
+# reused across the concurrent tile fan-out a viewport pan/zoom generates.
+_martin_client = httpx.Client(timeout=10.0)
+
+# Vector tiles change whenever a trails ingest/backfill runs (unlike Esri's imagery, which is
+# effectively static), so this stays well short of the satellite proxy's week-long cache - long
+# enough that panning back over the same area is free, short enough that a refreshed layer
+# reaches an open tab within the hour.
+_TRAILS_TILE_CACHE_CONTROL = "public, max-age=3600"
+
+
+@router.get(
+    "/api/tiles/trails/{z}/{x}/{y}.pbf",
+    response_class=Response,
+    responses={200: {"content": {"application/vnd.mapbox-vector-tile": {}}}},
+)
+def get_trails_tile(z: int, x: int, y: int, state: AppState = Depends(get_state)) -> Response:
+    """One trails vector tile (issue #336 PR 1), proxied same-origin from the martin tile server
+    so the frontend never talks to the docker-internal `martin_url` host directly."""
+    if not state.cfg.martin_url:
+        raise HTTPException(404, "trails vector tiles are not configured")
+    if not _in_range(z, x, y):
+        raise HTTPException(400, "tile coordinates out of range")
+    try:
+        upstream = _martin_client.get(f"{state.cfg.martin_url}/trails/{z}/{x}/{y}")
+        upstream.raise_for_status()
+    except httpx.HTTPError as error:
+        logger.warning("trails tile proxy: fetch failed for %d/%d/%d (%s)", z, x, y, error)
+        raise HTTPException(502, "trails tiles temporarily unavailable") from None
+    return Response(
+        content=upstream.content,
+        media_type="application/vnd.mapbox-vector-tile",
+        headers={"Cache-Control": _TRAILS_TILE_CACHE_CONTROL},
+    )

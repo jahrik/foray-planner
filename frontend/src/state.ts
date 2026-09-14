@@ -53,6 +53,10 @@ interface ScopeState {
   // Same-origin {z}/{x}/{y} template for the satellite basemap toggle (issue #340), from
   // /api/config. Empty -> the toggle is hidden. Set once on load, before initMap.
   satelliteTilesUrl: string;
+  // Same-origin {z}/{x}/{y} template for our own trails vector tiles (issue #336), from
+  // /api/config. Empty -> no trails vector source (no martin instance configured). Set once on
+  // load, before initMap.
+  trailsTilesUrl: string;
 }
 
 /** How results are shown: which view, sort order, unit system, and the last plan payload. */
@@ -86,6 +90,7 @@ export const state: State = {
   basemapUrl: "", // overwritten from /api/config; empty means no base layer
   terrainUrl: "", // overwritten from /api/config; empty means no hillshade/contours
   satelliteTilesUrl: "", // overwritten from /api/config; empty means no satellite basemap toggle
+  trailsTilesUrl: "", // overwritten from /api/config; empty means no trails vector source
   units: getUnits(),
 };
 

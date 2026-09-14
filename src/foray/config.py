@@ -192,6 +192,17 @@ class Settings(BaseSettings):
     # our own proxy in front of Esri World Imagery (api/routes/tiles.py), never Esri directly, so
     # it stays same-origin under the existing CSP. Empty disables the toggle entirely.
     satellite_tiles_url: str = "/api/tiles/satellite/{z}/{x}/{y}.jpg"
+    # Internal base URL of the martin tile server (issue #336 PR 1) - e.g. "http://martin:3000",
+    # a docker-network hostname never reachable from the browser. Empty (the default) disables
+    # the trails vector tile source entirely: no martin container running yet, or a deployment
+    # that doesn't want it. `/api/tiles/trails/...` proxies to it same-origin, matching how
+    # satellite_tiles_url proxies Esri rather than exposing a third-party/internal host to the
+    # frontend directly.
+    martin_url: str = ""
+    # Same-origin {z}/{x}/{y} template returned to the frontend when martin_url is set. Not
+    # itself gated on martin_url here - routes/config.py blanks it out when disabled, same
+    # pattern as basemap_url/satellite_tiles_url.
+    trails_tiles_url: str = "/api/tiles/trails/{z}/{x}/{y}.pbf"
     spaces: Spaces = Field(default_factory=Spaces)
     ingest: Ingest = Ingest()
     intervals: Intervals = Field(default_factory=Intervals)

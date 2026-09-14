@@ -125,6 +125,7 @@ async function main(): Promise<void> {
   state.basemapUrl = config.basemap_url ?? "";
   state.terrainUrl = config.terrain_url ?? "";
   state.satelliteTilesUrl = config.satellite_tiles_url ?? "";
+  state.trailsTilesUrl = config.trails_tiles_url ?? "";
   initTheme();
   initUnits();
   initTextSize();
