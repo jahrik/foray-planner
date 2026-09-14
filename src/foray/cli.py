@@ -464,8 +464,13 @@ def stage_snapshot_cmd(ctx: click.Context, source: str | None, stage_all: bool) 
     for name in sources:
         try:
             snapshot_date = ingest_bulk.stage_snapshot(cfg, name)
-        except (KeyError, RuntimeError) as exc:
-            click.echo(f"Failed to stage {name}: {exc}", err=True)
+        # Broad on purpose (Copilot review, PR #358): a stager can raise anything its own
+        # network/Spaces client throws (httpx.HTTPError, a botocore ClientError, ...), not just
+        # the KeyError/RuntimeError stage_snapshot itself raises for an unknown source or a
+        # missing Space config - narrower would let one source's transient failure abort the
+        # loop before later registered sources are even attempted.
+        except Exception as exc:
+            click.echo(f"Failed to stage {name}: {exc!r}", err=True)
             failures.append(name)
             continue
         click.echo(f"Staged {name} snapshot {snapshot_date.isoformat()}.")

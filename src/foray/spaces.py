@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 import uuid
 from datetime import date
 from typing import Any
@@ -156,7 +158,27 @@ def list_snapshot_dates(cfg: Spaces, source: str) -> list[date]:
     need the newest (e.g. a frequently-polled freshness check) should use
     `latest_snapshot_date` instead, which stops at the first hit instead of checking every date
     a source has ever staged."""
-    return sorted(d for d in _candidate_snapshot_dates(cfg, source) if snapshot_run_id(cfg, source, d) is not None)
+    return sorted(
+        snapshot_date
+        for snapshot_date in _candidate_snapshot_dates(cfg, source)
+        if snapshot_run_id(cfg, source, snapshot_date) is not None
+    )
+
+
+# Bounds how often `latest_snapshot_date` re-lists a source's date prefixes (Copilot review, PR
+# #358): the newest-first manifest-GET short-circuit alone still repeats the paginated
+# ListObjectsV2 listing itself on every call, which `/healthz/data` may make far more often than
+# this 5-minute window - a health check doesn't need second-to-second freshness against a
+# pipeline that stages weekly.
+_LATEST_SNAPSHOT_CACHE_TTL_SECONDS = 300.0
+_latest_snapshot_cache_lock = threading.Lock()
+_latest_snapshot_cache: dict[tuple[str, str], tuple[float, date | None]] = {}
+
+
+def invalidate_latest_snapshot_cache() -> None:
+    """Test-only reset - a real process never needs this, the TTL alone bounds staleness."""
+    with _latest_snapshot_cache_lock:
+        _latest_snapshot_cache.clear()
 
 
 def latest_snapshot_date(cfg: Spaces, source: str) -> date | None:
@@ -164,9 +186,22 @@ def latest_snapshot_date(cfg: Spaces, source: str) -> date | None:
     Checks candidate dates newest-first and stops at the first with a published manifest - O(1)
     manifest lookups in the common case (the newest date is already published), unlike
     `list_snapshot_dates`'s full-history scan, whose per-date manifest GETs would otherwise grow
-    unbounded as a weekly-staged source accumulates dates - the shape `/healthz/data` (issue
-    #357) needs, since it may be polled far more often than a source stages."""
+    unbounded as a weekly-staged source accumulates dates. Result is cached in-process for
+    `_LATEST_SNAPSHOT_CACHE_TTL_SECONDS` (keyed on bucket + source, since one process can only
+    ever run against one Spaces config at a time - see `foray.scoring.rank_cache` for the same
+    single-uvicorn-process assumption) - the shape `/healthz/data` (issue #357) needs, since it
+    may be polled far more often than a source stages."""
+    cache_key = (cfg.bucket, source)
+    now = time.monotonic()
+    with _latest_snapshot_cache_lock:
+        cached = _latest_snapshot_cache.get(cache_key)
+        if cached is not None and now - cached[0] < _LATEST_SNAPSHOT_CACHE_TTL_SECONDS:
+            return cached[1]
+    result = None
     for candidate in sorted(_candidate_snapshot_dates(cfg, source), reverse=True):
         if snapshot_run_id(cfg, source, candidate) is not None:
-            return candidate
-    return None
+            result = candidate
+            break
+    with _latest_snapshot_cache_lock:
+        _latest_snapshot_cache[cache_key] = (now, result)
+    return result
