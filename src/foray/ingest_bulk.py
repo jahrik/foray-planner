@@ -26,7 +26,13 @@ import psycopg
 
 from foray.config import Settings
 from foray.sources import camps, inat_bulk, usfs_trails
-from foray.spaces import list_snapshot_dates, new_run_id, publish_snapshot, snapshot_run_id
+from foray.spaces import (
+    list_snapshot_dates,
+    new_run_id,
+    prune_other_snapshots,
+    publish_snapshot,
+    snapshot_run_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +116,9 @@ def stage_snapshot(cfg: Settings, source: str, snapshot_date: date | None = None
     run_id = new_run_id()
     stager(cfg, snapshot_date, run_id)
     publish_snapshot(cfg.spaces, source, snapshot_date, run_id)
+    # Only after publish - see prune_other_snapshots' docstring for why pruning before the new
+    # run is live would risk a concurrent loader losing the snapshot it's mid-download of.
+    prune_other_snapshots(cfg.spaces, source, snapshot_date, run_id)
     return snapshot_date
 
 

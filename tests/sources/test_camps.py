@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import csv
-import gzip
 import io
-import json
 import zipfile
 from datetime import date
 from pathlib import Path
 
 import httpx
 import psycopg
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from foray import spaces
@@ -576,22 +576,21 @@ def test_stage_ridb_uploads_filtered_rows_as_gzip_jsonl(monkeypatch: pytest.Monk
 
     uploaded: dict[str, bytes] = {}
 
-    def fake_put_object(cfg: Spaces, key: str, data: bytes, content_type: str, **kwargs: object) -> str:
-        uploaded[key] = data
-        return f"https://space/{key}"
+    def fake_upload_file(cfg: Spaces, key: str, src_path: str, content_type: str) -> None:
+        uploaded[key] = Path(src_path).read_bytes()
 
-    monkeypatch.setattr(camps.spaces, "put_object", fake_put_object)
+    monkeypatch.setattr(camps.spaces, "upload_file", fake_upload_file)
     client = httpx.Client(transport=httpx.MockTransport(handler))
 
     stage_ridb(Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1", client=client)
 
     assert len(uploaded) == 1
     ((key, data),) = uploaded.items()
-    assert key == spaces.snapshot_run_prefix("ridb", date(2026, 1, 1), "run1") + "campsites.jsonl.gz"
-    rows = [json.loads(line) for line in gzip.decompress(data).decode().splitlines()]
+    assert key == spaces.snapshot_run_prefix("ridb", date(2026, 1, 1), "run1") + "campsites.parquet"
+    rows = pq.read_table(pa.BufferReader(data)).to_pylist()
     assert len(rows) == 1
-    assert rows[0][0] == "ridb:1"
-    assert rows[0][5:7] == [47.6, -122.3]
+    assert rows[0]["id"] == "ridb:1"
+    assert (rows[0]["lat"], rows[0]["lng"]) == (47.6, -122.3)
 
 
 def test_load_ridb_upserts_and_prunes_stale_rows(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -599,11 +598,22 @@ def test_load_ridb_upserts_and_prunes_stale_rows(con: psycopg.Connection, monkey
         con,
         [("ridb:stale", "Gone Now", "campground", None, None, 47.5, -122.2, "ridb", "u", None, None, None)],
     )
-    rows = [["ridb:1", "A Campground", "campground", None, None, 47.6, -122.3, "ridb", "u1", False, None, None]]
-    payload = "\n".join(json.dumps(row) for row in rows).encode()
+    dict_rows = [
+        dict(
+            zip(
+                camps._CAMPSITE_COLUMNS,
+                ("ridb:1", "A Campground", "campground", None, None, 47.6, -122.3, "ridb", "u1", False, None, None),
+                strict=True,
+            )
+        )
+    ]
+    buf = pa.BufferOutputStream()
+    with pq.ParquetWriter(buf, camps._BULK_SNAPSHOT_SCHEMA) as writer:
+        writer.write_table(pa.Table.from_pylist(dict_rows, schema=camps._BULK_SNAPSHOT_SCHEMA))
+    payload = buf.getvalue().to_pybytes()
 
     def fake_download_file(cfg: Spaces, key: str, dest_path: str) -> None:
-        Path(dest_path).write_bytes(gzip.compress(payload))
+        Path(dest_path).write_bytes(payload)
 
     monkeypatch.setattr(camps.spaces, "download_file", fake_download_file)
 

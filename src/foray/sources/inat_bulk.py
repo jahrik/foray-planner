@@ -4,11 +4,13 @@ Streams iNaturalist's own complete GBIF Darwin Core Archive export
 (``https://static.inaturalist.org/observations/gbif-observations-dwca.zip``, ~29 GB,
 refreshed at least daily) straight off HTTP via ``foray.sources.http.HttpRangeReader``, never
 downloading the whole archive - only ``observations.csv`` (the DwC Occurrence core) is read,
-filtered down to Fungi/US rows, and staged as a small gzipped JSON-Lines file. This is the
-same DwC-A export ``scripts/inat_dwca_filter.py``/``load_inat_bulk.py`` used manually (see git
-history) - this module replaces both with a repeatable, Space-backed pipeline any droplet (or
-CI runner) can run via ``foray stage-snapshot inat`` / ``foray ingest-bulk inat``, instead of a
-human running ``just bulk-download``/``bulk-filter``/``bulk-load`` by hand.
+filtered down to Fungi/US rows, and staged as a small Parquet file (issue #359 PR 1 - the
+standard bulk-snapshot format, via ``foray.spaces.write_snapshot_parquet``/
+``read_snapshot_parquet``). This is the same DwC-A export ``scripts/inat_dwca_filter.py``/
+``load_inat_bulk.py`` used manually (see git history) - this module replaces both with a
+repeatable, Space-backed pipeline any droplet (or CI runner) can run via
+``foray stage-snapshot inat`` / ``foray ingest-bulk inat``, instead of a human running
+``just bulk-download``/``bulk-filter``/``bulk-load`` by hand.
 
 **Why not the AWS Open Data dump** (``inaturalist-open-data``, the other bulk source TODO.md
 flagged for "confirm"): checked live 2026-09-12 - it's TSV, not Parquet, and critically its
@@ -35,11 +37,8 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
-import gzip
 import io
-import json
 import logging
-import tempfile
 import zipfile
 from collections.abc import Iterator
 from datetime import date
@@ -47,6 +46,7 @@ from typing import Any
 
 import httpx
 import psycopg
+import pyarrow as pa
 
 from foray import spaces
 from foray.cache import genus_taxon_ids, insert_observations_if_missing, maybe_rebuild_phenology, record_ingest
@@ -83,6 +83,23 @@ _SINCE_YEAR_FLOOR = "2000-01-01"
 # time) by the same factor for the same bytes read.
 _BUFFER_SIZE = 64 * 1024 * 1024
 _CHUNK_SIZE = 5000
+
+_SNAPSHOT_FILENAME = "fungi_us.parquet"
+# event_date/coordinate_uncertainty_m stay as the raw CSV strings (matching what this module has
+# always staged) rather than parsing them here - `load_inat` already does that parsing
+# (`_parse_date`, the `int(float(...))` accuracy conversion) and a malformed value should fail
+# there, at load time with the genus/DB context available, not silently drop the row at stage
+# time before that context exists.
+_SNAPSHOT_SCHEMA = pa.schema(
+    [
+        ("id", pa.int64()),
+        ("genus", pa.string()),
+        ("lat", pa.float64()),
+        ("lng", pa.float64()),
+        ("event_date", pa.string()),
+        ("coordinate_uncertainty_m", pa.string()),
+    ]
+)
 
 # Paces successive range GETs against static.inaturalist.org - see HttpRangeReader's docstring.
 # 0.25s is a guess at "comfortably under whatever burst threshold triggered the 403", not a
@@ -135,20 +152,19 @@ def iter_fungi_us_rows(client: httpx.Client) -> Iterator[dict[str, Any]]:
 
 
 def stage_inat(cfg: Settings, snapshot_date: date, run_id: str) -> None:
-    """Stager: stream-filter the live DwC-A dump to Fungi/US rows and upload as gzipped JSON
-    Lines under this run's Space prefix. No DB connection - see this module's docstring for why
+    """Stager: stream-filter the live DwC-A dump to Fungi/US rows and upload as a Parquet file
+    under this run's Space prefix. No DB connection - see this module's docstring for why
     genus->taxon_id resolution happens in ``load_inat`` instead. Runs in GitHub Actions."""
-    buf = io.BytesIO()
-    kept = 0
-    with (
-        httpx.Client(timeout=120.0, headers={"User-Agent": USER_AGENT}) as client,
-        gzip.GzipFile(fileobj=buf, mode="wb") as gz,
-    ):
-        for row in iter_fungi_us_rows(client):
-            gz.write((json.dumps(row) + "\n").encode())
-            kept += 1
-    key = spaces.snapshot_run_prefix("inat", snapshot_date, run_id) + "fungi_us.jsonl.gz"
-    spaces.put_object(cfg.spaces, key, buf.getvalue(), "application/gzip")
+    with httpx.Client(timeout=120.0, headers={"User-Agent": USER_AGENT}) as client:
+        kept = spaces.write_snapshot_parquet(
+            cfg.spaces,
+            "inat",
+            snapshot_date,
+            run_id,
+            _SNAPSHOT_FILENAME,
+            iter_fungi_us_rows(client),
+            _SNAPSHOT_SCHEMA,
+        )
     logger.info("inat_bulk: staged %d Fungi/US observations from the DwC-A export", kept)
 
 
@@ -177,52 +193,46 @@ def load_inat(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
     genera = genus_taxon_ids(con)
     if not genera:
         raise RuntimeError("fungi_genera catalog is empty - run `foray genera-refresh` first")
-    key = spaces.snapshot_run_prefix("inat", snapshot_date, run_id) + "fungi_us.jsonl.gz"
     total = 0
     skipped_unknown_genus = 0
     skipped_no_date = 0
     max_date: dt.date | None = None
-    chunk: list[tuple[Any, ...]] = []
-    with tempfile.NamedTemporaryFile(suffix=".jsonl.gz") as tmp:
-        spaces.download_file(cfg.spaces, key, tmp.name)
-        with gzip.open(tmp.name, "rt", encoding="utf-8") as payload_file:
-            for line in payload_file:
-                rec = json.loads(line)
-                taxon_id = genera.get(rec["genus"])
-                if taxon_id is None:
-                    skipped_unknown_genus += 1
-                    continue
-                day = _parse_date(rec["event_date"])
-                if day is None:
-                    skipped_no_date += 1
-                    continue
-                uncertainty = rec.get("coordinate_uncertainty_m")
-                accuracy = int(float(uncertainty)) if uncertainty else None
-                obscured = True if accuracy and OBSCURED_ACCURACY_LOW <= accuracy <= OBSCURED_ACCURACY_HIGH else None
-                chunk.append(
-                    (
-                        rec["id"],
-                        taxon_id,
-                        rec["lat"],
-                        rec["lng"],
-                        day,
-                        day.month,
-                        "research",
-                        accuracy,
-                        None,  # place_guess
-                        f"https://www.inaturalist.org/observations/{rec['id']}",
-                        obscured,
-                    )
+    for batch in spaces.read_snapshot_parquet(
+        cfg.spaces, "inat", snapshot_date, run_id, _SNAPSHOT_FILENAME, batch_size=_CHUNK_SIZE
+    ):
+        chunk: list[tuple[Any, ...]] = []
+        for rec in batch:
+            taxon_id = genera.get(rec["genus"])
+            if taxon_id is None:
+                skipped_unknown_genus += 1
+                continue
+            day = _parse_date(rec["event_date"])
+            if day is None:
+                skipped_no_date += 1
+                continue
+            uncertainty = rec.get("coordinate_uncertainty_m")
+            accuracy = int(float(uncertainty)) if uncertainty else None
+            obscured = True if accuracy and OBSCURED_ACCURACY_LOW <= accuracy <= OBSCURED_ACCURACY_HIGH else None
+            chunk.append(
+                (
+                    rec["id"],
+                    taxon_id,
+                    rec["lat"],
+                    rec["lng"],
+                    day,
+                    day.month,
+                    "research",
+                    accuracy,
+                    None,  # place_guess
+                    f"https://www.inaturalist.org/observations/{rec['id']}",
+                    obscured,
                 )
-                if max_date is None or day > max_date:
-                    max_date = day
-                if len(chunk) >= _CHUNK_SIZE:
-                    insert_observations_if_missing(con, chunk)
-                    total += len(chunk)
-                    chunk = []
-    if chunk:
-        insert_observations_if_missing(con, chunk)
-        total += len(chunk)
+            )
+            if max_date is None or day > max_date:
+                max_date = day
+        if chunk:
+            insert_observations_if_missing(con, chunk)
+            total += len(chunk)
     logger.info(
         "inat_bulk: loaded %d observations (%d unknown genus, %d no date)",
         total,

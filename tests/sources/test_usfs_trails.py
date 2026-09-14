@@ -2,22 +2,25 @@
 
 from __future__ import annotations
 
-import gzip
 import json
 from datetime import date
 from pathlib import Path
 
 import httpx
 import psycopg
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from foray import spaces
 from foray.cache import prune_trails_missing_from, upsert_trails
 from foray.config import Settings, Spaces
 from foray.scoring import trails_near
+from foray.sources import usfs_trails
 from foray.sources.usfs_trails import (
     _ArcGISQueryError,
     _attrs,
+    _geojson_to_wkb,
     _get,
     _iter_pages,
     _parse_feature,
@@ -32,6 +35,19 @@ _SPACES_CFG = Spaces(access_key_id="k", secret_access_key="s", bucket="foray-bul
 
 def _line(lat: float, lng: float, size: float = 0.01) -> dict:
     return {"type": "LineString", "coordinates": [[lng - size, lat - size], [lng + size, lat + size]]}
+
+
+def _write_trail_snapshot(rows: list[tuple]) -> bytes:
+    """Encode `_parse_feature`-shaped tuples (GeoJSON text at index 7) as the Parquet bytes a
+    real `stage_usfs_trails` run would upload (WKB bytes for that column instead)."""
+    dict_rows = [
+        dict(zip(usfs_trails._TRAIL_COLUMNS, (*row[:7], _geojson_to_wkb(row[7]), *row[8:]), strict=True))
+        for row in rows
+    ]
+    buf = pa.BufferOutputStream()
+    with pq.ParquetWriter(buf, usfs_trails._BULK_SNAPSHOT_SCHEMA) as writer:
+        writer.write_table(pa.Table.from_pylist(dict_rows, schema=usfs_trails._BULK_SNAPSHOT_SCHEMA))
+    return buf.getvalue().to_pybytes()
 
 
 def test_get_is_case_insensitive() -> None:
@@ -89,7 +105,7 @@ def test_parse_feature_skips_missing_geometry_or_id() -> None:
     assert _parse_feature({"properties": {}, "geometry": _line(HOME_LAT, HOME_LNG)}) is None
 
 
-def test_stage_usfs_trails_uploads_deduped_rows_as_gzip_jsonl(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stage_usfs_trails_uploads_deduped_rows_as_parquet(monkeypatch: pytest.MonkeyPatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url).startswith("https://apps.fs.usda.gov/")
         assert "geometry" not in request.url.params  # no envelope - the whole national table
@@ -109,20 +125,19 @@ def test_stage_usfs_trails_uploads_deduped_rows_as_gzip_jsonl(monkeypatch: pytes
 
     uploaded: dict[str, bytes] = {}
 
-    def fake_put_object(cfg: Spaces, key: str, data: bytes, content_type: str, **kwargs: object) -> str:
-        uploaded[key] = data
-        return f"https://space/{key}"
+    def fake_upload_file(cfg: Spaces, key: str, src_path: str, content_type: str) -> None:
+        uploaded[key] = Path(src_path).read_bytes()
 
-    monkeypatch.setattr("foray.sources.usfs_trails.spaces.put_object", fake_put_object)
+    monkeypatch.setattr("foray.sources.usfs_trails.spaces.upload_file", fake_upload_file)
     client = httpx.Client(transport=httpx.MockTransport(handler))
 
     stage_usfs_trails(Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1", client=client)
 
     assert len(uploaded) == 1
     ((key, data),) = uploaded.items()
-    assert key == spaces.snapshot_run_prefix("usfs_trails", date(2026, 1, 1), "run1") + "trails.jsonl.gz"
-    rows = [json.loads(line) for line in gzip.decompress(data).decode().splitlines()]
-    assert [row[0] for row in rows] == ["usfs:trail/7"]  # deduped
+    assert key == spaces.snapshot_run_prefix("usfs_trails", date(2026, 1, 1), "run1") + "trails.parquet"
+    rows = pq.read_table(pa.BufferReader(data)).to_pylist()
+    assert [row["id"] for row in rows] == ["usfs:trail/7"]  # deduped
 
 
 def test_stage_usfs_trails_pages_until_transfer_limit_clears(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -146,15 +161,15 @@ def test_stage_usfs_trails_pages_until_transfer_limit_clears(monkeypatch: pytest
 
     uploaded: dict[str, bytes] = {}
     monkeypatch.setattr(
-        "foray.sources.usfs_trails.spaces.put_object",
-        lambda cfg, key, data, content_type, **kw: uploaded.__setitem__(key, data),
+        "foray.sources.usfs_trails.spaces.upload_file",
+        lambda cfg, key, src_path, content_type: uploaded.__setitem__(key, Path(src_path).read_bytes()),
     )
     client = httpx.Client(transport=httpx.MockTransport(handler))
 
     stage_usfs_trails(Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1", client=client)
 
     ((_key, data),) = uploaded.items()
-    ids = {json.loads(line)[0] for line in gzip.decompress(data).decode().splitlines()}
+    ids = {row["id"] for row in pq.read_table(pa.BufferReader(data)).to_pylist()}
     assert "usfs:trail/1000" in ids
     assert len(ids) == 1001
 
@@ -206,7 +221,7 @@ def test_stage_usfs_trails_propagates_a_later_page_failure_without_publishing(
     # catching the error here would publish a truncated snapshot as if it were the complete,
     # authoritative export - which load_usfs_trails' prune step would then read literally,
     # deleting every USFS trail the partial fetch didn't happen to reach (a Copilot review
-    # catch). No put_object call should happen at all.
+    # catch). No upload_file call should happen at all.
     def handler(request: httpx.Request) -> httpx.Response:
         offset = int(request.url.params.get("resultOffset", "0"))
         if offset > 0:
@@ -221,8 +236,8 @@ def test_stage_usfs_trails_propagates_a_later_page_failure_without_publishing(
 
     uploaded: dict[str, bytes] = {}
     monkeypatch.setattr(
-        "foray.sources.usfs_trails.spaces.put_object",
-        lambda cfg, key, data, content_type, **kw: uploaded.__setitem__(key, data),
+        "foray.sources.usfs_trails.spaces.upload_file",
+        lambda cfg, key, src_path, content_type: uploaded.__setitem__(key, Path(src_path).read_bytes()),
     )
     client = httpx.Client(transport=httpx.MockTransport(handler))
 
@@ -266,8 +281,8 @@ def test_stage_usfs_trails_refuses_to_publish_a_zero_row_result(monkeypatch: pyt
 
     uploaded: dict[str, bytes] = {}
     monkeypatch.setattr(
-        "foray.sources.usfs_trails.spaces.put_object",
-        lambda cfg, key, data, content_type, **kw: uploaded.__setitem__(key, data),
+        "foray.sources.usfs_trails.spaces.upload_file",
+        lambda cfg, key, src_path, content_type: uploaded.__setitem__(key, Path(src_path).read_bytes()),
     )
     client = httpx.Client(transport=httpx.MockTransport(handler))
 
@@ -286,10 +301,10 @@ def test_load_usfs_trails_upserts_and_prunes_stale_rows(
 
     fresh = _parse_feature({"properties": {"TRAIL_CN": "9"}, "geometry": _line(HOME_LAT, HOME_LNG)})
     assert fresh is not None
-    payload = "\n".join(json.dumps(row) for row in [fresh]).encode()
+    payload = _write_trail_snapshot([fresh])
 
     def fake_download_file(cfg: Spaces, key: str, dest_path: str) -> None:
-        Path(dest_path).write_bytes(gzip.compress(payload))
+        Path(dest_path).write_bytes(payload)
 
     monkeypatch.setattr("foray.sources.usfs_trails.spaces.download_file", fake_download_file)
 
@@ -310,10 +325,10 @@ def test_load_usfs_trails_records_ingest_under_the_trails_prefix(
     # which reads every trails:-prefixed ingest_log key, picks this bulk load up.
     row = _parse_feature({"properties": {"TRAIL_CN": "1"}, "geometry": _line(HOME_LAT, HOME_LNG)})
     assert row is not None
-    payload = json.dumps(row).encode()
+    payload = _write_trail_snapshot([row])
     monkeypatch.setattr(
         "foray.sources.usfs_trails.spaces.download_file",
-        lambda cfg, key, dest_path: Path(dest_path).write_bytes(gzip.compress(payload)),
+        lambda cfg, key, dest_path: Path(dest_path).write_bytes(payload),
     )
 
     load_usfs_trails(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")

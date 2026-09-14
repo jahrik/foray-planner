@@ -22,15 +22,12 @@ proxy-based layer (tracked separately) - this module only handles developed camp
 from __future__ import annotations
 
 import csv
-import gzip
 import html
 import io
-import json
 import logging
 import math
 import os
 import re
-import tempfile
 import time
 import zipfile
 from collections.abc import Callable, Iterator, Sequence
@@ -39,6 +36,7 @@ from typing import Any
 
 import httpx
 import psycopg
+import pyarrow as pa
 
 from foray import cache, spaces
 from foray.cache import upsert_campsites
@@ -557,6 +555,41 @@ def _ridb_bulk_loaded(con: psycopg.Connection) -> bool:
 RIDB_FULL_EXPORT_URL = "https://ridb.recreation.gov/downloads/RIDBFullExport_V1_CSV.zip"
 _CAMPING_ACTIVITY_ID = "9"
 
+_BULK_SNAPSHOT_FILENAME = "campsites.parquet"
+# Same order/meaning as `cache.upsert_campsites`'s tuple shape - kept as a named tuple of
+# columns here so the bulk-snapshot dict rows (write side) and the tuples `upsert_campsites`
+# wants (read side) can convert between each other without hardcoding the order twice.
+_CAMPSITE_COLUMNS = (
+    "id",
+    "name",
+    "kind",
+    "fee",
+    "free",
+    "lat",
+    "lng",
+    "source",
+    "url",
+    "reservable",
+    "fee_low",
+    "fee_high",
+)
+_BULK_SNAPSHOT_SCHEMA = pa.schema(
+    [
+        ("id", pa.string()),
+        ("name", pa.string()),
+        ("kind", pa.string()),
+        ("fee", pa.string()),
+        ("free", pa.bool_()),
+        ("lat", pa.float64()),
+        ("lng", pa.float64()),
+        ("source", pa.string()),
+        ("url", pa.string()),
+        ("reservable", pa.bool_()),
+        ("fee_low", pa.float64()),
+        ("fee_high", pa.float64()),
+    ]
+)
+
 
 def _camping_facility_ids(zf: zipfile.ZipFile) -> set[str]:
     """FacilityIDs with a CAMPING entry in the full export's activity join table."""
@@ -586,11 +619,10 @@ def _iter_bulk_campsite_rows(zf: zipfile.ZipFile) -> Iterator[tuple[Any, ...]]:
 
 
 def stage_ridb(cfg: Settings, snapshot_date: date, run_id: str, *, client: httpx.Client | None = None) -> None:
-    """Stager: stream-filter the live RIDB full export to camping facilities and upload as
-    gzipped JSON Lines under this run's Space prefix. Runs in GitHub Actions (no DB, no API
-    key). Uses ``HttpRangeReader`` (like ``inat_bulk.stage_inat``) rather than downloading the
-    ~235 MB zip to runner disk first - ``client`` is injectable so tests never hit the real
-    URL."""
+    """Stager: stream-filter the live RIDB full export to camping facilities and upload as a
+    Parquet file under this run's Space prefix. Runs in GitHub Actions (no DB, no API key). Uses
+    ``HttpRangeReader`` (like ``inat_bulk.stage_inat``) rather than downloading the ~235 MB zip
+    to runner disk first - ``client`` is injectable so tests never hit the real URL."""
     owns = client is None
     client = client or httpx.Client(timeout=120.0)
     try:
@@ -601,23 +633,20 @@ def stage_ridb(cfg: Settings, snapshot_date: date, run_id: str, *, client: httpx
     finally:
         if owns:
             client.close()
-    buf = io.BytesIO()
-    with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
-        gz.write("\n".join(json.dumps(row) for row in rows).encode())
-    key = spaces.snapshot_run_prefix("ridb", snapshot_date, run_id) + "campsites.jsonl.gz"
-    spaces.put_object(cfg.spaces, key, buf.getvalue(), "application/gzip")
-    logger.info("camps: staged %d camping facilities from the RIDB full export", len(rows))
+    dict_rows = (dict(zip(_CAMPSITE_COLUMNS, row, strict=True)) for row in rows)
+    count = spaces.write_snapshot_parquet(
+        cfg.spaces, "ridb", snapshot_date, run_id, _BULK_SNAPSHOT_FILENAME, dict_rows, _BULK_SNAPSHOT_SCHEMA
+    )
+    logger.info("camps: staged %d camping facilities from the RIDB full export", count)
 
 
 def load_ridb(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_id: str) -> None:
     """Loader: load the newest staged RIDB snapshot into ``campsites`` and prune any ``ridb``
     row the export no longer lists (a closed/delisted facility) - the export is authoritative
     and complete, unlike the live crawl's home-radius/coverage-state scoping."""
-    key = spaces.snapshot_run_prefix("ridb", snapshot_date, run_id) + "campsites.jsonl.gz"
-    with tempfile.NamedTemporaryFile(suffix=".jsonl.gz") as tmp:
-        spaces.download_file(cfg.spaces, key, tmp.name)
-        with gzip.open(tmp.name, "rt", encoding="utf-8") as payload_file:
-            rows = [tuple(json.loads(line)) for line in payload_file if line.strip()]
+    rows: list[tuple[Any, ...]] = []
+    for batch in spaces.read_snapshot_parquet(cfg.spaces, "ridb", snapshot_date, run_id, _BULK_SNAPSHOT_FILENAME):
+        rows.extend(tuple(rec[col] for col in _CAMPSITE_COLUMNS) for rec in batch)
     upsert_campsites(con, rows)
     pruned = cache.prune_campsites_missing_from(con, "ridb", [row[0] for row in rows])
     # `/healthz/data` (issue #332) computes campground freshness from the newest `fetched_at`

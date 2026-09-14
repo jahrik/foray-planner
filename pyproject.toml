@@ -37,6 +37,13 @@ dependencies = [
     # ingest_bulk.py's future loaders (issue #334 PR 3, #335) query staged Parquet/GPKG
     # snapshots directly rather than loading them into Python first.
     "duckdb>=1.1,<2.0",
+    # issue #359: the standard bulk-snapshot format (write_snapshot_parquet/read_snapshot_parquet
+    # in ingest_bulk.py) is Parquet, streamed via pyarrow.parquet.ParquetWriter/ParquetFile.
+    "pyarrow>=18.0,<20.0",
+    # usfs_trails.py's trail_geometry column: WKB bytes in the Parquet snapshot (compact, no
+    # per-row JSON re-parse) round-tripped to/from the GeoJSON text the trails table's
+    # ST_GeomFromGeoJSON trigger expects (see cache.upsert_trails).
+    "shapely>=2.0,<3.0",
 ]
 
 [project.scripts]
