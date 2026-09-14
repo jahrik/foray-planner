@@ -377,6 +377,19 @@ or filtering, same posture as land ownership.
 to fetch live per-region (issue #335: PAD-US, USFS Trail_NFS + MVUM, MTBS/RAVG) - not a source
 itself.
 
+**Which pipeline for a new source? (issue #357)** Ask two questions before writing a stager:
+is it a *national/authoritative* dataset (a government shapefile/GeoPackage/CSV export covering
+the whole country, not scoped to a query envelope), and is it *infrequently updated* (daily/
+weekly, not something a user action needs fresh right now)? Both yes -> `ingest_bulk`: register
+a `Stager`/`Loader` pair (`sources/usfs_trails.py` is the reference shape), and it's
+automatically staged by `bulk-load.yml`'s `foray stage-snapshot --all` default and loaded by a
+`jobs.yaml` entry - no separate registry to remember to update. Either answer is no -> a live
+per-request/per-envelope fetch on the droplet, `land.py`'s BLM/USFS/PAD-US pattern (queried
+scoped to the coverage envelope, on-demand or on the existing coverage-wide refresh cadence) -
+reserved for small, incremental, or interactive sources. Issue #335 PR 3a's first draft picked
+the live-fetch pattern for USFS Trail_NFS (a national bulk source) by cloning `land.py` without
+checking the issue's own text first - see AGENTS.md's Conventions section.
+
 - **Staging (GitHub Actions, `.github/workflows/bulk-load.yml`, weekly + manual dispatch):**
   `foray stage-snapshot <source>` fetches/transforms a source and uploads it to the DO Space
   under a fresh, run-unique key space (`foray.spaces.snapshot_run_prefix` -
@@ -398,6 +411,11 @@ itself.
   own the whole table) - see each loader's docstring for why.
 - **Config:** `FORAY_SPACES__ACCESS_KEY_ID`/`SECRET_ACCESS_KEY`/`BUCKET`/`REGION` (`Settings.spaces`,
   see the satellite-overlay section above for the other consumer of this same Space).
+- **Staleness visibility (`/healthz/data`, issue #357):** one `bulk-stage:{source}` layer per
+  registered source, flagging any whose newest published snapshot is missing or more than 14
+  days old (2x `bulk-load.yml`'s weekly cadence) - watches the Space's own published-snapshot
+  dates directly, so it would have caught `inat`/`ridb`'s weeks-long unstaged gap the whole time
+  it existed. Skipped when Spaces isn't configured (local dev).
 - **Registered sources (issue #334 PR 2):**
   - **`inat`** (`foray.sources.inat_bulk`) - iNaturalist's own complete GBIF Darwin Core Archive
     export (`static.inaturalist.org/observations/gbif-observations-dwca.zip`, ~29 GB, refreshed
