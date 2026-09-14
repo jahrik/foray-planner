@@ -281,18 +281,16 @@ Follows the global `python` skill: uv, ruff, ty, pytest, and **no single-letter 
 names**. Tests are hermetic - never hit the network (scoring uses fixtures, geocoding is
 mocked).
 
-**Before implementing a TODO.md work-plan PR, read the linked GitHub issue itself, not just
-TODO.md's own write-up of it.** TODO.md's Work plan section is a derived index; the Reference
-sections further down (R#/S#/E#/O#/A#/P#) are older discovery notes that can drift out of
-sync with what the issue actually specifies once later PRs under the same issue narrow or
-correct it - #335 PR 3a shipped a live per-request ArcGIS fetch cloned from `land.py` because
-its R2 reference note said to, without cross-checking the issue's own "the national shapefile
-downloads via `ingest-bulk`" line or the Work plan's own header ("Needs #334. Each PR is one
-source through the `ingest-bulk` machinery") and S1 table verdict - both already in TODO.md,
-just not in the section actually read. A source or mechanism named in the issue (e.g. "via
-`ingest-bulk`", a specific service endpoint) overrides a narrower/older TODO.md Reference
-note if the two disagree; when they do disagree, fix the TODO.md note to match rather than
-carrying the contradiction forward silently.
+**Before implementing a roadmap item tracked as a GitHub issue, read the issue's own text, not
+just an older planning note about it (a design doc, a prior comment, a local scratch file).**
+A note written early in scoping a feature can drift out of sync with what the issue actually
+specifies by the time you implement it, especially once earlier PRs under the same issue
+narrow or correct the plan. Issue #335 PR 3a is the concrete case: it shipped a live
+per-request ArcGIS fetch on the production droplet because an early planning note said to
+clone `land.py`'s pattern, without checking the issue's own text, which specified a different
+delivery mechanism entirely. If a note and the issue disagree on a mechanism or source (e.g.
+which pipeline something should go through, a specific endpoint), the issue wins - fix the
+stale note to match rather than carrying the contradiction forward silently.
 
 No CORS middleware is configured, which is intentionally safe by omission (no
 `Access-Control-Allow-Origin` = no cross-origin JS can read responses). Don't add one later
