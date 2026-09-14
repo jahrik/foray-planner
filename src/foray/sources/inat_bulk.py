@@ -76,16 +76,18 @@ _COL_GENUS = 37
 _PLACE_ID_US = 1
 _SINCE_YEAR_FLOOR = "2000-01-01"
 
-# 256 MiB (raised from 64 MiB - PR #360 - after that size still got 403'd partway through a
-# production run: it survived ~40 requests/~5 min/~2.5 GB instead of the original ~11
-# requests/~9s/~88 MB, which pointed at a rate-based (leaky-bucket) limiter on
-# static.inaturalist.org rather than a pure burst check - fewer, larger requests buys more
-# headroom against a limiter like that. Sized against the client's `timeout` below: at the ~8.5
-# MB/s observed in that run, a 256 MiB chunk takes ~30s, comfortably inside the timeout even if
-# throughput drops by half: 512 MiB would start eating into that margin for not much extra
-# request-count reduction, so this is the largest bump that still leaves real headroom rather
-# than trading one failure mode (403) for another (a mid-download read timeout).
-_BUFFER_SIZE = 256 * 1024 * 1024
+# 1 GiB (raised from 256 MiB - PR #363 - which still got 403'd after ~38 requests/~16 min/~9.5
+# GB). That run and the 64 MiB run before it (~40 requests/~5 min/~2.5 GB) failed at almost the
+# same *request count* despite running 3x longer and moving 4x more data - evidence this is a
+# request-count limiter on static.inaturalist.org, not a bytes/sec one, so pacing doesn't help
+# and the only lever is fewer, larger requests. The full archive is 28,655,031,167 bytes
+# (checked live 2026-09-14); at 1 GiB/request that's ~27 requests total, comfortable margin
+# under the ~38-40 that has tripped every run so far. Time isn't the constraint (even at half
+# the ~9 MB/s observed throughput, a 1 GiB chunk is ~230s, still inside the 300s timeout below) -
+# the real cost of going this large is reliability: a ~2min single-range transfer has more
+# exposure to a mid-stream connection drop, and there's no retry logic, so one hiccup now fails
+# the whole run instead of just one range.
+_BUFFER_SIZE = 1024 * 1024 * 1024
 _CHUNK_SIZE = 5000
 
 _SNAPSHOT_FILENAME = "fungi_us.parquet"
