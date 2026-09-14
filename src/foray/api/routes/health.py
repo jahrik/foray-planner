@@ -14,11 +14,21 @@ semantics refresh, the recent-rain-per-destination layer - see ``foray.jobs``).
 outstanding and how fast is it draining" - for the two backfills issue #334 PR 3 put behind an
 activity-weighted priority queue (``cache.backfill_queue``). Informational only: nothing here
 ever 503s, since a nonzero backlog is normal operation, not a failure.
+
+``/healthz/data`` also covers *staging* freshness for every ``ingest_bulk.STAGERS``-registered
+source (issue #357), not just loading - a source can be registered in code and still silently
+never actually staged (the exact gap that left `inat`/`ridb` unstaged for weeks: nothing was
+watching the DO Space's own published-snapshot dates). One `bulk-stage:{source}` layer per
+registered source, `stale` if the newest published snapshot (``spaces.list_snapshot_dates``) is
+more than 14 days old (2x `bulk-load.yml`'s weekly cadence) or none has ever published. Skipped
+entirely when Spaces isn't configured (local dev) - matching the `camps`/`RIDB_API_KEY` pattern
+above, an unconfigured optional dependency isn't a freshness problem to report.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import os
 
 from fastapi import APIRouter, Depends, Response
@@ -29,6 +39,10 @@ from foray.api.state import AppState
 from foray.api_models import BacklogResponse, DataHealthResponse, LayerFreshnessResponse, StatusResponse
 from foray.cache import backfill_queue_depth, job_run_drain_rate, latest_ingest_at, latest_successful_job_run
 from foray.config import Settings
+from foray.ingest_bulk import STAGERS
+from foray.spaces import list_snapshot_dates
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -108,10 +122,44 @@ def healthz_data(
                     blocking=blocking,
                 )
             )
+    if cfg.spaces.configured:
+        layers.extend(_bulk_stage_freshness(cfg, now))
     ok = not any(layer.stale and layer.blocking for layer in layers)
     if not ok:
         response.status_code = 503
     return DataHealthResponse(ok=ok, layers=layers)
+
+
+# 2x bulk-load.yml's weekly cron - a fixed threshold, not `observability.data_freshness_multiplier`
+# (that knob is about how much slack ingest/refresh cadences get, unrelated to this pipeline).
+_BULK_STAGE_STALE_AFTER = dt.timedelta(days=14)
+
+
+def _bulk_stage_freshness(cfg: Settings, now: dt.datetime) -> list[LayerFreshnessResponse]:
+    """One `bulk-stage:{source}` layer per `ingest_bulk.STAGERS`-registered source - stale if
+    the newest published snapshot is more than 14 days old, or none has ever published. A
+    Spaces listing failure (network blip, throttling) degrades to reporting stale rather than
+    raising - a real 503 either way, but with a source name attached instead of a generic
+    500."""
+    layers = []
+    for source in sorted(STAGERS):
+        try:
+            dates = list_snapshot_dates(cfg.spaces, source)
+        except Exception:
+            logger.warning("healthz/data: failed listing snapshots for bulk source %s", source, exc_info=True)
+            dates = []
+        last_success = dt.datetime.combine(dates[-1], dt.time.min, tzinfo=dt.UTC) if dates else None
+        stale = last_success is None or (now - last_success) > _BULK_STAGE_STALE_AFTER
+        layers.append(
+            LayerFreshnessResponse(
+                layer=f"bulk-stage:{source}",
+                last_success=last_success.isoformat() if last_success else None,
+                interval_hours=24 * 7,
+                stale=stale,
+                blocking=True,
+            )
+        )
+    return layers
 
 
 # (kind, the job whose job_runs feeds the drain rate). elevation-backfill-dem, not

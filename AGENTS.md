@@ -296,6 +296,19 @@ No CORS middleware is configured, which is intentionally safe by omission (no
 `Access-Control-Allow-Origin` = no cross-origin JS can read responses). Don't add one later
 without scoping `allow_origins` to the real domain.
 
+**Any authoritative bulk/national data source goes through the `ingest_bulk` pipeline, not a
+live droplet fetch.** Register a `Stager`/`Loader` pair in `ingest_bulk.STAGERS`/`LOADERS`
+(`src/foray/sources/usfs_trails.py` is the reference implementation) - staging runs from GitHub
+Actions (`.github/workflows/bulk-load.yml`), loading runs on the droplet (`foray ingest-bulk`).
+A live per-request/per-envelope fetch on the droplet (`land.py`'s BLM/USFS/PAD-US pattern) is
+reserved for small, incremental, or interactive sources - not a national dataset fetched whole.
+Issue #335 PR 3a's first draft got this wrong (cloned `land.py`'s live-fetch pattern for USFS
+Trail_NFS, a national bulk source) before a Copilot review + the issue's own text caught it; see
+`docs/data-sources.md`'s "which pipeline for a new source" note for the deciding questions.
+`foray stage-snapshot --all` stages every registered source - no separate registry (a repo
+variable, a hardcoded list) to keep in sync with `STAGERS` by hand, which is exactly how
+`inat`/`ridb` went unstaged for weeks after #334 PR 2 (issue #357).
+
 **Map imagery: prefer the provider's tile pyramid over a custom/dynamic render, always.** This is
 the general rule, not an Esri-specific one - it applies to any future imagery/basemap-style
 provider, not just ArcGIS. Every serious map provider (Esri, Mapbox, OSM, Google) actually

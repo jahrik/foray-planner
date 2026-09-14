@@ -1156,6 +1156,75 @@ def test_healthz_data_ok_when_every_layer_is_fresh(
     assert all(not layer["stale"] for layer in body["layers"])
 
 
+def test_healthz_data_omits_bulk_stage_layers_when_spaces_unconfigured(client: TestClient) -> None:
+    # Spaces isn't configured in the `cfg` fixture (issue #357) - an unconfigured optional
+    # dependency, matching the `camps`/`RIDB_API_KEY` pattern, not a freshness problem to report.
+    response = client.get("/healthz/data")
+    layer_names = {layer["layer"] for layer in response.json()["layers"]}
+    assert not any(name.startswith("bulk-stage:") for name in layer_names)
+
+
+@pytest.fixture
+def spaces_client(cfg: Settings) -> Iterator[TestClient]:
+    from foray.config import Spaces
+
+    cfg_with_spaces = cfg.model_copy(
+        update={"spaces": Spaces(access_key_id="key", secret_access_key="secret", bucket="bucket")}
+    )
+    with TestClient(create_app(cfg_with_spaces)) as client:
+        yield client
+
+
+def test_healthz_data_flags_a_bulk_source_with_no_published_snapshot(
+    spaces_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("foray.api.routes.health.list_snapshot_dates", lambda cfg, source: [])
+    response = spaces_client.get("/healthz/data")
+    assert response.status_code == 503
+    by_layer = {layer["layer"]: layer for layer in response.json()["layers"]}
+    assert by_layer["bulk-stage:inat"]["stale"] is True
+    assert by_layer["bulk-stage:inat"]["last_success"] is None
+    assert by_layer["bulk-stage:inat"]["blocking"] is True
+
+
+def test_healthz_data_flags_a_bulk_source_with_a_stale_snapshot(
+    spaces_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old_date = (dt.datetime.now(dt.UTC) - dt.timedelta(days=30)).date()
+    monkeypatch.setattr("foray.api.routes.health.list_snapshot_dates", lambda cfg, source: [old_date])
+    response = spaces_client.get("/healthz/data")
+    by_layer = {layer["layer"]: layer for layer in response.json()["layers"]}
+    assert by_layer["bulk-stage:ridb"]["stale"] is True
+
+
+def test_healthz_data_bulk_source_fresh_when_recently_staged(
+    spaces_client: TestClient, con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recent_date = dt.datetime.now(dt.UTC).date()
+    monkeypatch.setattr("foray.api.routes.health.list_snapshot_dates", lambda cfg, source: [recent_date])
+    monkeypatch.setenv("RIDB_API_KEY", "test-key")
+    for prefix in (
+        "obs:fungi:place:1:x",
+        "land:coverage",
+        "trails:place:1:q1",
+        "camps:coverage:v1",
+        "dispersed:coverage:v1",
+    ):
+        con.execute("INSERT INTO ingest_log (key, fetched_at, row_count) VALUES (%s, now(), 1)", [prefix])
+    for job in ("fire", "refresh-precip"):
+        con.execute(
+            "INSERT INTO job_runs (job, started_at, ended_at, status) VALUES (%s, now(), now(), 'ok')",
+            [job],
+        )
+
+    response = spaces_client.get("/healthz/data")
+
+    assert response.status_code == 200
+    by_layer = {layer["layer"]: layer for layer in response.json()["layers"]}
+    assert by_layer["bulk-stage:inat"]["stale"] is False
+    assert by_layer["bulk-stage:usfs_trails"]["stale"] is False
+
+
 def test_healthz_backlog_reports_zero_depth_with_no_queue(client: TestClient) -> None:
     response = client.get("/healthz/backlog")
     assert response.status_code == 200
