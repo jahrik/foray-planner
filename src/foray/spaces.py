@@ -231,9 +231,21 @@ def prune_other_snapshots(cfg: Spaces, source: str, keep_date: date, keep_run_id
     old runs (a deliberate choice, not an oversight - see this module's per-run-isolation
     docstring for why an orphaned run's objects were left in place before this existed).
 
-    Returns the number of objects deleted. One recursive listing (no ``Delimiter``, unlike
-    `_candidate_snapshot_dates`) plus batched `delete_objects` calls (S3's 1000-key cap per
-    call)."""
+    Not safe against two overlapping `stage_snapshot` calls for the same `source` (Copilot
+    review, PR #361): if run A publishes and prunes while run B has uploaded objects but not yet
+    published, A's prune deletes B's not-yet-published objects (they don't match A's
+    `keep_prefix` and aren't the manifest key), so B's later publish points at data that's gone.
+    `ingest_bulk.stage_snapshot`'s docstring covers the actual mitigation - a GitHub Actions
+    `concurrency` group on `bulk-load.yml`, the one place this ever runs from - rather than
+    S3-level locking here, since DO Spaces' conditional-write support isn't guaranteed.
+
+    Returns the number of objects actually deleted. Raises `RuntimeError` if `delete_objects`
+    reports any per-key failures - S3 returns those as a 200 response with an `Errors` list, not
+    as a raised exception, so a caller must not read a returned count as "n objects pruned" when
+    the batch it came from silently left some objects behind.
+
+    One recursive listing (no ``Delimiter``, unlike `_candidate_snapshot_dates`) plus batched
+    `delete_objects` calls (S3's 1000-key cap per call)."""
     keep_prefix = snapshot_run_prefix(source, keep_date, keep_run_id)
     manifest_key = f"{snapshot_prefix(source, keep_date)}{_MANIFEST_NAME}"
     prefix = f"bulk/{source}/"
@@ -246,12 +258,17 @@ def prune_other_snapshots(cfg: Spaces, source: str, keep_date: date, keep_run_id
             if key == manifest_key or key.startswith(keep_prefix):
                 continue
             doomed.append(key)
+    deleted = 0
     for start in range(0, len(doomed), 1000):
         batch = doomed[start : start + 1000]
-        s3.delete_objects(Bucket=cfg.bucket, Delete={"Objects": [{"Key": key} for key in batch]})
-    if doomed:
-        logger.info("spaces: pruned %d stale object(s) under %s, keeping %s", len(doomed), prefix, keep_prefix)
-    return len(doomed)
+        response = s3.delete_objects(Bucket=cfg.bucket, Delete={"Objects": [{"Key": key} for key in batch]})
+        errors = response.get("Errors") or []
+        if errors:
+            raise RuntimeError(f"spaces: prune_other_snapshots failed to delete {len(errors)} object(s): {errors!r}")
+        deleted += len(batch)
+    if deleted:
+        logger.info("spaces: pruned %d stale object(s) under %s, keeping %s", deleted, prefix, keep_prefix)
+    return deleted
 
 
 # The standard bulk-snapshot format (issue #359 PR 1/2), replacing the jsonl.gz pattern
