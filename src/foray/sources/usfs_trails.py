@@ -209,6 +209,17 @@ def _iter_pages(client: httpx.Client) -> Iterator[list[dict[str, Any]]]:
     hiccup) looks identical to "no more pages" (an empty `features` list is the normal
     end-of-pagination signal), so it would otherwise be swallowed as if pagination just
     finished early, silently staging (and, worse, publishing) a truncated or empty snapshot.
+
+    Keeps paging on any `exceededTransferLimit: true` response regardless of that page's
+    feature count (another Copilot review catch): ArcGIS sets that flag when either the
+    record-count limit (`_PAGE_SIZE`) *or* the response's transfer-size limit is hit, so a page
+    can be truncated by size with fewer than `_PAGE_SIZE` features and still have more data
+    waiting at the next offset - stopping on "short page" alone would silently drop the
+    remainder into the same truncated-snapshot failure mode as the two checks above.
+
+    ``outSR=4326`` is explicit (matching `land.py`'s ArcGIS calls) rather than relying on
+    `f=geojson` alone implying WGS84 output - belt-and-braces for an authoritative snapshot
+    whose load then prunes every trail not in it.
     """
     offset = 0
     while True:
@@ -218,6 +229,7 @@ def _iter_pages(client: httpx.Client) -> Iterator[list[dict[str, Any]]]:
                 "f": "geojson",
                 "where": _WHERE,
                 "outFields": _out_fields(),
+                "outSR": "4326",
                 "returnGeometry": "true",
                 "maxAllowableOffset": _SIMPLIFY_DEG,
                 "resultOffset": offset,
@@ -236,7 +248,7 @@ def _iter_pages(client: httpx.Client) -> Iterator[list[dict[str, Any]]]:
             return
         yield features
         offset += len(features)
-        if not payload.get("exceededTransferLimit") or len(features) < _PAGE_SIZE:
+        if not payload.get("exceededTransferLimit"):
             return
 
 
