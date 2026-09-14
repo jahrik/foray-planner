@@ -18,6 +18,11 @@ name: Bulk snapshot staging
 # the droplet's DO region), not a separate one: `vars.FORAY_SPACES_BUCKET`/`FORAY_SPACES_REGION`
 # must be set to those same values (or left unset to use the same defaults) or a staged
 # snapshot lands somewhere `foray ingest-bulk` on the droplet never looks.
+#
+# `environment: production` on the job below (matching cd.yml's `deploy` job) - DO_SPACES_KEY/
+# DO_SPACES_SECRET live as Environment secrets under "production" in this repo, not repo-level
+# secrets; without this, `secrets.DO_SPACES_KEY`/`DO_SPACES_SECRET` resolve empty here and every
+# source fails to stage with "FORAY_SPACES__* not configured".
 on:
   schedule:
     - cron: "0 9 * * 1" # Monday 09:00 UTC
@@ -31,6 +36,7 @@ on:
 jobs:
   stage:
     runs-on: ubuntu-latest
+    environment: production
     env:
       IMAGE: "ghcr.io/${{ github.repository }}"
     steps:
