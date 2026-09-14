@@ -16,8 +16,10 @@ from foray.cache import prune_trails_missing_from, upsert_trails
 from foray.config import Settings, Spaces
 from foray.scoring import trails_near
 from foray.sources.usfs_trails import (
+    _ArcGISQueryError,
     _attrs,
     _get,
+    _iter_pages,
     _parse_feature,
     _tracktype,
     load_usfs_trails,
@@ -157,7 +159,15 @@ def test_stage_usfs_trails_pages_until_transfer_limit_clears(monkeypatch: pytest
     assert len(ids) == 1001
 
 
-def test_stage_usfs_trails_keeps_parsed_rows_when_a_later_page_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stage_usfs_trails_propagates_a_later_page_failure_without_publishing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Unlike the live/best-effort area ingests, a stage failure must NOT be swallowed: this
+    # function runs before ingest_bulk.stage_snapshot's unconditional publish_snapshot call, so
+    # catching the error here would publish a truncated snapshot as if it were the complete,
+    # authoritative export - which load_usfs_trails' prune step would then read literally,
+    # deleting every USFS trail the partial fetch didn't happen to reach (a Copilot review
+    # catch). No put_object call should happen at all.
     def handler(request: httpx.Request) -> httpx.Response:
         offset = int(request.url.params.get("resultOffset", "0"))
         if offset > 0:
@@ -177,12 +187,55 @@ def test_stage_usfs_trails_keeps_parsed_rows_when_a_later_page_fails(monkeypatch
     )
     client = httpx.Client(transport=httpx.MockTransport(handler))
 
-    stage_usfs_trails(Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1", client=client)
+    with pytest.raises(httpx.HTTPStatusError):
+        stage_usfs_trails(Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1", client=client)
 
-    # best-effort: the first page's rows still get staged despite the later transport error
-    ((_key, data),) = uploaded.items()
-    rows = gzip.decompress(data).decode().splitlines()
-    assert len(rows) == 1000
+    assert uploaded == {}
+
+
+def test_iter_pages_raises_on_an_arcgis_error_payload() -> None:
+    # ArcGIS reports query errors (a bad field name, an over-budget request, ...) as an HTTP
+    # 200 with an `error` body, not an HTTP error status - raise_for_status() never sees it. An
+    # empty `features` list is the normal end-of-pagination signal, so without this check an
+    # error payload looks identical to "no more pages" and gets silently treated as success
+    # (a Copilot review catch).
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"error": {"code": 400, "message": "Invalid field"}})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(_ArcGISQueryError, match="ArcGIS query error"):
+        list(_iter_pages(client))
+
+
+def test_iter_pages_raises_on_a_response_missing_features() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"type": "FeatureCollection"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(_ArcGISQueryError, match="malformed response"):
+        list(_iter_pages(client))
+
+
+def test_stage_usfs_trails_refuses_to_publish_a_zero_row_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    # This source is never legitimately empty - an empty result means something went wrong
+    # upstream (a where-clause typo, a service hiccup returning well-formed-but-empty pages),
+    # not a valid "zero trails today" snapshot. Publishing it would still look like a
+    # successful, complete, authoritative export to the loader's prune step (a Copilot review
+    # catch, alongside the two above).
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"type": "FeatureCollection", "features": []})
+
+    uploaded: dict[str, bytes] = {}
+    monkeypatch.setattr(
+        "foray.sources.usfs_trails.spaces.put_object",
+        lambda cfg, key, data, content_type, **kw: uploaded.__setitem__(key, data),
+    )
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(RuntimeError, match="zero rows"):
+        stage_usfs_trails(Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1", client=client)
+
+    assert uploaded == {}
 
 
 def test_load_usfs_trails_upserts_and_prunes_stale_rows(
@@ -218,7 +271,7 @@ def test_load_usfs_trails_records_ingest_under_the_trails_prefix(
     # which reads every trails:-prefixed ingest_log key, picks this bulk load up.
     row = _parse_feature({"properties": {"TRAIL_CN": "1"}, "geometry": _line(HOME_LAT, HOME_LNG)})
     assert row is not None
-    payload = "\n".join(json.dumps(r) for r in [row]).encode()
+    payload = json.dumps(row).encode()
     monkeypatch.setattr(
         "foray.sources.usfs_trails.spaces.download_file",
         lambda cfg, key, dest_path: Path(dest_path).write_bytes(gzip.compress(payload)),

@@ -41,7 +41,7 @@ from foray import cache, spaces
 from foray.cache import record_ingest, upsert_trails
 from foray.config import Settings
 from foray.geo import haversine_km
-from foray.sources.http import SOURCE_ERRORS, USER_AGENT
+from foray.sources.http import USER_AGENT
 
 logger = logging.getLogger(__name__)
 
@@ -192,11 +192,24 @@ def _parse_feature(feature: dict[str, Any]) -> tuple[Any, ...] | None:
     )
 
 
+class _ArcGISQueryError(RuntimeError):
+    """ArcGIS returned an error payload as an HTTP 200 (its own convention for query errors -
+    a bad field name, an over-budget request, ...), which `raise_for_status()` never sees since
+    the transport call itself succeeded."""
+
+
 def _iter_pages(client: httpx.Client) -> Iterator[list[dict[str, Any]]]:
     """Yield each ArcGIS response page (<= `_PAGE_SIZE` features) of the whole national
     ``TRAIL_TYPE='TERRA'`` table (no geometry filter - the full bulk export, like RIDB's full
     CSV), paging until exhausted. A live count against the real service (checked 2026-09-14):
-    78,149 features."""
+    78,149 features.
+
+    Raises `_ArcGISQueryError` on an error payload or a malformed response missing `features`
+    entirely - a Copilot review catch: without this, a query failure (bad field name, service
+    hiccup) looks identical to "no more pages" (an empty `features` list is the normal
+    end-of-pagination signal), so it would otherwise be swallowed as if pagination just
+    finished early, silently staging (and, worse, publishing) a truncated or empty snapshot.
+    """
     offset = 0
     while True:
         resp = client.get(
@@ -214,7 +227,11 @@ def _iter_pages(client: httpx.Client) -> Iterator[list[dict[str, Any]]]:
         )
         resp.raise_for_status()
         payload = resp.json()
-        features = payload.get("features", [])
+        if "error" in payload:
+            raise _ArcGISQueryError(f"usfs_trails: ArcGIS query error at offset {offset}: {payload['error']}")
+        if "features" not in payload:
+            raise _ArcGISQueryError(f"usfs_trails: malformed response at offset {offset} (no 'features' key)")
+        features = payload["features"]
         if not features:
             return
         yield features
@@ -230,6 +247,16 @@ def stage_usfs_trails(cfg: Settings, snapshot_date: date, run_id: str, *, client
     live per-request/coverage crawl on the 1-vCPU box). Each line is one trails row tuple, JSON-
     encoded (``geojson``/``attrs`` stay as their already-JSON-encoded string elements), so
     ``load_usfs_trails`` can load it with no reparsing.
+
+    Unlike the live/best-effort area ingests, a fetch failure here is **not** swallowed - it's
+    left to propagate (matching `camps.stage_ridb`/`inat_bulk.stage_inat`, neither of which
+    catches anything either). `ingest_bulk.stage_snapshot` calls `spaces.publish_snapshot` right
+    after this returns, with no other success signal - catching the error here (a Copilot review
+    catch on the first cut of this function) would have turned a failed fetch into a published
+    *partial* snapshot, which `load_usfs_trails`' prune-to-exactly-what's-listed step would then
+    have read as authoritative, deleting every USFS trail the partial fetch didn't happen to
+    reach. Also refuses to stage a zero-row result - this source is never legitimately empty, so
+    an empty result is a signal something went wrong, not a valid snapshot.
     """
     owns = client is None
     client = client or httpx.Client(timeout=120.0)
@@ -240,11 +267,11 @@ def stage_usfs_trails(cfg: Settings, snapshot_date: date, run_id: str, *, client
                 row = _parse_feature(feature)
                 if row is not None:
                     by_id[row[0]] = row
-    except SOURCE_ERRORS as error:
-        logger.warning("usfs_trails: stage fetch failed (%s) - keeping %d rows parsed so far", error, len(by_id))
     finally:
         if owns:
             client.close()
+    if not by_id:
+        raise RuntimeError("usfs_trails: stage fetched zero rows - refusing to publish an empty snapshot")
     buf = io.BytesIO()
     with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
         gz.write("\n".join(json.dumps(row) for row in by_id.values()).encode())
