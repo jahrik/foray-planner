@@ -44,6 +44,10 @@ dependencies = [
     # per-row JSON re-parse) round-tripped to/from the GeoJSON text the trails table's
     # ST_GeomFromGeoJSON trigger expects (see cache.upsert_trails).
     "shapely>=2.0,<3.0",
+    # inat_bulk.py streams the live DwC-A archive as a single continuous GET and parses it
+    # forward-only (no seeking to the central directory) - see that module's docstring for why
+    # this replaced range reads. Zip64-aware, which observations.csv needs.
+    "stream-unzip>=0.0.90,<1.0",
 ]
 
 [project.scripts]

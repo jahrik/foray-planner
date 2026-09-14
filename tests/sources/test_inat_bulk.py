@@ -80,10 +80,16 @@ _RealClient = httpx.Client  # captured before any test patches `httpx.Client` gl
 
 
 def _mock_client(zip_bytes: bytes) -> httpx.Client:
+    # Serves both access patterns: HEAD+Range (foray.sources.http.HttpRangeReader, still used by
+    # camps.py's RIDB stager and exercised below against this same fixture) and a plain GET with
+    # no Range header (inat_bulk.iter_fungi_us_rows' single continuous stream, see this module's
+    # docstring for why it moved off range reads).
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "HEAD":
             return httpx.Response(200, headers={"content-length": str(len(zip_bytes))})
-        range_header = request.headers["Range"]
+        range_header = request.headers.get("Range")
+        if range_header is None:
+            return httpx.Response(200, content=zip_bytes)
         start_s, end_s = range_header.removeprefix("bytes=").split("-")
         start, end = int(start_s), int(end_s)
         content_range = f"bytes {start}-{end}/{len(zip_bytes)}"

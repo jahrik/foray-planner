@@ -1,16 +1,29 @@
 """Bulk-snapshot iNat loader (issue #334 PR 2) - the "biggest win" from the S1 survey.
 
 Streams iNaturalist's own complete GBIF Darwin Core Archive export
-(``https://static.inaturalist.org/observations/gbif-observations-dwca.zip``, ~29 GB,
-refreshed at least daily) straight off HTTP via ``foray.sources.http.HttpRangeReader``, never
-downloading the whole archive - only ``observations.csv`` (the DwC Occurrence core) is read,
-filtered down to Fungi/US rows, and staged as a small Parquet file (issue #359 PR 1 - the
-standard bulk-snapshot format, via ``foray.spaces.write_snapshot_parquet``/
-``read_snapshot_parquet``). This is the same DwC-A export ``scripts/inat_dwca_filter.py``/
-``load_inat_bulk.py`` used manually (see git history) - this module replaces both with a
-repeatable, Space-backed pipeline any droplet (or CI runner) can run via
-``foray stage-snapshot inat`` / ``foray ingest-bulk inat``, instead of a human running
-``just bulk-download``/``bulk-filter``/``bulk-load`` by hand.
+(``https://static.inaturalist.org/observations/gbif-observations-dwca.zip``, ~29 GB, regenerated
+weekly - not daily, see below) as a single continuous HTTP GET, parsed forward-only with
+``stream_unzip`` - only ``observations.csv`` (the DwC Occurrence core) is read, filtered down to
+Fungi/US rows, and staged as a small Parquet file (issue #359 PR 1 - the standard bulk-snapshot
+format, via ``foray.spaces.write_snapshot_parquet``/``read_snapshot_parquet``). This is the same
+DwC-A export ``scripts/inat_dwca_filter.py``/``load_inat_bulk.py`` used manually (see git
+history) - this module replaces both with a repeatable, Space-backed pipeline any droplet (or CI
+runner) can run via ``foray stage-snapshot inat`` / ``foray ingest-bulk inat``, instead of a
+human running ``just bulk-download``/``bulk-filter``/``bulk-load`` by hand.
+
+**Why a single GET instead of range reads** (issue found 2026-09-14, after PRs #360/#363 tried
+pacing and progressively larger range-read buffers): every range-read attempt eventually got
+403'd by ``static.inaturalist.org``'s CloudFront-fronted S3 origin, at inconsistent request
+counts (11 to ~40) that didn't track buffer size or pacing - inconsistent with a stable
+count/rate limiter. iNaturalist's own developer docs say plainly that large downloads should go
+through GBIF instead of this file (GBIF's own dataset registration confirms its DWC_ARCHIVE
+endpoint *is* this same URL, regenerated weekly - not daily as this module assumed until now).
+The retired manual workflow above (``curl -L``, a single continuous download) never hit this
+block, because it was structurally never the "many small range requests to one object" pattern
+CloudFront's WAF flags. ``stream_unzip`` (MIT, forward-only zip parsing over an iterable of
+bytes, Zip64-aware - this archive's ``observations.csv`` entry needs Zip64, verified live) lets
+this module recover the "never materialize the whole archive" property of range reads while
+using that same single-GET access pattern instead.
 
 **Why not the AWS Open Data dump** (``inaturalist-open-data``, the other bulk source TODO.md
 flagged for "confirm"): checked live 2026-09-12 - it's TSV, not Parquet, and critically its
@@ -35,11 +48,10 @@ connection; a row whose genus isn't cataloged yet is skipped, same as the old sc
 
 from __future__ import annotations
 
+import codecs
 import csv
 import datetime as dt
-import io
 import logging
-import zipfile
 from collections.abc import Iterator
 from datetime import date
 from typing import Any
@@ -47,11 +59,12 @@ from typing import Any
 import httpx
 import psycopg
 import pyarrow as pa
+from stream_unzip import stream_unzip
 
 from foray import spaces
 from foray.cache import genus_taxon_ids, insert_observations_if_missing, maybe_rebuild_phenology, record_ingest
 from foray.config import Settings
-from foray.sources.http import USER_AGENT, HttpRangeReader, Throttle
+from foray.sources.http import USER_AGENT
 from foray.sources.inat import OBSCURED_ACCURACY_HIGH, OBSCURED_ACCURACY_LOW
 
 logger = logging.getLogger(__name__)
@@ -76,18 +89,10 @@ _COL_GENUS = 37
 _PLACE_ID_US = 1
 _SINCE_YEAR_FLOOR = "2000-01-01"
 
-# 1 GiB (raised from 256 MiB - PR #363 - which still got 403'd after ~38 requests/~16 min/~9.5
-# GB). That run and the 64 MiB run before it (~40 requests/~5 min/~2.5 GB) failed at almost the
-# same *request count* despite running 3x longer and moving 4x more data - evidence this is a
-# request-count limiter on static.inaturalist.org, not a bytes/sec one, so pacing doesn't help
-# and the only lever is fewer, larger requests. The full archive is 28,655,031,167 bytes
-# (checked live 2026-09-14); at 1 GiB/request that's ~27 requests total, comfortable margin
-# under the ~38-40 that has tripped every run so far. Time isn't the constraint (even at half
-# the ~9 MB/s observed throughput, a 1 GiB chunk is ~230s, still inside the 300s timeout below) -
-# the real cost of going this large is reliability: a ~2min single-range transfer has more
-# exposure to a mid-stream connection drop, and there's no retry logic, so one hiccup now fails
-# the whole run instead of just one range.
-_BUFFER_SIZE = 1024 * 1024 * 1024
+# Size of each chunk read off the HTTP response and fed to stream_unzip/zlib - purely a memory/
+# throughput tuning knob now (not a request-count lever like the old range-read _BUFFER_SIZE
+# was), since this is all one continuous GET regardless of chunk size.
+_STREAM_CHUNK_SIZE = 1024 * 1024
 _CHUNK_SIZE = 5000
 
 _SNAPSHOT_FILENAME = "fungi_us.parquet"
@@ -107,54 +112,66 @@ _SNAPSHOT_SCHEMA = pa.schema(
     ]
 )
 
-# Paces successive range GETs against static.inaturalist.org - see HttpRangeReader's docstring.
-# 0.25s is a guess at "comfortably under whatever burst threshold triggered the 403", not a
-# documented limit (iNat doesn't publish one for this static export); revisit if staging still
-# gets blocked, or relax it if a run comfortably completes with room to spare.
-_RANGE_MIN_INTERVAL = 0.25
+_DWCA_ENTRY_BYTES = DWCA_ENTRY.encode()
 
 
-def _open_observations_csv(client: httpx.Client) -> tuple[zipfile.ZipFile, io.TextIOWrapper]:
-    reader = HttpRangeReader(client, DWCA_URL, throttle=Throttle(_RANGE_MIN_INTERVAL))
-    buffered = io.BufferedReader(reader, buffer_size=_BUFFER_SIZE)
-    zf = zipfile.ZipFile(buffered)
-    raw = zf.open(DWCA_ENTRY)
-    # errors="replace": a single bad byte in a ~29 GB archive we don't control shouldn't abort
-    # a run that's otherwise streamed cleanly (same guard scripts/inat_dwca_filter.py used).
-    return zf, io.TextIOWrapper(raw, encoding="utf-8", newline="", errors="replace")
+def _iter_csv_lines(byte_chunks: Iterator[bytes]) -> Iterator[str]:
+    """Decode a stream of byte chunks (which can split a multi-byte UTF-8 character across a
+    chunk boundary) into complete text lines. errors="replace": a single bad byte in a ~29 GB
+    archive we don't control shouldn't abort a run that's otherwise streamed cleanly (same guard
+    scripts/inat_dwca_filter.py used)."""
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    buffer = ""
+    for chunk in byte_chunks:
+        buffer += decoder.decode(chunk)
+        while "\n" in buffer:
+            line, buffer = buffer.split("\n", 1)
+            yield line
+    buffer += decoder.decode(b"", final=True)
+    if buffer:
+        yield buffer
 
 
 def iter_fungi_us_rows(client: httpx.Client) -> Iterator[dict[str, Any]]:
     """Stream ``observations.csv`` out of the live DwC-A archive, yielding one dict per
     Fungi-kingdom, US, coordinate-bearing row: ``{id, genus, lat, lng, event_date,
-    coordinate_uncertainty_m}``. Never materializes the archive or the full CSV on disk."""
-    zf, text = _open_observations_csv(client)
-    with zf, text:
-        reader = csv.reader(text)
-        header = next(reader)
-        expected_len = len(header)
-        scanned = kept = 0
-        for row in reader:
-            scanned += 1
-            if len(row) != expected_len:
-                continue  # malformed/truncated row - skip rather than abort a multi-hour scan
-            if row[_COL_KINGDOM] != "Fungi" or row[_COL_COUNTRY_CODE] != "US":
+    coordinate_uncertainty_m}``. Never materializes the archive or the full CSV on disk - one
+    continuous GET, parsed forward-only via ``stream_unzip`` (see this module's docstring for
+    why, over the old HttpRangeReader-based range reads)."""
+    with client.stream("GET", DWCA_URL) as response:
+        response.raise_for_status()
+        byte_chunks = response.iter_bytes(chunk_size=_STREAM_CHUNK_SIZE)
+        for file_name, _file_size, unzipped_chunks in stream_unzip(byte_chunks):
+            if file_name != _DWCA_ENTRY_BYTES:
+                for _ in unzipped_chunks:  # stream_unzip requires every entry's chunks drained
+                    pass
                 continue
-            lat, lng = row[_COL_LAT], row[_COL_LNG]
-            if not lat or not lng:
-                continue
-            kept += 1
-            yield {
-                "id": int(row[_COL_ID]),
-                "genus": row[_COL_GENUS],
-                "lat": float(lat),
-                "lng": float(lng),
-                "event_date": row[_COL_EVENT_DATE] or None,
-                "coordinate_uncertainty_m": row[_COL_COORD_UNCERTAINTY] or None,
-            }
-            if kept % 100_000 == 0:
-                logger.info("inat_bulk: scanned %d rows, kept %d Fungi/US so far", scanned, kept)
-        logger.info("inat_bulk: scan done - %d rows scanned, %d Fungi/US kept", scanned, kept)
+            reader = csv.reader(_iter_csv_lines(unzipped_chunks))
+            header = next(reader)
+            expected_len = len(header)
+            scanned = kept = 0
+            for row in reader:
+                scanned += 1
+                if len(row) != expected_len:
+                    continue  # malformed/truncated row - skip rather than abort a multi-hour scan
+                if row[_COL_KINGDOM] != "Fungi" or row[_COL_COUNTRY_CODE] != "US":
+                    continue
+                lat, lng = row[_COL_LAT], row[_COL_LNG]
+                if not lat or not lng:
+                    continue
+                kept += 1
+                yield {
+                    "id": int(row[_COL_ID]),
+                    "genus": row[_COL_GENUS],
+                    "lat": float(lat),
+                    "lng": float(lng),
+                    "event_date": row[_COL_EVENT_DATE] or None,
+                    "coordinate_uncertainty_m": row[_COL_COORD_UNCERTAINTY] or None,
+                }
+                if kept % 100_000 == 0:
+                    logger.info("inat_bulk: scanned %d rows, kept %d Fungi/US so far", scanned, kept)
+            logger.info("inat_bulk: scan done - %d rows scanned, %d Fungi/US kept", scanned, kept)
+            return  # observations.csv is the last entry in the archive - nothing left to drain
 
 
 def stage_inat(cfg: Settings, snapshot_date: date, run_id: str) -> None:
@@ -162,10 +179,10 @@ def stage_inat(cfg: Settings, snapshot_date: date, run_id: str) -> None:
     under this run's Space prefix. No DB connection - see this module's docstring for why
     genus->taxon_id resolution happens in ``load_inat`` instead. Runs in GitHub Actions.
 
-    ``timeout=300`` (raised from 120 alongside `_BUFFER_SIZE`'s bump to 256 MiB) - a single range
-    GET now transfers a much larger chunk, so the read timeout needs enough margin that a slower
-    network doesn't turn a 403 into a timeout error instead of actually fixing anything."""
-    with httpx.Client(timeout=300.0, headers={"User-Agent": USER_AGENT}) as client:
+    ``timeout=60`` applies per socket read (httpx's streaming reads are bounded individually, not
+    over the whole multi-hour GET) - generous for a single ``_STREAM_CHUNK_SIZE`` (1 MiB) read
+    without risking a multi-minute hang on a stalled connection going undetected."""
+    with httpx.Client(timeout=60.0, headers={"User-Agent": USER_AGENT}) as client:
         kept = spaces.write_snapshot_parquet(
             cfg.spaces,
             "inat",
