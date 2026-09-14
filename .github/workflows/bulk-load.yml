@@ -7,10 +7,11 @@ name: Bulk snapshot staging
 # (a systemd timer via jobs.yaml, see issue #332) separately loads whatever's staged here into
 # the database on its own schedule.
 #
-# `vars.FORAY_BULK_SOURCES` (repo variable, comma-separated) must be set to `inat,ridb` for
-# this to do anything (issue #334 PR 2 registers those two stagers; PR 3/#335 add more to the
-# list) - left unset, this workflow runs and exits cleanly with nothing to do, rather than
-# failing weekly on an unregistered name.
+# Stages every source registered in `ingest_bulk.STAGERS` (`foray stage-snapshot --all`) by
+# default - no repo variable to keep in sync with the code's own registry, which is exactly the
+# gap issue #357 was filed over (`inat`/`ridb` went unstaged for weeks because nothing had set
+# `vars.FORAY_BULK_SOURCES`). Set `vars.FORAY_BULK_SOURCES` (comma-separated) only to *narrow*
+# the weekly run to a subset; leave it unset to stage everything registered.
 #
 # Stages into the *same* Space the deployed app reads from (infra/ansible/AGENTS.md,
 # `foray_basemap_space_name`/`foray_basemap_region` - default bucket "foray-basemap", region
@@ -23,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       source:
-        description: "Stage a single source now (blank = every source in FORAY_BULK_SOURCES)"
+        description: "Stage a single source now (blank = every registered source, or FORAY_BULK_SOURCES if set)"
         required: false
         default: ""
 
@@ -57,7 +58,12 @@ jobs:
           set -euo pipefail
           targets="${DISPATCH_SOURCE:-$SOURCES}"
           if [ -z "$targets" ]; then
-            echo "No bulk sources registered yet (issue #334 PR 2, #335) - nothing to stage."
+            docker run --rm \
+              -e FORAY_SPACES__ACCESS_KEY_ID \
+              -e FORAY_SPACES__SECRET_ACCESS_KEY \
+              -e FORAY_SPACES__BUCKET \
+              -e FORAY_SPACES__REGION \
+              "$IMAGE:latest" foray stage-snapshot --all
             exit 0
           fi
           IFS=',' read -ra list <<< "$targets"
