@@ -57,6 +57,7 @@ class _FakeS3Client:
         self._date_prefixes = date_prefixes
         self._objects: dict[str, bytes] = dict(objects or {})
         self.put_calls: list[dict[str, Any]] = []
+        self.get_calls: list[str] = []
 
     def put_object(self, **kwargs: Any) -> None:
         self.put_calls.append(kwargs)
@@ -64,6 +65,7 @@ class _FakeS3Client:
 
     def get_object(self, **kwargs: Any) -> dict[str, Any]:
         key = kwargs["Key"]
+        self.get_calls.append(key)
         if key not in self._objects:
             raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
 
@@ -207,3 +209,45 @@ def test_list_snapshot_dates_only_counts_published_snapshots(monkeypatch: pytest
     monkeypatch.setattr(spaces, "client", lambda cfg: fake)
 
     assert spaces.list_snapshot_dates(_CONFIGURED, "padus") == [date(2026, 1, 1), date(2026, 1, 8)]
+
+
+def test_latest_snapshot_date_returns_none_when_never_published(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeS3Client(date_prefixes=[])
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
+
+    assert spaces.latest_snapshot_date(_CONFIGURED, "padus") is None
+
+
+def test_latest_snapshot_date_skips_an_in_progress_newer_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 2026-01-15 has a date prefix (data uploading) but no manifest yet - the newest *published*
+    # date is still 2026-01-08.
+    fake = _FakeS3Client(
+        date_prefixes=["bulk/padus/2026-01-01/", "bulk/padus/2026-01-08/", "bulk/padus/2026-01-15/"],
+        objects={
+            "bulk/padus/2026-01-01/_manifest.json": json.dumps({"run_id": "run-1"}).encode(),
+            "bulk/padus/2026-01-08/_manifest.json": json.dumps({"run_id": "run-2"}).encode(),
+        },
+    )
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
+
+    assert spaces.latest_snapshot_date(_CONFIGURED, "padus") == date(2026, 1, 8)
+
+
+def test_latest_snapshot_date_stops_at_the_first_published_date_instead_of_checking_every_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The performance property a frequently-polled health check needs (issue #357 Copilot
+    # review): with the newest date already published, this does exactly one manifest GET, not
+    # one per historical date the source has ever staged.
+    fake = _FakeS3Client(
+        date_prefixes=["bulk/padus/2026-01-01/", "bulk/padus/2026-01-08/", "bulk/padus/2026-01-15/"],
+        objects={
+            "bulk/padus/2026-01-01/_manifest.json": json.dumps({"run_id": "run-1"}).encode(),
+            "bulk/padus/2026-01-08/_manifest.json": json.dumps({"run_id": "run-2"}).encode(),
+            "bulk/padus/2026-01-15/_manifest.json": json.dumps({"run_id": "run-3"}).encode(),
+        },
+    )
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
+
+    assert spaces.latest_snapshot_date(_CONFIGURED, "padus") == date(2026, 1, 15)
+    assert fake.get_calls == ["bulk/padus/2026-01-15/_manifest.json"]

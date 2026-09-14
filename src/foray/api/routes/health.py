@@ -19,8 +19,10 @@ ever 503s, since a nonzero backlog is normal operation, not a failure.
 source (issue #357), not just loading - a source can be registered in code and still silently
 never actually staged (the exact gap that left `inat`/`ridb` unstaged for weeks: nothing was
 watching the DO Space's own published-snapshot dates). One `bulk-stage:{source}` layer per
-registered source, `stale` if the newest published snapshot (``spaces.list_snapshot_dates``) is
-more than 14 days old (2x `bulk-load.yml`'s weekly cadence) or none has ever published. Skipped
+registered source, `stale` if the newest published snapshot (``spaces.latest_snapshot_date`` -
+newest-first, stops at the first published manifest rather than checking a source's whole
+history) is more than 14 days old (2x `bulk-load.yml`'s weekly cadence) or none has ever
+published. Skipped
 entirely when Spaces isn't configured (local dev) - matching the `camps`/`RIDB_API_KEY` pattern
 above, an unconfigured optional dependency isn't a freshness problem to report.
 """
@@ -40,7 +42,7 @@ from foray.api_models import BacklogResponse, DataHealthResponse, LayerFreshness
 from foray.cache import backfill_queue_depth, job_run_drain_rate, latest_ingest_at, latest_successful_job_run
 from foray.config import Settings
 from foray.ingest_bulk import STAGERS
-from foray.spaces import list_snapshot_dates
+from foray.spaces import latest_snapshot_date
 
 logger = logging.getLogger(__name__)
 
@@ -144,11 +146,11 @@ def _bulk_stage_freshness(cfg: Settings, now: dt.datetime) -> list[LayerFreshnes
     layers = []
     for source in sorted(STAGERS):
         try:
-            dates = list_snapshot_dates(cfg.spaces, source)
+            newest = latest_snapshot_date(cfg.spaces, source)
         except Exception:
             logger.warning("healthz/data: failed listing snapshots for bulk source %s", source, exc_info=True)
-            dates = []
-        last_success = dt.datetime.combine(dates[-1], dt.time.min, tzinfo=dt.UTC) if dates else None
+            newest = None
+        last_success = dt.datetime.combine(newest, dt.time.min, tzinfo=dt.UTC) if newest else None
         stale = last_success is None or (now - last_success) > _BULK_STAGE_STALE_AFTER
         layers.append(
             LayerFreshnessResponse(

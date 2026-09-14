@@ -1178,7 +1178,7 @@ def spaces_client(cfg: Settings) -> Iterator[TestClient]:
 def test_healthz_data_flags_a_bulk_source_with_no_published_snapshot(
     spaces_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("foray.api.routes.health.list_snapshot_dates", lambda cfg, source: [])
+    monkeypatch.setattr("foray.api.routes.health.latest_snapshot_date", lambda cfg, source: None)
     response = spaces_client.get("/healthz/data")
     assert response.status_code == 503
     by_layer = {layer["layer"]: layer for layer in response.json()["layers"]}
@@ -1191,7 +1191,7 @@ def test_healthz_data_flags_a_bulk_source_with_a_stale_snapshot(
     spaces_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     old_date = (dt.datetime.now(dt.UTC) - dt.timedelta(days=30)).date()
-    monkeypatch.setattr("foray.api.routes.health.list_snapshot_dates", lambda cfg, source: [old_date])
+    monkeypatch.setattr("foray.api.routes.health.latest_snapshot_date", lambda cfg, source: old_date)
     response = spaces_client.get("/healthz/data")
     by_layer = {layer["layer"]: layer for layer in response.json()["layers"]}
     assert by_layer["bulk-stage:ridb"]["stale"] is True
@@ -1201,7 +1201,7 @@ def test_healthz_data_bulk_source_fresh_when_recently_staged(
     spaces_client: TestClient, con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     recent_date = dt.datetime.now(dt.UTC).date()
-    monkeypatch.setattr("foray.api.routes.health.list_snapshot_dates", lambda cfg, source: [recent_date])
+    monkeypatch.setattr("foray.api.routes.health.latest_snapshot_date", lambda cfg, source: recent_date)
     monkeypatch.setenv("RIDB_API_KEY", "test-key")
     for prefix in (
         "obs:fungi:place:1:x",

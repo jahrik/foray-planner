@@ -460,12 +460,17 @@ def stage_snapshot_cmd(ctx: click.Context, source: str | None, stage_all: bool) 
         if source is None:
             raise click.UsageError("pass exactly one of SOURCE or --all")
         sources = [source]
+    failures: list[str] = []
     for name in sources:
         try:
             snapshot_date = ingest_bulk.stage_snapshot(cfg, name)
         except (KeyError, RuntimeError) as exc:
-            raise click.ClickException(str(exc)) from None
+            click.echo(f"Failed to stage {name}: {exc}", err=True)
+            failures.append(name)
+            continue
         click.echo(f"Staged {name} snapshot {snapshot_date.isoformat()}.")
+    if failures:
+        raise click.ClickException(f"failed to stage: {', '.join(failures)}")
 
 
 @cli.command("ingest-bulk")
