@@ -1,0 +1,14 @@
+# Managed by the foray-planner ansible role. Daily, off-peak - see docker-prune.service.j2
+# for why this exists. Persistent=true: a missed run (droplet down at 03:00) still catches up
+# on the next boot rather than silently skipping a whole day, which is exactly the kind of gap
+# that let the disk fill unnoticed in the first place.
+[Unit]
+Description=Prune unused Docker images daily
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 {{ foray_night_window_tz }}
+Persistent=true
+RandomizedDelaySec={{ foray_job_randomized_delay_sec }}
+
+[Install]
+WantedBy=timers.target

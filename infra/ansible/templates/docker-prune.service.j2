@@ -1,0 +1,15 @@
+# Managed by the foray-planner ansible role. Every scheduled foray-*.service unit
+# (foray-job.service.j2) runs `docker run --pull always`, and every deploy leaves the
+# previous image's digest behind - nothing removes them. That silently filled the droplet's
+# disk to 99% (25G root volume, only 405M free) and broke every deploy from #350 through #354
+# with "no space left on device" pulling the new image, discovered only by reading a failed
+# CD run's logs rather than any alert. `docker image prune -a` only removes images with no
+# container currently using them, so this can never touch what's actually running.
+[Unit]
+Description=Prune unused Docker images (disk-space self-heal)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker image prune -a -f
