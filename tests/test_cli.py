@@ -297,6 +297,27 @@ def test_stage_snapshot_cmd_all_stages_every_registered_source(env_config, monke
     assert staged == ["inat", "ridb"]
 
 
+def test_stage_snapshot_cmd_all_continues_past_a_failed_source(env_config, monkeypatch) -> None:
+    # A transient failure in one source (network blip, a bad endpoint) must not prevent later
+    # registered sources from being attempted - Copilot review catch on issue #357's PR.
+    staged: list[str] = []
+    monkeypatch.setattr(cli_module.ingest_bulk, "STAGERS", {"inat": None, "ridb": None, "usfs_trails": None})
+
+    def fake_stage(cfg, source):
+        if source == "ridb":
+            raise RuntimeError("boom")
+        staged.append(source)
+        return date(2026, 1, 1)
+
+    monkeypatch.setattr(cli_module.ingest_bulk, "stage_snapshot", fake_stage)
+
+    result = CliRunner().invoke(cli, ["stage-snapshot", "--all"])
+
+    assert result.exit_code != 0
+    assert staged == ["inat", "usfs_trails"]
+    assert "ridb" in result.output
+
+
 def test_ingest_bulk_cmd_without_spaces_configured_fails_clean(
     con: psycopg.Connection, env_config, monkeypatch
 ) -> None:
