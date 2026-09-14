@@ -102,7 +102,14 @@ def record_snapshot_loaded(con: psycopg.Connection, source: str, snapshot_date: 
 def stage_snapshot(cfg: Settings, source: str, snapshot_date: date | None = None) -> date:
     """Fetch + upload today's (or `snapshot_date`'s) snapshot for `source`. Raises
     `click.ClickException`-friendly `KeyError`/`RuntimeError` for an unknown source or missing
-    Space config - the CLI command turns those into a clean error message."""
+    Space config - the CLI command turns those into a clean error message.
+
+    Not safe to call twice concurrently for the same `source` (Copilot review, PR #361): the
+    unconditional `prune_other_snapshots` call below deletes every object outside *this* call's
+    run, which would delete a second concurrent call's not-yet-published objects out from under
+    it. `.github/workflows/bulk-load.yml`'s `concurrency` group is what actually prevents that -
+    this function has no in-process lock of its own, since GitHub Actions is the only place it
+    ever runs from."""
     if not cfg.spaces.configured:
         raise RuntimeError("FORAY_SPACES__* not configured - see foray.config.Spaces")
     stager = STAGERS.get(source)

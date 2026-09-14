@@ -92,18 +92,21 @@ class _FakeS3Client:
         return {"Body": _Body(self._objects[key])}
 
     def upload_file(self, filename: str, bucket: str, key: str, ExtraArgs: dict[str, Any] | None = None) -> None:
-        with Path(filename).open("rb") as f:
-            self._objects[key] = f.read()
+        with Path(filename).open("rb") as file_handle:
+            self._objects[key] = file_handle.read()
         self.upload_calls.append((filename, bucket, key, ExtraArgs))
 
     def download_file(self, bucket: str, key: str, dest_path: str) -> None:
-        with Path(dest_path).open("wb") as f:
-            f.write(self._objects[key])
+        with Path(dest_path).open("wb") as file_handle:
+            file_handle.write(self._objects[key])
 
-    def delete_objects(self, **kwargs: Any) -> None:
+    def delete_objects(self, **kwargs: Any) -> dict[str, Any]:
         self.delete_calls.append(kwargs)
+        deleted = []
         for obj in kwargs["Delete"]["Objects"]:
             self._objects.pop(obj["Key"], None)
+            deleted.append(obj)
+        return {"Deleted": deleted}
 
     def get_paginator(self, name: str) -> Any:
         assert name == "list_objects_v2"
@@ -349,7 +352,7 @@ _ROW_SCHEMA = pa.schema([("id", pa.string()), ("value", pa.int64())])
 def test_write_then_read_snapshot_parquet_round_trips_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeS3Client(date_prefixes=[])
     monkeypatch.setattr(spaces, "client", lambda cfg: fake)
-    rows = [{"id": f"row-{i}", "value": i} for i in range(3)]
+    rows = [{"id": f"row-{index}", "value": index} for index in range(3)]
 
     count = spaces.write_snapshot_parquet(
         _CONFIGURED, "padus", date(2026, 1, 8), "run-1", "data.parquet", rows, _ROW_SCHEMA
@@ -370,7 +373,7 @@ def test_write_snapshot_parquet_batches_across_row_groups(monkeypatch: pytest.Mo
     fake = _FakeS3Client(date_prefixes=[])
     monkeypatch.setattr(spaces, "client", lambda cfg: fake)
     monkeypatch.setattr(spaces, "_PARQUET_ROW_GROUP_SIZE", 2)
-    rows = [{"id": f"row-{i}", "value": i} for i in range(5)]
+    rows = [{"id": f"row-{index}", "value": index} for index in range(5)]
 
     spaces.write_snapshot_parquet(_CONFIGURED, "padus", date(2026, 1, 8), "run-1", "data.parquet", rows, _ROW_SCHEMA)
 
@@ -418,3 +421,25 @@ def test_prune_other_snapshots_is_a_noop_when_nothing_is_stale(monkeypatch: pyte
 
     assert deleted == 0
     assert fake.delete_calls == []
+
+
+def test_prune_other_snapshots_raises_on_a_partial_delete_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Copilot review (PR #361): DeleteObjects reports a per-key failure as a 200 response with an
+    # `Errors` list, not a raised exception - silently ignoring that would report "N objects
+    # pruned" while some of them are still sitting in the Space.
+    class _FailingDeleteClient(_FakeS3Client):
+        def delete_objects(self, **kwargs: Any) -> dict[str, Any]:
+            return {"Errors": [{"Key": kwargs["Delete"]["Objects"][0]["Key"], "Code": "AccessDenied"}]}
+
+    fake = _FailingDeleteClient(
+        date_prefixes=[],
+        objects={
+            "bulk/padus/2026-01-08/_manifest.json": b'{"run_id": "run-1"}',
+            "bulk/padus/2026-01-08/runs/run-1/data.parquet": b"keep-me",
+            "bulk/padus/2026-01-01/runs/old-run/data.parquet": b"stale",
+        },
+    )
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
+
+    with pytest.raises(RuntimeError, match="AccessDenied"):
+        spaces.prune_other_snapshots(_CONFIGURED, "padus", date(2026, 1, 8), "run-1")

@@ -33,6 +33,19 @@ on:
         required: false
         default: ""
 
+# Copilot review (PR #361, issue #359): spaces.prune_other_snapshots deletes every object under
+# bulk/{source}/ except the run it was just called for - two overlapping stage_snapshot calls
+# for the same source (the weekly cron firing while someone manually dispatches, say) could then
+# have one run's prune delete the other's not-yet-published objects, or a loader mid-download of
+# one run see its objects vanish under a second run's prune. Rather than adding S3-level
+# locking/leases inside stage_snapshot (extra complexity, and DO Spaces' conditional-write
+# support isn't guaranteed), queue overlapping workflow runs instead - this is the only place
+# `stage_snapshot` ever actually runs from, so serializing here closes the race at its one real
+# entrypoint.
+concurrency:
+  group: bulk-snapshot-staging
+  cancel-in-progress: false
+
 jobs:
   stage:
     runs-on: ubuntu-latest

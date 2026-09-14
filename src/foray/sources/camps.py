@@ -644,14 +644,23 @@ def load_ridb(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
     """Loader: load the newest staged RIDB snapshot into ``campsites`` and prune any ``ridb``
     row the export no longer lists (a closed/delisted facility) - the export is authoritative
     and complete, unlike the live crawl's home-radius/coverage-state scoping."""
-    rows: list[tuple[Any, ...]] = []
+    total = 0
+    ids: list[str] = []
+    # Upsert each batch as it's read rather than buffering the whole export in `rows` first
+    # (Copilot review, PR #361) - only `ids` (needed for the prune step below) accumulates across
+    # the whole loop, so this stays bounded even if RIDB's export eventually outgrows comfortable
+    # in-memory size, the same guarantee `write_snapshot_parquet`'s streaming write already gives
+    # the stage side.
     for batch in spaces.read_snapshot_parquet(cfg.spaces, "ridb", snapshot_date, run_id, _BULK_SNAPSHOT_FILENAME):
-        rows.extend(tuple(rec[col] for col in _CAMPSITE_COLUMNS) for rec in batch)
-    upsert_campsites(con, rows)
-    pruned = cache.prune_campsites_missing_from(con, "ridb", [row[0] for row in rows])
+        chunk = [tuple(rec[col] for col in _CAMPSITE_COLUMNS) for rec in batch]
+        if chunk:
+            upsert_campsites(con, chunk)
+            total += len(chunk)
+            ids.extend(row[0] for row in chunk)
+    pruned = cache.prune_campsites_missing_from(con, "ridb", ids)
     # `/healthz/data` (issue #332) computes campground freshness from the newest `fetched_at`
     # across every `camps:`-prefixed ingest_log key (`latest_ingest_at`) - without this, a
     # successful bulk load would still read as stale there even though the live crawl above is
     # now permanently skipped in its favor.
-    cache.record_ingest(con, f"camps:ridb:bulk:{snapshot_date.isoformat()}", len(rows))
-    logger.info("camps: loaded %d ridb facilities from the bulk snapshot (pruned %d stale)", len(rows), pruned)
+    cache.record_ingest(con, f"camps:ridb:bulk:{snapshot_date.isoformat()}", total)
+    logger.info("camps: loaded %d ridb facilities from the bulk snapshot (pruned %d stale)", total, pruned)
