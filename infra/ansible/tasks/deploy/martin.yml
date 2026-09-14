@@ -23,8 +23,12 @@
     state: started
     restart_policy: unless-stopped
     command: ["--config", "/config.yaml"]
+    # user/password are percent-encoded (urlencode) - a managed-PG credential can contain
+    # URI-reserved characters (@ # / ? :) that would otherwise get parsed as part of the
+    # host/path instead of the credential itself, unlike the app's separate PGUSER/PGPASSWORD
+    # env vars (Copilot review, PR #368). Keep the handler below in sync.
     env:
-      DATABASE_URL: "postgres://{{ foray_db_user }}:{{ foray_db_password }}@{{ foray_db_host }}:{{ foray_db_port }}/{{ foray_do_db_name }}"
+      DATABASE_URL: "postgres://{{ foray_db_user | urlencode }}:{{ foray_db_password | urlencode }}@{{ foray_db_host }}:{{ foray_db_port }}/{{ foray_do_db_name }}"
     volumes:
       - /opt/foray-planner/martin-config.yaml:/config.yaml:ro
     networks:

@@ -137,9 +137,9 @@
         - foray
         - "foray:deploy"
 
-    - name: Include martin (trails vector tile server) tasks
+    - name: Include one-shot schema migration task
       ansible.builtin.include_tasks:
-        file: tasks/deploy/martin.yml
+        file: tasks/deploy/migrate.yml
         apply:
           tags:
             - foray
@@ -148,9 +148,12 @@
         - foray
         - "foray:deploy"
 
-    - name: Include one-shot schema migration task
+    # After migrate.yml, not before: the `trails` table (and any future martin-published table)
+    # only exists once the schema migration above has run, and a fresh droplet has no `trails`
+    # table until then (Copilot review, PR #368).
+    - name: Include martin (trails vector tile server) tasks
       ansible.builtin.include_tasks:
-        file: tasks/deploy/migrate.yml
+        file: tasks/deploy/martin.yml
         apply:
           tags:
             - foray

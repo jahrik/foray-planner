@@ -42,8 +42,9 @@
     restart: true
     restart_policy: unless-stopped
     command: ["--config", "/config.yaml"]
+    # Kept in sync with tasks/deploy/martin.yml's own DATABASE_URL - see its comment.
     env:
-      DATABASE_URL: "postgres://{{ foray_db_user }}:{{ foray_db_password }}@{{ foray_db_host }}:{{ foray_db_port }}/{{ foray_do_db_name }}"
+      DATABASE_URL: "postgres://{{ foray_db_user | urlencode }}:{{ foray_db_password | urlencode }}@{{ foray_db_host }}:{{ foray_db_port }}/{{ foray_do_db_name }}"
     volumes:
       - /opt/foray-planner/martin-config.yaml:/config.yaml:ro
     networks:
