@@ -9,9 +9,11 @@ Two angles, one table (``cache.fire_perimeters``):
 * **Recent burn scars** - a morel-opportunity signal (InterAgency Fire Perimeter History,
   windowed to the last 3 completed fire years + the current year, matching the burn-morel
   productivity curve). Slow cadence, plain upsert.
-* **MTBS burn severity** - optional enrichment joined onto either lane by IRWIN / MTBS id.
-  Published ~1.5-2 yr after a season, so recent scars stay ``dominant_severity = NULL``; the
-  layer works without it (``fire_year`` + acreage carry the recent scars).
+* **Burn severity** - optional enrichment joined onto either lane, applied by a separate bulk
+  source (``foray.sources.ravg``, issue #335 PR 4) rather than fetched here. The MTBS severity
+  service this module originally called live turned out to be dead (confirmed 2026-09-14 - see
+  ``ravg.py``'s module docstring); RAVG replaces it. The layer works without any severity data
+  too (``fire_year`` + acreage carry the recent scars on their own).
 
 Cloned from ``land.py``'s ArcGIS pattern end to end: envelope query, server-side geometry
 generalization, GeoJSON stored as text, a representative center cached (the `geom` GIST index
@@ -19,8 +21,8 @@ serves "fire near here"), one source unreachable is skipped rather than aborting
 Informational only - links the
 official incident page, never asserts a road/forest closure (see AGENTS.md).
 
-No API key. Endpoints are the public NIFC / MTBS ArcGIS services; if one moves, only the
-constants here change.
+No API key. Endpoints are the public NIFC ArcGIS services; if one moves, only the constants here
+change.
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ import httpx
 import psycopg
 
 from foray.alerting import alert
-from foray.cache import apply_fire_severity, replace_fire_lane, upsert_fire_perimeters
+from foray.cache import replace_fire_lane, upsert_fire_perimeters
 from foray.config import Settings
 from foray.geo import bbox_around
 from foray.sources.http import USER_AGENT
@@ -56,7 +58,8 @@ def _lane_row_count(con: psycopg.Connection, source_key: str) -> int:
 
 
 # NIFC WFIGS (Wildland Fire Interagency Geospatial Services) + InterAgency Perimeter History,
-# all on the NIFC ArcGIS Online org. MTBS burned-area boundaries on the MTBS portal server.
+# all on the NIFC ArcGIS Online org. Burn-severity enrichment is a separate bulk source, not
+# fetched here - see foray.sources.ravg.
 ACTIVE_PERIMETERS_URL = (
     "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/"
     "WFIGS_Interagency_Perimeters_Current/FeatureServer/0/query"
@@ -68,9 +71,6 @@ ACTIVE_LOCATIONS_URL = (
 PERIMETER_HISTORY_URL = (
     "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/"
     "InterAgencyFirePerimeterHistory_All_Years_View/FeatureServer/0/query"
-)
-MTBS_SEVERITY_URL = (
-    "https://portal.mtbs.gov/server/rest/services/MTBS_ATBI/MTBS_Burned_Area_Boundaries/MapServer/0/query"
 )
 
 LANE_ACTIVE = "wfigs_active"
@@ -260,28 +260,6 @@ def _fetch_lane(
     return list(by_id.values())
 
 
-def _fetch_mtbs_severity(client: httpx.Client, envelope: tuple[float, float, float, float]) -> list[tuple[Any, ...]]:
-    """MTBS burned-area boundaries -> severity-enrichment tuples for ``cache.apply_fire_severity``.
-
-    MTBS publishes per-fire severity-class acreage on the boundary features. Matched onto our
-    perimeters by IRWIN id where present, else the MTBS fire id."""
-    rows: list[tuple[Any, ...]] = []
-    for feature in _iter_features(client, MTBS_SEVERITY_URL, where="1=1", envelope=envelope):
-        props = feature.get("properties") or {}
-        irwin = _get(props, "Irwin_ID", "IRWINID", "IrwinID")
-        mtbs_id = _get(props, "Event_ID", "MTBS_ID", "Fire_ID")
-        unburned = _to_float(_get(props, "Acres_Unburned_Low", "UnburnLow_Acres"))
-        low = _to_float(_get(props, "Acres_Low", "Low_Acres"))
-        moderate = _to_float(_get(props, "Acres_Moderate", "Mod_Acres"))
-        high = _to_float(_get(props, "Acres_High", "High_Acres"))
-        classes = {"low": low or 0.0, "moderate": moderate or 0.0, "high": high or 0.0}
-        dominant = max(classes, key=lambda key: classes[key]) if any(classes.values()) else None
-        match_key, match_value = ("irwin_id", irwin) if irwin else ("mtbs_fire_id", mtbs_id)
-        if match_value:
-            rows.append((match_key, match_value, unburned, low, moderate, high, dominant, mtbs_id))
-    return rows
-
-
 def refresh_fire(
     con: psycopg.Connection,
     cfg: Settings,
@@ -291,15 +269,16 @@ def refresh_fire(
 ) -> dict[str, int]:
     """Refresh all three fire lanes over the coverage envelope (issue #227).
 
-    Returns ``{"active", "points", "history", "severity"}`` row counts. Each lane is
-    best-effort: one source failing is logged and skipped, the rest still refresh. The active
-    and point lanes use replace semantics; history is a plain upsert; MTBS severity is applied
-    backfill-style onto whatever perimeters already exist."""
+    Returns ``{"active", "points", "history"}`` row counts. Each lane is best-effort: one source
+    failing is logged and skipped, the rest still refresh. The active and point lanes use replace
+    semantics; history is a plain upsert. Burn-severity enrichment (``dominant_severity``) is
+    applied by a separate bulk source (``foray.sources.ravg``, issue #335 PR 4), not fetched here
+    - see this module's docstring for why."""
     owns = client is None
     client = client or httpx.Client(timeout=60.0, headers={"User-Agent": USER_AGENT})
     envelope = _envelope(cfg)
     this_year = dt.date.today().year
-    counts = {"active": 0, "points": 0, "history": 0, "severity": 0}
+    counts = {"active": 0, "points": 0, "history": 0}
     try:
         lanes: list[tuple[str, str, str, str, bool, bool]] = [
             (LANE_ACTIVE, ACTIVE_PERIMETERS_URL, "active", "1=1", False, True),
@@ -351,15 +330,6 @@ def refresh_fire(
                 upsert_fire_perimeters(con, rows)
             counts[key] = len(rows)
             logger.info("fire: lane %s -> %d rows", lane, len(rows))
-
-        if progress_cb:
-            progress_cb("Fetching MTBS severity…", len(lanes) / (len(lanes) + 1) * 100.0)
-        try:
-            severity_rows = _fetch_mtbs_severity(client, envelope)
-            counts["severity"] = apply_fire_severity(con, severity_rows)
-            logger.info("fire: MTBS severity applied to %d perimeters", counts["severity"])
-        except _SOURCE_ERRORS as error:
-            logger.warning("fire: MTBS severity fetch failed (%s) - burn scars keep NULL severity", error)
     finally:
         if owns:
             client.close()

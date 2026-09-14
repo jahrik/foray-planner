@@ -147,7 +147,7 @@ spots" value without the license problem. Do not add iOverlander or The Dyrt.
 
 ---
 
-## NIFC / MTBS wildfire ArcGIS services
+## NIFC wildfire ArcGIS services + RAVG burn severity
 
 **Role:** Active wildfire perimeters + points (safety/access) and recent burn scars
 (burn-morel opportunity), issue #227. Cloned from the BLM/USFS ArcGIS pattern.
@@ -158,8 +158,6 @@ spots" value without the license problem. Do not add iOverlander or The Dyrt.
   - Active points: NIFC **WFIGS Current Interagency Fire Locations** (small/new fires, no perimeter yet)
   - History: NIFC **InterAgency Fire Perimeter History** (windowed to the last 3 completed fire
     years + current, matching the burn-morel productivity curve)
-  - Severity: **MTBS Burned Area Boundaries** (`dominant_severity` join, published ~1.5-2 yr
-    after a season - recent scars stay `NULL` and the layer still works)
 - **Storage:** `fire_perimeters`, with a PostGIS `geom geography` column + GiST index
   (`ix_fire_perimeters_geom`, issue #268) backing the "fire near here" query and a representative
   center for the card. The GeoJSON text is kept for serving the map layer; the bbox columns are gone.
@@ -169,6 +167,19 @@ spots" value without the license problem. Do not add iOverlander or The Dyrt.
 - **No claims:** popups link the official incident page (InciWeb / NIFC); the app never asserts
   a road or forest closure - same posture as land ownership.
 - **Tests:** Network-mocked with `httpx.MockTransport`.
+
+**Burn severity (`dominant_severity`), issue #335 PR 4:** originally a live MTBS severity fetch
+inside `refresh_fire` - that endpoint (`portal.mtbs.gov`) no longer resolves at all (confirmed
+2026-09-14), so it had been failing silently on every refresh since #227 shipped. MTBS's own
+live-confirmed national layer (`EDW_MTBS_01/MapServer/63` on `apps.fs.usda.gov`) doesn't carry
+per-severity-class acreage, only boundary/metadata - so it isn't a drop-in fix. Severity now comes
+from **RAVG** (`EDW_RAVG_v2_01/MapServer/0`, found via an ArcGIS Online org search after every
+guessed name under `apps.fs.usda.gov/.../RDW_Wildfire` 403'd), a vegetation-mortality proxy
+(`tree_acres`/`tree_ac_50`/`tree_ac_75`) mapped onto the same low/moderate/high shape
+`cache.apply_fire_severity` expects. No shared id field exists between RAVG and our WFIGS-derived
+rows, so matching falls back to a normalized name+year join (`cache._MTBS_UPDATE`'s `"name_year"`
+key) - best-effort. Loaded via `ingest-bulk ravg` (`foray/sources/ravg.py`), per #357's bulk-source
+standard - not a live per-refresh fetch. See that module's docstring for the full writeup.
 
 ---
 

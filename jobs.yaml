@@ -140,3 +140,13 @@ jobs:
     interval_hours: 24
     window: night
     writer: true
+
+  # RAVG burn severity (issue #335 PR 4) - replaces the dead live MTBS severity fetch that used
+  # to run inside `fire`'s own refresh (portal.mtbs.gov no longer resolves). Small (~1,400 rows
+  # nationally) and enrichment-only (never creates fire_perimeters rows), but still `night`:
+  # `apply_fire_severity` writes can touch every row in both the active and history lanes.
+  - name: ingest-bulk-ravg
+    command: ingest-bulk ravg
+    interval_hours: 24
+    window: night
+    writer: true
