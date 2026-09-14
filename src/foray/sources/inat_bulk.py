@@ -76,12 +76,16 @@ _COL_GENUS = 37
 _PLACE_ID_US = 1
 _SINCE_YEAR_FLOOR = "2000-01-01"
 
-# 64 MiB, not http.py's usual 8 MiB (see camps.py's RIDB reader) - the ~29 GB DwC-A scan makes
-# thousands of range GETs at 8 MiB each, which is what got the client 403'd by
-# static.inaturalist.org partway through a run (seen in production, see HttpRangeReader's
-# docstring); an 8x larger buffer cuts the request count (and _RANGE_MIN_INTERVAL's added wall
-# time) by the same factor for the same bytes read.
-_BUFFER_SIZE = 64 * 1024 * 1024
+# 256 MiB (raised from 64 MiB - PR #360 - after that size still got 403'd partway through a
+# production run: it survived ~40 requests/~5 min/~2.5 GB instead of the original ~11
+# requests/~9s/~88 MB, which pointed at a rate-based (leaky-bucket) limiter on
+# static.inaturalist.org rather than a pure burst check - fewer, larger requests buys more
+# headroom against a limiter like that. Sized against the client's `timeout` below: at the ~8.5
+# MB/s observed in that run, a 256 MiB chunk takes ~30s, comfortably inside the timeout even if
+# throughput drops by half: 512 MiB would start eating into that margin for not much extra
+# request-count reduction, so this is the largest bump that still leaves real headroom rather
+# than trading one failure mode (403) for another (a mid-download read timeout).
+_BUFFER_SIZE = 256 * 1024 * 1024
 _CHUNK_SIZE = 5000
 
 _SNAPSHOT_FILENAME = "fungi_us.parquet"
@@ -154,8 +158,12 @@ def iter_fungi_us_rows(client: httpx.Client) -> Iterator[dict[str, Any]]:
 def stage_inat(cfg: Settings, snapshot_date: date, run_id: str) -> None:
     """Stager: stream-filter the live DwC-A dump to Fungi/US rows and upload as a Parquet file
     under this run's Space prefix. No DB connection - see this module's docstring for why
-    genus->taxon_id resolution happens in ``load_inat`` instead. Runs in GitHub Actions."""
-    with httpx.Client(timeout=120.0, headers={"User-Agent": USER_AGENT}) as client:
+    genus->taxon_id resolution happens in ``load_inat`` instead. Runs in GitHub Actions.
+
+    ``timeout=300`` (raised from 120 alongside `_BUFFER_SIZE`'s bump to 256 MiB) - a single range
+    GET now transfers a much larger chunk, so the read timeout needs enough margin that a slower
+    network doesn't turn a 403 into a timeout error instead of actually fixing anything."""
+    with httpx.Client(timeout=300.0, headers={"User-Agent": USER_AGENT}) as client:
         kept = spaces.write_snapshot_parquet(
             cfg.spaces,
             "inat",
