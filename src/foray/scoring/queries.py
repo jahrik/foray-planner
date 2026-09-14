@@ -220,6 +220,28 @@ _ROAD_LENGTH_WEIGHT = 1.0
 # A forest road closed to motor vehicles but open on foot is prime foraging - walk-in, less
 # picked - so being gated is a positive signal here, not the access penalty it looks like.
 _WALK_IN_RELEVANCE_BONUS = 2.0
+
+# USFS's own road/trail layers (`usfs_trails`/`usfs_mvum`, issue #335 PR 3a/3b) and OSM's
+# `trails.py` ingest both cover national-forest routes, so the same physical road or trail often
+# lands as two rows - one per source. Dedup happens here at read time rather than at ingest (see
+# `sources.usfs_mvum`'s module docstring): an OSM row of the same `kind` is dropped whenever a
+# `source` starting with "usfs" sits within this radius, since the USFS layer is authoritative
+# (access matrix, official name/class) where OSM is a crowdsourced guess. Kept small - forest
+# roads/trails run for kilometers, so a wide radius would false-positive-hide two genuinely
+# distinct parallel routes as if they were the same one.
+_USFS_DEDUP_RADIUS_M = 15
+# `u.source LIKE %s` (param `"usfs%"`) rather than an inlined `'usfs%'` literal - matching
+# `cache.latest_ingest_at`'s own prefix-match convention - since a literal bare `%` in the SQL
+# text would otherwise collide with psycopg's `%s` placeholder scanning.
+_USFS_DEDUP_FILTER: LiteralString = """
+    AND NOT (
+        t.source = 'osm' AND t.kind IN ('path', 'road') AND EXISTS (
+            SELECT 1 FROM trails u
+            WHERE u.source LIKE %s AND u.kind = t.kind AND u.geom IS NOT NULL
+              AND ST_DWithin(u.geom, t.geom, %s)
+        )
+    )
+"""
 # Values of ``motor_vehicle`` / ``access`` that keep the general public from *driving* in.
 _CLOSED_TO_PUBLIC = frozenset({"no", "private", "permit", "forestry", "agricultural", "delivery", "military"})
 # ``foot`` values that positively grant walking access (needed to override a blanket ``access=*``,
@@ -304,7 +326,8 @@ def trails_near(
     so it costs nothing extra on the up-to-500-row relevance/longest candidate scan either.
     """
     # params are appended in the order their %s appears in the final SQL: GEOG_POINT (CTE) ->
-    # obs_join (FROM) -> radius (WHERE) -> kind (WHERE) -> limit (ORDER BY).
+    # obs_join (FROM) -> radius (WHERE) -> kind (WHERE) -> dedup source/radius (WHERE) ->
+    # limit (ORDER BY).
     params: list[Any] = [lng, lat]
     # `geojson` lives in `trail_geometry`, not `trails` (issue #333 PR 2, migration 45) - only
     # joined when a caller actually wants it, so the common `with_geometry=False` list-view path
@@ -368,6 +391,7 @@ def trails_near(
     params.append(radius_km * 1000.0)
     if kinds:
         params.append(kinds)
+    params.extend(["usfs%", _USFS_DEDUP_RADIUS_M])
 
     order_limit: LiteralString = ""
     if sort == "nearest" and limit is not None:
@@ -392,6 +416,7 @@ def trails_near(
                t.land_agency, t.land_unit
         FROM trails t{geom_join}, pt{camp_join}{lead_join}{obs_join}
         WHERE t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s) {kind_filter}
+        {_USFS_DEDUP_FILTER}
         {order_limit}
         """
     rows = con.execute(sql, params).fetchall()
@@ -663,10 +688,11 @@ def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: fl
         LEFT JOIN trail_geometry g ON g.id = t.id, pt
         WHERE t.kind IN ('path', 'road', 'route')
           AND t.geom IS NOT NULL AND ST_DWithin(t.geom, pt.g, %s)
+        {_USFS_DEDUP_FILTER}
         ORDER BY t.geom <-> pt.g
         LIMIT 1
         """
-    row = con.execute(sql, [lng, lat, max_km * 1000.0]).fetchone()
+    row = con.execute(sql, [lng, lat, max_km * 1000.0, "usfs%", _USFS_DEDUP_RADIUS_M]).fetchone()
     if row is None:
         return None
     return _base_trail(row, distance_km=row[10], camp_distance_km=None, forage_obs=row[11])

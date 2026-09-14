@@ -693,6 +693,74 @@ def test_walk_in_gate_is_overridden_by_an_explicit_foot_no() -> None:
     assert _walk_in({"barrier": "gate", "access": "private", "foot": "yes"}) is True
 
 
+def test_trails_near_dedupes_an_osm_road_against_its_usfs_mvum_twin(con: psycopg.Connection) -> None:
+    from foray.sources.usfs_mvum import _parse_feature as parse_mvum
+
+    osm_twin = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "track", "name": "FR 300 (OSM guess)"},
+            # ~5m from the USFS row below - well inside the dedup radius.
+            "geometry": [{"lat": 47.6000, "lon": -122.3000}, {"lat": 47.6010, "lon": -122.3000}],
+        }
+    )
+    mvum_row = parse_mvum(
+        {
+            "properties": {"RTE_CN": "300", "NAME": "FR 300"},
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [[-122.30004, 47.60004], [-122.30004, 47.60104]],
+            },
+        }
+    )
+    distinct_road = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "track", "name": "Unrelated Road"},
+            # Far enough away (~2 km) that it must not be caught by the dedup radius.
+            "geometry": [{"lat": 47.62, "lon": -122.32}, {"lat": 47.625, "lon": -122.32}],
+        }
+    )
+    assert osm_twin is not None and mvum_row is not None and distinct_road is not None
+    upsert_trails(con, [osm_twin, mvum_row, distinct_road])
+
+    roads = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=10.0, kind="road")
+    by_name = {t.name: t for t in roads}
+    assert "FR 300 (OSM guess)" not in by_name  # the OSM twin is dropped
+    assert by_name["FR 300"].source == "usfs_mvum"
+    assert by_name["Unrelated Road"].source == "osm"  # untouched - outside the dedup radius
+
+
+def test_nearest_trail_dedupes_an_osm_road_against_its_usfs_mvum_twin(con: psycopg.Connection) -> None:
+    from foray.sources.usfs_mvum import _parse_feature as parse_mvum
+
+    osm_twin = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "track", "name": "FR 300 (OSM guess)"},
+            "geometry": [{"lat": 47.6000, "lon": -122.3000}, {"lat": 47.6010, "lon": -122.3000}],
+        }
+    )
+    mvum_row = parse_mvum(
+        {
+            "properties": {"RTE_CN": "300", "NAME": "FR 300"},
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [[-122.30004, 47.60004], [-122.30004, 47.60104]],
+            },
+        }
+    )
+    assert osm_twin is not None and mvum_row is not None
+    upsert_trails(con, [osm_twin, mvum_row])
+
+    nearest = nearest_trail(con, lat=47.6005, lng=-122.3000, max_km=1.0)
+    assert nearest is not None
+    assert nearest.source == "usfs_mvum"  # the OSM twin never surfaces
+
+
 def test_trail_land_is_persisted_at_ingest_and_tags_the_smallest_owning_unit(con: psycopg.Connection) -> None:
     road = _parse_element(
         {
