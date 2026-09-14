@@ -52,6 +52,7 @@ import codecs
 import csv
 import datetime as dt
 import logging
+import time
 from collections.abc import Iterator
 from datetime import date
 from typing import Any
@@ -124,9 +125,12 @@ def _iter_csv_lines(byte_chunks: Iterator[bytes]) -> Iterator[str]:
     buffer = ""
     for chunk in byte_chunks:
         buffer += decoder.decode(chunk)
-        while "\n" in buffer:
-            line, buffer = buffer.split("\n", 1)
-            yield line
+        # One split per chunk, not one split per line found in it - splitting repeatedly against
+        # a shrinking buffer is O(lines-per-chunk) copies of the whole remaining buffer, which is
+        # quadratic over a multi-billion-row CSV (Copilot review catch on PR #365).
+        lines = buffer.split("\n")
+        buffer = lines.pop()
+        yield from lines
     buffer += decoder.decode(b"", final=True)
     if buffer:
         yield buffer
@@ -174,6 +178,10 @@ def iter_fungi_us_rows(client: httpx.Client) -> Iterator[dict[str, Any]]:
             return  # observations.csv is the last entry in the archive - nothing left to drain
 
 
+_MAX_STAGE_ATTEMPTS = 3
+_STAGE_RETRY_DELAY_SECONDS = 30.0
+
+
 def stage_inat(cfg: Settings, snapshot_date: date, run_id: str) -> None:
     """Stager: stream-filter the live DwC-A dump to Fungi/US rows and upload as a Parquet file
     under this run's Space prefix. No DB connection - see this module's docstring for why
@@ -181,17 +189,39 @@ def stage_inat(cfg: Settings, snapshot_date: date, run_id: str) -> None:
 
     ``timeout=60`` applies per socket read (httpx's streaming reads are bounded individually, not
     over the whole multi-hour GET) - generous for a single ``_STREAM_CHUNK_SIZE`` (1 MiB) read
-    without risking a multi-minute hang on a stalled connection going undetected."""
+    without risking a multi-minute hang on a stalled connection going undetected.
+
+    Retries up to ``_MAX_STAGE_ATTEMPTS`` on a transport failure (a dropped connection, a read
+    timeout), each retry restarting the whole GET from byte 0 - this module's docstring already
+    explains why a plain DEFLATE stream can't resume from an arbitrary offset, so a failure late
+    in the scan still costs the whole scan again. This only recovers an early blip without
+    waiting for next week's scheduled run; either way a failed run harmlessly leaves the previous
+    week's published snapshot in place (``ingest_bulk.stage_snapshot`` only prunes it after a new
+    one publishes successfully) - the ``/healthz/data`` staleness check (issue #357) is the
+    backstop if every attempt fails (Copilot review catch on PR #365)."""
     with httpx.Client(timeout=60.0, headers={"User-Agent": USER_AGENT}) as client:
-        kept = spaces.write_snapshot_parquet(
-            cfg.spaces,
-            "inat",
-            snapshot_date,
-            run_id,
-            _SNAPSHOT_FILENAME,
-            iter_fungi_us_rows(client),
-            _SNAPSHOT_SCHEMA,
-        )
+        for attempt in range(1, _MAX_STAGE_ATTEMPTS + 1):
+            try:
+                kept = spaces.write_snapshot_parquet(
+                    cfg.spaces,
+                    "inat",
+                    snapshot_date,
+                    run_id,
+                    _SNAPSHOT_FILENAME,
+                    iter_fungi_us_rows(client),
+                    _SNAPSHOT_SCHEMA,
+                )
+                break
+            except httpx.HTTPError:
+                if attempt == _MAX_STAGE_ATTEMPTS:
+                    raise
+                logger.warning(
+                    "inat_bulk: stage attempt %d/%d failed, retrying from byte 0",
+                    attempt,
+                    _MAX_STAGE_ATTEMPTS,
+                    exc_info=True,
+                )
+                time.sleep(_STAGE_RETRY_DELAY_SECONDS)
     logger.info("inat_bulk: staged %d Fungi/US observations from the DwC-A export", kept)
 
 
