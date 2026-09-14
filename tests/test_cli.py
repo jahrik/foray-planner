@@ -299,13 +299,16 @@ def test_stage_snapshot_cmd_all_stages_every_registered_source(env_config, monke
 
 def test_stage_snapshot_cmd_all_continues_past_a_failed_source(env_config, monkeypatch) -> None:
     # A transient failure in one source (network blip, a bad endpoint) must not prevent later
-    # registered sources from being attempted - Copilot review catch on issue #357's PR.
+    # registered sources from being attempted - Copilot review catch on issue #357's PR. Uses a
+    # plain Exception, not RuntimeError/KeyError - a real stager can raise httpx.HTTPError or a
+    # botocore ClientError, neither of which the original narrow `except (KeyError, RuntimeError)`
+    # would have caught (a second Copilot review catch on the same PR).
     staged: list[str] = []
     monkeypatch.setattr(cli_module.ingest_bulk, "STAGERS", {"inat": None, "ridb": None, "usfs_trails": None})
 
     def fake_stage(cfg, source):
         if source == "ridb":
-            raise RuntimeError("boom")
+            raise ConnectionError("boom")
         staged.append(source)
         return date(2026, 1, 1)
 

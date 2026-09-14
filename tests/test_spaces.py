@@ -14,6 +14,14 @@ _UNCONFIGURED = Spaces()
 _CONFIGURED = Spaces(access_key_id="k", secret_access_key="s", bucket="foray-bulk", region="nyc3")
 
 
+@pytest.fixture(autouse=True)
+def _reset_latest_snapshot_cache() -> None:
+    # `latest_snapshot_date` caches in-process, keyed on (bucket, source) - without this reset,
+    # tests reusing `_CONFIGURED`/"padus" across different fake clients would read a previous
+    # test's cached result instead of exercising the real listing.
+    spaces.invalidate_latest_snapshot_cache()
+
+
 def test_spaces_configured_property() -> None:
     assert _UNCONFIGURED.configured is False
     assert _CONFIGURED.configured is True
@@ -58,6 +66,7 @@ class _FakeS3Client:
         self._objects: dict[str, bytes] = dict(objects or {})
         self.put_calls: list[dict[str, Any]] = []
         self.get_calls: list[str] = []
+        self.list_calls = 0
 
     def put_object(self, **kwargs: Any) -> None:
         self.put_calls.append(kwargs)
@@ -81,6 +90,7 @@ class _FakeS3Client:
     def get_paginator(self, name: str) -> Any:
         assert name == "list_objects_v2"
         prefixes = self._date_prefixes
+        self.list_calls += 1
 
         class _Paginator:
             def paginate(self, **kwargs: Any) -> list[dict[str, Any]]:
@@ -251,3 +261,38 @@ def test_latest_snapshot_date_stops_at_the_first_published_date_instead_of_check
 
     assert spaces.latest_snapshot_date(_CONFIGURED, "padus") == date(2026, 1, 15)
     assert fake.get_calls == ["bulk/padus/2026-01-15/_manifest.json"]
+
+
+def test_latest_snapshot_date_is_cached_across_calls_within_the_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Copilot review catch (PR #358): the newest-first short-circuit alone still repeats the
+    # ListObjectsV2 listing itself on every call - a short-TTL process cache is what actually
+    # bounds a frequently-polled health check's S3 work.
+    fake = _FakeS3Client(
+        date_prefixes=["bulk/padus/2026-01-08/"],
+        objects={"bulk/padus/2026-01-08/_manifest.json": json.dumps({"run_id": "run-1"}).encode()},
+    )
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake)
+
+    first = spaces.latest_snapshot_date(_CONFIGURED, "padus")
+    second = spaces.latest_snapshot_date(_CONFIGURED, "padus")
+
+    assert first == second == date(2026, 1, 8)
+    assert fake.list_calls == 1
+
+
+def test_latest_snapshot_date_cache_is_scoped_per_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Proves the cache key includes the source, not just a single global slot - querying "padus"
+    # right after "ridb" must not return ridb's cached date.
+    fake_ridb = _FakeS3Client(
+        date_prefixes=["bulk/ridb/2026-01-08/"],
+        objects={"bulk/ridb/2026-01-08/_manifest.json": json.dumps({"run_id": "run-1"}).encode()},
+    )
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake_ridb)
+    assert spaces.latest_snapshot_date(_CONFIGURED, "ridb") == date(2026, 1, 8)
+
+    fake_padus = _FakeS3Client(
+        date_prefixes=["bulk/padus/2026-02-01/"],
+        objects={"bulk/padus/2026-02-01/_manifest.json": json.dumps({"run_id": "run-2"}).encode()},
+    )
+    monkeypatch.setattr(spaces, "client", lambda cfg: fake_padus)
+    assert spaces.latest_snapshot_date(_CONFIGURED, "padus") == date(2026, 2, 1)
