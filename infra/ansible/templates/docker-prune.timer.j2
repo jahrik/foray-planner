@@ -1,12 +1,17 @@
-# Managed by the foray-planner ansible role. Daily, off-peak - see docker-prune.service.j2
-# for why this exists. Persistent=true: a missed run (droplet down at 03:00) still catches up
-# on the next boot rather than silently skipping a whole day, which is exactly the kind of gap
-# that let the disk fill unnoticed in the first place.
+# Managed by the foray-planner ansible role. Daily, just after the 02:00-05:00 night-job
+# window closes (a Copilot review catch, PR #355: scheduled at 03:00 - squarely inside that
+# window - this could race a `window: night` job's `docker run --pull always` and prune the
+# image out from under it mid-pull/create). Doesn't fully eliminate the race (`window: any`
+# jobs and a deploy can still land at any hour), which is what docker-prune.service.j2's
+# `--filter until=24h` is for - this timing just avoids the highest-density collision window.
+# Persistent=true: a missed run (droplet down at 05:45) still catches up on the next boot
+# rather than silently skipping a whole day, which is exactly the kind of gap that let the
+# disk fill unnoticed in the first place.
 [Unit]
 Description=Prune unused Docker images daily
 
 [Timer]
-OnCalendar=*-*-* 03:00:00 {{ foray_night_window_tz }}
+OnCalendar=*-*-* 05:45:00 {{ foray_night_window_tz }}
 Persistent=true
 RandomizedDelaySec={{ foray_job_randomized_delay_sec }}
 
