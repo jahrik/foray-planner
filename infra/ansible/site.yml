@@ -187,6 +187,21 @@
         - "foray:cron"
         - "foray:deploy"
 
+    # Daily docker-image-prune timer (disk-space self-heal) - see docker-prune.service.j2.
+    # Tagged the same as the job timers above so every deploy keeps it current too.
+    - name: Include docker-prune timer tasks
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/docker_prune_timer.yml
+        apply:
+          tags:
+            - foray
+            - "foray:cron"
+            - "foray:deploy"
+      tags:
+        - foray
+        - "foray:cron"
+        - "foray:deploy"
+
     - name: Include one-off genus catalog refresh task
       ansible.builtin.include_tasks:
         file: tasks/deploy/genera_once.yml

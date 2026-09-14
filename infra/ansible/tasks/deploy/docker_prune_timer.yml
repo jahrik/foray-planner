@@ -1,0 +1,27 @@
+---
+# Daily `docker image prune -a` on the droplet - see docker-prune.service.j2 for why. Not part
+# of jobs.yaml (that manifest is for `foray <command>` runs inside the app container; this is a
+# host-level Docker Engine maintenance command, and jobs.yaml's `foray job` wrapper couldn't run
+# it anyway).
+
+- name: Deploy the docker-prune systemd service unit
+  ansible.builtin.template:
+    src: docker-prune.service.j2
+    dest: /etc/systemd/system/docker-prune.service
+    mode: "0644"
+
+- name: Deploy the docker-prune systemd timer unit
+  ansible.builtin.template:
+    src: docker-prune.timer.j2
+    dest: /etc/systemd/system/docker-prune.timer
+    mode: "0644"
+
+- name: Reload systemd unit files
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable + start the docker-prune timer
+  ansible.builtin.systemd:
+    name: docker-prune.timer
+    enabled: true
+    state: started
