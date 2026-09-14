@@ -196,6 +196,36 @@ def test_ingest_usfs_trails_coverage_reruns_past_an_unversioned_marker(con: psyc
     assert is_ingested(con, f"usfs_trails:coverage:v{_USFS_TRAILS_VERSION}")
 
 
+def test_ingest_usfs_trails_coverage_keeps_partial_rows_but_does_not_mark_done_on_failure(
+    con: psycopg.Connection,
+) -> None:
+    # A mid-stream failure must not record the coverage marker as done - unlike a full in-memory
+    # fetch, page-streamed upserts have already committed their successful pages, but the run
+    # still needs to retry on the next pass to pick up whatever came after the failure.
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(request.url.params.get("resultOffset", "0"))
+        if offset > 0:
+            return httpx.Response(500)
+        # A full page (exactly _PAGE_SIZE) so _iter_pages continues to a second request, which
+        # the handler above fails - a short first page would look "done" and never retry.
+        features = [
+            {"properties": {"TRAIL_CN": str(index)}, "geometry": _line(HOME_LAT + index * 0.0001, HOME_LNG)}
+            for index in range(1000)
+        ]
+        return httpx.Response(
+            200, json={"type": "FeatureCollection", "features": features, "exceededTransferLimit": True}
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    cfg = Settings(coverage=[CoverageRegion(name="California", place_id=165, bbox=(-124.5, 32.5, -114.1, 42.1))])
+    count = ingest_usfs_trails_coverage(cfg, con, client=client)
+    assert count == 1000  # the first page's rows were upserted before the failure
+    assert not is_ingested(con, f"usfs_trails:coverage:v{_USFS_TRAILS_VERSION}")
+
+    rows = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=30.0, kind="path", limit=1)
+    assert rows  # the partial page's rows survive
+
+
 def test_ingest_usfs_trails_coverage_requires_a_coverage_bbox(con: psycopg.Connection) -> None:
     cfg = Settings(coverage=[CoverageRegion(name="No bbox", place_id=1)])
     with pytest.raises(ValueError, match="bbox"):

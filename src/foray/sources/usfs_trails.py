@@ -102,7 +102,7 @@ def _to_lnglat(coords: list[tuple[float, float]]) -> list[list[float]]:
 def _length_km(lines: list[list[tuple[float, float]]]) -> float | None:
     """Great-circle length of the full (un-thinned) polyline set - never trust `gis_miles`, which
     the source can leave stale or mismatched with the actual geometry (see TODO.md R2)."""
-    total = sum(haversine_km(a[0], a[1], b[0], b[1]) for line in lines for a, b in pairwise(line))
+    total = sum(haversine_km(start[0], start[1], end[0], end[1]) for line in lines for start, end in pairwise(line))
     return round(total, 3) if total > 0 else None
 
 
@@ -185,8 +185,13 @@ def _parse_feature(feature: dict[str, Any]) -> tuple[Any, ...] | None:
     )
 
 
-def _iter_features(client: httpx.Client, envelope: tuple[float, float, float, float]) -> Iterator[dict[str, Any]]:
-    """Yield every Trail_NFS feature ArcGIS returns for the envelope, paging until exhausted."""
+def _iter_pages(client: httpx.Client, envelope: tuple[float, float, float, float]) -> Iterator[list[dict[str, Any]]]:
+    """Yield each ArcGIS response page (<= `_PAGE_SIZE` features) for the envelope, paging until
+    exhausted - one page at a time, not the whole national result, so a caller can upsert and
+    discard each page rather than holding the full ~78k-feature national result in memory (a live
+    count against the real service, checked 2026-09-14: 78,149 TERRA features - smaller than
+    PAD-US's Fee Managers count of 214,108, which already ingests coverage-wide from this same
+    droplet, see `land.py`)."""
     xmin, ymin, xmax, ymax = envelope
     offset = 0
     while True:
@@ -213,10 +218,20 @@ def _iter_features(client: httpx.Client, envelope: tuple[float, float, float, fl
         features = payload.get("features", [])
         if not features:
             return
-        yield from features
+        yield features
         offset += len(features)
         if not payload.get("exceededTransferLimit") or len(features) < _PAGE_SIZE:
             return
+
+
+def _parse_page(features: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
+    """One ArcGIS page -> trails row tuples, deduped by id within the page."""
+    by_id: dict[str, tuple[Any, ...]] = {}
+    for feature in features:
+        row = _parse_feature(feature)
+        if row is not None:
+            by_id[row[0]] = row
+    return list(by_id.values())
 
 
 def fetch_usfs_trails(
@@ -228,7 +243,9 @@ def fetch_usfs_trails(
     """Fetch USFS foot trails within an (xmin, ymin, xmax, ymax) envelope, deduped by id.
 
     Best-effort like the other area sources: a failing/malformed response is logged and yields
-    whatever was already parsed rather than aborting the whole ingest.
+    whatever was already parsed rather than aborting the whole ingest. For a small envelope
+    (state-sized or smaller); the coverage-wide national pull uses
+    ``ingest_usfs_trails_coverage``'s own page-at-a-time loop instead, to keep memory bounded.
     """
     owns = client is None
     client = client or httpx.Client(timeout=60.0)
@@ -236,9 +253,8 @@ def fetch_usfs_trails(
     try:
         if progress_cb:
             progress_cb("Fetching USFS trails…", 0.0)
-        for feature in _iter_features(client, envelope):
-            row = _parse_feature(feature)
-            if row is not None:
+        for page in _iter_pages(client, envelope):
+            for row in _parse_page(page):
                 by_id[row[0]] = row
     except SOURCE_ERRORS as error:
         logger.warning("usfs_trails: fetch failed (%s) - keeping %d rows parsed so far", error, len(by_id))
@@ -257,9 +273,16 @@ def ingest_usfs_trails_coverage(
 ) -> int:
     """Ingest USFS Trail_NFS foot trails across all of ``cfg.coverage`` in one envelope query.
 
+    Upserts each ArcGIS page as it arrives (see ``_iter_pages``) rather than accumulating the
+    whole national result before one upsert - bounds memory to one page (<= `_PAGE_SIZE` rows)
+    at a time regardless of how large the national result is.
+
     One-shot per ``_USFS_TRAILS_VERSION``, same self-heal pattern as
     ``land.ingest_public_land_coverage``: skips once ``usfs_trails:coverage:v{N}`` is recorded,
-    bumping the version re-pulls on the next run.
+    bumping the version re-pulls on the next run. A mid-stream failure is *not* recorded as done
+    (unlike a full in-memory fetch, a partial page-streamed pull has already written its
+    successful pages, but the run must still be retried to pick up the rest) - same
+    don't-mark-done-on-partial-failure rule ``trails.ingest_trails_region`` uses per region.
     """
     key = f"usfs_trails:coverage:v{_USFS_TRAILS_VERSION}"
     with connection(con) as database:
@@ -270,9 +293,29 @@ def ingest_usfs_trails_coverage(
             return 0
         envelope = coverage_envelope(cfg.coverage)
         logger.info("usfs_trails: fetching Trail_NFS across %d coverage regions…", len(cfg.coverage))
-        rows = fetch_usfs_trails(envelope, client=client, progress_cb=progress_cb)
-        upsert_trails(database, rows)
-        record_ingest(database, key, len(rows))
+        owns = client is None
+        client = client or httpx.Client(timeout=60.0)
+        total = 0
+        try:
+            for page in _iter_pages(client, envelope):
+                rows = _parse_page(page)
+                if rows:
+                    upsert_trails(database, rows)
+                    total += len(rows)
+                if progress_cb:
+                    progress_cb(f"Cached {total} USFS trails so far…", 0.0)
+        except SOURCE_ERRORS as error:
+            logger.warning(
+                "usfs_trails: coverage fetch failed (%s) after caching %d rows - "
+                "not recording as done, will retry next run",
+                error,
+                total,
+            )
+            return total
+        finally:
+            if owns:
+                client.close()
+        record_ingest(database, key, total)
         database.execute("DELETE FROM ingest_log WHERE key LIKE %s AND key <> %s", ["usfs_trails:coverage:v%", key])
-        logger.info("usfs_trails: cached %d USFS trails (coverage-wide)", len(rows))
-        return len(rows)
+        logger.info("usfs_trails: cached %d USFS trails (coverage-wide)", total)
+        return total
