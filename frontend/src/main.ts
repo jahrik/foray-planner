@@ -10,9 +10,9 @@ import { getJson, postJson } from "./api/client";
 import type { Home, LocationResponse } from "./api/types";
 import { initGenusSelection } from "./genera";
 import { initLayerToggles } from "./ui/layer-toggles";
-import { loadFire, loadLand } from "./map/layers";
+import { loadFire, loadLand, selectTrailOnMap } from "./map/layers";
 import { initLocationAutocomplete, initPlaceAutocomplete } from "./location";
-import { initMap, map, setMapClickHandler, updateHome } from "./map/map";
+import { initMap, map, setMapClickHandler, setTrailSelectHandler, updateHome } from "./map/map";
 import { runPlan } from "./views/plan";
 import { setLocationLatLng, startRefresh } from "./refresh";
 import { collapseIfOpen, currentDetent, initSheet, snapTo } from "./map/sheet";
@@ -126,6 +126,8 @@ async function main(): Promise<void> {
   state.terrainUrl = config.terrain_url ?? "";
   state.satelliteTilesUrl = config.satellite_tiles_url ?? "";
   state.trailsTilesUrl = config.trails_tiles_url ?? "";
+  state.landTilesUrl = config.land_tiles_url ?? "";
+  state.fireTilesUrl = config.fire_tiles_url ?? "";
   initTheme();
   initUnits();
   initTextSize();
@@ -140,6 +142,10 @@ async function main(): Promise<void> {
     if (collapseIfOpen()) return;
     setLocationLatLng(lat, lng);
   });
+  // Clicking our own rendered trails layer selects + draws that trail (issue #336 PR 2), same
+  // as clicking its Trails-tab chip - map.ts can't import layers.ts itself (layers.ts already
+  // imports from map.ts), so this is wired the same way setMapClickHandler is above.
+  setTrailSelectHandler(selectTrailOnMap);
   updateHome(config.home);
   // Leaflet measures #map's box once at construction and never re-measures on its own. The
   // mobile media query gives #map an explicit height, but the browser may not have finished

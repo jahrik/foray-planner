@@ -1,21 +1,16 @@
 import L from "leaflet";
 import "leaflet.markercluster";
+import type { Map as MaplibreMap } from "maplibre-gl";
 
 import type { CampSite, Home } from "../api/types";
+import { FIRE_ACTIVE, FIRE_LAYER_IDS, FIRE_SCAR, firePopupSpec, type FireProps } from "./basemap-fire";
+import { LAND_COLORS, LAND_DEFAULT, LAND_LAYER_IDS, landPopupSpec, type LandProps } from "./basemap-land";
+import { TRAILS_LAYER_ID, type TrailTileProps } from "./basemap-trails";
 import { FORAGE_RAMP, FORAGE_TIER_LABELS } from "./forage";
 import { clearLayer, clearLayerList } from "./layer-lifecycle";
 import { circleStyle } from "./markers";
 import { buildPopup } from "./popup";
-import {
-  enrichedRoadPopupSpec,
-  pickNearbyTrail,
-  pickRoadFeature,
-  roadLineLayerIds,
-  roadPopupSpec,
-  shouldEnrichRoad,
-  type RoadProps,
-} from "./road-inspect";
-import { getJson } from "../api/client";
+import { pickRoadFeature, roadLineLayerIds, roadPopupSpec, type RoadProps } from "./road-inspect";
 import { dist, onScopeChange, qs, state } from "../state";
 
 // Marker palette. Destination + recency markers now read their colour from tokens.css at
@@ -29,13 +24,6 @@ export const HOME_RING = "#0c0d09";
 export const CAMP_FREE = "#ffe14d"; // neon gold - free / no-fee campground
 export const CAMP_PAID = "#ff9e2e"; // bright amber - fee or unknown-cost campground
 export const CAMP_OSM = "#1fe6d0"; // neon teal - OSM dispersed-camping layer (reported sites)
-// Public-land ownership fill - non-green so it reads over the terrain, one hue per agency.
-export const LAND_COLORS: Record<string, string> = {
-  BLM: "#e8974a", // bright ochre
-  USFS: "#a693ff", // bright violet
-  Tribal: "#4d79ff", // bright blue - sovereign nation land, visually distinct from BLM/USFS
-};
-export const LAND_DEFAULT = "#b5b5b5"; // any other agency
 // Bright red - a destination card's selected trail (layers.ts's selectTrailhead), drawn solid
 // when its geometry comes from real OSM topology, dashed when it's the nearest-cached fallback.
 export const TRAIL = "#ff5555";
@@ -43,8 +31,6 @@ export const TRAIL = "#ff5555";
 // from the red drive-in trail line; matching legend entry + Trails-tab chip (issue A4b).
 export const TRAIL_WALKIN = "#1fb6a6";
 export const PLAN_STOP = "#ffd060"; // neon gold - planned-route stops and connecting line
-export const FIRE_ACTIVE = "#ff3b1f"; // hot red - active wildfire perimeter/point (issue #227)
-export const FIRE_SCAR = "#ff8c42"; // burnt orange - recent burn scar (dimmer for older years)
 
 // The persistent "you are here" dot: a white fill with a dark ring. Shared by the base-map home
 // marker (initMap) and the plan-route start marker (plan.ts runPlan) so the two stay identical.
@@ -131,6 +117,19 @@ let vectorMounting = false;
 // Held after the first load so the synchronous map-click handler can reach getGlMap() for
 // click-to-inspect without another dynamic import.
 let basemapModule: typeof import("./basemap") | null = null;
+
+// Grouped once here (see basemap.ts's `TileUrls` doc) rather than re-spelled at each call site.
+function tileUrls(): import("./basemap").TileUrls {
+  return {
+    basemapUrl: state.basemapUrl,
+    terrainUrl: state.terrainUrl,
+    satelliteUrl: state.satelliteTilesUrl,
+    trailsUrl: state.trailsTilesUrl,
+    landUrl: state.landTilesUrl,
+    fireUrl: state.fireTilesUrl,
+  };
+}
+
 export function setTiles(): void {
   if (!map || !state.basemapUrl) return;
   // Detached on purpose (the GL stack loads async), so swallow-and-log any rejection - a failed
@@ -146,27 +145,14 @@ async function applyVectorBasemap(theme: "dark" | "light"): Promise<void> {
   if (!map || !state.basemapUrl) return;
   if (basemap.hasVectorBasemap()) {
     if (tileTheme === theme) return; // already showing the right style
-    basemap.setVectorBasemapTheme(
-      state.basemapUrl,
-      state.terrainUrl,
-      state.satelliteTilesUrl,
-      state.trailsTilesUrl,
-      theme,
-    );
+    basemap.setVectorBasemapTheme(tileUrls(), theme);
     tileTheme = theme;
     return;
   }
   if (vectorMounting) return;
   vectorMounting = true;
   try {
-    basemap.mountVectorBasemap(
-      map,
-      state.basemapUrl,
-      state.terrainUrl,
-      state.satelliteTilesUrl,
-      state.trailsTilesUrl,
-      theme,
-    );
+    basemap.mountVectorBasemap(map, tileUrls(), theme);
   } catch (error) {
     vectorMounting = false; // let a later setTiles() retry
     throw error;
@@ -331,53 +317,90 @@ export function initMap(home: Home): void {
   });
 }
 
-// Click-to-inspect: if the tap landed on a rendered road/trail, open a popup of its OSM tags
-// (read straight off the vector tile - no API call) and report the hit so the caller skips the
-// set-home behaviour. A miss, or no vector basemap, returns false and the click falls through.
+// A few px of slop around the click point so a thin forest-road line is still an easy tap
+// target - shared by every `queryRenderedFeatures` box below.
+function hitBox(gl: MaplibreMap, latlng: L.LatLng): [[number, number], [number, number]] {
+  const point = gl.project([latlng.lng, latlng.lat]);
+  return [
+    [point.x - 5, point.y - 5],
+    [point.x + 5, point.y + 5],
+  ];
+}
+
+// Click-to-select for our own trails layer (issue #336 PR 2): a hit selects + draws that trail
+// exactly like clicking its Trails-tab chip or trailhead marker (layers.ts's `selectTrailhead`),
+// keyed by the tile's promoted `id` - no proximity guessing, since the click landed on that
+// exact line. Late-bound the same way `onMapClick` is (map.ts can't import layers.ts - layers.ts
+// already imports from here - so main.ts wires the real handler at startup).
+let onTrailSelect: ((id: string, lat: number, lng: number) => void) | null = null;
+
+export function setTrailSelectHandler(handler: (id: string, lat: number, lng: number) => void): void {
+  onTrailSelect = handler;
+}
+
+function trySelectTrailAt(gl: MaplibreMap, latlng: L.LatLng): boolean {
+  if (!onTrailSelect || !gl.getLayer(TRAILS_LAYER_ID)) return false;
+  const [hit] = gl.queryRenderedFeatures(hitBox(gl, latlng), { layers: [TRAILS_LAYER_ID] });
+  const id = (hit?.properties as TrailTileProps | undefined)?.id;
+  if (!id) return false;
+  onTrailSelect(id, latlng.lat, latlng.lng);
+  return true;
+}
+
+// Land/fire (issue #336 PR 2): a hit just pops up what the tile carries - no click-to-select
+// story for these, unlike trails. `LAND_LAYER_IDS`/`FIRE_LAYER_IDS` are hidden (`visibility:
+// "none"`) whenever their Layers-pill toggle is off, and `queryRenderedFeatures` never returns
+// features from a hidden layer, so no extra toggle check is needed here.
+function tryInspectLandOrFireAt(gl: MaplibreMap, latlng: L.LatLng): boolean {
+  const box = hitBox(gl, latlng);
+  const landLayers = LAND_LAYER_IDS.filter((id) => gl.getLayer(id));
+  if (landLayers.length > 0) {
+    const [hit] = gl.queryRenderedFeatures(box, { layers: landLayers });
+    if (hit) {
+      L.popup()
+        .setLatLng(latlng)
+        .setContent(buildPopup(landPopupSpec((hit.properties ?? {}) as LandProps)))
+        .openOn(map);
+      return true;
+    }
+  }
+  const fireLayers = FIRE_LAYER_IDS.filter((id) => gl.getLayer(id));
+  if (fireLayers.length > 0) {
+    const [hit] = gl.queryRenderedFeatures(box, { layers: fireLayers });
+    if (hit) {
+      L.popup()
+        .setLatLng(latlng)
+        .setContent(buildPopup(firePopupSpec((hit.properties ?? {}) as FireProps)))
+        .openOn(map);
+      return true;
+    }
+  }
+  return false;
+}
+
+// Click-to-inspect: if the tap landed on a rendered trail/land/fire/road feature, act on it (see
+// the three helpers above) and report the hit so the caller skips the set-home behaviour. A
+// miss, or no vector basemap, returns false and the click falls through.
 //
 // Exported because the destination-region circles set `bubblingMouseEvents: false` (their own
-// click selects the region and must not also stomp the home location), so a click on a road
+// click selects the region and must not also stomp the home location), so a click on a feature
 // that runs under a hero circle's translucent fill never reaches the map handler above - the
 // circle's own handler (views.ts) calls this first so a road line still wins.
 export function inspectRoadAt(latlng: L.LatLng): boolean {
   const gl = basemapModule?.getGlMap();
   if (!gl) return false;
+  if (trySelectTrailAt(gl, latlng)) return true;
+  if (tryInspectLandOrFireAt(gl, latlng)) return true;
   const layerIds = roadLineLayerIds(gl.getStyle().layers);
   if (layerIds.length === 0) return false;
-  const point = gl.project([latlng.lng, latlng.lat]);
-  // a few px of slop so a thin forest-road line is still an easy tap target
-  const box: [[number, number], [number, number]] = [
-    [point.x - 5, point.y - 5],
-    [point.x + 5, point.y + 5],
-  ];
-  const feature = pickRoadFeature(gl.queryRenderedFeatures(box, { layers: layerIds }));
+  const feature = pickRoadFeature(gl.queryRenderedFeatures(hitBox(gl, latlng), { layers: layerIds }));
   if (!feature) return false;
   const props = (feature.properties ?? {}) as RoadProps;
-  const popup = L.popup()
+  L.popup()
     .setLatLng(latlng)
     .setContent(buildPopup(roadPopupSpec(props, latlng.lat, latlng.lng)))
     .openOn(map);
-  enrichRoadPopup(popup, props, latlng.lat, latlng.lng);
   return true;
-}
-
-// The Protomaps tile only carries a track's name at z15 and never its road number, so when the
-// tile gave us no name, look the way up in our own ingested trails/roads (GET /api/trails, from
-// #306/#314 - cached, no live Overpass) and fold the real name + Ref + surface into the popup
-// that is already open. Best-effort: any failure leaves the tile popup standing.
-function enrichRoadPopup(popup: L.Popup, props: RoadProps, lat: number, lng: number): void {
-  if (!shouldEnrichRoad(props)) return;
-  void getJson("/api/trails", {
-    query: { lat, lng, sort: "nearest", limit: 5, radius_km: 0.15 },
-  })
-    .then((rows) => {
-      if (!popup.isOpen()) return;
-      const enriched = enrichedRoadPopupSpec(props, lat, lng, pickNearbyTrail(rows));
-      if (enriched) popup.setContent(buildPopup(enriched));
-    })
-    .catch(() => {
-      /* the tile popup stands */
-    });
 }
 
 let onMapClick: ((lat: number, lng: number) => void) | null = null;
@@ -582,14 +605,7 @@ export function setSatelliteBasemapEnabled(on: boolean): void {
     return;
   }
   void import("./basemap").then((basemap) => {
-    basemap.setSatelliteBasemapMode(
-      state.basemapUrl,
-      state.terrainUrl,
-      state.satelliteTilesUrl,
-      state.trailsTilesUrl,
-      currentTheme(),
-      on,
-    );
+    basemap.setSatelliteBasemapMode(tileUrls(), currentTheme(), on);
     if (!map) return;
     if (on) {
       map.attributionControl.addAttribution(SATELLITE_ATTRIBUTION);
@@ -675,8 +691,6 @@ export function deselectSize(marker: L.Circle): void {
 export function clearMarkers(): void {
   clearLayerList(map, state.markers);
   clearCamps();
-  clearLand();
-  clearFire();
   clearTrailheadMarkers();
   clearCardCampMarkers();
   clearSelectedTrail();
@@ -706,20 +720,16 @@ export function addCampMarker(marker: L.CircleMarker): void {
   state.campMarkers.push(marker);
 }
 
-export function clearLand(): void {
-  state.landLayer = clearLayer(map, state.landLayer);
+// Public-land agency toggles (#show-land-blm/usfs/tribal, layers.ts's loadLand) - live
+// setLayoutProperty/setFilter on the vector layers, no fetch (issue #336 PR 2). Same lazy
+// `import("./basemap")` pattern as setContoursEnabled/setSatelliteBasemapEnabled below.
+export function setLandVisibility(agencies: readonly string[]): void {
+  void import("./basemap").then((basemap) => basemap.setLandLayerState(agencies));
 }
 
-export function setLandLayer(layer: L.GeoJSON): void {
-  state.landLayer = layer;
-}
-
-export function clearFire(): void {
-  state.fireLayer = clearLayer(map, state.fireLayer);
-}
-
-export function setFireLayer(layer: L.GeoJSON): void {
-  state.fireLayer = layer;
+// The Fire toggle (#show-fire, layers.ts's loadFire) - same reasoning as setLandVisibility.
+export function setFireVisibility(visible: boolean): void {
+  void import("./basemap").then((basemap) => basemap.setFireLayerState(visible));
 }
 
 // Signpost marker for a destination card's Trails tab trailhead list (views.ts) - only the

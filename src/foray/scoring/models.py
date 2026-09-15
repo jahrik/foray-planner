@@ -77,8 +77,8 @@ class CampSite:
 
 @dataclass
 class FireNear:
-    """An active wildfire or recent burn scar near a point (issue #227). ``geometry`` is only
-    populated for the map layer (`GET /api/fire`); the card/scoring paths leave it None."""
+    """An active wildfire or recent burn scar near a point (issue #227) - the card / plan-stop
+    warning annotation. The map layer moved to vector tiles (issue #336 PR 2)."""
 
     id: str
     name: str
@@ -92,17 +92,6 @@ class FireNear:
     dominant_severity: str | None  # 'low' | 'moderate' | 'high' | None
     is_point: bool
     incident_url: str | None
-    geometry: dict[str, Any] | None = None
-
-
-@dataclass
-class LandUnit:
-    id: str
-    agency: str
-    unit: str
-    source: str
-    url: str
-    geometry: dict[str, Any]  # parsed GeoJSON geometry, ready for Leaflet
 
 
 @dataclass

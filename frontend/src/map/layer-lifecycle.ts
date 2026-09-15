@@ -14,7 +14,7 @@ export function clearLayerList(map: LayerRemover, layers: L.Layer[]): void {
 }
 
 /** Pull a single optional layer off the map if it's present; returns `null` for the caller to
- * store back. Backs `clearLand`, `clearSelectedTrail`, `clearPlanRoute`. */
+ * store back. Backs `clearSelectedTrail`, `clearPlanRoute`. */
 export function clearLayer(map: LayerRemover, layer: L.Layer | null): null {
   if (layer) map.removeLayer(layer);
   return null;

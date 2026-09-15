@@ -3,7 +3,7 @@
 These formalize the shapes already produced by ``foray.scoring.models``'s stdlib dataclasses and a
 few endpoint-only envelopes, so FastAPI's generated OpenAPI schema carries real field types
 for *responses*, not just request bodies/params. Field names mirror the dataclasses exactly
-(``models.SpeciesHit``, ``RegionScore``, ``CampSite``, ``LandUnit``, ``Trail``, ``Stop``,
+(``models.SpeciesHit``, ``RegionScore``, ``CampSite``, ``Trail``, ``Stop``,
 ``TripPlan``) - no new shapes invented, just typed reflections of what the routes already
 return.
 """
@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict
 from foray.config import Home
 
 # Several models below mirror the stdlib dataclasses in foray.scoring.models (SpeciesHit, RegionScore,
-# CampSite, LandUnit, Trail, Stop, TripPlan). Routes return those dataclass instances directly
+# CampSite, Trail, Stop, TripPlan). Routes return those dataclass instances directly
 # (see api/routes/), so those models need `from_attributes=True` to validate them; it's harmless for
 # the dict-shaped inputs the other models validate (alerts/observations/calendar all build plain
 # dicts in foray.scoring.queries).
@@ -39,9 +39,11 @@ class ConfigResponse(BaseModel):
     # Same-origin {z}/{x}/{y} template for the full-map satellite basemap toggle; empty when
     # disabled (see Settings.satellite_tiles_url).
     satellite_tiles_url: str = ""
-    # Same-origin {z}/{x}/{y} template for our own trails vector tiles (issue #336), proxied to
-    # the martin tile server; empty when no martin instance is configured (Settings.martin_url).
+    # Same-origin {z}/{x}/{y} templates for our own vector tiles (issue #336), proxied to the
+    # martin tile server; empty when no martin instance is configured (Settings.martin_url).
     trails_tiles_url: str = ""
+    land_tiles_url: str = ""
+    fire_tiles_url: str = ""
 
 
 class GenusResult(BaseModel):
@@ -81,8 +83,9 @@ class SpeciesHit(BaseModel):
 
 
 class FireNear(BaseModel):
-    """An active wildfire or recent burn scar near a point (issue #227). ``geometry`` is only
-    populated for the map layer (`GET /api/fire`)."""
+    """An active wildfire or recent burn scar near a point (issue #227) - the card / plan-stop
+    warning annotation. The map layer moved to vector tiles (issue #336 PR 2), so this no longer
+    carries geometry."""
 
     model_config = _FROM_DATACLASS
 
@@ -98,7 +101,6 @@ class FireNear(BaseModel):
     dominant_severity: str | None
     is_point: bool
     incident_url: str | None
-    geometry: dict[str, Any] | None = None
 
 
 class RegionScore(BaseModel):
@@ -226,17 +228,6 @@ class CampSite(BaseModel):
     reservable: bool | None = None  # RIDB Reservable (issue #306)
     fee_low: float | None = None  # nightly USD range parsed from the fee prose
     fee_high: float | None = None
-
-
-class LandUnit(BaseModel):
-    model_config = _FROM_DATACLASS
-
-    id: str
-    agency: str
-    unit: str
-    source: str
-    url: str
-    geometry: dict[str, Any]  # raw GeoJSON geometry - not modeled further, see api_models docstring
 
 
 class Trail(BaseModel):

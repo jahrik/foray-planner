@@ -276,48 +276,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/land": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Land
-         * @description Public-land ownership polygons near a region (by id) or an explicit lat/lng.
-         */
-        get: operations["get_land_api_land_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/fire": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Fire
-         * @description Active fire perimeters/points and recent burn scars near a region (by id) or an explicit
-         *     lat/lng (issue #227). ``status=active|historical`` filters; both by default. Geometry is
-         *     included for the map overlay. Informational only - links the official incident page.
-         */
-        get: operations["get_fire_api_fire_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/destinations/places": {
         parameters: {
             query?: never;
@@ -493,10 +451,49 @@ export interface paths {
         };
         /**
          * Get Trails Tile
-         * @description One trails vector tile (issue #336 PR 1), proxied same-origin from the martin tile server
-         *     so the frontend never talks to the docker-internal `martin_url` host directly.
+         * @description One trails vector tile (issue #336 PR 1) - see `_martin_tile`.
          */
         get: operations["get_trails_tile_api_tiles_trails__z___x___y__pbf_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tiles/land/{z}/{x}/{y}.pbf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Land Tile
+         * @description One public-land ownership vector tile (issue #336 PR 2) - see `_martin_tile`.
+         */
+        get: operations["get_land_tile_api_tiles_land__z___x___y__pbf_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tiles/fire/{z}/{x}/{y}.pbf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Fire Tile
+         * @description One wildfire/burn-scar vector tile (issue #336 PR 2) - see `_martin_tile`.
+         */
+        get: operations["get_fire_tile_api_tiles_fire__z___x___y__pbf_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -757,6 +754,16 @@ export interface components {
              * @default
              */
             trails_tiles_url: string;
+            /**
+             * Land Tiles Url
+             * @default
+             */
+            land_tiles_url: string;
+            /**
+             * Fire Tiles Url
+             * @default
+             */
+            fire_tiles_url: string;
         };
         /** CoverageRegionResponse */
         CoverageRegionResponse: {
@@ -778,8 +785,9 @@ export interface components {
         };
         /**
          * FireNear
-         * @description An active wildfire or recent burn scar near a point (issue #227). ``geometry`` is only
-         *     populated for the map layer (`GET /api/fire`).
+         * @description An active wildfire or recent burn scar near a point (issue #227) - the card / plan-stop
+         *     warning annotation. The map layer moved to vector tiles (issue #336 PR 2), so this no longer
+         *     carries geometry.
          */
         FireNear: {
             /** Id */
@@ -806,10 +814,6 @@ export interface components {
             is_point: boolean;
             /** Incident Url */
             incident_url: string | null;
-            /** Geometry */
-            geometry?: {
-                [key: string]: unknown;
-            } | null;
         };
         /**
          * GenusResult
@@ -853,23 +857,6 @@ export interface components {
              * @default 150
              */
             radius_km: number;
-        };
-        /** LandUnit */
-        LandUnit: {
-            /** Id */
-            id: string;
-            /** Agency */
-            agency: string;
-            /** Unit */
-            unit: string;
-            /** Source */
-            source: string;
-            /** Url */
-            url: string;
-            /** Geometry */
-            geometry: {
-                [key: string]: unknown;
-            };
         };
         /**
          * LayerFreshnessResponse
@@ -1613,75 +1600,6 @@ export interface operations {
             };
         };
     };
-    get_land_api_land_get: {
-        parameters: {
-            query?: {
-                region_id?: string | null;
-                lat?: number | null;
-                lng?: number | null;
-                radius_km?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LandUnit"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_fire_api_fire_get: {
-        parameters: {
-            query?: {
-                region_id?: string | null;
-                lat?: number | null;
-                lng?: number | null;
-                radius_km?: number;
-                status?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FireNear"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_region_places_api_destinations_places_get: {
         parameters: {
             query: {
@@ -1913,6 +1831,72 @@ export interface operations {
         };
     };
     get_trails_tile_api_tiles_trails__z___x___y__pbf_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                z: number;
+                x: number;
+                y: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.mapbox-vector-tile": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_land_tile_api_tiles_land__z___x___y__pbf_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                z: number;
+                x: number;
+                y: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.mapbox-vector-tile": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_fire_tile_api_tiles_fire__z___x___y__pbf_get: {
         parameters: {
             query?: never;
             header?: never;

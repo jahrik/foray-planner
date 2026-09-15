@@ -199,10 +199,14 @@ class Settings(BaseSettings):
     # satellite_tiles_url proxies Esri rather than exposing a third-party/internal host to the
     # frontend directly.
     martin_url: str = ""
-    # Same-origin {z}/{x}/{y} template returned to the frontend when martin_url is set. Not
-    # itself gated on martin_url here - routes/config.py blanks it out when disabled, same
+    # Same-origin {z}/{x}/{y} templates returned to the frontend when martin_url is set. Not
+    # themselves gated on martin_url here - routes/config.py blanks them out when disabled, same
     # pattern as basemap_url/satellite_tiles_url.
     trails_tiles_url: str = "/api/tiles/trails/{z}/{x}/{y}.pbf"
+    # Public-land ownership + wildfire/burn-scar layers (issue #336 PR 2) - these replace the
+    # `/api/land` / `/api/fire` GeoJSON-over-JSON routes that layers.ts used to fetch instead.
+    land_tiles_url: str = "/api/tiles/land/{z}/{x}/{y}.pbf"
+    fire_tiles_url: str = "/api/tiles/fire/{z}/{x}/{y}.pbf"
     spaces: Spaces = Field(default_factory=Spaces)
     ingest: Ingest = Ingest()
     intervals: Intervals = Field(default_factory=Intervals)

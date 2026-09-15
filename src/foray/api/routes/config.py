@@ -35,4 +35,6 @@ def get_config(
         terrain_url=cfg.terrain_url,
         satellite_tiles_url=cfg.satellite_tiles_url,
         trails_tiles_url=cfg.trails_tiles_url if cfg.martin_url else "",
+        land_tiles_url=cfg.land_tiles_url if cfg.martin_url else "",
+        fire_tiles_url=cfg.fire_tiles_url if cfg.martin_url else "",
     )

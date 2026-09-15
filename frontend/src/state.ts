@@ -24,8 +24,6 @@ export type Sort = "best" | "active" | "nearest";
 interface MapState {
   markers: L.CircleMarker[];
   campMarkers: L.CircleMarker[];
-  landLayer: L.GeoJSON | null;
-  fireLayer: L.GeoJSON | null;
   trailheadMarkers: L.Marker[];
   cardCampMarkers: L.CircleMarker[];
   selectedTrailLayer: L.Polyline | null;
@@ -53,10 +51,12 @@ interface ScopeState {
   // Same-origin {z}/{x}/{y} template for the satellite basemap toggle (issue #340), from
   // /api/config. Empty -> the toggle is hidden. Set once on load, before initMap.
   satelliteTilesUrl: string;
-  // Same-origin {z}/{x}/{y} template for our own trails vector tiles (issue #336), from
-  // /api/config. Empty -> no trails vector source (no martin instance configured). Set once on
-  // load, before initMap.
+  // Same-origin {z}/{x}/{y} templates for our own vector tiles (issue #336), from /api/config.
+  // Empty -> that source is disabled (no martin instance configured). Set once on load, before
+  // initMap. land/fire replace the old `/api/land` / `/api/fire` GeoJSON fetches.
   trailsTilesUrl: string;
+  landTilesUrl: string;
+  fireTilesUrl: string;
 }
 
 /** How results are shown: which view, sort order, unit system, and the last plan payload. */
@@ -76,8 +76,6 @@ export const state: State = {
   home: null,
   markers: [],
   campMarkers: [],
-  landLayer: null,
-  fireLayer: null,
   trailheadMarkers: [],
   cardCampMarkers: [],
   selectedTrailLayer: null,
@@ -91,6 +89,8 @@ export const state: State = {
   terrainUrl: "", // overwritten from /api/config; empty means no hillshade/contours
   satelliteTilesUrl: "", // overwritten from /api/config; empty means no satellite basemap toggle
   trailsTilesUrl: "", // overwritten from /api/config; empty means no trails vector source
+  landTilesUrl: "", // overwritten from /api/config; empty means no land vector source
+  fireTilesUrl: "", // overwritten from /api/config; empty means no fire vector source
   units: getUnits(),
 };
 

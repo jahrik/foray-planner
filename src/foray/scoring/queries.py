@@ -29,7 +29,7 @@ from foray.scoring._sql import (
     sql_in,
     taxon_filter,
 )
-from foray.scoring.models import CampSite, FireNear, LandUnit, Trail
+from foray.scoring.models import CampSite, FireNear, Trail
 
 _CALENDAR_SPECIES_PER_MONTH = 15
 
@@ -98,16 +98,15 @@ def fire_near(
     lng: float,
     radius_km: float,
     status: str | None = None,
-    include_geometry: bool = False,
     limit: int | None = None,
 ) -> list[FireNear]:
-    """Active fires and recent burn scars within ``radius_km`` of ``(lat, lng)`` (issue #227).
+    """Active fires and recent burn scars within ``radius_km`` of ``(lat, lng)`` (issue #227) -
+    the card / plan-stop warning annotation (the map layer is vector tiles, issue #336 PR 2).
 
     Index-backed ``ST_DWithin`` on ``geom``; ``ST_Distance`` gives the exact point-to-perimeter
     distance in the same query (issue #268 - previously a bbox prefilter then a ``haversine_km``
     cut on the representative center). ``status`` filters to ``'active'`` or ``'historical'``
-    (both by default). ``include_geometry`` parses the GeoJSON for the map layer; the card /
-    scoring paths leave it off. Empty when nothing is ingested yet."""
+    (both by default). Empty when nothing is ingested yet."""
     try:
         where_status: LiteralString = " AND status = %s" if status else ""
         params: list[Any] = [lng, lat, radius_km * 1000.0]
@@ -120,7 +119,7 @@ def fire_near(
                 WITH pt AS (SELECT {GEOG_POINT} AS g)
                 SELECT f.id, f.name, f.status, f.fire_year, f.percent_contained, f.gis_acres,
                        f.dominant_severity, f.is_point, f.incident_url, f.center_lat, f.center_lng,
-                       f.geojson, ST_Distance(f.geom, pt.g) / 1000.0 AS dist_km
+                       ST_Distance(f.geom, pt.g) / 1000.0 AS dist_km
                 FROM fire_perimeters f, pt
                 WHERE f.geom IS NOT NULL AND ST_DWithin(f.geom, pt.g, %s)
                 """
@@ -144,7 +143,6 @@ def fire_near(
         incident_url,
         center_lat,
         center_lng,
-        geojson,
         dist,
     ) in rows:
         scored.append(
@@ -163,40 +161,12 @@ def fire_near(
                     dominant_severity=dominant_severity,
                     is_point=is_point or False,
                     incident_url=incident_url,
-                    geometry=json.loads(geojson) if include_geometry and geojson else None,
                 ),
             )
         )
     scored.sort(key=lambda item: item[0])
     fires = [fire for _, fire in scored]
     return fires[:limit] if limit is not None else fires
-
-
-def land_near(con: psycopg.Connection, *, lat: float, lng: float, radius_km: float) -> list[LandUnit]:
-    """Public-land ownership polygons within ``radius_km`` of the home point.
-
-    Index-backed ``ST_DWithin`` on ``geom`` (issue #268 - previously a bbox-vs-envelope
-    overlap); still coarse on purpose - the map just shades approximate ownership. No rows
-    ingested yet yields an empty list, mirroring ``camps_near``.
-    """
-    sql: LiteralString = f"""
-        WITH pt AS (SELECT {GEOG_POINT} AS g)
-        SELECT p.id, p.agency, p.unit, p.source, p.url, p.geojson
-        FROM public_land p, pt
-        WHERE p.geom IS NOT NULL AND ST_DWithin(p.geom, pt.g, %s)
-        """
-    rows = con.execute(sql, [lng, lat, radius_km * 1000.0]).fetchall()
-    return [
-        LandUnit(
-            id=land_id,
-            agency=agency,
-            unit=unit,
-            source=source,
-            url=url,
-            geometry=json.loads(geojson),
-        )
-        for land_id, agency, unit, source, url, geojson in rows
-    ]
 
 
 TrailSort = Literal["nearest", "relevance", "longest"]

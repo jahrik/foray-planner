@@ -1,9 +1,10 @@
 import L from "leaflet";
 
 import { getJson } from "../api/client";
-import type { CampSite, FireNear, LandUnit, PreciseObservation, Trail, TrailPath } from "../api/types";
+import type { CampSite, PreciseObservation, Trail, TrailPath } from "../api/types";
 import { createRunGuard } from "../ui/card-select";
 import { feeLabel } from "../format";
+import { LAND_AGENCIES } from "./basemap-land";
 import { FORAGE_RAMP, forageTier } from "./forage";
 import { isRoughSurface } from "./trail-attrs";
 import { circleStyle } from "./markers";
@@ -15,22 +16,16 @@ import {
   CAMP_OSM,
   CAMP_PAID,
   clearCamps,
-  clearFire,
-  clearLand,
   clearPrecise,
   clearSelectedTrail,
-  FIRE_ACTIVE,
-  FIRE_SCAR,
   HOME_RING,
-  LAND_COLORS,
-  LAND_DEFAULT,
   map,
   markerPalette,
   regionRadiusKm,
   renderLegend,
-  setFireLayer,
+  setFireVisibility,
   setFocused,
-  setLandLayer,
+  setLandVisibility,
   setSelectedTrail,
   TRAIL,
   TRAIL_WALKIN,
@@ -44,7 +39,6 @@ export const blmOn = (): boolean => qs<HTMLInputElement>("#show-land-blm").check
 export const usfsOn = (): boolean => qs<HTMLInputElement>("#show-land-usfs").checked;
 export const tribalOn = (): boolean => qs<HTMLInputElement>("#show-land-tribal").checked;
 const LAND_TOGGLES: Record<string, () => boolean> = { BLM: blmOn, USFS: usfsOn, Tribal: tribalOn };
-const landOn = (): boolean => blmOn() || usfsOn() || tribalOn();
 
 // OSM dispersed-camping layer: sites tagged campable in OpenStreetMap (kind='reported').
 const isDispersed = (site: CampSite): boolean => site.kind === "reported";
@@ -96,142 +90,22 @@ function campPopup(site: CampSite): HTMLElement {
   });
 }
 
-// Fetch + shade public-land ownership across the whole search radius (not just the focused
-// destination) - land ownership doesn't change per-destination, so show everywhere there's
-// ingested data instead of a tight circle around whichever result happens to be focused.
-// No-op (just clears) when the toggle is off. Polygons sit behind the observation/campground
-// markers and degrade quietly.
-export async function loadLand(): Promise<void> {
-  clearLand();
+// Show/hide the public-land vector layer for whichever agencies are toggled on (issue #336 PR
+// 2) - nationwide, unlike the old per-home-radius `/api/land` fetch, so this is a synchronous
+// style update, not a network round-trip. Kept as a plain function (not async) since main.ts/
+// refresh.ts call it unawaited alongside the camps/precise loaders it used to run next to.
+export function loadLand(): void {
   renderLegend();
-  if (!landOn() || !state.home) return;
-  const { lat, lng, radius_km } = state.home;
-  let units: LandUnit[];
-  try {
-    // The generated OpenAPI schema types `geometry` as an opaque `{[key: string]: unknown}`
-    // (components["schemas"]["LandUnit"] in ./api/schema) - it's real GeoJSON at runtime, just
-    // not modeled further on the backend. `./api/types`'s `LandUnit` alias overrides it to
-    // `GeoJSON.Geometry`, hence this cast.
-    units = (await getJson("/api/land", { query: { lat, lng, radius_km } })) as unknown as LandUnit[];
-  } catch (error) {
-    setStatus(errorDetail(error));
-    return;
-  }
-  const layer = L.geoJSON(undefined, {
-    style: (feature) => {
-      const agency = (feature?.properties as LandUnit | undefined)?.agency ?? "";
-      const color = LAND_COLORS[agency] ?? LAND_DEFAULT;
-      return { color, weight: 1, fillColor: color, fillOpacity: 0.18, bubblingMouseEvents: false };
-    },
-    onEachFeature: (feature, lyr) => lyr.bindPopup(landPopup(feature.properties as LandUnit)),
-  });
-  // Carry each unit's fields as GeoJSON `properties` so style/popup can read them. Each agency
-  // has its own toggle, so a fetched-but-toggled-off agency is filtered out here rather than
-  // re-fetched per toggle - one request covers whichever combination is on.
-  units.forEach((unit) => {
-    const isOn = LAND_TOGGLES[unit.agency];
-    if (isOn && !isOn()) return;
-    const feature: GeoJSON.Feature = {
-      type: "Feature",
-      properties: unit,
-      geometry: unit.geometry,
-    };
-    layer.addData(feature);
-  });
-  layer.addTo(map);
-  layer.bringToBack(); // keep observation + campground markers clickable on top
-  setLandLayer(layer);
+  setLandVisibility(LAND_AGENCIES.filter((agency) => LAND_TOGGLES[agency]?.()));
 }
 
 export const fireOn = (): boolean => qs<HTMLInputElement>("#show-fire").checked;
 
-// Wildfire overlay (issue #227): active perimeters/points red, recent burn scars burnt-orange
-// and dimmed for older years. Fetched around home (like public land, not per-focused-region).
-// Informational only - the popup links the official incident page, asserts no closure.
-export async function loadFire(): Promise<void> {
-  clearFire();
+// Show/hide the wildfire/burn-scar vector layer (issue #227, moved to vector tiles in #336 PR
+// 2) - same reasoning as loadLand: a style toggle, not a fetch.
+export function loadFire(): void {
   renderLegend();
-  if (!fireOn() || !state.home) return;
-  const { lat, lng, radius_km } = state.home;
-  let fires: FireNear[];
-  try {
-    fires = (await getJson("/api/fire", { query: { lat, lng, radius_km } })) as unknown as FireNear[];
-  } catch (error) {
-    setStatus(errorDetail(error));
-    return;
-  }
-  const scarOpacity = (year: number | null): number => {
-    const age = year ? new Date().getFullYear() - year : 3;
-    return age <= 1 ? 0.35 : age === 2 ? 0.22 : 0.12;
-  };
-  const layer = L.geoJSON(undefined, {
-    style: (feature) => {
-      const fire = feature?.properties as FireNear | undefined;
-      if (fire?.status === "active") {
-        return {
-          color: FIRE_ACTIVE,
-          weight: 2,
-          fillColor: FIRE_ACTIVE,
-          fillOpacity: 0.25,
-          bubblingMouseEvents: false,
-        };
-      }
-      return {
-        color: FIRE_SCAR,
-        weight: 1,
-        fillColor: FIRE_SCAR,
-        fillOpacity: scarOpacity((fire?.fire_year as number | null) ?? null),
-        bubblingMouseEvents: false,
-      };
-    },
-    pointToLayer: (feature, latlng) =>
-      L.circleMarker(
-        latlng,
-        circleStyle({
-          radius: 6,
-          fill: (feature.properties as FireNear).status === "active" ? FIRE_ACTIVE : FIRE_SCAR,
-          fillOpacity: 0.9,
-        }),
-      ),
-    onEachFeature: (feature, lyr) => lyr.bindPopup(firePopup(feature.properties as FireNear)),
-  });
-  fires.forEach((fire) => {
-    if (!fire.geometry) return;
-    const feature: GeoJSON.Feature = { type: "Feature", properties: fire, geometry: fire.geometry };
-    layer.addData(feature);
-  });
-  layer.addTo(map);
-  layer.bringToBack();
-  setFireLayer(layer);
-}
-
-// `fire.name` comes from an external service (buildPopup sets it via textContent); the incident
-// url is server-constructed (InciWeb / NIFC).
-function firePopup(fire: FireNear): HTMLElement {
-  const bits: string[] = [];
-  if (fire.status === "active") {
-    bits.push("Active fire");
-    if (fire.percent_contained != null) bits.push(`${Math.round(fire.percent_contained)}% contained`);
-  } else {
-    bits.push(fire.fire_year ? `${fire.fire_year} burn scar` : "Burn scar");
-    if (fire.dominant_severity) bits.push(`${fire.dominant_severity} severity`);
-  }
-  if (fire.gis_acres != null) bits.push(`${Math.round(fire.gis_acres).toLocaleString()} ac`);
-  return buildPopup({
-    title: fire.name,
-    lines: [bits.join(" · "), "Informational only - check official sources before travel"],
-    ...(fire.incident_url ? { link: { href: fire.incident_url, text: "Incident info ↗" } } : {}),
-  });
-}
-
-// agency/unit come from an external service (buildPopup sets them via textContent); the source
-// url is a fixed ArcGIS service link.
-function landPopup(unit: LandUnit): HTMLElement {
-  return buildPopup({
-    title: unit.unit,
-    lines: [`${unit.agency} · ownership only, not legal advice`],
-    link: { href: unit.url, text: "Source (ArcGIS) ↗" },
-  });
+  setFireVisibility(fireOn());
 }
 
 // A trail's geometry as one or more ordered point sequences ([lat, lng] pairs, Leaflet's order -
@@ -284,24 +158,30 @@ function animateTrail(layer: L.Polyline, parts: L.LatLngTuple[][]): void {
   requestAnimationFrame(frame);
 }
 
-// Draws the real trail for a trailhead selected in a destination card's Trails tab (views.ts).
-// Fetches `/api/trails/network`, which resolves it via live OSM topology when the trailhead sits
-// on a real way/route, falling back to the nearest already-cached path/route otherwise - drawn
-// solid for the former, dashed for the latter so the UI doesn't overstate confidence in a guess.
-// At most one selected trail shows at a time (state.selectedTrailLayer). Zooms to the trailhead
-// itself right away - the live Overpass lookup (trailhead_network) can take a beat, and waiting
-// for it before moving the camera reads as the whole thing being slow, not just the data. Once
-// the real geometry arrives, the view re-fits to the trail's actual extent and animates the line
-// drawing in (animateTrail) rather than snapping it in instantly.
-export async function selectTrailhead(trail: Trail): Promise<void> {
+// Draws the real trail for a given trail id, either from a destination card's Trails tab
+// (selectTrailhead below) or a direct click on our own rendered trails layer (selectTrailOnMap,
+// map.ts's click-to-select, issue #336 PR 2 - promoteId gives that click an exact id instead of
+// the old fuzzy `/api/trails` proximity lookup). Fetches `/api/trails/network`, which resolves
+// via live OSM topology when the trail sits on a real way/route, falling back to the nearest
+// already-cached path/route otherwise - drawn solid for the former, dashed for the latter so the
+// UI doesn't overstate confidence in a guess. At most one selected trail shows at a time
+// (state.selectedTrailLayer). Zooms to `flyLat`/`flyLng` right away - the live Overpass lookup
+// (trailhead_network) can take a beat, and waiting for it before moving the camera reads as the
+// whole thing being slow, not just the data. Once the real geometry arrives, the view re-fits to
+// the trail's actual extent and animates the line drawing in (animateTrail) rather than snapping
+// it in instantly. `requestedName` (optional - a map click has no name to ask for ahead of the
+// fetch) labels the non-authoritative "nearest mapped trail" fallback message.
+async function drawSelectedTrail(
+  id: string,
+  flyLat: number,
+  flyLng: number,
+  requestedName?: string,
+): Promise<void> {
   clearSelectedTrail();
-  map.flyTo([trail.center_lat, trail.center_lng], Math.max(map.getZoom(), 14), { duration: 0.5 });
+  map.flyTo([flyLat, flyLng], Math.max(map.getZoom(), 14), { duration: 0.5 });
   let path: TrailPath;
   try {
-    // See the LandUnit cast above - `geometry` is real GeoJSON, just untyped on the backend.
-    path = (await getJson("/api/trails/network", {
-      query: { trail_id: trail.id },
-    })) as unknown as TrailPath;
+    path = (await getJson("/api/trails/network", { query: { trail_id: id } })) as unknown as TrailPath;
   } catch (error) {
     setStatus(errorDetail(error));
     return;
@@ -334,7 +214,9 @@ export async function selectTrailhead(trail: Trail): Promise<void> {
   // path - say so plainly rather than letting a stand-in trail read as the one that was picked
   // (issue #306 C3).
   if (!path.authoritative) {
-    const label = `Nearest mapped trail: ${path.trail.name} (exact path for “${trail.name}” unavailable)`;
+    const label = `Nearest mapped trail: ${path.trail.name}${
+      requestedName ? ` (exact path for “${requestedName}” unavailable)` : ""
+    }`;
     // OSM names are untrusted - bind the tooltip as a text node, not an HTML string.
     const tip = document.createElement("span");
     tip.textContent = label;
@@ -345,6 +227,17 @@ export async function selectTrailhead(trail: Trail): Promise<void> {
   renderLegend(); // surface / hide the walk-in + foraging-density legend entries
   map.flyToBounds(L.latLngBounds(parts.flat()), { padding: [40, 40], maxZoom: 15, duration: 0.5 });
   animateTrail(layer, parts);
+}
+
+/** A destination card's Trails tab row was selected (views.ts / destination-tabs.ts). */
+export function selectTrailhead(trail: Trail): Promise<void> {
+  return drawSelectedTrail(trail.id, trail.center_lat, trail.center_lng, trail.name);
+}
+
+/** A click landed directly on our own rendered trails layer (map.ts's `setTrailSelectHandler`,
+ * issue #336 PR 2). */
+export function selectTrailOnMap(id: string, lat: number, lng: number): Promise<void> {
+  return drawSelectedTrail(id, lat, lng);
 }
 
 // Fetch + plot individually-precise observations (issue #161): unlike the coarse cell_deg
