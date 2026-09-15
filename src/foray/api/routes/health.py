@@ -210,7 +210,7 @@ def healthz_backlog(pool: ConnectionPool = Depends(get_pool)) -> list[BacklogRes
         ]
 
 
-@router.get("/metrics")
+@router.get("/metrics", response_class=Response, responses={200: {"content": {CONTENT_TYPE_LATEST: {}}}})
 def metrics(
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
