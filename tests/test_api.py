@@ -1242,3 +1242,57 @@ def test_healthz_backlog_reflects_queue_depth_and_drain_rate(client: TestClient,
     assert by_kind["elevation"]["backlog"] == 2
     assert by_kind["elevation"]["drain_rate_per_hour"] == pytest.approx(100.0)
     assert by_kind["precip"]["backlog"] == 0
+
+
+def test_metrics_returns_prometheus_text_exposition(client: TestClient) -> None:
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    body = response.text
+    assert "# TYPE foray_layer_stale gauge" in body
+    assert "# TYPE foray_backlog_depth gauge" in body
+    assert "# TYPE foray_job_runs_total counter" in body
+
+
+def test_metrics_reports_job_run_counts_and_latest_duration(client: TestClient, con: psycopg.Connection) -> None:
+    con.execute(
+        "INSERT INTO job_runs (job, started_at, ended_at, status, rows, duration_ms, http_429_count) VALUES "
+        "('fire', now() - interval '2 hours', now() - interval '2 hours', 'ok', 50, 4000, 3), "
+        "('fire', now(), now(), 'error', NULL, NULL, 0)"
+    )
+
+    body = client.get("/metrics").text
+
+    assert 'foray_job_runs_total{job="fire",status="ok"} 1.0' in body
+    assert 'foray_job_runs_total{job="fire",status="error"} 1.0' in body
+    assert 'foray_job_http_429_total{job="fire"} 3.0' in body
+    assert 'foray_job_last_duration_seconds{job="fire"} 4.0' in body
+    assert 'foray_job_last_rows{job="fire"} 50.0' in body
+
+
+def test_metrics_reports_backlog_depth_and_drain_rate(client: TestClient, con: psycopg.Connection) -> None:
+    con.execute("INSERT INTO backfill_queue (kind, obs_id, priority) VALUES ('elevation', 1, 5), ('elevation', 2, 3)")
+    con.execute(
+        "INSERT INTO job_runs (job, started_at, ended_at, status, rows, duration_ms) VALUES "
+        "('elevation-backfill-dem', now(), now(), 'ok', 100, 3600000)"
+    )
+
+    body = client.get("/metrics").text
+
+    assert 'foray_backlog_depth{kind="elevation"} 2.0' in body
+    assert 'foray_backlog_depth{kind="precip"} 0.0' in body
+    assert 'foray_backlog_drain_rate_per_hour{kind="elevation"} 100.0' in body
+
+
+def test_metrics_reports_layer_age_and_staleness(client: TestClient, con: psycopg.Connection) -> None:
+    con.execute("INSERT INTO ingest_log (key, fetched_at, row_count) VALUES ('land:coverage', now(), 1)")
+
+    body = client.get("/metrics").text
+
+    assert 'foray_layer_stale{layer="land"} 0.0' in body
+    assert 'foray_layer_stale{layer="observations"} 1.0' in body
+    assert 'foray_layer_age_seconds{layer="observations"}' not in body
+    layer_age_line = next(
+        line for line in body.splitlines() if line.startswith('foray_layer_age_seconds{layer="land"}')
+    )
+    assert float(layer_age_line.split()[-1]) < 5.0
