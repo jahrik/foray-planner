@@ -48,9 +48,20 @@ export function initLayerToggles(): void {
   wireLayerToggle("#show-land-blm", "land", "Fetching public land…", loadLand);
   wireLayerToggle("#show-land-usfs", "land", "Fetching public land…", loadLand);
   wireLayerToggle("#show-land-tribal", "land", "Fetching public land…", loadLand);
+  // Land is a vector-tile layer now (issue #336 PR 2) - hidden outright when no martin instance
+  // is configured, same gating shape as Contours/Satellite basemap below. Without this, a
+  // deployment with martin disabled would still let someone check these and see nothing render,
+  // with no clue why (Copilot review, PR #369).
+  for (const id of ["#show-land-blm", "#show-land-usfs", "#show-land-tribal"]) {
+    const row = qs(id).closest("label");
+    if (row) row.hidden = !state.landTilesUrl;
+  }
   // Fire data is refreshed server-side on its own cadence (issue #227), not on-demand per
   // toggle - so this just fetches + plots what's cached, no startRefresh round-trip.
   qs("#show-fire").onchange = () => loadFire();
+  // Same martin-disabled gating as land above.
+  const fireRow = qs("#show-fire").closest("label");
+  if (fireRow) fireRow.hidden = !state.fireTilesUrl;
   // Aerial imagery for the selected destination - no fetch here, map.ts shows/hides the cached
   // overlay for whatever region is currently selected (sources/satellite.py serves it).
   qs("#show-aerial").onchange = (e) => setAerialEnabled((e.target as HTMLInputElement).checked);
