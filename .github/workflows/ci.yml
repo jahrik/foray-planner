@@ -76,6 +76,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
+      # issue #337: _MIGRATIONS now does `CREATE EXTENSION h3`, which the bare postgis/postgis
+      # image this service uses doesn't carry (dev's docker-compose.yml instead builds
+      # infra/docker/postgres/Dockerfile, but a GitHub Actions `services:` container can only
+      # be a pre-built image, not a build context) - install the same PGDG package directly
+      # into the running service container instead of maintaining a second custom image just
+      # for CI.
+      - name: Install h3 extension into the service container
+        run: |
+          cid=$(docker ps --filter ancestor=docker.io/postgis/postgis:17-3.5 --format '{{.ID}}')
+          docker exec "$cid" bash -c "apt-get update -qq && apt-get install -y --no-install-recommends postgresql-17-h3"
+
       - name: Apply the full schema + migrations chain from scratch
         run: uv run foray migrate
 

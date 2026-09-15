@@ -129,4 +129,4 @@ def run_home_refresh(
     if "mushrooms" in layers and not aborted():
         if progress_cb is not None:
             progress_cb("Building phenology…", slices["phenology"][0])
-        scoring.build_phenology(conn, cfg.cell_deg)
+        scoring.build_phenology(conn, cfg.h3_resolution)

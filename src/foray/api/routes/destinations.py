@@ -72,7 +72,7 @@ def destinations(
                 home_lat=home.lat,
                 home_lng=home.lng,
                 radius_km=radius_km or home.radius_km,
-                cell_deg=cfg.cell_deg,
+                h3_resolution=cfg.h3_resolution,
                 recent_weeks=cfg.recent_weeks,
                 ttl_seconds=cfg.observability.ranking_cache_ttl_seconds,
             )
@@ -130,7 +130,7 @@ def observation_photos(
                 conn,
                 region_id=region_id,
                 taxon_ids=parse_species(species, conn, device_id),
-                cell_deg=cfg.cell_deg,
+                h3_resolution=cfg.h3_resolution,
                 months=selected_months,
                 offset=offset,
             )
@@ -173,7 +173,7 @@ def get_alerts(
                 home_lat=home.lat,
                 home_lng=home.lng,
                 radius_km=radius_km or home.radius_km,
-                cell_deg=cfg.cell_deg,
+                h3_resolution=cfg.h3_resolution,
                 weeks=weeks or cfg.recent_weeks,
             )
     except psycopg.errors.UndefinedTable:

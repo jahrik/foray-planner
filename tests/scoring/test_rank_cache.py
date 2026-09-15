@@ -11,7 +11,7 @@ import pytest
 from foray.scoring import build_phenology, rank_destinations
 from foray.scoring import rank_cache as rank_cache_module
 
-CELL = 0.5
+CELL = 5
 MOREL = 111
 APR_LAT, APR_LNG = 47.6, -122.3
 
@@ -39,7 +39,7 @@ def _rank(con: psycopg.Connection) -> list:
         home_lat=46.0,
         home_lng=-121.6,
         radius_km=500,
-        cell_deg=CELL,
+        h3_resolution=CELL,
     )
 
 
@@ -64,7 +64,7 @@ def test_different_params_miss(con: psycopg.Connection) -> None:
         home_lat=46.0,
         home_lng=-121.6,
         radius_km=1000,  # only the radius changed
-        cell_deg=CELL,
+        h3_resolution=CELL,
     )
     # A cache miss re-runs the query against the still-present data - same region should be
     # found, but it's independently computed rather than the identical cached object.
@@ -91,7 +91,7 @@ def test_ttl_expiry_forces_a_recompute(con: psycopg.Connection, monkeypatch: pyt
         home_lat=46.0,
         home_lng=-121.6,
         radius_km=500,
-        cell_deg=CELL,
+        h3_resolution=CELL,
         ttl_seconds=10,
     )
     monkeypatch.setattr(rank_cache_module.time, "monotonic", lambda: 1011.0)  # past the 10s TTL
@@ -106,7 +106,7 @@ def test_ttl_expiry_forces_a_recompute(con: psycopg.Connection, monkeypatch: pyt
         home_lat=46.0,
         home_lng=-121.6,
         radius_km=500,
-        cell_deg=CELL,
+        h3_resolution=CELL,
         ttl_seconds=10,
     )
     # The truncate above ran after the entry expired, so recomputing finds nothing left.

@@ -19,6 +19,7 @@ from foray.api.state import AppState
 from foray.cache import load_genera as db_load_genera
 from foray.cache import load_location as db_load_location
 from foray.config import Home, Settings
+from foray.geo import grid_cell_center
 from foray.refresh import parse_month_list
 
 
@@ -128,12 +129,13 @@ def parse_species(species: str, conn: psycopg.Connection, device_id: str) -> lis
         raise HTTPException(400, f"bad species: {species}") from error
 
 
-def region_center(region_id: str, cfg: Settings) -> tuple[float, float]:
-    """Grid-cell center for a region id ("{ilat}_{ilng}"), inverse of scoring's binning."""
+def region_center(region_id: str) -> tuple[float, float]:
+    """H3 cell center for a region id, inverse of scoring's binning (issue #337).
+
+    No ``cfg``/resolution argument needed (unlike the old degree grid) - an H3 index carries
+    its own resolution, so the id alone is enough.
+    """
     try:
-        ilat_str, ilng_str = region_id.split("_", 1)
-        ilat, ilng = int(ilat_str), int(ilng_str)
-    except ValueError as error:
+        return grid_cell_center(region_id)
+    except (ValueError, TypeError) as error:
         raise HTTPException(400, f"bad region_id: {region_id}") from error
-    cell = cfg.cell_deg
-    return (ilat + 0.5) * cell, (ilng + 0.5) * cell

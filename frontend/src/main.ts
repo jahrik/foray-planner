@@ -121,7 +121,7 @@ function initDock(): void {
 async function main(): Promise<void> {
   const config = await getJson("/api/config");
   state.home = config.home;
-  state.cellDeg = config.cell_deg;
+  state.regionRadiusKm = config.region_radius_km;
   state.basemapUrl = config.basemap_url ?? "";
   state.terrainUrl = config.terrain_url ?? "";
   state.satelliteTilesUrl = config.satellite_tiles_url ?? "";

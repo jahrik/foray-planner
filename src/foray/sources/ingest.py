@@ -40,7 +40,7 @@ from foray.cache import (
     upsert_region_precip,
 )
 from foray.config import CoverageRegion, Settings
-from foray.defaults import CELL_DEG as _DEFAULT_CELL_DEG
+from foray.defaults import H3_RESOLUTION as _DEFAULT_H3_RESOLUTION
 from foray.geo import grid_cell, grid_cell_center
 from foray.sources import elevation, precip
 from foray.sources.inat import FUNGI_TAXON_ID, fetch_observations, iter_observations
@@ -226,7 +226,7 @@ def backfill_elevations(
     *,
     max_points: int | None = None,
     near: tuple[float, float] | None = None,
-    cell_deg: float = _DEFAULT_CELL_DEG,
+    h3_resolution: int = _DEFAULT_H3_RESOLUTION,
 ) -> int:
     """Enrich observations that have coordinates but no `elevation_m` yet (issue #36), pulling
     ground elevation from Open-Meteo's DEM in batches of `elevation.MAX_BATCH`.
@@ -238,16 +238,16 @@ def backfill_elevations(
     outstanding); the ingest path passes a small cap so a perpetual backlog does not turn every
     run into a rate-limit round-trip. `near` (a `(lat, lng)`) prioritises rows closest to that
     point - the post-ingest top-up passes the visitor's home so a Refresh fills the destination
-    cells on screen, not the activity-weighted queue's national ranking. `cell_deg` only matters
+    cells on screen, not the activity-weighted queue's national ranking. `h3_resolution` only matters
     without `near` - it's the region binning `cache.observations_missing_elevation` scores
-    backfill_queue priority by (issue #334 PR 3); pass `cfg.cell_deg` when available.
+    backfill_queue priority by (issue #334 PR 3); pass `cfg.h3_resolution` when available.
     """
     updated = 0
     while max_points is None or updated < max_points:
         limit = elevation.MAX_BATCH
         if max_points is not None:
             limit = min(limit, max_points - updated)
-        pending = observations_missing_elevation(db, limit, near=near, cell_deg=cell_deg)
+        pending = observations_missing_elevation(db, limit, near=near, h3_resolution=h3_resolution)
         if not pending:
             break
         try:
@@ -292,7 +292,7 @@ def _span_covered(series: dict[dt.date, float | None], start: dt.date, end: dt.d
 def backfill_precip(
     db: psycopg.Connection,
     *,
-    cell_deg: float,
+    h3_resolution: int,
     max_cells: int | None = None,
     near: tuple[float, float] | None = None,
     client: httpx.Client | None = None,
@@ -310,13 +310,13 @@ def backfill_precip(
     Best-effort: an HTTP/network failure stops the run early (rows deferred), never raises -
     callers wire this in after ingest where it must not fail the ingest. ``max_cells`` caps the
     work per call; ``near`` prioritises the cells around a point (a Refresh)."""
-    pending = observations_missing_precip(db, _PRECIP_SCAN_LIMIT, near=near, cell_deg=cell_deg)
+    pending = observations_missing_precip(db, _PRECIP_SCAN_LIMIT, near=near, h3_resolution=h3_resolution)
     if not pending:
         return 0
     by_cell: dict[str, list[tuple[int, dt.date]]] = {}
     centers: dict[str, tuple[float, float]] = {}
     for obs_id, lat, lng, observed_on in pending:
-        cell = grid_cell(lat, lng, cell_deg)
+        cell = grid_cell(lat, lng, h3_resolution)
         by_cell.setdefault(cell.cell_id, []).append((obs_id, observed_on))
         centers.setdefault(cell.cell_id, (cell.center_lat, cell.center_lng))
 
@@ -411,7 +411,7 @@ def refresh_precipitation(db: psycopg.Connection, cfg: Settings, *, client: http
 
     for fetch_start in range(0, len(region_ids), precip.MAX_BATCH):
         fetch_group = region_ids[fetch_start : fetch_start + precip.MAX_BATCH]
-        centers = [grid_cell_center(region_id, cfg.cell_deg) for region_id in fetch_group]
+        centers = [grid_cell_center(region_id) for region_id in fetch_group]
         try:
             series_list = precip.fetch_recent_precip_batch(centers, past_days=30, client=client)
         except (httpx.HTTPError, ValueError) as error:
@@ -509,8 +509,10 @@ def ingest(
         len(counts),
         skipped_no_genus,
     )
-    backfill_elevations(db, max_points=_INGEST_ELEVATION_POINTS, near=(home.lat, home.lng), cell_deg=cfg.cell_deg)
-    backfill_precip(db, cell_deg=cfg.cell_deg, max_cells=_INGEST_PRECIP_CELLS, near=(home.lat, home.lng))
+    backfill_elevations(
+        db, max_points=_INGEST_ELEVATION_POINTS, near=(home.lat, home.lng), h3_resolution=cfg.h3_resolution
+    )
+    backfill_precip(db, h3_resolution=cfg.h3_resolution, max_cells=_INGEST_PRECIP_CELLS, near=(home.lat, home.lng))
     return counts
 
 
@@ -577,8 +579,8 @@ def ingest_region(
         len(counts),
         skipped_no_genus,
     )
-    backfill_elevations(db, max_points=_INGEST_ELEVATION_POINTS, cell_deg=cfg.cell_deg)
-    backfill_precip(db, cell_deg=cfg.cell_deg, max_cells=_INGEST_PRECIP_CELLS)
+    backfill_elevations(db, max_points=_INGEST_ELEVATION_POINTS, h3_resolution=cfg.h3_resolution)
+    backfill_precip(db, h3_resolution=cfg.h3_resolution, max_cells=_INGEST_PRECIP_CELLS)
     return counts
 
 

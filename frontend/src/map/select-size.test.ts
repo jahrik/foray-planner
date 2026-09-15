@@ -38,7 +38,7 @@ vi.mock("leaflet", async (importOriginal) => {
   };
 });
 
-const fakeState: { markers: unknown[]; cellDeg: number } = { markers: [], cellDeg: 0.5 };
+const fakeState: { markers: unknown[]; regionRadiusKm: number } = { markers: [], regionRadiusKm: 27.75 };
 vi.mock("../state", () => ({
   get state() {
     return fakeState;

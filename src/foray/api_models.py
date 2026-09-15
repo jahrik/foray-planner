@@ -26,7 +26,10 @@ _FROM_DATACLASS = ConfigDict(from_attributes=True)
 
 class ConfigResponse(BaseModel):
     home: Home
-    cell_deg: float
+    # Real-world radius (km) of one H3 region cell at the server's configured resolution
+    # (issue #337) - precomputed server-side (foray.geo.h3_edge_length_km) rather than sending
+    # the raw resolution, since the frontend has no H3 library and just needs the drawing size.
+    region_radius_km: float
     recent_weeks: int
     refreshing: bool
     last_error: str | None

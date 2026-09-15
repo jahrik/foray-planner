@@ -12,7 +12,7 @@ from foray.cache import upsert_campsites, upsert_trails
 from foray.scoring import rank_destinations, region_access
 from foray.scoring.regions import build_phenology
 
-CELL = 0.25
+CELL = 4
 BOLETUS = 48701
 LAT, LNG = 44.0, -121.0
 
@@ -39,7 +39,7 @@ def _trailhead(node: int, lat: float, lng: float) -> tuple[object, ...]:
 
 def _rank(con: psycopg.Connection) -> list:
     return rank_destinations(
-        con, months=[9], taxon_ids=[BOLETUS], home_lat=LAT, home_lng=LNG, radius_km=200, cell_deg=CELL
+        con, months=[9], taxon_ids=[BOLETUS], home_lat=LAT, home_lng=LNG, radius_km=200, h3_resolution=CELL
     )
 
 

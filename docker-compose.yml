@@ -59,7 +59,11 @@ services:
     # Upgrading from an existing PG16 volume: Postgres refuses to start against a data
     # directory from a different major version - `docker compose down -v` (local dev data is
     # disposable/re-ingestable) to drop `foray-postgres-data` and let it recreate fresh.
-    image: docker.io/postgis/postgis:17-3.5
+    #
+    # `build` (not a bare `image:`) since issue #337 - adds the `h3` extension package on top
+    # of the stock postgis/postgis image (infra/docker/postgres/Dockerfile). DO managed
+    # Postgres exposes h3 to `CREATE EXTENSION` directly, no image change needed on prod.
+    build: infra/docker/postgres
     environment:
       POSTGRES_USER: foray
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-foray}

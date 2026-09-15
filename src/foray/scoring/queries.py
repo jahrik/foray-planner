@@ -712,7 +712,7 @@ def recent_observations(
     *,
     region_id: str,
     taxon_ids: list[int],
-    cell_deg: float,
+    h3_resolution: int,
     months: list[int],
     limit: int = 12,
     offset: int = 0,
@@ -725,7 +725,7 @@ def recent_observations(
     ``observed_on`` alone isn't unique - without it, LIMIT/OFFSET paging can skip or repeat rows
     whenever two observations share a date and land on opposite sides of a page boundary.
     """
-    binned = BINNED.format(cell=cell_deg)
+    binned = BINNED.format(resolution=h3_resolution)
     rows = con.execute(
         cast(
             LiteralString,
@@ -767,12 +767,12 @@ def alerts(
     home_lat: float,
     home_lng: float,
     radius_km: float,
-    cell_deg: float,
+    h3_resolution: int,
     weeks: int = 4,
 ) -> list[dict[str, Any]]:
     """Regions with fresh (trailing ``weeks``) observations of target species - 'fruiting now'."""
     cutoff = (dt.date.today() - dt.timedelta(weeks=weeks)).isoformat()
-    binned = BINNED.format(cell=cell_deg)
+    binned = BINNED.format(resolution=h3_resolution)
     # Centers computed once per region_id across every matching taxon (not per region+taxon
     # below) - a region with several target species shouldn't get a decoy-shifted center just
     # because one of those species' rows here happen to be entirely obscured while another's

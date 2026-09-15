@@ -25,7 +25,7 @@ def env_with_coverage(con: psycopg.Connection, monkeypatch):
     monkeypatch.setenv("FORAY_HOME__LAT", "47.6")
     monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
     monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
-    monkeypatch.setenv("FORAY_CELL_DEG", "0.25")
+    monkeypatch.setenv("FORAY_H3_RESOLUTION", "4")
     monkeypatch.setenv("FORAY_INGEST__SINCE_YEAR", "2015")
     monkeypatch.setenv("FORAY_INGEST__QUALITY_GRADE", "research")
     monkeypatch.setenv("FORAY_INGEST__RECENT_WEEKS", "4")

@@ -22,10 +22,10 @@ import psycopg
 
 from foray.cache import region_precip
 from foray.geo import (
-    bbox_around,
     bbox_around_segment,
     bbox_center_radius,
-    grid_cells_in_bbox,
+    cells_along_segment,
+    cells_in_radius,
     haversine_km,
     project_to_plane,
     segment_progress_and_offset,
@@ -63,7 +63,7 @@ def _rank_candidates(
     *,
     months: list[int],
     taxon_ids: list[int],
-    cell_deg: float,
+    h3_resolution: int,
     recent_weeks: int,
     region_ids: list[str],
     recent_center: tuple[float, float],
@@ -72,8 +72,9 @@ def _rank_candidates(
 ) -> list[RegionScore]:
     """Shared fetch/score core for ``rank_destinations``/``rank_destinations_corridor``.
 
-    ``region_ids`` is the candidate grid-cell allowlist (a bounding box over the home
-    radius / corridor, from :func:`grid_cells_in_bbox`); the phenology scan is restricted
+    ``region_ids`` is the candidate H3-cell allowlist (a disk over the home radius, or a
+    disk-per-sample union along the corridor - :func:`cells_in_radius` /
+    :func:`cells_along_segment`); the phenology scan is restricted
     to it via ``ix_phenology_region`` instead of aggregating every ingested cell globally.
     ``recent_center`` / ``recent_radius_km`` bound the ``recent_counts`` observation scan the
     same way (a circle enclosing the candidate area). ``keep(center_lat, center_lng)`` then
@@ -139,7 +140,7 @@ def _rank_candidates(
         lat=recent_center[0],
         lng=recent_center[1],
         radius_km=recent_radius_km,
-        cell_deg=cell_deg,
+        h3_resolution=h3_resolution,
         taxon_ids=taxon_ids,
         weeks=recent_weeks,
     )
@@ -321,7 +322,7 @@ def rank_destinations(
     home_lat: float,
     home_lng: float,
     radius_km: float,
-    cell_deg: float,
+    h3_resolution: int,
     recent_weeks: int = 4,
     ttl_seconds: float = rank_cache.DEFAULT_TTL_SECONDS,
 ) -> list[RegionScore]:
@@ -340,7 +341,7 @@ def rank_destinations(
         home_lat=home_lat,
         home_lng=home_lng,
         radius_km=radius_km,
-        cell_deg=cell_deg,
+        h3_resolution=h3_resolution,
         recent_weeks=recent_weeks,
     )
     cached = rank_cache.get(key, ttl_seconds)
@@ -354,12 +355,12 @@ def rank_destinations(
         dist = haversine_km(home_lat, home_lng, clat, clng)
         return dist <= radius_km, dist
 
-    region_ids = grid_cells_in_bbox(bbox_around(home_lat, home_lng, radius_km), cell_deg)
+    region_ids = cells_in_radius(home_lat, home_lng, radius_km, h3_resolution)
     results = _rank_candidates(
         con,
         months=months,
         taxon_ids=taxon_ids,
-        cell_deg=cell_deg,
+        h3_resolution=h3_resolution,
         recent_weeks=recent_weeks,
         region_ids=region_ids,
         recent_center=(home_lat, home_lng),
@@ -382,7 +383,7 @@ def rank_destinations_corridor(
     dest_lat: float,
     dest_lng: float,
     corridor_km: float,
-    cell_deg: float,
+    h3_resolution: int,
     recent_weeks: int = 4,
     ttl_seconds: float = rank_cache.DEFAULT_TTL_SECONDS,
 ) -> list[RegionScore]:
@@ -403,7 +404,7 @@ def rank_destinations_corridor(
         dest_lat=dest_lat,
         dest_lng=dest_lng,
         corridor_km=corridor_km,
-        cell_deg=cell_deg,
+        h3_resolution=h3_resolution,
         recent_weeks=recent_weeks,
     )
     cached = rank_cache.get(key, ttl_seconds)
@@ -425,7 +426,7 @@ def rank_destinations_corridor(
         return offset_km <= corridor_km, progress_km
 
     corridor_bbox = bbox_around_segment(start_lat, start_lng, dest_lat, dest_lng, corridor_km)
-    region_ids = grid_cells_in_bbox(corridor_bbox, cell_deg)
+    region_ids = cells_along_segment(start_lat, start_lng, dest_lat, dest_lng, corridor_km, h3_resolution)
     # recent_counts only needs a superset of the candidate area (see _rank_candidates); a
     # circle around the same bounding box (midpoint + farthest-corner radius) is a compact one,
     # and keeps the ST_DWithin scan from ballooning on a long corridor the way a start-anchored
@@ -435,7 +436,7 @@ def rank_destinations_corridor(
         con,
         months=months,
         taxon_ids=taxon_ids,
-        cell_deg=cell_deg,
+        h3_resolution=h3_resolution,
         recent_weeks=recent_weeks,
         region_ids=region_ids,
         recent_center=(recent_lat, recent_lng),

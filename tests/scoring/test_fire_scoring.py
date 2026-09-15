@@ -10,10 +10,11 @@ from typing import Any, LiteralString, cast
 import psycopg
 import pytest
 
+from foray.geo import haversine_km
 from foray.scoring import build_phenology, fire_near, rank_cache, rank_destinations
 from foray.scoring.models import RegionScore
 
-CELL = 0.25
+RES = 4
 MORCHELLA, OTHER = 47143, 55555
 LAT, LNG = 44.0, -121.0
 THIS_YEAR = dt.date.today().year
@@ -31,7 +32,7 @@ def _seed(con: psycopg.Connection) -> None:
             " VALUES (%s, %s, %s, %s, %s, %s, 'research')",
             [(i, MORCHELLA if i % 2 else OTHER, LAT, LNG, dt.date(2022, 5, 15), 5) for i in range(1, 21)],
         )
-    build_phenology(con, CELL)
+    build_phenology(con, RES)
 
 
 def _add_fire(con: psycopg.Connection, **kw: Any) -> None:
@@ -80,7 +81,9 @@ def _add_fire(con: psycopg.Connection, **kw: Any) -> None:
 
 
 def _rank(con: psycopg.Connection, taxa: list[int]) -> list[RegionScore]:
-    return rank_destinations(con, months=[5], taxon_ids=taxa, home_lat=LAT, home_lng=LNG, radius_km=200, cell_deg=CELL)
+    return rank_destinations(
+        con, months=[5], taxon_ids=taxa, home_lat=LAT, home_lng=LNG, radius_km=200, h3_resolution=RES
+    )
 
 
 def test_fire_near_filters_by_distance(con: psycopg.Connection) -> None:
@@ -101,7 +104,7 @@ def test_fire_nearby_distance_is_region_relative(con: psycopg.Connection) -> Non
             " VALUES (%s, %s, %s, %s, %s, %s, 'research')",
             [(100 + i, MORCHELLA, far_lat, far_lng, dt.date(2022, 5, 15), 5) for i in range(6)],
         )
-    build_phenology(con, CELL)
+    build_phenology(con, RES)
     _add_fire(
         con,
         id="onfar",
@@ -113,9 +116,9 @@ def test_fire_nearby_distance_is_region_relative(con: psycopg.Connection) -> Non
         max_lng=far_lng + 0.1,
     )
     ranked = rank_destinations(
-        con, months=[5], taxon_ids=[MORCHELLA], home_lat=far_lat, home_lng=far_lng, radius_km=300, cell_deg=CELL
+        con, months=[5], taxon_ids=[MORCHELLA], home_lat=far_lat, home_lng=far_lng, radius_km=300, h3_resolution=RES
     )
-    far_region = next(r for r in ranked if abs(r.center_lat - far_lat) < CELL)
+    far_region = next(r for r in ranked if haversine_km(r.center_lat, r.center_lng, far_lat, far_lng) < 50)
     assert far_region.fire_nearby and far_region.fire_nearby[0].distance_km < 10
 
 

@@ -2,7 +2,7 @@
 
 Observations are keyed by iNat id, so re-ingesting the same window is a no-op
 (``ON CONFLICT DO NOTHING``). Region binning (grid cell) is derived in SQL from
-lat/lng and ``cell_deg`` so it is never stored redundantly.
+lat/lng and ``h3_resolution`` so it is never stored redundantly.
 
 Connections are opened with ``autocommit=True`` (nothing here was written against explicit
 transactions) - callers that need atomicity across statements (e.g.
@@ -23,7 +23,7 @@ import psycopg
 
 from foray import spaces
 from foray.config import Settings
-from foray.defaults import CELL_DEG as _DEFAULT_CELL_DEG
+from foray.defaults import H3_RESOLUTION as _DEFAULT_H3_RESOLUTION
 from foray.geo import haversine_km
 
 logger = logging.getLogger(__name__)
@@ -218,7 +218,7 @@ CREATE TABLE IF NOT EXISTS fungi_genera (
 CREATE INDEX IF NOT EXISTS ix_fungi_genera_name ON fungi_genera (name);
 
 -- Destination-card place titling (issue #206): caches one reverse-geocode result per grid
--- region forever - regions are a fixed grid (scoring.py's cell_deg binning), so a region's
+-- region forever - regions are a fixed grid (scoring.py's h3_resolution binning), so a region's
 -- centroid never moves and its notable place name never needs re-resolving. `place_name` is
 -- nullable on purpose: a row existing means "already looked up", regardless of whether a
 -- notable place was found - so a remote/rural region with no notable place nearby is cached
@@ -781,6 +781,37 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         $$;
         CREATE OR REPLACE TRIGGER trg_public_land_geom_area BEFORE INSERT OR UPDATE ON public_land
             FOR EACH ROW EXECUTE FUNCTION foray_public_land_area();
+        """,
+    ),
+    # issue #337: replace the plain lat/lng degree grid (`floor(coord / h3_resolution)`) with H3
+    # hexagons - the square grid narrows with `cos(lat)` going north (a 0.25 deg cell is ~28km
+    # wide at the equator, ~14km wide in Alaska), which both under/over-sizes destination cards
+    # by latitude and is the root cause of the offshore-cell-center bug #326 C4 patched
+    # tactically. H3 cells are the same real-world size everywhere. Resolution 4 chosen
+    # empirically (issue #337 scoping comment): against 1.99M local research-grade
+    # observations it produced *denser* phenology cells than the old grid (17.9% of cells with
+    # <=3 observations, vs. 25.4% today), where resolution 5 made sparsity worse (30.5%).
+    #
+    # `h3` (not `h3_postgis`) is enough - every region-keyed table here stores plain
+    # lat/lng/TEXT columns, never a PostGIS geometry, so the postgis-specific wrapper functions
+    # (which additionally require `postgis_raster`) buy nothing. DO managed Postgres exposes
+    # `h3` directly to `CREATE EXTENSION` on its Standard-Edition plan, PG 15-17 (confirmed
+    # 2026-09-10) - same as `postgis` above, no ansible/cluster-config change needed.
+    #
+    # Old and new grids don't overlap, so this is a wipe, not a translation - every dropped
+    # table below self-heals on its own existing refresh path (`build_phenology`'s
+    # DROP-and-rename already handles a from-scratch build; `precip_daily`/`precipitation`
+    # repopulate from the `precip-backfill`/`precip-refresh` cron jobs; `region_places`
+    # repopulates lazily on next view via `layers.py`'s reverse-geocode path).
+    # `region_satellite` is the one real cost: its cached Esri exports (25-45s/region) are gone
+    # too, so a deliberate post-migration `foray backfill-satellite` run is worth doing rather
+    # than waiting on first-view fetches for every region - see the issue for that rollout note.
+    (
+        50,
+        """
+        CREATE EXTENSION IF NOT EXISTS h3;
+        DROP TABLE IF EXISTS phenology, regions, observations_scoring;
+        TRUNCATE precip_daily, precipitation, region_satellite, region_places;
         """,
     ),
 ]
@@ -1795,7 +1826,7 @@ def maybe_rebuild_phenology(con: psycopg.Connection, cfg: Settings, new_rows: in
         )
         if pending < cfg.observability.phenology_rebuild_threshold:
             return False
-        build_phenology(con, cfg.cell_deg)
+        build_phenology(con, cfg.h3_resolution)
         con.execute(
             "INSERT INTO meta (key, value) VALUES ('phenology_pending_rows', '0') "
             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
@@ -2033,7 +2064,7 @@ _BACKFILL_ELIGIBLE: dict[str, LiteralString] = {
 _BACKFILL_ACTIVITY_WINDOW_DAYS = 180
 
 
-def refresh_backfill_queue(con: psycopg.Connection, kind: str, cell_deg: float) -> int:
+def refresh_backfill_queue(con: psycopg.Connection, kind: str, h3_resolution: int) -> int:
     """(Re)populate ``backfill_queue`` for ``kind`` (``"elevation"`` or ``"precip"``) from
     ``observations`` - the priority behind issue #334 PR 3's "prioritize backfill by region
     activity, not strict staleness order" (TODO.md E4).
@@ -2050,8 +2081,8 @@ def refresh_backfill_queue(con: psycopg.Connection, kind: str, cell_deg: float) 
     ``ix_observations_precip_missing``) the un-queued query used - only the activity-scoring
     join scans a wider (but time-bounded) window.
 
-    Priority is the count of research-grade observations in the same grid cell (``cell_deg``
-    binning, matching ``regions``/``phenology``) observed within the last
+    Priority is the count of research-grade observations in the same H3 cell (``h3_resolution``,
+    matching ``regions``/``phenology``) observed within the last
     ``_BACKFILL_ACTIVITY_WINDOW_DAYS`` days - a cell with recent activity outranks one that has
     been quiet, regardless of which specific row is older. Returns the number of rows now
     queued for ``kind``.
@@ -2059,10 +2090,10 @@ def refresh_backfill_queue(con: psycopg.Connection, kind: str, cell_deg: float) 
     if kind not in _BACKFILL_ELIGIBLE:
         raise ValueError(f"unknown backfill kind {kind!r} (expected one of {sorted(_BACKFILL_ELIGIBLE)})")
     eligible_sql = _BACKFILL_ELIGIBLE[kind]
-    # A literal (no interpolation) - cell_deg rides through as a bound %s param below instead
+    # A literal (no interpolation) - h3_resolution rides through as a bound %s param below instead
     # (Copilot review, PR #351: f-string-interpolating a float into SQL text works but invites
     # exactly this kind of question; parameterizing removes the doubt for free here).
-    cell_sql: LiteralString = "(floor(lat / %s))::int::text || '_' || (floor(lng / %s))::int::text"
+    cell_sql: LiteralString = "h3_lat_lng_to_cell(POINT(lng, lat), %s)::text"
     con.execute(
         f"""
         WITH eligible AS (
@@ -2081,9 +2112,9 @@ def refresh_backfill_queue(con: psycopg.Connection, kind: str, cell_deg: float) 
         FROM eligible e LEFT JOIN activity a USING (region_id)
         ON CONFLICT (kind, obs_id) DO UPDATE SET priority = EXCLUDED.priority
         """,
-        # Matches placeholder order left-to-right: eligible's cell_sql (lat, lng), activity's
-        # cell_sql (lat, lng), the activity window, then the INSERT's `kind` literal.
-        [cell_deg, cell_deg, cell_deg, cell_deg, _BACKFILL_ACTIVITY_WINDOW_DAYS, kind],
+        # Matches placeholder order left-to-right: eligible's cell_sql (resolution), activity's
+        # cell_sql (resolution), the activity window, then the INSERT's `kind` literal.
+        [h3_resolution, h3_resolution, _BACKFILL_ACTIVITY_WINDOW_DAYS, kind],
     )
     result = con.execute(
         f"""
@@ -2169,7 +2200,11 @@ def job_run_drain_rate(con: psycopg.Connection, job: str, *, sample_runs: int = 
 
 
 def observations_missing_elevation(
-    con: psycopg.Connection, limit: int, *, near: tuple[float, float] | None = None, cell_deg: float = _DEFAULT_CELL_DEG
+    con: psycopg.Connection,
+    limit: int,
+    *,
+    near: tuple[float, float] | None = None,
+    h3_resolution: int = _DEFAULT_H3_RESOLUTION,
 ) -> list[tuple[int, float, float]]:
     """Up to ``limit`` research-grade observations with in-range coordinates but no elevation
     yet (issue #36). Non-research-grade rows are skipped - scoring only ever reads research-grade
@@ -2190,7 +2225,7 @@ def observations_missing_elevation(
 
     Without ``near`` (the hourly prod cron's whole-backlog drain), rows come from
     ``backfill_queue`` instead of a plain scan - see :func:`refresh_backfill_queue` for the
-    activity-weighted priority behind that (issue #334 PR 3) and ``cell_deg`` for its region
+    activity-weighted priority behind that (issue #334 PR 3) and ``h3_resolution`` for its region
     binning."""
     if near is not None:
         plat, plng = near
@@ -2227,7 +2262,7 @@ def observations_missing_elevation(
             [*box_params, *order_params, limit],
         ).fetchall()
         return [(int(obs_id), float(lat), float(lng)) for obs_id, lat, lng in rows]
-    refresh_backfill_queue(con, "elevation", cell_deg)
+    refresh_backfill_queue(con, "elevation", h3_resolution)
     obs_ids = dequeue_backfill_batch(con, "elevation", limit)
     if not obs_ids:
         return []
@@ -2299,7 +2334,11 @@ def upsert_precip_days(con: psycopg.Connection, cell_id: str, days: Mapping[dt.d
 
 
 def observations_missing_precip(
-    con: psycopg.Connection, limit: int, *, near: tuple[float, float] | None = None, cell_deg: float = _DEFAULT_CELL_DEG
+    con: psycopg.Connection,
+    limit: int,
+    *,
+    near: tuple[float, float] | None = None,
+    h3_resolution: int = _DEFAULT_H3_RESOLUTION,
 ) -> list[tuple[int, float, float, dt.date]]:
     """Up to ``limit`` research-grade, non-obscured observations with coordinates and an
     ``observed_on`` but at least one of ``precip_7d_mm`` / ``precip_30d_mm`` still unset
@@ -2345,7 +2384,7 @@ def observations_missing_precip(
             [*params, limit],
         ).fetchall()
         return [(int(obs_id), float(lat), float(lng), observed_on) for obs_id, lat, lng, observed_on in rows]
-    refresh_backfill_queue(con, "precip", cell_deg)
+    refresh_backfill_queue(con, "precip", h3_resolution)
     obs_ids = dequeue_backfill_batch(con, "precip", limit)
     if not obs_ids:
         return []

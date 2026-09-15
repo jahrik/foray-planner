@@ -20,7 +20,7 @@ def env_config(con: psycopg.Connection, monkeypatch):
     monkeypatch.setenv("FORAY_HOME__LAT", "47.6")
     monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
     monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
-    monkeypatch.setenv("FORAY_CELL_DEG", "0.25")
+    monkeypatch.setenv("FORAY_H3_RESOLUTION", "4")
     monkeypatch.setenv("FORAY_INGEST__SINCE_YEAR", "2015")
     monkeypatch.setenv("FORAY_INGEST__QUALITY_GRADE", "research")
     monkeypatch.setenv("FORAY_INGEST__RECENT_WEEKS", "4")
@@ -45,7 +45,7 @@ def calls(monkeypatch):
     ):
         monkeypatch.setattr(f"{target}.{name}", lambda *args, label=name, **kwargs: seen.append(label))
 
-    def fake_build_phenology(con, cell_deg):
+    def fake_build_phenology(con, h3_resolution):
         seen.append("build_phenology")
         con.execute("CREATE TABLE IF NOT EXISTS regions (region_id VARCHAR)")
 
@@ -145,7 +145,7 @@ def test_backfill_elevation_rebuild_flag(con: psycopg.Connection, env_config, mo
     """`--rebuild` (default) makes it *eligible* to debounce-rebuild (issue #332 PR 2's
     `maybe_rebuild_phenology`); `--no-rebuild` skips that call entirely."""
     monkeypatch.setattr(cli_module, "connect", lambda: _CloseTrackingConnection(con))
-    monkeypatch.setattr(cli_module, "backfill_elevations", lambda con, *, max_points=None, cell_deg=0.25: 5)
+    monkeypatch.setattr(cli_module, "backfill_elevations", lambda con, *, max_points=None, h3_resolution=0.25: 5)
     rebuilds: list[int] = []
     monkeypatch.setattr(
         cli_module, "maybe_rebuild_phenology", lambda con, cfg, new_rows: rebuilds.append(new_rows) or True
@@ -206,7 +206,7 @@ def test_backfill_elevation_dem_rebuild_flag_and_exit_code(con: psycopg.Connecti
 
 def test_backfill_precip_rebuild_flag(con: psycopg.Connection, env_config, monkeypatch) -> None:
     monkeypatch.setattr(cli_module, "connect", lambda: _CloseTrackingConnection(con))
-    monkeypatch.setattr(cli_module, "backfill_precip", lambda con, *, cell_deg, max_cells=None: 3)
+    monkeypatch.setattr(cli_module, "backfill_precip", lambda con, *, h3_resolution, max_cells=None: 3)
     rebuilds: list[int] = []
     monkeypatch.setattr(
         cli_module, "maybe_rebuild_phenology", lambda con, cfg, new_rows: rebuilds.append(new_rows) or True

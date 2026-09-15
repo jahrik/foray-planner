@@ -7,7 +7,7 @@ import datetime as dt
 import psycopg
 import pytest
 
-from foray.geo import haversine_km
+from foray.geo import grid_cell, haversine_km
 from foray.scoring import (
     alerts,
     build_phenology,
@@ -16,7 +16,7 @@ from foray.scoring import (
     rank_destinations,
 )
 
-CELL = 0.5
+RES = 4
 
 # Two well-separated regions:
 #   APR region ~ (47.6, -122.3): morels in April.
@@ -56,7 +56,7 @@ def _seed(con: psycopg.Connection) -> None:
             " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             rows,
         )
-    build_phenology(con, CELL)
+    build_phenology(con, RES)
 
 
 def test_april_ranks_morel_region_first(con: psycopg.Connection) -> None:
@@ -67,11 +67,11 @@ def test_april_ranks_morel_region_first(con: psycopg.Connection) -> None:
         home_lat=46.0,
         home_lng=-121.6,
         radius_km=500,
-        cell_deg=CELL,
+        h3_resolution=RES,
     )
     assert ranked, "expected at least one region"
     top = ranked[0]
-    assert abs(top.center_lat - APR_LAT) < CELL
+    assert haversine_km(top.center_lat, top.center_lng, APR_LAT, APR_LNG) < 50
     assert top.species[0].common_name == "Morels"
     assert top.score_norm == 1.0
 
@@ -86,7 +86,7 @@ def test_empty_taxon_ids_means_no_filter_not_no_results(con: psycopg.Connection)
         home_lat=46.0,
         home_lng=-121.6,
         radius_km=500,
-        cell_deg=CELL,
+        h3_resolution=RES,
     )
     seen_taxa = {hit.taxon_id for region in ranked for hit in region.species}
     assert seen_taxa == {MOREL, CHANTERELLE}
@@ -100,10 +100,10 @@ def test_october_ranks_chanterelle_region_first(con: psycopg.Connection) -> None
         home_lat=46.0,
         home_lng=-121.6,
         radius_km=500,
-        cell_deg=CELL,
+        h3_resolution=RES,
     )
     top = ranked[0]
-    assert abs(top.center_lat - OCT_LAT) < CELL
+    assert haversine_km(top.center_lat, top.center_lng, OCT_LAT, OCT_LNG) < 50
     assert top.species[0].common_name == "Chanterelles"
 
 
@@ -116,9 +116,9 @@ def test_radius_filters_far_regions(con: psycopg.Connection) -> None:
         home_lat=APR_LAT,
         home_lng=APR_LNG,
         radius_km=50,
-        cell_deg=CELL,
+        h3_resolution=RES,
     )
-    assert all(abs(region.center_lat - APR_LAT) < CELL for region in ranked)
+    assert all(haversine_km(region.center_lat, region.center_lng, APR_LAT, APR_LNG) < 50 for region in ranked)
 
 
 def test_non_research_grade_excluded_from_scoring(con: psycopg.Connection) -> None:
@@ -136,7 +136,7 @@ def test_non_research_grade_excluded_from_scoring(con: psycopg.Connection) -> No
             " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             [(9000 + i, casual_taxon, APR_LAT, APR_LNG, dt.date(2022, 4, 15), 4, "casual", 10) for i in range(20)],
         )
-    build_phenology(con, CELL)
+    build_phenology(con, RES)
     ranked = rank_destinations(
         con,
         months=[4],
@@ -144,7 +144,7 @@ def test_non_research_grade_excluded_from_scoring(con: psycopg.Connection) -> No
         home_lat=46.0,
         home_lng=-121.6,
         radius_km=500,
-        cell_deg=CELL,
+        h3_resolution=RES,
     )
     assert all(hit.taxon_id != casual_taxon for region in ranked for hit in region.species)
 
@@ -185,7 +185,7 @@ def test_place_calendar_caps_species_breakdown_when_unfiltered(con: psycopg.Conn
                 for i, (taxon_id, _, _) in enumerate(extra_taxa)
             ],
         )
-    build_phenology(con, CELL)
+    build_phenology(con, RES)
 
     row = con.execute("SELECT region_id FROM regions ORDER BY abs(center_lat - %s) LIMIT 1", [OCT_LAT]).fetchone()
     assert row is not None
@@ -216,7 +216,7 @@ def test_place_calendar_disambiguates_duplicate_display_names(con: psycopg.Conne
                 (30002, dup_b, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15), 10, "research", 10),
             ],
         )
-    build_phenology(con, CELL)
+    build_phenology(con, RES)
 
     row = con.execute("SELECT region_id FROM regions ORDER BY abs(center_lat - %s) LIMIT 1", [OCT_LAT]).fetchone()
     assert row is not None
@@ -236,7 +236,7 @@ def test_alerts_only_recent(con: psycopg.Connection) -> None:
         home_lat=46.0,
         home_lng=-121.6,
         radius_km=500,
-        cell_deg=CELL,
+        h3_resolution=RES,
         weeks=4,
     )
     assert active == []
@@ -260,9 +260,11 @@ def test_recent_counts_is_scoped_to_the_radius(con: psycopg.Connection) -> None:
             ],
         )
 
-    counts = recent_counts(con, lat=near_lat, lng=near_lng, radius_km=100, cell_deg=CELL, taxon_ids=[MOREL], weeks=4)
-    near_id = f"{int(near_lat // CELL)}_{int(near_lng // CELL)}"
-    far_id = f"{int(far_lat // CELL)}_{int(far_lng // CELL)}"
+    counts = recent_counts(
+        con, lat=near_lat, lng=near_lng, radius_km=100, h3_resolution=RES, taxon_ids=[MOREL], weeks=4
+    )
+    near_id = grid_cell(near_lat, near_lng, RES).cell_id
+    far_id = grid_cell(far_lat, far_lng, RES).cell_id
     assert counts.get(near_id) == 1
     assert far_id not in counts
 
@@ -273,7 +275,7 @@ def test_regions_center_excludes_obscured_decoy(con: psycopg.Connection) -> None
     # Own grid cell (40.0, -100.0), well away from the APR/OCT fixture regions.
     taxon_id = 555
     precise_lat, precise_lng = 40.0, -100.0
-    decoy_lat, decoy_lng = 40.3, -99.6  # same 0.5deg cell, far enough to shift a naive average
+    decoy_lat, decoy_lng = 40.05, -99.95  # same H3 res-4 cell, far enough to shift a naive average
     rows = [(900 + i, taxon_id, precise_lat, precise_lng, dt.date(2022, 6, 1), 6, "research", 10) for i in range(3)]
     with con.cursor() as cur:
         cur.executemany(
@@ -288,12 +290,11 @@ def test_regions_center_excludes_obscured_decoy(con: psycopg.Connection) -> None
             (999, taxon_id, decoy_lat, decoy_lng, dt.date(2022, 6, 1), 6, "research", 27000),
         )
 
-    build_phenology(con, CELL)
+    build_phenology(con, RES)
 
     row = con.execute(
-        "SELECT center_lat, center_lng FROM regions WHERE region_id ="
-        " CAST(floor(%s / %s) AS INTEGER)::text || '_' || CAST(floor(%s / %s) AS INTEGER)::text",
-        [precise_lat, CELL, precise_lng, CELL],
+        "SELECT center_lat, center_lng FROM regions WHERE region_id = h3_lat_lng_to_cell(POINT(%s, %s), %s)::text",
+        [precise_lng, precise_lat, RES],
     ).fetchone()
     assert row is not None
     center_lat, center_lng = row
@@ -314,12 +315,11 @@ def test_regions_center_falls_back_when_all_obscured(con: psycopg.Connection) ->
             (997, taxon_id, lat, lng, dt.date(2022, 6, 1), 6, "research", 27000),
         )
 
-    build_phenology(con, CELL)
+    build_phenology(con, RES)
 
     row = con.execute(
-        "SELECT center_lat, center_lng FROM regions WHERE region_id ="
-        " CAST(floor(%s / %s) AS INTEGER)::text || '_' || CAST(floor(%s / %s) AS INTEGER)::text",
-        [lat, CELL, lng, CELL],
+        "SELECT center_lat, center_lng FROM regions WHERE region_id = h3_lat_lng_to_cell(POINT(%s, %s), %s)::text",
+        [lng, lat, RES],
     ).fetchone()
     assert row is not None
     assert row[0] == pytest.approx(lat, abs=1e-6)
@@ -342,12 +342,11 @@ def test_regions_elevation_is_mean_of_enriched_observations(con: psycopg.Connect
         cur.execute("UPDATE observations SET elevation_m = 1300 WHERE id = 871")
         # id 872 stays NULL - not yet enriched
 
-    build_phenology(con, CELL)
+    build_phenology(con, RES)
 
     row = con.execute(
-        "SELECT elevation_m FROM regions WHERE region_id ="
-        " CAST(floor(%s / %s) AS INTEGER)::text || '_' || CAST(floor(%s / %s) AS INTEGER)::text",
-        [lat, CELL, lng, CELL],
+        "SELECT elevation_m FROM regions WHERE region_id = h3_lat_lng_to_cell(POINT(%s, %s), %s)::text",
+        [lng, lat, RES],
     ).fetchone()
     assert row is not None and row[0] == 1150
 
@@ -361,12 +360,11 @@ def test_regions_elevation_is_null_when_no_observation_enriched(con: psycopg.Con
             (880, 561, lat, lng, dt.date(2022, 6, 1), 6, "research", 10),
         )
 
-    build_phenology(con, CELL)
+    build_phenology(con, RES)
 
     row = con.execute(
-        "SELECT elevation_m FROM regions WHERE region_id ="
-        " CAST(floor(%s / %s) AS INTEGER)::text || '_' || CAST(floor(%s / %s) AS INTEGER)::text",
-        [lat, CELL, lng, CELL],
+        "SELECT elevation_m FROM regions WHERE region_id = h3_lat_lng_to_cell(POINT(%s, %s), %s)::text",
+        [lng, lat, RES],
     ).fetchone()
     assert row is not None and row[0] is None
 
@@ -384,7 +382,7 @@ def test_rank_survives_stale_regions_without_elevation_column(con: psycopg.Conne
         home_lat=46.0,
         home_lng=-121.6,
         radius_km=500,
-        cell_deg=CELL,
+        h3_resolution=RES,
     )
 
     assert ranked, "expected ranking to still return regions"
@@ -394,7 +392,7 @@ def test_rank_survives_stale_regions_without_elevation_column(con: psycopg.Conne
 def test_alerts_center_excludes_obscured_decoy(con: psycopg.Connection) -> None:
     taxon_id = 557
     precise_lat, precise_lng = 40.0, -100.0
-    decoy_lat, decoy_lng = 40.3, -99.6
+    decoy_lat, decoy_lng = 40.05, -99.95  # same H3 res-4 cell as precise_lat/lng
     today = dt.date.today()
     with con.cursor() as cur:
         cur.executemany(
@@ -419,7 +417,7 @@ def test_alerts_center_excludes_obscured_decoy(con: psycopg.Connection) -> None:
         home_lat=precise_lat,
         home_lng=precise_lng,
         radius_km=500,
-        cell_deg=CELL,
+        h3_resolution=RES,
         weeks=4,
     )
     assert len(active) == 1
@@ -434,7 +432,7 @@ def test_alerts_center_excludes_obscured_decoy_across_taxa(con: psycopg.Connecti
     # computed once per region_id across every matching taxon, not per (region_id, taxon_id).
     precise_taxon, obscured_taxon = 558, 559
     precise_lat, precise_lng = 40.0, -100.0
-    decoy_lat, decoy_lng = 40.3, -99.6
+    decoy_lat, decoy_lng = 40.05, -99.95  # same H3 res-4 cell as precise_lat/lng
     today = dt.date.today()
     with con.cursor() as cur:
         cur.executemany(
@@ -459,7 +457,7 @@ def test_alerts_center_excludes_obscured_decoy_across_taxa(con: psycopg.Connecti
         home_lat=precise_lat,
         home_lng=precise_lng,
         radius_km=500,
-        cell_deg=CELL,
+        h3_resolution=RES,
         weeks=4,
     )
     assert len(active) == 1
@@ -532,7 +530,7 @@ def test_haversine_known_distance() -> None:
 def test_build_phenology_ends_with_canonical_table_and_index_names(con: psycopg.Connection) -> None:
     # Build-and-swap uses `*_new` staging names; the end state must be byte-for-byte the old
     # layout so callers/queries that name `phenology` / `ix_phenology_region` keep working.
-    build_phenology(con, CELL)
+    build_phenology(con, RES)
 
     staging = con.execute(
         "SELECT count(*) FROM pg_tables WHERE tablename IN ('phenology_new', 'regions_new')"
@@ -551,8 +549,8 @@ def test_build_phenology_recovers_from_a_stray_staging_table(con: psycopg.Connec
     con.execute("CREATE TABLE phenology_new (x int)")
     con.execute("CREATE TABLE regions_new (x int)")
 
-    build_phenology(con, CELL)  # must not raise
+    build_phenology(con, RES)  # must not raise
 
     assert rank_destinations(
-        con, months=[4], taxon_ids=[MOREL], home_lat=APR_LAT, home_lng=APR_LNG, radius_km=50, cell_deg=CELL
+        con, months=[4], taxon_ids=[MOREL], home_lat=APR_LAT, home_lng=APR_LNG, radius_km=50, h3_resolution=RES
     )

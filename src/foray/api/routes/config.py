@@ -8,6 +8,7 @@ from psycopg_pool import ConnectionPool
 from foray.api.deps import get_pool, get_state, resolve_device_id, resolve_home, set_device_cookie
 from foray.api.state import AppState
 from foray.api_models import ConfigResponse
+from foray.geo import h3_edge_length_km
 
 router = APIRouter()
 
@@ -27,7 +28,7 @@ def get_config(
         home = resolve_home(conn, device_id, cfg)
     return ConfigResponse(
         home=home,
-        cell_deg=cfg.cell_deg,
+        region_radius_km=h3_edge_length_km(cfg.h3_resolution),
         recent_weeks=cfg.recent_weeks,
         refreshing=state.refreshing,
         last_error=state.last_error,

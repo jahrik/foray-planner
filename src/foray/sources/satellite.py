@@ -48,7 +48,7 @@ from PIL import Image
 
 from foray.cache import save_region_satellite
 from foray.config import Settings
-from foray.geo import KM_PER_DEG_LAT, web_mercator_bbox_m
+from foray.geo import h3_edge_length_km, web_mercator_bbox_m
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +235,7 @@ def backfill_region_satellite(
     con: psycopg.Connection,
     cfg: Settings,
     *,
-    cell_deg: float,
+    h3_resolution: int,
     max_regions: int | None = None,
     concurrency: int = 4,
     refresh: bool = False,
@@ -265,7 +265,14 @@ def backfill_region_satellite(
         f"LEFT JOIN region_satellite s ON s.region_id = r.region_id WHERE s.region_id IS NULL {limit_sql}",
         params,
     ).fetchall()
-    radius_m = (cell_deg * KM_PER_DEG_LAT * 1000) / 2
+    # issue #337: the old `cell_deg * KM_PER_DEG_LAT / 2` calc assumed a square degree cell and
+    # inherited the same `cos(lat)` distortion the H3 cutover exists to remove - a region's
+    # fetch radius shrank going north even though its H3 cell is the same real-world size
+    # everywhere. A regular hexagon's edge length equals its circumradius (center to vertex),
+    # so the average edge length at this resolution is the right per-region fetch radius, with
+    # no per-region computation needed (every cell at a resolution is close enough to the same
+    # size to share one constant).
+    radius_m = h3_edge_length_km(h3_resolution) * 1000
     total = len(rows)
     updated = 0
     failed = 0
