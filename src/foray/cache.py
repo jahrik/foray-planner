@@ -783,9 +783,10 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
             FOR EACH ROW EXECUTE FUNCTION foray_public_land_area();
         """,
     ),
-    # issue #337: replace the plain lat/lng degree grid (`floor(coord / h3_resolution)`) with H3
-    # hexagons - the square grid narrows with `cos(lat)` going north (a 0.25 deg cell is ~28km
-    # wide at the equator, ~14km wide in Alaska), which both under/over-sizes destination cards
+    # issue #337: replace the plain lat/lng degree grid (`floor(coord / cell_deg)`, the retired
+    # config field - not related to the new `h3_resolution`) with H3 hexagons - the square grid
+    # narrowed with `cos(lat)` going north (a 0.25 deg cell was ~28km wide at the equator, ~14km
+    # wide in Alaska), which both under/over-sizes destination cards
     # by latitude and is the root cause of the offshore-cell-center bug #326 C4 patched
     # tactically. H3 cells are the same real-world size everywhere. Resolution 4 chosen
     # empirically (issue #337 scoping comment): against 1.99M local research-grade
@@ -806,6 +807,18 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # `region_satellite` is the one real cost: its cached Esri exports (25-45s/region) are gone
     # too, so a deliberate post-migration `foray backfill-satellite` run is worth doing rather
     # than waiting on first-view fetches for every region - see the issue for that rollout note.
+    #
+    # ROLLOUT (Copilot review, PR #370): dropping `phenology`/`regions` here means
+    # `/api/destinations` serves nothing until the next `build_phenology` call - unlike the
+    # other tables above, this isn't lazy/cron-driven on its own schedule, it rides on the next
+    # ingest run (`refresh.run_home_refresh` calls it unconditionally on every "mushrooms"
+    # target, not debounced - only the backfill-driven path in `maybe_rebuild_phenology` is).
+    # Bounded to at most one nightly `ingest` cron cycle, same "deliberately not baked into the
+    # migration itself" call as the #335 PR2 trail-land backfill - a schema migration is the
+    # wrong place for a ~20s-per-million-rows compute pass with its own failure modes (a fresh
+    # `regions`/`phenology` table needs an `ANALYZE` and index build too). Run
+    # `foray refresh --with mushrooms` manually right after deploy to skip that wait instead of
+    # leaving destinations empty until the next scheduled ingest.
     (
         50,
         """

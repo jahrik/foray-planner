@@ -46,8 +46,7 @@ FROM python:3.13-slim-bookworm AS runtime
 # either (issue #79 Phase 4) - the full Fungi catalog lives in Postgres (fungi_genera).
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    FORAY_HOME__RADIUS_KM=400 \
-    FORAY_CELL_DEG=0.5
+    FORAY_HOME__RADIUS_KM=400
 
 RUN useradd --uid 1000 --create-home foray
 

@@ -28,7 +28,7 @@ from foray.cache import load_region_places as db_load_region_places
 from foray.cache import load_region_satellite as db_load_region_satellite
 from foray.cache import save_region_place as db_save_region_place
 from foray.cache import save_region_satellite as db_save_region_satellite
-from foray.geo import KM_PER_DEG_LAT
+from foray.geo import h3_edge_length_km
 from foray.sources import geocode, satellite, trails
 
 logger = logging.getLogger(__name__)
@@ -173,7 +173,11 @@ def _region_satellite_bytes(region_id: str, state: AppState, pool: ConnectionPoo
             if cached is not None:
                 return cached
             center_lat, center_lng = region_center(region_id)
-            radius_m = (state.cfg.h3_resolution * KM_PER_DEG_LAT * 1000) / 2
+            # Matches sources.satellite.backfill_region_satellite's radius exactly (Copilot
+            # review, PR #370: this cache-miss path had its own stale copy of the old degree-grid
+            # calc, so first-view imagery was stitched at a different, cos(lat)-distorted scale
+            # from the prefilled cache and the frontend's own region circle).
+            radius_m = h3_edge_length_km(state.cfg.h3_resolution) * 1000
             try:
                 image, labels = satellite.fetch_region_satellite(center_lat, center_lng, radius_m)
             except httpx.HTTPError as error:

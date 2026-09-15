@@ -178,9 +178,14 @@ class Settings(BaseSettings):
     )
 
     home: Home = Field(default_factory=Home)
-    # H3 resolution (0=coarsest, 15=finest) regions/phenology/ranking bin observations into -
-    # see foray.defaults.H3_RESOLUTION for how 4 was picked.
-    h3_resolution: int = Field(ge=0, le=15, default=_DEFAULT_H3_RESOLUTION)
+    # H3 resolution (0=coarsest) regions/phenology/ranking bin observations into - see
+    # foray.defaults.H3_RESOLUTION for how 4 was picked. Capped well below H3's full 0-15 range
+    # (Copilot review, PR #370): geo.cells_in_radius sizes a grid_disk from real-world radius /
+    # cell edge length, so a fine resolution (edge length shrinks fast per step) combined with a
+    # large home radius can enumerate an enormous cell count before any SQL runs - res 9's ~74 m
+    # edge already leaves headroom far past any realistic resolution choice while keeping that
+    # enumeration bounded.
+    h3_resolution: int = Field(ge=0, le=9, default=_DEFAULT_H3_RESOLUTION)
     # URL of the Protomaps PMTiles vector basemap archive (a self-hosted US extract on DO Spaces
     # + CDN, built + uploaded by the `foray:build-basemap-once` Ansible task - see
     # docs/data-sources.md). The map has no raster fallback, so empty means no base layer.
