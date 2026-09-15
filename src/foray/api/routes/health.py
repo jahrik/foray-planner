@@ -25,6 +25,15 @@ history) is more than 14 days old (2x `bulk-load.yml`'s weekly cadence) or none 
 published. Skipped
 entirely when Spaces isn't configured (local dev) - matching the `camps`/`RIDB_API_KEY` pattern
 above, an unconfigured optional dependency isn't a freshness problem to report.
+
+``/metrics`` (issue #338 PR 1) is a Prometheus text-exposition endpoint over the same
+`job_runs`/`backfill_queue` data plus the DB-backed half of `/healthz/data`'s layer freshness
+(`compute_layer_freshness`, factored out below so both routes share one query) - job run counts/
+durations/rows/429s by job, backfill depth + drain rate by kind, and layer age/staleness gauges.
+Deliberately excludes the Spaces-backed `bulk-stage:*` layers: those need an S3 `list_objects`
+call per source, and a Prometheus scrape (every 15-60s, possibly from multiple scrapers) hitting
+Spaces that often isn't worth it for a signal `/healthz/data` already exposes on its own slower,
+cron-driven cadence.
 """
 
 from __future__ import annotations
@@ -33,7 +42,9 @@ import datetime as dt
 import logging
 import os
 
+import psycopg
 from fastapi import APIRouter, Depends, Response
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 from psycopg_pool import ConnectionPool
 
 from foray.api.deps import get_pool, get_state
@@ -42,6 +53,7 @@ from foray.api_models import BacklogResponse, DataHealthResponse, LayerFreshness
 from foray.cache import backfill_queue_depth, job_run_drain_rate, latest_ingest_at, latest_successful_job_run
 from foray.config import Settings
 from foray.ingest_bulk import STAGERS
+from foray.metrics import ForayCollector
 from foray.spaces import latest_snapshot_date
 
 logger = logging.getLogger(__name__)
@@ -80,6 +92,37 @@ def _layer_specs(cfg: Settings) -> list[tuple[str, str | None, str | None, float
     return specs
 
 
+def compute_layer_freshness(cfg: Settings, conn: psycopg.Connection, now: dt.datetime) -> list[LayerFreshnessResponse]:
+    """The DB-only half of `/healthz/data` (everything but the Spaces-backed `bulk-stage:*`
+    layers) - factored out so `/metrics` (issue #338 PR 1) can reuse the exact same freshness
+    computation instead of re-deriving it."""
+    multiplier = cfg.observability.data_freshness_multiplier
+    layers: list[LayerFreshnessResponse] = []
+    for name, prefix, job, interval_hours, blocking in _layer_specs(cfg):
+        last_success = latest_ingest_at(conn, prefix) if prefix else None
+        if last_success is None and job:
+            run = latest_successful_job_run(conn, job)
+            if run is not None:
+                last_success = run["ended_at"] or run["started_at"]
+        # The pool opens connections in autocommit with no explicit session timezone, so a
+        # TIMESTAMPTZ column can come back naive (server-local) rather than UTC-aware -
+        # normalize before comparing against `now` (always UTC-aware) or the subtraction
+        # raises instead of just being wrong.
+        if last_success is not None and last_success.tzinfo is None:
+            last_success = last_success.replace(tzinfo=dt.UTC)
+        stale = last_success is None or (now - last_success) > dt.timedelta(hours=interval_hours * multiplier)
+        layers.append(
+            LayerFreshnessResponse(
+                layer=name,
+                last_success=last_success.isoformat() if last_success else None,
+                interval_hours=interval_hours,
+                stale=stale,
+                blocking=blocking,
+            )
+        )
+    return layers
+
+
 @router.get(
     "/healthz/data",
     responses={
@@ -98,32 +141,9 @@ def healthz_data(
     ``interval_hours * observability.data_freshness_multiplier`` (default 2x) fails the check
     - a non-200 response a cron/alerting layer or an uptime monitor can page on."""
     cfg = state.cfg
-    multiplier = cfg.observability.data_freshness_multiplier
     now = dt.datetime.now(dt.UTC)
-    layers: list[LayerFreshnessResponse] = []
     with pool.connection() as conn:
-        for name, prefix, job, interval_hours, blocking in _layer_specs(cfg):
-            last_success = latest_ingest_at(conn, prefix) if prefix else None
-            if last_success is None and job:
-                run = latest_successful_job_run(conn, job)
-                if run is not None:
-                    last_success = run["ended_at"] or run["started_at"]
-            # The pool opens connections in autocommit with no explicit session timezone, so a
-            # TIMESTAMPTZ column can come back naive (server-local) rather than UTC-aware -
-            # normalize before comparing against `now` (always UTC-aware) or the subtraction
-            # raises instead of just being wrong.
-            if last_success is not None and last_success.tzinfo is None:
-                last_success = last_success.replace(tzinfo=dt.UTC)
-            stale = last_success is None or (now - last_success) > dt.timedelta(hours=interval_hours * multiplier)
-            layers.append(
-                LayerFreshnessResponse(
-                    layer=name,
-                    last_success=last_success.isoformat() if last_success else None,
-                    interval_hours=interval_hours,
-                    stale=stale,
-                    blocking=blocking,
-                )
-            )
+        layers = compute_layer_freshness(cfg, conn, now)
     if cfg.spaces.configured:
         layers.extend(_bulk_stage_freshness(cfg, now))
     ok = not any(layer.stale and layer.blocking for layer in layers)
@@ -188,3 +208,22 @@ def healthz_backlog(pool: ConnectionPool = Depends(get_pool)) -> list[BacklogRes
             )
             for kind, job in _BACKLOG_SPECS
         ]
+
+
+@router.get("/metrics")
+def metrics(
+    state: AppState = Depends(get_state),
+    pool: ConnectionPool = Depends(get_pool),
+) -> Response:
+    """Prometheus text-exposition scrape target (issue #338 PR 1) - see this module's
+    docstring for scope. A fresh `CollectorRegistry` per request rather than one shared
+    process-wide registry: `ForayCollector.collect()` already does all its work against
+    Postgres on every call, so there's no in-process state a shared registry would actually
+    be caching, and a fresh one sidesteps `prometheus_client`'s duplicate-registration error
+    on module reload (e.g. multiple `TestClient` apps in the same test process). Not gated by
+    any auth - matches `/healthz`/`/healthz/data`'s existing unauthenticated precedent;
+    restricting scrape access (private network, firewall rule) is an ops decision for #338 PR
+    2's Prometheus deployment, not this endpoint's job."""
+    registry = CollectorRegistry()
+    registry.register(ForayCollector(state.cfg, pool))
+    return Response(content=generate_latest(registry), media_type=CONTENT_TYPE_LATEST)

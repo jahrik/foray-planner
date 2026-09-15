@@ -49,7 +49,11 @@ docker run -d --name foray-planner -p 8000:8000 $PG_ENV -e RIDB_API_KEY=$RIDB_AP
 
 The image exposes port `8000` and serves both the API and the built frontend bundle.
 The health check polls `GET /healthz` every 30 seconds (liveness only, no DB round trip -
-see `GET /healthz/data` for data-freshness monitoring).
+see `GET /healthz/data` for data-freshness monitoring). `GET /metrics` (issue #338 PR 1) is a
+Prometheus text-exposition scrape target - job run counts/durations/rows/429s, backfill depth
+and drain rate, and per-layer age/staleness gauges, all queried from Postgres fresh on every
+scrape. Unauthenticated, same as the `/healthz*` routes - restrict scrape access at the network
+layer if it's exposed beyond a private Prometheus (issue #338 PR 2).
 
 ---
 
