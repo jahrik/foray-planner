@@ -164,6 +164,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Metrics
+         * @description Prometheus text-exposition scrape target (issue #338 PR 1) - see this module's
+         *     docstring for scope. A fresh `CollectorRegistry` per request rather than one shared
+         *     process-wide registry: `ForayCollector.collect()` already does all its work against
+         *     Postgres on every call, so there's no in-process state a shared registry would actually
+         *     be caching, and a fresh one sidesteps `prometheus_client`'s duplicate-registration error
+         *     on module reload (e.g. multiple `TestClient` apps in the same test process). Not gated by
+         *     any auth - matches `/healthz`/`/healthz/data`'s existing unauthenticated precedent;
+         *     restricting scrape access (private network, firewall rule) is an ops decision for #338 PR
+         *     2's Prometheus deployment, not this endpoint's job.
+         */
+        get: operations["metrics_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/destinations": {
         parameters: {
             query?: never;
@@ -1391,6 +1419,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BacklogResponse"][];
+                };
+            };
+        };
+    };
+    metrics_metrics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain; version=1.0.0; charset=utf-8": unknown;
                 };
             };
         };

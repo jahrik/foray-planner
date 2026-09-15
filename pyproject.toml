@@ -53,6 +53,11 @@ dependencies = [
     # corridor math, the ranking candidate-cell disk) agrees with SQL-side (BINNED, regions)
     # without either one calling the other.
     "h3>=4.1,<5.0",
+    # api/routes/health.py's /metrics endpoint (issue #338 PR 1) - text-format exposition for
+    # a Prometheus scrape, built from a custom Collector over job_runs/backfill_queue rather
+    # than the client's default global registry (those tables' state only exists in Postgres,
+    # not process memory).
+    "prometheus-client>=0.21,<1.0",
 ]
 
 [project.scripts]
