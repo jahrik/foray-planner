@@ -22,13 +22,25 @@ from foray.config import Settings
 # would be circular. Both names exist by the time collect() actually runs (well after both
 # modules finish importing at app startup).
 
-# One row per (job, status) ever recorded - `job_runs` is never pruned, so these counters are
+# One row per (job, status) ever recorded - `job_runs` is never pruned, so this counter is
 # monotonic across the process lifetime the way a Prometheus counter is supposed to be (unlike
 # a gauge sampled from a rolling window).
 _JOB_RUN_STATS_SQL = """
-    SELECT job, status, count(*), coalesce(sum(http_429_count), 0)
+    SELECT job, status, count(*)
     FROM job_runs
     GROUP BY job, status
+"""
+
+# Grouped by job only (not status, unlike the query above) - a Copilot review catch (PR #371):
+# summing this per (job, status) and adding one sample per row let a job with 429s recorded
+# under more than one status emit two samples for the same `{job=...}` label set, which
+# Prometheus's own text format forbids (a scrape with duplicate labels is invalid, not just
+# double-counted).
+_JOB_HTTP_429_SQL = """
+    SELECT job, sum(http_429_count)
+    FROM job_runs
+    GROUP BY job
+    HAVING sum(http_429_count) > 0
 """
 
 # The most recent successful run per job - what a "how long did the last run take" / "how many
@@ -62,15 +74,21 @@ class ForayCollector(Collector):
             "Total foray job_runs rows, by job and outcome (ok/error/skipped).",
             labels=["job", "status"],
         )
+        # Accepted known gap (Copilot review, PR #371): job_runs.http_429_count stays 0 in real
+        # operation today - foray.jobs's own docstring already flags that no source module wires
+        # its 429 retries through to this column. Shipping the series anyway (it'll just read 0
+        # everywhere) rather than deferring it, since the fix is "teach a source module to count
+        # its own retries", not anything about this endpoint - wiring that up is separate work
+        # this PR isn't scoped to do.
         http_429_total = CounterMetricFamily(
             "foray_job_http_429_total",
             "Cumulative HTTP 429 responses recorded across a job's runs.",
             labels=["job"],
         )
-        for job, status, count, http_429 in conn.execute(_JOB_RUN_STATS_SQL):
+        for job, status, count in conn.execute(_JOB_RUN_STATS_SQL):
             runs_total.add_metric([job, status], count)
-            if http_429:
-                http_429_total.add_metric([job], http_429)
+        for job, http_429 in conn.execute(_JOB_HTTP_429_SQL):
+            http_429_total.add_metric([job], http_429)
         yield runs_total
         yield http_429_total
 
