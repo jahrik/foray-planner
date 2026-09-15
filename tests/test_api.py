@@ -1255,17 +1255,22 @@ def test_metrics_returns_prometheus_text_exposition(client: TestClient) -> None:
 
 
 def test_metrics_reports_job_run_counts_and_latest_duration(client: TestClient, con: psycopg.Connection) -> None:
+    # The error run also carries a nonzero http_429_count - a job with 429s recorded under more
+    # than one status previously emitted two foray_job_http_429_total samples for the same
+    # {job="fire"} label set (Copilot review catch, PR #371); this exercises that the two rows
+    # collapse into one summed sample instead.
     con.execute(
         "INSERT INTO job_runs (job, started_at, ended_at, status, rows, duration_ms, http_429_count) VALUES "
         "('fire', now() - interval '2 hours', now() - interval '2 hours', 'ok', 50, 4000, 3), "
-        "('fire', now(), now(), 'error', NULL, NULL, 0)"
+        "('fire', now(), now(), 'error', NULL, NULL, 2)"
     )
 
     body = client.get("/metrics").text
 
     assert 'foray_job_runs_total{job="fire",status="ok"} 1.0' in body
     assert 'foray_job_runs_total{job="fire",status="error"} 1.0' in body
-    assert 'foray_job_http_429_total{job="fire"} 3.0' in body
+    assert body.count('foray_job_http_429_total{job="fire"}') == 1
+    assert 'foray_job_http_429_total{job="fire"} 5.0' in body
     assert 'foray_job_last_duration_seconds{job="fire"} 4.0' in body
     assert 'foray_job_last_rows{job="fire"} 50.0' in body
 
