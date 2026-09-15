@@ -1,4 +1,4 @@
-"""Public-land ingest + scoring tests - no network (mocked ArcGIS transport)."""
+"""Public-land ingest tests - no network (mocked ArcGIS transport)."""
 
 from __future__ import annotations
 
@@ -8,9 +8,8 @@ import httpx
 import psycopg
 import pytest
 
-from foray.cache import is_ingested, record_ingest, upsert_public_land
+from foray.cache import is_ingested, record_ingest
 from foray.config import CoverageRegion, Settings, coverage_envelope
-from foray.scoring import land_near
 from foray.sources.land import (
     _LAND_SOURCES_VERSION,
     SOURCES,
@@ -276,28 +275,6 @@ def test_fetch_public_land_pages_until_transfer_limit_clears() -> None:
     ids = {row[0] for row in rows}
     assert "blm:1000" in ids  # the second page was fetched
     assert len(ids) == 1001
-
-
-def test_land_near_filters_by_bbox_and_returns_geometry(con: psycopg.Connection) -> None:
-    near = _parse_feature(BLM, {"properties": {"OBJECTID": 1}, "geometry": _polygon(47.65, -122.35)})
-    far = _parse_feature(
-        USFS,
-        {
-            "properties": {"OBJECTID": 2, "FORESTNAME": "Faraway"},
-            "geometry": _polygon(40.0, -122.0),
-        },
-    )
-    assert near is not None and far is not None
-    upsert_public_land(con, [near, far])
-
-    units = land_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=30.0)
-    assert [unit.id for unit in units] == ["blm:1"]  # the 800 km-away unit's bbox is out of range
-    assert units[0].agency == "BLM"
-    assert units[0].geometry["type"] == "Polygon"  # geojson parsed back to a dict
-
-
-def test_land_near_no_rows_ingested_returns_empty(con: psycopg.Connection) -> None:
-    assert land_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0) == []
 
 
 def test_coverage_envelope_unions_region_bboxes() -> None:

@@ -29,6 +29,8 @@ import "@maplibre/maplibre-gl-leaflet";
 // resolution needed), covered by the `worker-src blob:` the backend CSP already sets.
 import mlcontour from "maplibre-contour";
 import { Protocol } from "pmtiles";
+import { fireLayers, FIRE_LAYER_IDS, fireSource } from "./basemap-fire";
+import { landFilter, landLayers, LAND_LAYER_IDS, landSource } from "./basemap-land";
 import { applyForayRoadStyle } from "./basemap-roads";
 import { roadsAndLabelsOnly, satelliteImageryLayer, satelliteSource } from "./basemap-satellite";
 import { trailsLayer, trailsSource } from "./basemap-trails";
@@ -47,6 +49,20 @@ const ASSETS = "https://protomaps.github.io/basemaps-assets";
 const ATTRIBUTION =
   '<a href="https://protomaps.com">Protomaps</a> · © <a href="https://openstreetmap.org">OpenStreetMap</a>';
 
+/** The same-origin tile/archive URLs a style build needs - grouped into one object once a
+ * fifth and sixth ({@link landUrl}/{@link fireUrl}, issue #336 PR 2) joined the original four,
+ * since threading that many near-identical strings positionally through every call site here
+ * and in map.ts had become its own source of mix-up risk. Any entry may be `""` to disable that
+ * layer/source entirely - see each field's own Settings.* counterpart in config.py. */
+export interface TileUrls {
+  basemapUrl: string;
+  terrainUrl: string;
+  satelliteUrl: string;
+  trailsUrl: string;
+  landUrl: string;
+  fireUrl: string;
+}
+
 let protocolRegistered = false;
 let glLayer: L.MaplibreGL | null = null;
 
@@ -59,6 +75,11 @@ let contoursVisible = false;
 // vector map and real Esri imagery. Tracked here (not just passed as an argument) so a theme
 // change alone re-bakes whichever mode is currently active, the same way `contoursVisible` does.
 let satelliteBasemapEnabled = false;
+// Public-land / fire layer toggles (issue #336 PR 2) - same "track it here so a theme swap
+// re-bakes the current state" reasoning as contoursVisible/satelliteBasemapEnabled. Land carries
+// one flag per agency toggle (map.ts's #show-land-blm/usfs/tribal); fire is a single on/off.
+let landAgencies: readonly string[] = [];
+let fireVisible = false;
 
 /** The URL pattern the contour vector source pulls from - encodes the per-zoom thresholds. */
 function contourTilesUrl(source: InstanceType<typeof mlcontour.DemSource>): string {
@@ -86,42 +107,46 @@ function ensureDemSource(terrainUrl: string): InstanceType<typeof mlcontour.DemS
   return demSource;
 }
 
-// `satelliteUrl` is only ever used when `satelliteBasemapEnabled` is true (the Layers-pill
+// `urls.satelliteUrl` is only used when `satelliteBasemapEnabled` is true (the Layers-pill
 // toggle) - buildStyle is the one place that branches on that flag, so every other call site
 // (mount, theme change, contour toggle, the satellite toggle itself) stays a plain "rebuild and
 // setStyle" with no satellite-specific logic of its own.
-function buildStyle(
-  url: string,
-  terrainUrl: string,
-  satelliteUrl: string,
-  trailsUrl: string,
-  theme: "dark" | "light",
-): StyleSpecification {
-  const useSatellite = satelliteBasemapEnabled && !!satelliteUrl;
+function buildStyle(urls: TileUrls, theme: "dark" | "light"): StyleSpecification {
+  const useSatellite = satelliteBasemapEnabled && !!urls.satelliteUrl;
   const sources: StyleSpecification["sources"] = {
     protomaps: {
       type: "vector",
-      url: `pmtiles://${url}`,
+      url: `pmtiles://${urls.basemapUrl}`,
       attribution: ATTRIBUTION,
     },
   };
   const vectorLayers = applyForayRoadStyle(themedBaseLayers(theme), theme);
   let layers: StyleSpecification["layers"];
   if (useSatellite) {
-    Object.assign(sources, satelliteSource(satelliteUrl));
+    Object.assign(sources, satelliteSource(urls.satelliteUrl));
     layers = [satelliteImageryLayer(), ...roadsAndLabelsOnly(vectorLayers)];
   } else {
     layers = vectorLayers;
   }
 
-  if (terrainUrl) {
-    const source = ensureDemSource(terrainUrl);
+  if (urls.terrainUrl) {
+    const source = ensureDemSource(urls.terrainUrl);
     Object.assign(sources, terrainSources(source.sharedDemProtocolUrl, contourTilesUrl(source)));
     layers = applyTerrainLayers(layers, theme, contoursVisible, !useSatellite);
   }
 
-  if (trailsUrl) {
-    Object.assign(sources, trailsSource(trailsUrl));
+  // Land/fire before trails: trails is the layer users click most (road-inspect.ts), and MapLibre
+  // hit-tests top-down, so it should sit above the land/fire fills rather than under them.
+  if (urls.landUrl) {
+    Object.assign(sources, landSource(urls.landUrl));
+    layers = [...layers, ...landLayers(landAgencies)];
+  }
+  if (urls.fireUrl) {
+    Object.assign(sources, fireSource(urls.fireUrl));
+    layers = [...layers, ...fireLayers(fireVisible)];
+  }
+  if (urls.trailsUrl) {
+    Object.assign(sources, trailsSource(urls.trailsUrl));
     layers = [...layers, trailsLayer(theme)];
   }
 
@@ -137,48 +162,58 @@ function buildStyle(
 /** Mount the vector basemap on `map` and return the Leaflet layer. Registers the `pmtiles://`
  * protocol with MapLibre once per page. The layer lands in Leaflet's default `tilePane`
  * (z-index 200), below the `satellite` pane (350) and every overlay pane (400+). */
-export function mountVectorBasemap(
-  map: L.Map,
-  url: string,
-  terrainUrl: string,
-  satelliteUrl: string,
-  trailsUrl: string,
-  theme: "dark" | "light",
-): L.MaplibreGL {
+export function mountVectorBasemap(map: L.Map, urls: TileUrls, theme: "dark" | "light"): L.MaplibreGL {
   if (!protocolRegistered) {
     addProtocol("pmtiles", new Protocol().tile);
     protocolRegistered = true;
   }
-  glLayer = L.maplibreGL({ style: buildStyle(url, terrainUrl, satelliteUrl, trailsUrl, theme) }).addTo(map);
+  glLayer = L.maplibreGL({ style: buildStyle(urls, theme) }).addTo(map);
   return glLayer;
 }
 
 /** Swap the style for a theme change (light <-> dark). No-op if the basemap has not been
  * mounted yet (no basemap_url configured). Keeps whichever of vector/satellite mode is
  * currently active - see `satelliteBasemapEnabled`. */
-export function setVectorBasemapTheme(
-  url: string,
-  terrainUrl: string,
-  satelliteUrl: string,
-  trailsUrl: string,
-  theme: "dark" | "light",
-): void {
-  glLayer?.getMaplibreMap().setStyle(buildStyle(url, terrainUrl, satelliteUrl, trailsUrl, theme));
+export function setVectorBasemapTheme(urls: TileUrls, theme: "dark" | "light"): void {
+  glLayer?.getMaplibreMap().setStyle(buildStyle(urls, theme));
 }
 
 /** The Layers-pill "Satellite basemap" toggle: swap the whole style between the vector map and
  * real Esri imagery with our own roads/boundaries/labels over it. No-op if the basemap has not
  * been mounted yet. */
-export function setSatelliteBasemapMode(
-  url: string,
-  terrainUrl: string,
-  satelliteUrl: string,
-  trailsUrl: string,
-  theme: "dark" | "light",
-  on: boolean,
-): void {
+export function setSatelliteBasemapMode(urls: TileUrls, theme: "dark" | "light", on: boolean): void {
   satelliteBasemapEnabled = on;
-  glLayer?.getMaplibreMap().setStyle(buildStyle(url, terrainUrl, satelliteUrl, trailsUrl, theme));
+  glLayer?.getMaplibreMap().setStyle(buildStyle(urls, theme));
+}
+
+/** The Layers-pill land-agency toggles (#show-land-blm/usfs/tribal): live `setLayoutProperty` +
+ * `setFilter` on the already-mounted land layers, no full style rebuild (unlike the satellite/
+ * contour toggles above, which change what else is in the style). `agencies` tracked module-side
+ * so a later theme swap's rebuild keeps the current selection. No-op if land tiles are disabled
+ * (layers never got added to the style) or the basemap isn't mounted yet. */
+export function setLandLayerState(agencies: readonly string[]): void {
+  landAgencies = agencies;
+  const gl = glLayer?.getMaplibreMap();
+  if (!gl) return;
+  const visibility = agencies.length > 0 ? "visible" : "none";
+  const filter = landFilter(agencies);
+  for (const id of LAND_LAYER_IDS) {
+    if (!gl.getLayer(id)) continue;
+    gl.setLayoutProperty(id, "visibility", visibility);
+    gl.setFilter(id, filter);
+  }
+}
+
+/** The Layers-pill "Fire" toggle (#show-fire) - same live-update reasoning as
+ * `setLandLayerState`, minus the per-agency filter (fire has one toggle for both layers). */
+export function setFireLayerState(visible: boolean): void {
+  fireVisible = visible;
+  const gl = glLayer?.getMaplibreMap();
+  if (!gl) return;
+  const visibility = visible ? "visible" : "none";
+  for (const id of FIRE_LAYER_IDS) {
+    if (gl.getLayer(id)) gl.setLayoutProperty(id, "visibility", visibility);
+  }
 }
 
 export function hasVectorBasemap(): boolean {

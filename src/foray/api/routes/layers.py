@@ -1,4 +1,5 @@
-"""Map-layer reads around a region or an explicit point: camps, public land, trails, place."""
+"""Map-layer reads around a region or an explicit point: camps, trails, place. Public land and
+wildfire polygons are served as vector tiles instead (issue #336 PR 2, api/routes/tiles.py)."""
 
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ from foray.api.deps import (
     set_device_cookie,
 )
 from foray.api.state import AppState
-from foray.api_models import CampSite, FireNear, LandUnit, RegionPlace, Trail, TrailPath
+from foray.api_models import CampSite, RegionPlace, Trail, TrailPath
 from foray.cache import load_region_place as db_load_region_place
 from foray.cache import load_region_places as db_load_region_places
 from foray.cache import load_region_satellite as db_load_region_satellite
@@ -66,55 +67,6 @@ def get_camps(
             limit=limit,
         )
     return [CampSite.model_validate(site) for site in sites]
-
-
-@router.get("/api/land")
-def get_land(
-    region_id: str | None = Query(None),
-    lat: float | None = Query(None),
-    lng: float | None = Query(None),
-    radius_km: float = Query(40.0),
-    state: AppState = Depends(get_state),
-    pool: ConnectionPool = Depends(get_pool),
-) -> list[LandUnit]:
-    """Public-land ownership polygons near a region (by id) or an explicit lat/lng."""
-    require_idle(state)
-    if region_id is not None:
-        center_lat, center_lng = region_center(region_id, state.cfg)
-    elif lat is not None and lng is not None:
-        center_lat, center_lng = lat, lng
-    else:
-        raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
-    with pool.connection() as conn:
-        units = scoring.land_near(conn, lat=center_lat, lng=center_lng, radius_km=radius_km)
-    return [LandUnit.model_validate(unit) for unit in units]
-
-
-@router.get("/api/fire")
-def get_fire(
-    region_id: str | None = Query(None),
-    lat: float | None = Query(None),
-    lng: float | None = Query(None),
-    radius_km: float = Query(60.0),
-    status: str | None = Query(None, pattern="^(active|historical)$"),
-    state: AppState = Depends(get_state),
-    pool: ConnectionPool = Depends(get_pool),
-) -> list[FireNear]:
-    """Active fire perimeters/points and recent burn scars near a region (by id) or an explicit
-    lat/lng (issue #227). ``status=active|historical`` filters; both by default. Geometry is
-    included for the map overlay. Informational only - links the official incident page."""
-    require_idle(state)
-    if region_id is not None:
-        center_lat, center_lng = region_center(region_id, state.cfg)
-    elif lat is not None and lng is not None:
-        center_lat, center_lng = lat, lng
-    else:
-        raise HTTPException(400, "provide `region_id` or both `lat` and `lng`")
-    with pool.connection() as conn:
-        fires = scoring.fire_near(
-            conn, lat=center_lat, lng=center_lng, radius_km=radius_km, status=status, include_geometry=True
-        )
-    return [FireNear.model_validate(fire) for fire in fires]
 
 
 @router.get("/api/destinations/places")

@@ -179,7 +179,7 @@ export async function loadTrailheadsInto(
   container.innerHTML = "<p class='hint'>Loading…</p>";
   let trailheads: Trail[];
   try {
-    // See layers.ts's LandUnit cast - `geometry` is real GeoJSON, just untyped on the backend.
+    // `geometry` is real GeoJSON, just untyped on the backend - see `Trail`'s cast in ./api/types.
     trailheads = (await getJson("/api/trails", {
       query: {
         lat: region.center_lat,

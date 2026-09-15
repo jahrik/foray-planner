@@ -36,17 +36,9 @@ export type AlertRegion = components["schemas"]["AlertRegion"];
 /** A campsite near a region (`GET /api/camps`). `free` is null when the source is silent. */
 export type CampSite = components["schemas"]["CampSite"];
 
-/** A public-land ownership polygon (`GET /api/land`). `geometry` is raw GeoJSON. */
-export type LandUnit = Omit<components["schemas"]["LandUnit"], "geometry"> & {
-  geometry: GeoJSON.Geometry;
-};
-
-/** An active fire or recent burn scar near a region / point (`GET /api/fire`, and the
- * `fire_nearby` annotation on destination/alert cards + plan stops, issue #227). `geometry`
- * is raw GeoJSON on the map layer, null on the card annotations. */
-export type FireNear = Omit<components["schemas"]["FireNear"], "geometry"> & {
-  geometry: GeoJSON.Geometry | null;
-};
+/** The `fire_nearby` warning annotation on destination/alert cards + plan stops (issue #227).
+ * The map layer moved to vector tiles (issue #336 PR 2, see basemap-fire.ts's `FireProps`). */
+export type FireNear = components["schemas"]["FireNear"];
 
 /**
  * A trail near a hotspot (`GET /api/trails`). `geometry` is raw GeoJSON (line or point) when

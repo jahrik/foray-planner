@@ -2,9 +2,8 @@
 #
 # Explicit `tables:` list rather than martin's default auto-discovery: auto-discovery would
 # publish every geometry column in the database (observations included - obscured/rare-species
-# coordinates), which is exactly what we don't want on a tile endpoint. Only `trails` is
-# published here; land/fire get their own entries in a later PR (#336 PR 2) once the frontend
-# cutover lands.
+# coordinates), which is exactly what we don't want on a tile endpoint. `trails`, `land`, and
+# `fire` are published; the frontend cutover for the latter two is issue #336 PR 2.
 #
 # Shared verbatim between local dev (docker-compose.yml) and prod
 # (infra/ansible/tasks/deploy/martin.yml) - see AGENTS.md "dev must mirror prod".
@@ -35,3 +34,41 @@ postgres:
         land_agency: text
         land_unit: text
         forage_obs: int4
+
+    # Public-land ownership polygons (issue #335 PR 1/2). Same "no id_column" reasoning as
+    # trails: public_land.id is text ("usfs:1234"), carried as a plain property.
+    land:
+      schema: public
+      table: public_land
+      srid: 4326
+      geometry_column: geom
+      extent: 4096
+      buffer: 64
+      clip_geom: true
+      properties:
+        id: text
+        agency: text
+        unit: text
+        source: text
+        url: text
+
+    # Active wildfire perimeters/points + recent burn scars (issue #227). Mixed geometry
+    # (Polygon for a perimeter/scar, Point for a WFIGS location with none yet, `is_point`) -
+    # the frontend splits fill vs. circle styling on MVT's own `$type`, not this flag.
+    fire:
+      schema: public
+      table: fire_perimeters
+      srid: 4326
+      geometry_column: geom
+      extent: 4096
+      buffer: 64
+      clip_geom: true
+      properties:
+        id: text
+        name: text
+        status: text
+        fire_year: int4
+        percent_contained: float8
+        gis_acres: float8
+        dominant_severity: text
+        incident_url: text

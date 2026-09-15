@@ -467,12 +467,6 @@ def test_camps_limit_caps_the_results(client: TestClient, con: psycopg.Connectio
     assert len(response.json()) == 1
 
 
-def test_land_by_latlng_empty(client: TestClient) -> None:
-    response = client.get("/api/land", params={"lat": HOME_LAT, "lng": HOME_LNG})
-    assert response.status_code == 200
-    assert response.json() == []
-
-
 def test_trails_by_latlng_empty(client: TestClient) -> None:
     response = client.get("/api/trails", params={"lat": HOME_LAT, "lng": HOME_LNG})
     assert response.status_code == 200

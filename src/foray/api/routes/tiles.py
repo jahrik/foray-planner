@@ -73,19 +73,40 @@ def get_satellite_tile(z: int, x: int, y: int) -> Response:
     return Response(content=content, media_type=content_type, headers={"Cache-Control": _TILE_CACHE_CONTROL})
 
 
-# Async, unlike `_client` above: a trails viewport pan/zoom fans out to far more concurrent
-# tile requests than the 3-service satellite basemap ever does, and route handlers are plain
-# `def`s Starlette runs in AnyIO's worker thread pool - capped at 12 tokens (api/app.py), sized
-# to the DB pool. A sync martin fetch blocking one of those for up to `timeout` seconds could
-# starve ordinary DB-bound API requests during a heavy pan (Copilot review, PR #368). `async def`
-# below awaits this client instead of occupying a thread-pool token while it waits on I/O.
+# Async, unlike `_client` above: a viewport pan/zoom fans out to far more concurrent tile
+# requests than the 3-service satellite basemap ever does, and route handlers are plain `def`s
+# Starlette runs in AnyIO's worker thread pool - capped at 12 tokens (api/app.py), sized to the
+# DB pool. A sync martin fetch blocking one of those for up to `timeout` seconds could starve
+# ordinary DB-bound API requests during a heavy pan (Copilot review, PR #368). `async def` below
+# awaits this client instead of occupying a thread-pool token while it waits on I/O.
 _martin_client = httpx.AsyncClient(timeout=10.0)
 
-# Vector tiles change whenever a trails ingest/backfill runs (unlike Esri's imagery, which is
+# Vector tiles change whenever an ingest/backfill runs (unlike Esri's imagery, which is
 # effectively static), so this stays well short of the satellite proxy's week-long cache - long
 # enough that panning back over the same area is free, short enough that a refreshed layer
 # reaches an open tab within the hour.
-_TRAILS_TILE_CACHE_CONTROL = "public, max-age=3600"
+_MARTIN_TILE_CACHE_CONTROL = "public, max-age=3600"
+
+
+async def _martin_tile(martin_url: str, martin_table: str, z: int, x: int, y: int) -> Response:
+    """Shared body for the martin-backed vector tile routes below - one martin table (trails,
+    land, fire) proxied same-origin so the frontend never talks to the docker-internal
+    `martin_url` host directly."""
+    if not martin_url:
+        raise HTTPException(404, "vector tiles are not configured")
+    if not _in_range(z, x, y):
+        raise HTTPException(400, "tile coordinates out of range")
+    try:
+        upstream = await _martin_client.get(f"{martin_url}/{martin_table}/{z}/{x}/{y}")
+        upstream.raise_for_status()
+    except httpx.HTTPError as error:
+        logger.warning("%s tile proxy: fetch failed for %d/%d/%d (%s)", martin_table, z, x, y, error)
+        raise HTTPException(502, "vector tiles temporarily unavailable") from None
+    return Response(
+        content=upstream.content,
+        media_type="application/vnd.mapbox-vector-tile",
+        headers={"Cache-Control": _MARTIN_TILE_CACHE_CONTROL},
+    )
 
 
 @router.get(
@@ -94,20 +115,25 @@ _TRAILS_TILE_CACHE_CONTROL = "public, max-age=3600"
     responses={200: {"content": {"application/vnd.mapbox-vector-tile": {}}}},
 )
 async def get_trails_tile(z: int, x: int, y: int, state: AppState = Depends(get_state)) -> Response:
-    """One trails vector tile (issue #336 PR 1), proxied same-origin from the martin tile server
-    so the frontend never talks to the docker-internal `martin_url` host directly."""
-    if not state.cfg.martin_url:
-        raise HTTPException(404, "trails vector tiles are not configured")
-    if not _in_range(z, x, y):
-        raise HTTPException(400, "tile coordinates out of range")
-    try:
-        upstream = await _martin_client.get(f"{state.cfg.martin_url}/trails/{z}/{x}/{y}")
-        upstream.raise_for_status()
-    except httpx.HTTPError as error:
-        logger.warning("trails tile proxy: fetch failed for %d/%d/%d (%s)", z, x, y, error)
-        raise HTTPException(502, "trails tiles temporarily unavailable") from None
-    return Response(
-        content=upstream.content,
-        media_type="application/vnd.mapbox-vector-tile",
-        headers={"Cache-Control": _TRAILS_TILE_CACHE_CONTROL},
-    )
+    """One trails vector tile (issue #336 PR 1) - see `_martin_tile`."""
+    return await _martin_tile(state.cfg.martin_url, "trails", z, x, y)
+
+
+@router.get(
+    "/api/tiles/land/{z}/{x}/{y}.pbf",
+    response_class=Response,
+    responses={200: {"content": {"application/vnd.mapbox-vector-tile": {}}}},
+)
+async def get_land_tile(z: int, x: int, y: int, state: AppState = Depends(get_state)) -> Response:
+    """One public-land ownership vector tile (issue #336 PR 2) - see `_martin_tile`."""
+    return await _martin_tile(state.cfg.martin_url, "land", z, x, y)
+
+
+@router.get(
+    "/api/tiles/fire/{z}/{x}/{y}.pbf",
+    response_class=Response,
+    responses={200: {"content": {"application/vnd.mapbox-vector-tile": {}}}},
+)
+async def get_fire_tile(z: int, x: int, y: int, state: AppState = Depends(get_state)) -> Response:
+    """One wildfire/burn-scar vector tile (issue #336 PR 2) - see `_martin_tile`."""
+    return await _martin_tile(state.cfg.martin_url, "fire", z, x, y)
