@@ -165,6 +165,17 @@ def bbox_center_radius(bbox: BBox) -> tuple[float, float, float]:
     return center_lat, center_lng, radius_km
 
 
+# Hard ceiling on grid_disk's ring count (Copilot review, PR #370): a disk's cell count grows
+# as ~3k^2, so an unbounded k - a fine resolution paired with a large radius_km (Home.radius_km
+# alone allows up to 20,000) - can enumerate millions of cells and exhaust memory/CPU before any
+# SQL runs, regardless of Settings.h3_resolution's own cap. 120 rings is already generous for
+# this app's real usage (a few hundred km at resolution 4-6) and bounds the disk to ~43k cells
+# worst case - correctness is unaffected by the clamp (rank_destinations/_corridor re-filter
+# every candidate against the exact distance anyway), only completeness at radii far past
+# anything the app actually uses.
+_MAX_GRID_DISK_RINGS = 120
+
+
 def cells_in_radius(lat: float, lng: float, radius_km: float, h3_resolution: int) -> list[str]:
     """Every H3 cell within ``radius_km`` of ``(lat, lng)``, as an ``h3.grid_disk`` (issue #337).
 
@@ -178,7 +189,7 @@ def cells_in_radius(lat: float, lng: float, radius_km: float, h3_resolution: int
     """
     origin = h3.latlng_to_cell(lat, lng, h3_resolution)
     edge_km = h3.average_hexagon_edge_length(h3_resolution, unit="km")
-    k = math.ceil(radius_km / edge_km) + 1
+    k = min(math.ceil(radius_km / edge_km) + 1, _MAX_GRID_DISK_RINGS)
     return h3.grid_disk(origin, k)
 
 
@@ -188,22 +199,29 @@ def cells_along_segment(
     """Every H3 cell within ``corridor_km`` of the straight line ``1 -> 2`` (issue #337).
 
     The corridor analogue of :func:`cells_in_radius` - a single disk can't cover a segment
-    longer than its own radius, so this unions disks sampled every ``corridor_km`` along the
-    line (straight lat/lng interpolation, the same flat-degree approximation
-    :func:`project_to_plane` already uses at this scale). Consecutive disks overlap by
-    construction (adjacent samples are exactly ``corridor_km`` apart, each disk's own radius),
-    so the union has no gaps. Like :func:`cells_in_radius`, a safe superset is enough -
-    ``rank_destinations_corridor`` re-filters every candidate against the exact perpendicular
-    offset (see its ``keep()``).
+    longer than its own radius, so this unions disks sampled roughly every ``corridor_km`` along
+    the line (straight lat/lng interpolation, the same flat-degree approximation
+    :func:`project_to_plane` already uses at this scale).
+
+    Consecutive samples being ``corridor_km`` apart does *not* by itself mean every point within
+    ``corridor_km`` of the line is within ``corridor_km`` of *some* sample (Copilot review, PR
+    #370): a point at the disk boundary exactly between two samples sits
+    ``sqrt(corridor_km**2 + (step/2)**2)`` from the nearer one, which exceeds ``corridor_km``
+    whenever ``step > 0``. Each sample's own search radius is padded by half the sample spacing
+    to cover that worst case, so the union has no gaps regardless of spacing. Like
+    :func:`cells_in_radius`, a safe superset is enough - ``rank_destinations_corridor``
+    re-filters every candidate against the exact perpendicular offset (see its ``keep()``).
     """
     total_km = haversine_km(lat1, lng1, lat2, lng2)
     n_samples = max(2, math.ceil(total_km / corridor_km) + 1)
+    step_km = total_km / (n_samples - 1)
+    sample_radius_km = corridor_km + step_km / 2
     cells: set[str] = set()
     for i in range(n_samples):
         t = i / (n_samples - 1)
         sample_lat = lat1 + t * (lat2 - lat1)
         sample_lng = lng1 + t * (lng2 - lng1)
-        cells.update(cells_in_radius(sample_lat, sample_lng, corridor_km, h3_resolution))
+        cells.update(cells_in_radius(sample_lat, sample_lng, sample_radius_km, h3_resolution))
     return list(cells)
 
 

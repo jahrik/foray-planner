@@ -26,7 +26,15 @@ import psycopg
 # live against the installed extension (issue #337 scoping comment): despite the function's own
 # name suggesting `(lat, lng)`, swapping the order silently produces a valid-looking but wrong
 # cell for every non-null-island coordinate, so this is exercised directly by
-# ``tests/scoring/test_regions.py`` rather than trusted from the docs.
+# ``tests/scoring/test_scoring.py`` rather than trusted from the docs.
+#
+# `lat`/`lng` range guard (Copilot review, PR #370): the old `floor(coord / cell_deg)` formula
+# never raised on a garbage coordinate, it just produced a nonsense-but-valid-looking region_id.
+# `h3_lat_lng_to_cell` raises instead (H3CellInvalidError, a ValueError subclass) on an
+# out-of-range point, so without this filter one bad research-grade row would take down every
+# phenology rebuild, ranking query, and alert scan that reads through BINNED - the exact
+# in-range check `observations_missing_elevation`/`_precip` already apply for the same reason
+# (`cache._BACKFILL_ELIGIBLE`).
 BINNED = """
 SELECT
     o.id, o.taxon_id, o.lat, o.lng, o.observed_on, o.month, o.quality_grade,
@@ -34,6 +42,7 @@ SELECT
     h3_lat_lng_to_cell(POINT(o.lng, o.lat), {resolution})::text AS region_id
 FROM observations o
 WHERE o.quality_grade = 'research'
+      AND o.lat BETWEEN -90 AND 90 AND o.lng BETWEEN -180 AND 180
 """
 
 # A geoprivacy-obscured observation's cached point is iNat's randomized decoy coordinate, not
