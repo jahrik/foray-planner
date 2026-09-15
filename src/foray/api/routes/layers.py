@@ -52,7 +52,7 @@ def get_camps(
     ``limit`` caps the ranked result, e.g. a destination card's Campgrounds tab."""
     require_idle(state)
     if region_id is not None:
-        center_lat, center_lng = region_center(region_id, state.cfg)
+        center_lat, center_lng = region_center(region_id)
     elif lat is not None and lng is not None:
         center_lat, center_lng = lat, lng
     else:
@@ -111,7 +111,7 @@ def get_region_place(
         found, place_name = db_load_region_place(conn, region_id)
         if found:
             return RegionPlace(place_name=place_name)
-        center_lat, center_lng = region_center(region_id, state.cfg)
+        center_lat, center_lng = region_center(region_id)
         try:
             place_name = geocode.notable_place_name(center_lat, center_lng)
         except (httpx.HTTPError, ValueError) as error:
@@ -172,8 +172,8 @@ def _region_satellite_bytes(region_id: str, state: AppState, pool: ConnectionPoo
             cached = _load_cached_satellite(conn, state, region_id)
             if cached is not None:
                 return cached
-            center_lat, center_lng = region_center(region_id, state.cfg)
-            radius_m = (state.cfg.cell_deg * KM_PER_DEG_LAT * 1000) / 2
+            center_lat, center_lng = region_center(region_id)
+            radius_m = (state.cfg.h3_resolution * KM_PER_DEG_LAT * 1000) / 2
             try:
                 image, labels = satellite.fetch_region_satellite(center_lat, center_lng, radius_m)
             except httpx.HTTPError as error:
@@ -253,7 +253,7 @@ def get_trails(
     """
     require_idle(state)
     if region_id is not None:
-        center_lat, center_lng = region_center(region_id, state.cfg)
+        center_lat, center_lng = region_center(region_id)
     elif lat is not None and lng is not None:
         center_lat, center_lng = lat, lng
     else:

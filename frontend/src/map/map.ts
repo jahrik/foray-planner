@@ -421,16 +421,17 @@ export function updateHome(home: Home): void {
   onScopeChange();
 }
 
-// Matches the same 111 km/degree approximation used backend-side (camps.py, land.py,
-// scoring.py) to convert a region's cell_deg grid width into meters.
-const KM_PER_DEG = 111.0;
-
 // Same footprint plot() uses for a region's true (not score-scaled) circle - see selectSize.
 // Exported so layers.ts can scope the precise-observations fetch to exactly the ground a
 // selected destination bubble represents, instead of the whole search radius (issue #161
 // follow-up: a radius-wide fetch put a cluster badge on every destination on the map at once,
 // visually burying the destination bubbles they were competing with).
-export const regionRadiusKm = (): number => (state.cellDeg * KM_PER_DEG) / 2;
+//
+// issue #337: the server now sends this radius precomputed (an H3 cell's real-world size is
+// the same everywhere, unlike the old cell_deg degree grid, which needed a 111 km/deg
+// conversion done here that also silently assumed the equator - no distortion math belongs in
+// the frontend at all any more).
+export const regionRadiusKm = (): number => state.regionRadiusKm;
 
 // Per-marker sizing so a selected region can snap between its score size and its true
 // geographic footprint (see selectSize/deselectSize below) without re-plotting. `regionId` rides
@@ -476,7 +477,7 @@ function setOthersFill(selected: L.Circle, ringOnly: boolean): void {
 // constants up top. Colour: rust for a ranked destination, moss for the dim 11+ dots, flush
 // green when the region has recent observations. Score is still carried by size + fill opacity
 // within the top-10 tier. Uses L.circle (a geographic radius in meters, not L.circleMarker's
-// fixed pixel radius) so selecting a region can snap it to its true cell_deg footprint
+// fixed pixel radius) so selecting a region can snap it to its true H3-cell footprint
 // (selectSize) and so the circle scales with zoom instead of reading as a screen-space blob.
 export function plot(
   lat: number,
@@ -487,7 +488,7 @@ export function plot(
   rank: number,
 ): L.Circle {
   const palette = markerPalette();
-  const trueRadius = ((state.cellDeg * KM_PER_DEG) / 2) * 1000;
+  const trueRadius = state.regionRadiusKm * 1000;
   const isDim = rank > PROMINENT_RANK_MAX;
   const isHero = rank <= HERO_RANK_MAX;
   const baseColor = live ? palette.flush : isDim ? palette.moss : palette.rust;
@@ -655,7 +656,7 @@ export function clearSatelliteOverlay(): void {
 }
 
 // Selecting a region (marker or card click) snaps its circle from the score-sized preview to
-// its true real-world cell_deg footprint, computed from the same live config value as plot()
+// its true real-world H3-cell footprint, computed from the same live config value as plot()
 // (never hard-coded), so the user can see exactly how much ground that dot actually represents.
 // Fill drops to fully transparent at this size - the circle's own vector fill draws in Leaflet's
 // overlayPane, which sits *above* the "satellite" pane (see initMap/showSatelliteOverlay), so

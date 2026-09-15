@@ -990,7 +990,7 @@ def test_ingest_trails_upserts_into_cache(con: psycopg.Connection) -> None:
     client = httpx.Client(transport=httpx.MockTransport(handler))
     cfg = Settings(
         home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=40.0),
-        cell_deg=0.5,
+        h3_resolution=4,
         ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=4),
     )
     count = ingest_trails(cfg, con, client=client)

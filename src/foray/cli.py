@@ -297,7 +297,7 @@ def backfill_elevation_cmd(ctx: click.Context, limit: int | None, rebuild: bool)
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
-        updated = backfill_elevations(con, max_points=limit, cell_deg=cfg.cell_deg)
+        updated = backfill_elevations(con, max_points=limit, h3_resolution=cfg.h3_resolution)
         click.echo(f"Enriched {updated} observations with elevation.")
         if updated and rebuild and maybe_rebuild_phenology(con, cfg, updated):
             click.echo("Rebuilding phenology…")
@@ -360,7 +360,7 @@ def backfill_precip_cmd(ctx: click.Context, limit: int | None, rebuild: bool) ->
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
-        updated = backfill_precip(con, cell_deg=cfg.cell_deg, max_cells=limit)
+        updated = backfill_precip(con, h3_resolution=cfg.h3_resolution, max_cells=limit)
         click.echo(f"Enriched {updated} observations with antecedent rainfall.")
         if updated and rebuild and maybe_rebuild_phenology(con, cfg, updated):
             click.echo("Rebuilding phenology…")
@@ -426,7 +426,7 @@ def backfill_satellite_cmd(ctx: click.Context, limit: int | None, concurrency: i
         updated, failed = satellite.backfill_region_satellite(
             con,
             cfg,
-            cell_deg=cfg.cell_deg,
+            h3_resolution=cfg.h3_resolution,
             max_regions=limit,
             concurrency=concurrency,
             refresh=refresh,
@@ -710,7 +710,7 @@ def refresh(ctx: click.Context, with_: str, all_coverage: bool) -> None:
             # The home-radius path rebuilds phenology inside run_home_refresh; the
             # coverage-wide path doesn't use it, so rebuild here instead.
             if "mushrooms" in targets:
-                build_phenology(con, cfg.cell_deg)
+                build_phenology(con, cfg.h3_resolution)
         else:
             run_home_refresh(cfg, con, targets)
         if "mushrooms" in targets:
@@ -778,7 +778,7 @@ def plan_cmd(
             con,
             months=selected,
             taxon_ids=[],  # no fixed target list (issue #79) - every genus in the catalog is in play
-            cell_deg=cfg.cell_deg,
+            h3_resolution=cfg.h3_resolution,
             start_lat=cfg.home.lat,
             start_lng=cfg.home.lng,
             destination_lat=dest_lat,

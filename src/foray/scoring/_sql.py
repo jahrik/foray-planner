@@ -20,14 +20,18 @@ import psycopg
 # `regions` / `ranking` / `queries`, and `SELECT o.*` drags every observation column (incl.
 # `positional_accuracy`, `revalidated_at`) through each one. This is every column the aggregates
 # actually read - keep it in sync when a query starts consuming a new one.
+# issue #337: `region_id` is now an H3 cell (`h3_lat_lng_to_cell`), not a `"{ilat}_{ilng}"`
+# degree-grid key - see geo.py's module docstring for why (the old grid's `cos(lat)` distortion).
+# `h3_lat_lng_to_cell` takes a plain Postgres `point` as `(x, y)` = `(lng, lat)` - confirmed
+# live against the installed extension (issue #337 scoping comment): despite the function's own
+# name suggesting `(lat, lng)`, swapping the order silently produces a valid-looking but wrong
+# cell for every non-null-island coordinate, so this is exercised directly by
+# ``tests/scoring/test_regions.py`` rather than trusted from the docs.
 BINNED = """
 SELECT
     o.id, o.taxon_id, o.lat, o.lng, o.observed_on, o.month, o.quality_grade,
     o.obscured, o.place_guess, o.uri, o.elevation_m, o.precip_7d_mm, o.precip_30d_mm,
-    CAST(floor(o.lat / {cell}) AS INTEGER) AS ilat,
-    CAST(floor(o.lng / {cell}) AS INTEGER) AS ilng,
-    (CAST(floor(o.lat / {cell}) AS INTEGER))::text || '_' ||
-        (CAST(floor(o.lng / {cell}) AS INTEGER))::text AS region_id
+    h3_lat_lng_to_cell(POINT(o.lng, o.lat), {resolution})::text AS region_id
 FROM observations o
 WHERE o.quality_grade = 'research'
 """

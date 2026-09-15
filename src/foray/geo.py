@@ -12,6 +12,8 @@ from __future__ import annotations
 import math
 from typing import NamedTuple
 
+import h3
+
 # Degrees of latitude per kilometre is very nearly constant (~111 km/deg); longitude is scaled
 # by cos(lat) at the point of interest. This is the flat-degree approximation the bbox
 # prefilters and the corridor tangent-plane projection both rely on - fine at the scales this
@@ -105,25 +107,41 @@ def bbox_around_segment(lat1: float, lng1: float, lat2: float, lng2: float, radi
     )
 
 
+def h3_edge_length_km(h3_resolution: int) -> float:
+    """Average H3 cell edge length at ``h3_resolution``, in km (issue #337).
+
+    A per-resolution constant, not a per-cell one - every cell at a given resolution is close
+    enough to the same size (H3's whole point) that the average is precise enough for the
+    "pad by about one cell width" uses this has (``planner``'s corridor widening,
+    ``satellite.backfill_region_satellite``'s fetch radius). Matches the SQL-side
+    ``h3_get_hexagon_edge_length_avg(resolution, 'km')`` exactly - same core H3 library.
+    """
+    return h3.average_hexagon_edge_length(h3_resolution, unit="km")
+
+
 class GridCell(NamedTuple):
-    """A grid cell on the same ``floor(coord / cell_deg)`` lattice ``scoring._sql.BINNED``
-    derives ``region_id`` from. ``cell_id`` matches that ``region_id`` exactly."""
+    """An H3 cell (issue #337) on the same lattice ``scoring._sql.BINNED`` derives
+    ``region_id`` from in SQL. ``cell_id`` matches that ``region_id`` exactly - both are the
+    cell's H3 index in its canonical hex-string form."""
 
     cell_id: str
     center_lat: float
     center_lng: float
 
 
-def grid_cell(lat: float, lng: float, cell_deg: float) -> GridCell:
-    """Snap ``(lat, lng)`` to its grid cell - the same ``"{ilat}_{ilng}"`` key
-    ``regions``/``phenology`` compute in SQL, plus the cell's center point.
+def grid_cell(lat: float, lng: float, h3_resolution: int) -> GridCell:
+    """Snap ``(lat, lng)`` to its H3 cell - the same key ``regions``/``phenology`` compute in
+    SQL (``h3_lat_lng_to_cell``), plus the cell's center point.
 
     Used by the precip cache (issue #226) to reuse the region grid as the weather geography
-    instead of hitting Open-Meteo per raw observation coordinate.
+    instead of hitting Open-Meteo per raw observation coordinate. Backed by the ``h3`` package
+    (bindings for the same core H3 C library the Postgres ``h3`` extension wraps), not a
+    Postgres round trip - cell assignment is a pure function of ``(lat, lng, resolution)``, so
+    both sides always agree without either one calling the other.
     """
-    ilat = math.floor(lat / cell_deg)
-    ilng = math.floor(lng / cell_deg)
-    return GridCell(f"{ilat}_{ilng}", (ilat + 0.5) * cell_deg, (ilng + 0.5) * cell_deg)
+    cell_id = h3.latlng_to_cell(lat, lng, h3_resolution)
+    center_lat, center_lng = h3.cell_to_latlng(cell_id)
+    return GridCell(cell_id, center_lat, center_lng)
 
 
 def bbox_center_radius(bbox: BBox) -> tuple[float, float, float]:
@@ -147,27 +165,53 @@ def bbox_center_radius(bbox: BBox) -> tuple[float, float, float]:
     return center_lat, center_lng, radius_km
 
 
-def grid_cells_in_bbox(bbox: BBox, cell_deg: float) -> list[str]:
-    """Every ``"{ilat}_{ilng}"`` cell id whose cell intersects ``bbox``.
+def cells_in_radius(lat: float, lng: float, radius_km: float, h3_resolution: int) -> list[str]:
+    """Every H3 cell within ``radius_km`` of ``(lat, lng)``, as an ``h3.grid_disk`` (issue #337).
 
-    Same ``floor(coord / cell_deg)`` lattice as :func:`grid_cell`. Lets the ranking path
-    turn a home-radius / corridor envelope into an explicit ``region_id`` allowlist so the
-    phenology query hits ``ix_phenology_region`` instead of aggregating every ingested cell
-    on the planet and discarding the out-of-range ones in Python.
+    Replaces the old square-grid ``grid_cells_in_bbox(bbox_around(...), ...)`` two-step - H3's
+    own ring-distance IS a disk around a point, so there's no bbox middleman needed. ``k`` (ring
+    count) is sized from the resolution's average edge length with one extra ring of slack:
+    ``rank_destinations`` re-filters every candidate against the exact haversine distance anyway
+    (see its ``keep()``), so this only has to be a safe superset, never exact - under-covering
+    would silently drop a legitimate destination near the search boundary, which over-covering
+    (a handful of extra empty regions the SQL allowlist filter discards for free) cannot.
     """
-    ilat_lo = math.floor(bbox.min_lat / cell_deg)
-    ilat_hi = math.floor(bbox.max_lat / cell_deg)
-    ilng_lo = math.floor(bbox.min_lng / cell_deg)
-    ilng_hi = math.floor(bbox.max_lng / cell_deg)
-    lat_range = range(ilat_lo, ilat_hi + 1)
-    lng_range = range(ilng_lo, ilng_hi + 1)
-    return [f"{ilat}_{ilng}" for ilat in lat_range for ilng in lng_range]
+    origin = h3.latlng_to_cell(lat, lng, h3_resolution)
+    edge_km = h3.average_hexagon_edge_length(h3_resolution, unit="km")
+    k = math.ceil(radius_km / edge_km) + 1
+    return h3.grid_disk(origin, k)
 
 
-def grid_cell_center(cell_id: str, cell_deg: float) -> tuple[float, float]:
-    """Inverse of :func:`grid_cell` for the center point: ``"{ilat}_{ilng}"`` -> ``(lat, lng)``."""
-    ilat_str, ilng_str = cell_id.split("_")
-    return (int(ilat_str) + 0.5) * cell_deg, (int(ilng_str) + 0.5) * cell_deg
+def cells_along_segment(
+    lat1: float, lng1: float, lat2: float, lng2: float, corridor_km: float, h3_resolution: int
+) -> list[str]:
+    """Every H3 cell within ``corridor_km`` of the straight line ``1 -> 2`` (issue #337).
+
+    The corridor analogue of :func:`cells_in_radius` - a single disk can't cover a segment
+    longer than its own radius, so this unions disks sampled every ``corridor_km`` along the
+    line (straight lat/lng interpolation, the same flat-degree approximation
+    :func:`project_to_plane` already uses at this scale). Consecutive disks overlap by
+    construction (adjacent samples are exactly ``corridor_km`` apart, each disk's own radius),
+    so the union has no gaps. Like :func:`cells_in_radius`, a safe superset is enough -
+    ``rank_destinations_corridor`` re-filters every candidate against the exact perpendicular
+    offset (see its ``keep()``).
+    """
+    total_km = haversine_km(lat1, lng1, lat2, lng2)
+    n_samples = max(2, math.ceil(total_km / corridor_km) + 1)
+    cells: set[str] = set()
+    for i in range(n_samples):
+        t = i / (n_samples - 1)
+        sample_lat = lat1 + t * (lat2 - lat1)
+        sample_lng = lng1 + t * (lng2 - lng1)
+        cells.update(cells_in_radius(sample_lat, sample_lng, corridor_km, h3_resolution))
+    return list(cells)
+
+
+def grid_cell_center(cell_id: str) -> tuple[float, float]:
+    """Center point of an H3 ``cell_id`` - ``(lat, lng)``. Resolution isn't needed as a separate
+    argument (unlike the old degree grid's ``"{ilat}_{ilng}"`` key): an H3 index carries its own
+    resolution, so the cell id alone is enough to recover its center."""
+    return h3.cell_to_latlng(cell_id)
 
 
 def project_to_plane(ref_lat: float, ref_lng: float, lat: float, lng: float) -> tuple[float, float]:

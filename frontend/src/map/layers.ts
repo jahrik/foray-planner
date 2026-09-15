@@ -240,7 +240,7 @@ export function selectTrailOnMap(id: string, lat: number, lng: number): Promise<
   return drawSelectedTrail(id, lat, lng);
 }
 
-// Fetch + plot individually-precise observations (issue #161): unlike the coarse cell_deg
+// Fetch + plot individually-precise observations (issue #161): unlike the coarse per-region
 // circles plot() draws for every region, `obscured = false` rows have a cached coordinate
 // that's been live-verified against iNat as the real find location, not a randomized
 // geoprivacy decoy - worth showing as its own small pin. On by default (no layer toggle) and

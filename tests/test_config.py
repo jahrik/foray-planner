@@ -13,7 +13,7 @@ def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FORAY_HOME__LAT", "45.0")
     monkeypatch.setenv("FORAY_HOME__LNG", "-120.0")
     monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
-    monkeypatch.setenv("FORAY_CELL_DEG", "0.5")
+    monkeypatch.setenv("FORAY_H3_RESOLUTION", "5")
     monkeypatch.setenv("FORAY_INGEST__SINCE_YEAR", "2020")
     monkeypatch.setenv("FORAY_INGEST__QUALITY_GRADE", "research")
     monkeypatch.setenv("FORAY_INGEST__RECENT_WEEKS", "2")
@@ -22,7 +22,7 @@ def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert cfg.home.lat == 45.0
     assert cfg.home.lng == -120.0
     assert cfg.home.radius_km == 200
-    assert cfg.cell_deg == 0.5
+    assert cfg.h3_resolution == 5
     assert cfg.since_year == 2020
     assert cfg.quality_grade == "research"
     assert cfg.recent_weeks == 2

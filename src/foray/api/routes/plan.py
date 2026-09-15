@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import re
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -60,18 +59,20 @@ def plan(
     selected_months = parse_months(months) if months is not None else [dt.date.today().month]
 
     # Ordered region ids hand-picked from the shortlist ("+ Plan"), threaded in as required
-    # stops. Region ids are grid coords ("ilat_ilng", either part optionally negative).
+    # stops. Region ids are H3 cells (issue #337) - their own library validates the shape (a
+    # malformed or out-of-range hex string raises ValueError, a ValueError subclass) more
+    # strictly than a shape regex over the old "ilat_ilng" format could, so there's no separate
+    # bounds check needed the way the old degree-grid ids required.
     picked_waypoints: list[str] = []
     if waypoints:
         picked_waypoints = [part.strip() for part in waypoints.split(",") if part.strip()]
-        if len(picked_waypoints) > 10 or any(not re.fullmatch(r"-?\d+_-?\d+", w) for w in picked_waypoints):
+        if len(picked_waypoints) > 10:
             raise HTTPException(422, "waypoints must be up to 10 comma-separated region ids")
-        # Bound-check the implied cell center: an out-of-range grid index passes the shape regex
-        # but would blow up the corridor bbox (and grid_cells_in_bbox) in rank_destinations_corridor.
         for waypoint in picked_waypoints:
-            way_lat, way_lng = grid_cell_center(waypoint, cfg.cell_deg)
-            if not (-90.0 <= way_lat <= 90.0 and -180.0 <= way_lng <= 180.0):
-                raise HTTPException(422, f"waypoint {waypoint!r} is outside valid coordinates")
+            try:
+                grid_cell_center(waypoint)
+            except ValueError:
+                raise HTTPException(422, f"waypoint {waypoint!r} is not valid coordinates") from None
 
     def resolve_point(query: str) -> tuple[float, float]:
         try:
@@ -92,7 +93,7 @@ def plan(
                 conn,
                 months=selected_months,
                 taxon_ids=parse_species(species, conn, device_id),
-                cell_deg=cfg.cell_deg,
+                h3_resolution=cfg.h3_resolution,
                 start_lat=start_lat,
                 start_lng=start_lng,
                 destination_lat=dest_lat,

@@ -5,8 +5,8 @@ from __future__ import annotations
 import psycopg
 
 from foray.geo import (
-    KM_PER_DEG_LAT,
     grid_cell_center,
+    h3_edge_length_km,
     haversine_km,
     project_to_plane,
     segment_progress_and_offset,
@@ -22,7 +22,7 @@ def plan_route(
     *,
     months: list[int],
     taxon_ids: list[int],
-    cell_deg: float,
+    h3_resolution: int,
     start_lat: float,
     start_lng: float,
     destination_lat: float | None = None,
@@ -85,9 +85,9 @@ def plan_route(
         # Span the picks: destination = the waypoint farthest from start.
         farthest = max(
             forced_ids,
-            key=lambda region_id: haversine_km(start_lat, start_lng, *grid_cell_center(region_id, cell_deg)),
+            key=lambda region_id: haversine_km(start_lat, start_lng, *grid_cell_center(region_id)),
         )
-        destination_lat, destination_lng = grid_cell_center(farthest, cell_deg)
+        destination_lat, destination_lng = grid_cell_center(farthest)
         destination_name = farthest
     elif auto:
         picks = rank_destinations(
@@ -97,7 +97,7 @@ def plan_route(
             home_lat=start_lat,
             home_lng=start_lng,
             radius_km=auto_pick_radius_km,
-            cell_deg=cell_deg,
+            h3_resolution=h3_resolution,
             recent_weeks=recent_weeks,
             ttl_seconds=ttl_seconds,
         )
@@ -131,10 +131,10 @@ def plan_route(
     if forced_ids:
         dx, dy = project_to_plane(start_lat, start_lng, destination_lat, destination_lng)
         for region_id in forced_ids:
-            way_lat, way_lng = grid_cell_center(region_id, cell_deg)
+            way_lat, way_lng = grid_cell_center(region_id)
             plane_x, plane_y = project_to_plane(start_lat, start_lng, way_lat, way_lng)
             _, offset_km = segment_progress_and_offset(plane_x, plane_y, dx, dy)
-            corridor_km = max(corridor_km, offset_km + cell_deg * KM_PER_DEG_LAT)
+            corridor_km = max(corridor_km, offset_km + h3_edge_length_km(h3_resolution))
 
     ranked = rank_destinations_corridor(
         con,
@@ -145,7 +145,7 @@ def plan_route(
         dest_lat=destination_lat,
         dest_lng=destination_lng,
         corridor_km=corridor_km,
-        cell_deg=cell_deg,
+        h3_resolution=h3_resolution,
         recent_weeks=recent_weeks,
         ttl_seconds=ttl_seconds,
     )

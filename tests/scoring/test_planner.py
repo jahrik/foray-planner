@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import math
 
 import psycopg
 import pytest
 
 from foray.cache import upsert_campsites, upsert_trails
+from foray.geo import grid_cell
 from foray.scoring import build_phenology, plan_route
 
-CELL = 0.5
+CELL = 5
 MOREL = 111
 
 # Start near (44.0, -121.0). NEAR/MID/FAR sit due north of start, on the same meridian, all
@@ -29,11 +29,9 @@ DEST = (48.0, -121.0)  # ~444 km N of start
 OFF_CORRIDOR = (45.0, -119.87)  # ~same latitude as MID, ~90 km E of the corridor line
 
 
-def _region_id(lat: float, lng: float, cell: float = CELL) -> str:
-    """Mirror scoring.py's ``_BINNED`` grid-binning exactly (``floor``, not ``int``) - matters for
-    negative, non-multiple-of-``cell`` coordinates like OFF_CORRIDOR's longitude, where ``int()``
-    truncates toward zero and disagrees with ``floor()``."""
-    return f"{math.floor(lat / cell)}_{math.floor(lng / cell)}"
+def _region_id(lat: float, lng: float, resolution: int = CELL) -> str:
+    """Mirror scoring.py's ``_BINNED`` grid-binning exactly (the same H3 cell assignment)."""
+    return grid_cell(lat, lng, resolution).cell_id
 
 
 @pytest.fixture(autouse=True)
@@ -97,7 +95,7 @@ def _kwargs(**overrides: object) -> dict:
     base: dict = {
         "months": [10],
         "taxon_ids": [MOREL],
-        "cell_deg": CELL,
+        "h3_resolution": CELL,
         "start_lat": START_LAT,
         "start_lng": START_LNG,
         "destination_lat": DEST[0],

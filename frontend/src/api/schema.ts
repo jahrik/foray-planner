@@ -726,8 +726,8 @@ export interface components {
         /** ConfigResponse */
         ConfigResponse: {
             home: components["schemas"]["Home"];
-            /** Cell Deg */
-            cell_deg: number;
+            /** Region Radius Km */
+            region_radius_km: number;
             /** Recent Weeks */
             recent_weeks: number;
             /** Refreshing */

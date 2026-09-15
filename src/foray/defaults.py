@@ -5,7 +5,11 @@ from __future__ import annotations
 HOME_LAT = 47.6062
 HOME_LNG = -122.3321
 HOME_RADIUS_KM = 150
-CELL_DEG = 0.25
+# issue #337: H3 hexagon resolution regions/phenology/ranking bin observations into, replacing
+# the old `cell_deg=0.25` lat/lng degree grid. Picked empirically (issue #337 scoping doc) -
+# against 1.99M local research-grade observations, res 4 produced denser phenology cells than
+# the old grid; res 5 (closer to the old grid's card size) made sparsity worse.
+H3_RESOLUTION = 4
 
 # Country-level iNat place_ids - one ingest_region() call per entry covers every sub-region
 # within it in a single (paginated) query. Simpler and more correct than looping every state/

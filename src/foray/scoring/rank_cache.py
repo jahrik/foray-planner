@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 DEFAULT_TTL_SECONDS = 600.0
 
 # Bounds total memory (Copilot review, PR #348: an unbounded dict keyed on every distinct
-# (mode, months, taxa, coords, radius, cell_deg, recent_weeks) combination a busy box ever saw
+# (mode, months, taxa, coords, radius, h3_resolution, recent_weeks) combination a busy box ever saw
 # would never shrink on its own). Each entry holds one ranked region list - typically tens to a
 # couple hundred `RegionScore` objects - so 500 entries is a generous working set for a
 # single-device-at-a-time app, evicted least-recently-*inserted-or-hit* first.
@@ -116,7 +116,7 @@ def radial_key(
     home_lat: float,
     home_lng: float,
     radius_km: float,
-    cell_deg: float,
+    h3_resolution: int,
     recent_weeks: int,
 ) -> CacheKey:
     """Cache key for ``rank_destinations``. Exact coordinates/radius, not rounded (Copilot
@@ -133,7 +133,7 @@ def radial_key(
         home_lat,
         home_lng,
         radius_km,
-        cell_deg,
+        h3_resolution,
         recent_weeks,
     )
 
@@ -147,7 +147,7 @@ def corridor_key(
     dest_lat: float,
     dest_lng: float,
     corridor_km: float,
-    cell_deg: float,
+    h3_resolution: int,
     recent_weeks: int,
 ) -> CacheKey:
     """Cache key for ``rank_destinations_corridor``. Same exact-values rationale as ``radial_key``."""
@@ -160,6 +160,6 @@ def corridor_key(
         dest_lat,
         dest_lng,
         corridor_km,
-        cell_deg,
+        h3_resolution,
         recent_weeks,
     )

@@ -15,10 +15,11 @@ from fastapi.testclient import TestClient
 from foray.api import create_app
 from foray.cache import upsert_campsites, upsert_fungi_genera, upsert_trails
 from foray.config import Home, Settings
+from foray.geo import h3_edge_length_km
 from foray.scoring import TripPlan, build_phenology
 from foray.sources.trails import _parse_element
 
-CELL = 0.5
+CELL = 5
 MOREL = 111
 CHANT = 222
 BOLET = 333
@@ -53,7 +54,7 @@ def cfg(con: psycopg.Connection) -> Settings:
 
     return Settings(
         home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=200),
-        cell_deg=CELL,
+        h3_resolution=CELL,
         ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=8),
         # Pin empty so a FORAY_BASEMAP_URL / FORAY_TERRAIN_URL in the developer's local .env
         # doesn't leak in and flip the CSP / config assertions; the configured-host paths are
@@ -113,7 +114,7 @@ def test_get_config(client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["home"]["name"] == "Home"
-    assert body["cell_deg"] == CELL
+    assert body["region_radius_km"] == pytest.approx(h3_edge_length_km(CELL))
     assert body["refreshing"] is False
     assert body["basemap_url"] == ""  # both pinned off in the test settings (fixture above)
     assert body["terrain_url"] == ""
@@ -545,7 +546,7 @@ def test_region_place_bad_region_id_is_400(client: TestClient) -> None:
 def test_region_place_network_failure_returns_null(client: TestClient) -> None:
     # The autouse `_no_place_geocode_network` fixture already makes geocode.notable_place_name
     # raise, exercising the "answer this request with no title, don't cache the failure" path.
-    response = client.get("/api/destinations/95_-245/place")
+    response = client.get("/api/destinations/8428f63ffffffff/place")
     assert response.status_code == 200
     assert response.json() == {"place_name": None}
 
@@ -559,8 +560,8 @@ def test_region_place_resolves_and_caches(client: TestClient, monkeypatch: pytes
 
     monkeypatch.setattr("foray.api.geocode.notable_place_name", fake_notable_place_name)
 
-    first = client.get("/api/destinations/95_-245/place")
-    second = client.get("/api/destinations/95_-245/place")
+    first = client.get("/api/destinations/8428f63ffffffff/place")
+    second = client.get("/api/destinations/8428f63ffffffff/place")
 
     assert first.status_code == second.status_code == 200
     assert first.json() == second.json() == {"place_name": "Mt. Hood National Forest"}
@@ -578,8 +579,8 @@ def test_region_place_caches_a_negative_result(client: TestClient, monkeypatch: 
 
     monkeypatch.setattr("foray.api.geocode.notable_place_name", fake_notable_place_name)
 
-    first = client.get("/api/destinations/95_-245/place")
-    second = client.get("/api/destinations/95_-245/place")
+    first = client.get("/api/destinations/8428f63ffffffff/place")
+    second = client.get("/api/destinations/8428f63ffffffff/place")
 
     assert first.json() == second.json() == {"place_name": None}
     assert len(calls) == 1
@@ -591,13 +592,13 @@ def test_region_places_batch_returns_only_cached(client: TestClient, monkeypatch
 
     monkeypatch.setattr("foray.api.geocode.notable_place_name", fake_notable_place_name)
     # Warm the cache for one region only.
-    client.get("/api/destinations/95_-245/place")
+    client.get("/api/destinations/8428f63ffffffff/place")
 
-    response = client.get("/api/destinations/places", params={"region_ids": "95_-245,99_-249"})
+    response = client.get("/api/destinations/places", params={"region_ids": "8428f63ffffffff,8428889ffffffff"})
 
     assert response.status_code == 200
     # The uncached region is simply absent - the caller falls back to the per-region endpoint.
-    assert response.json() == {"95_-245": {"place_name": "Mt. Hood National Forest"}}
+    assert response.json() == {"8428f63ffffffff": {"place_name": "Mt. Hood National Forest"}}
 
 
 def test_region_places_batch_empty_ids_is_empty(client: TestClient) -> None:
@@ -652,8 +653,7 @@ def test_plan_route_rejects_malformed_waypoints(client: TestClient) -> None:
 
 
 def test_plan_route_rejects_out_of_range_waypoint(client: TestClient) -> None:
-    # Shape-valid ("ilat_ilng") but the implied cell center is way past the poles - must not
-    # reach the corridor bbox math.
+    # Not a valid H3 cell index (out of range) - must not reach the corridor bbox math.
     response = client.get("/api/plan", params={"waypoints": "9999999_9999999"})
     assert response.status_code == 422
     assert "valid coordinates" in response.text

@@ -13,9 +13,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from foray.defaults import CELL_DEG as _DEFAULT_CELL_DEG
 from foray.defaults import COUNTRIES as _DEFAULT_COUNTRIES
 from foray.defaults import COVERAGE as _DEFAULT_COVERAGE
+from foray.defaults import H3_RESOLUTION as _DEFAULT_H3_RESOLUTION
 from foray.defaults import HOME_LAT as _DEFAULT_HOME_LAT
 from foray.defaults import HOME_LNG as _DEFAULT_HOME_LNG
 from foray.defaults import HOME_RADIUS_KM as _DEFAULT_HOME_RADIUS_KM
@@ -178,7 +178,9 @@ class Settings(BaseSettings):
     )
 
     home: Home = Field(default_factory=Home)
-    cell_deg: float = Field(gt=0, le=10, default=_DEFAULT_CELL_DEG)
+    # H3 resolution (0=coarsest, 15=finest) regions/phenology/ranking bin observations into -
+    # see foray.defaults.H3_RESOLUTION for how 4 was picked.
+    h3_resolution: int = Field(ge=0, le=15, default=_DEFAULT_H3_RESOLUTION)
     # URL of the Protomaps PMTiles vector basemap archive (a self-hosted US extract on DO Spaces
     # + CDN, built + uploaded by the `foray:build-basemap-once` Ansible task - see
     # docs/data-sources.md). The map has no raster fallback, so empty means no base layer.

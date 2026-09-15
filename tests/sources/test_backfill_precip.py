@@ -15,7 +15,7 @@ from foray.scoring import build_phenology, rank_destinations
 from foray.scoring.regions import region_precip_obs
 from foray.sources import ingest, precip
 
-CELL = 0.25
+CELL = 4
 GENUS = 55555
 # One grid cell around (45.1, -122.1); a second well away at (48.0, -120.0).
 LAT, LNG = 45.1, -122.1
@@ -49,7 +49,7 @@ def test_backfill_writes_both_windows_from_one_cell_fetch(
 
     monkeypatch.setattr(precip, "fetch_archive_precip", fake_archive)
 
-    updated = ingest.backfill_precip(con, cell_deg=CELL)
+    updated = ingest.backfill_precip(con, h3_resolution=CELL)
     assert updated == 2
     assert len(calls) == 1  # both observations share a cell -> one archive call
     row = con.execute("SELECT precip_7d_mm, precip_30d_mm FROM observations WHERE id = 1").fetchone()
@@ -74,7 +74,7 @@ def test_partial_window_leaves_column_null_and_stays_pending(
 
     monkeypatch.setattr(precip, "fetch_archive_precip", fake_archive)
 
-    assert ingest.backfill_precip(con, cell_deg=CELL) == 0
+    assert ingest.backfill_precip(con, h3_resolution=CELL) == 0
     assert con.execute("SELECT precip_7d_mm FROM observations WHERE id = 1").fetchone() == (None,)
     still_pending = cache.observations_missing_precip(con, 10)
     assert [obs_id for obs_id, *_ in still_pending] == [1]
@@ -93,7 +93,7 @@ def test_7d_lands_while_30d_stays_pending(con: psycopg.Connection, monkeypatch: 
         return series
 
     monkeypatch.setattr(precip, "fetch_archive_precip", fake_archive)
-    assert ingest.backfill_precip(con, cell_deg=CELL) == 1
+    assert ingest.backfill_precip(con, h3_resolution=CELL) == 1
     row = con.execute("SELECT precip_7d_mm, precip_30d_mm FROM observations WHERE id = 1").fetchone()
     assert row == (7.0, None)
     # Still pending so the 30d column gets retried once ERA5 fills that day.
@@ -118,7 +118,7 @@ def test_region_precip_obs_mean_excludes_the_decoy(con: psycopg.Connection, monk
         return {start + dt.timedelta(days=i): 1.0 for i in range((end - start).days + 1)}
 
     monkeypatch.setattr(precip, "fetch_archive_precip", fake_archive)
-    ingest.backfill_precip(con, cell_deg=CELL)
+    ingest.backfill_precip(con, h3_resolution=CELL)
     con.execute("UPDATE observations SET precip_7d_mm = 100.0, precip_30d_mm = 400.0 WHERE id = 3")
 
     build_phenology(con, CELL)
@@ -145,7 +145,7 @@ def test_refresh_precipitation_populates_the_layer_and_flows_to_ranking(
     assert written >= 1
 
     ranked = rank_destinations(
-        con, months=[5], taxon_ids=[GENUS], home_lat=LAT, home_lng=LNG, radius_km=200, cell_deg=CELL
+        con, months=[5], taxon_ids=[GENUS], home_lat=LAT, home_lng=LNG, radius_km=200, h3_resolution=CELL
     )
     assert ranked
     assert ranked[0].precip_recent_7d_mm == 21.0  # 7 * 3.0
@@ -185,7 +185,7 @@ def test_backfill_skips_a_cell_that_400s_and_keeps_going(
         return {start + dt.timedelta(days=i): 1.0 for i in range((end - start).days + 1)}
 
     monkeypatch.setattr(precip, "fetch_archive_precip", fake_archive)
-    updated = ingest.backfill_precip(con, cell_deg=CELL)
+    updated = ingest.backfill_precip(con, h3_resolution=CELL)
     assert len(seen) == 2  # did not stop after the 400
     assert updated == 1  # the good cell's observation still got enriched
 
@@ -201,7 +201,7 @@ def test_backfill_never_requests_before_era5(con: psycopg.Connection, monkeypatc
         return {start + dt.timedelta(days=i): 0.5 for i in range((end - start).days + 1)}
 
     monkeypatch.setattr(precip, "fetch_archive_precip", fake_archive)
-    ingest.backfill_precip(con, cell_deg=CELL)
+    ingest.backfill_precip(con, h3_resolution=CELL)
     assert starts and starts[0] >= dt.date(1940, 1, 1)
 
 
@@ -218,7 +218,7 @@ def test_early_1940_observation_still_gets_its_january_days(
         return {start + dt.timedelta(days=i): 1.0 for i in range((end - start).days + 1)}
 
     monkeypatch.setattr(precip, "fetch_archive_precip", fake_archive)
-    assert ingest.backfill_precip(con, cell_deg=CELL) == 1
+    assert ingest.backfill_precip(con, h3_resolution=CELL) == 1
     assert con.execute("SELECT precip_7d_mm FROM observations WHERE id = 1").fetchone() == (7.0,)
 
 

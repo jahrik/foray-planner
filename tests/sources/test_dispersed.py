@@ -123,7 +123,7 @@ def test_ingest_dispersed_upserts_reported_sites(con: psycopg.Connection, monkey
 
     cfg = Settings(
         home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=40.0),
-        cell_deg=0.5,
+        h3_resolution=4,
         ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=4),
     )
 
@@ -161,7 +161,7 @@ def test_ingest_dispersed_coverage_tiles_the_envelope_and_is_one_shot(
     client = httpx.Client(transport=httpx.MockTransport(handler))
     cfg = Settings(
         coverage=[CoverageRegion(name="Redwoods", place_id=5, bbox=(-124.5, 41.0, -123.5, 42.0))],
-        cell_deg=0.5,
+        h3_resolution=4,
         ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=4),
     )
 

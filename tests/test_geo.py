@@ -7,39 +7,41 @@ import math
 import pytest
 
 from foray.geo import (
-    bbox_around,
     bbox_around_segment,
     bbox_center_radius,
+    cells_along_segment,
+    cells_in_radius,
     grid_cell,
-    grid_cells_in_bbox,
+    grid_cell_center,
     haversine_km,
     web_mercator_bbox_m,
 )
 
-CELL = 0.25
+RES = 4
 
 
-def test_grid_cells_in_bbox_covers_the_home_disk() -> None:
+def test_cells_in_radius_covers_the_home_disk() -> None:
     # Every cell whose center is within the radius must be in the enumerated candidate set -
     # the phenology ranking relies on this being a superset of the true disk.
     home_lat, home_lng = 44.06, -121.31
     radius_km = 60.0
-    cells = set(grid_cells_in_bbox(bbox_around(home_lat, home_lng, radius_km), CELL))
+    cells = set(cells_in_radius(home_lat, home_lng, radius_km, RES))
 
+    step_deg = 0.1
     for dlat in range(-10, 11):
         for dlng in range(-10, 11):
-            lat = home_lat + dlat * CELL / 2
-            lng = home_lng + dlng * CELL / 2
+            lat = home_lat + dlat * step_deg
+            lng = home_lng + dlng * step_deg
             if haversine_km(home_lat, home_lng, lat, lng) <= radius_km:
-                assert grid_cell(lat, lng, CELL).cell_id in cells
+                assert grid_cell(lat, lng, RES).cell_id in cells
 
 
-def test_grid_cells_in_bbox_ids_match_grid_cell() -> None:
-    bbox = bbox_around(0.1, 0.1, 40.0)
-    for cell_id in grid_cells_in_bbox(bbox, CELL):
-        ilat, ilng = cell_id.split("_")
-        clat, clng = (int(ilat) + 0.5) * CELL, (int(ilng) + 0.5) * CELL
-        assert grid_cell(clat, clng, CELL).cell_id == cell_id
+def test_cells_in_radius_ids_round_trip_through_grid_cell() -> None:
+    # Every id cells_in_radius hands back must be a real H3 cell at RES - decoding its center
+    # and re-encoding must land back on the same id.
+    for cell_id in cells_in_radius(0.1, 0.1, 40.0, RES):
+        clat, clng = grid_cell_center(cell_id)
+        assert grid_cell(clat, clng, RES).cell_id == cell_id
 
 
 def test_bbox_around_segment_contains_both_endpoints_and_the_pad() -> None:
@@ -62,15 +64,15 @@ def test_bbox_center_radius_circle_contains_the_box() -> None:
             assert haversine_km(clat, clng, lat, lng) <= radius_km + 1e-6
 
 
-def test_grid_cells_in_bbox_along_corridor_includes_the_line() -> None:
+def test_cells_along_segment_includes_the_line() -> None:
     start = (44.0, -121.0)
     dest = (45.2, -122.4)
-    cells = set(grid_cells_in_bbox(bbox_around_segment(*start, *dest, 20.0), CELL))
+    cells = set(cells_along_segment(*start, *dest, 20.0, RES))
     # Sample points straight down the line - all must fall in an enumerated cell.
     for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
         lat = start[0] + frac * (dest[0] - start[0])
         lng = start[1] + frac * (dest[1] - start[1])
-        assert grid_cell(lat, lng, CELL).cell_id in cells
+        assert grid_cell(lat, lng, RES).cell_id in cells
 
 
 def test_web_mercator_bbox_m_is_a_square_centered_on_the_point() -> None:

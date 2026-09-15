@@ -1,6 +1,6 @@
 """Phenology materialization: (re)build the ``regions`` and ``phenology`` tables.
 
-Regions are uniform lat/lng grid cells (``cell_deg`` wide). ``build_phenology`` rolls
+Regions are H3 hexagon cells (issue #337) at ``h3_resolution``. ``build_phenology`` rolls
 ``observations`` up into per-(taxon, region, month) counts (``phenology``) and per-region
 summaries (``regions``); everything in ``ranking`` / ``queries`` reads those.
 """
@@ -35,7 +35,7 @@ _PRECIP_OBS_30D = (
 )
 
 
-def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
+def build_phenology(con: psycopg.Connection, h3_resolution: int) -> None:
     """(Re)materialize the ``regions`` and ``phenology`` tables from ``observations``.
 
     Build-and-swap: the scan + aggregate + index builds + ``ANALYZE`` (the slow part, and the
@@ -56,13 +56,13 @@ def build_phenology(con: psycopg.Connection, cell_deg: float) -> None:
     """
     con.execute("SELECT pg_advisory_lock(hashtext('phenology-rebuild'))")
     try:
-        _build_phenology_locked(con, cell_deg)
+        _build_phenology_locked(con, h3_resolution)
     finally:
         con.execute("SELECT pg_advisory_unlock(hashtext('phenology-rebuild'))")
 
 
-def _build_phenology_locked(con: psycopg.Connection, cell_deg: float) -> None:
-    binned = BINNED.format(cell=cell_deg)
+def _build_phenology_locked(con: psycopg.Connection, h3_resolution: int) -> None:
+    binned = BINNED.format(resolution=h3_resolution)
     # A previous crash between the CREATE and the cutover can leave staging tables behind.
     con.execute("DROP TABLE IF EXISTS phenology_new, regions_new, observations_scoring_new")
     # issue #333 PR 2: `binned` used to be inlined into *both* CREATE TABLE statements below,
@@ -202,7 +202,7 @@ def recent_counts(
     lat: float,
     lng: float,
     radius_km: float,
-    cell_deg: float,
+    h3_resolution: int,
     taxon_ids: list[int],
     weeks: int,
 ) -> dict[str, int]:
@@ -212,16 +212,12 @@ def recent_counts(
     The radius cut is an index-backed ``ST_DWithin`` on ``observations.geom`` (issue #268) so
     this doesn't seq-scan the whole table on every ranking call - the caller only ever reads
     the counts for regions that already survived its spatial filter, so a superset of that
-    area is all that's needed. ``region_id`` is the same ``floor(coord / cell_deg)`` grid key
-    ``BINNED`` derives.
+    area is all that's needed. ``region_id`` is the same H3 cell ``BINNED`` derives.
     """
     cutoff = (dt.date.today() - dt.timedelta(weeks=weeks)).isoformat()
-    region_id = (
-        f"(CAST(floor(o.lat / {cell_deg}) AS INTEGER))::text || '_' || "
-        f"(CAST(floor(o.lng / {cell_deg}) AS INTEGER))::text"
-    )
+    region_id = f"h3_lat_lng_to_cell(POINT(o.lng, o.lat), {h3_resolution})::text"
     # cast: the query is a fixed template + `taxon_filter()`'s placeholder-count text and
-    # `cell_deg` (a config float, never user data); psycopg's LiteralString typing can't
+    # `h3_resolution` (a config int, never user data); psycopg's LiteralString typing can't
     # verify that statically.
     rows = con.execute(
         cast(

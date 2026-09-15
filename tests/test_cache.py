@@ -528,7 +528,7 @@ def _set_enrichment(
 
 # --- backfill_queue (issue #334 PR 3) ---
 
-_CELL = 0.25
+_CELL = 4
 _TODAY = dt.date(2026, 9, 1)
 
 
@@ -651,26 +651,26 @@ def test_observations_missing_elevation_join_preserves_priority_order(con: psyco
     for obs_id in (20, 21, 22, 30):
         _set_enrichment(con, obs_id, elevation_m=100)  # already enriched - not eligible itself
 
-    pending = observations_missing_elevation(con, 10, cell_deg=_CELL)
+    pending = observations_missing_elevation(con, 10, h3_resolution=_CELL)
 
     assert [obs_id for obs_id, *_ in pending] == [2, 3, 1]
 
 
 def test_observations_missing_elevation_without_near_uses_the_queue(con: psycopg.Connection) -> None:
     upsert_observations(con, [_research_row(1, 47.6, -122.3, _TODAY)])
-    pending = observations_missing_elevation(con, 10, cell_deg=_CELL)
+    pending = observations_missing_elevation(con, 10, h3_resolution=_CELL)
     assert [obs_id for obs_id, *_ in pending] == [1]
     # Still missing elevation, so it's found (and re-queued) again - each call re-derives the
     # queue from observations (the source of truth), it doesn't just drain a fixed snapshot.
-    assert [obs_id for obs_id, *_ in observations_missing_elevation(con, 10, cell_deg=_CELL)] == [1]
+    assert [obs_id for obs_id, *_ in observations_missing_elevation(con, 10, h3_resolution=_CELL)] == [1]
     # Once actually enriched, it stops appearing.
     _set_enrichment(con, 1, elevation_m=100)
-    assert observations_missing_elevation(con, 10, cell_deg=_CELL) == []
+    assert observations_missing_elevation(con, 10, h3_resolution=_CELL) == []
 
 
 def test_observations_missing_precip_without_near_uses_the_queue(con: psycopg.Connection) -> None:
     upsert_observations(con, [_research_row(1, 47.6, -122.3, _TODAY)])
-    pending = observations_missing_precip(con, 10, cell_deg=_CELL)
+    pending = observations_missing_precip(con, 10, h3_resolution=_CELL)
     assert [obs_id for obs_id, *_ in pending] == [1]
 
 
@@ -1112,7 +1112,7 @@ def test_maybe_rebuild_phenology_keeps_pending_count_on_a_failed_rebuild(
     con.execute("DELETE FROM meta WHERE key = 'phenology_pending_rows'")
     cfg = Settings(observability=Observability(phenology_rebuild_threshold=10))
 
-    def boom(con: psycopg.Connection, cell_deg: float) -> None:
+    def boom(con: psycopg.Connection, h3_resolution: float) -> None:
         raise RuntimeError("simulated rebuild failure")
 
     monkeypatch.setattr("foray.scoring.regions.build_phenology", boom)
