@@ -15,9 +15,10 @@ import type { PopupSpec } from "./popup";
 
 export const FIRE_SOURCE_ID = "foray-fire";
 const FIRE_FILL_LAYER_ID = "foray_fire_fill";
+const FIRE_LINE_LAYER_ID = "foray_fire_line";
 const FIRE_POINT_LAYER_ID = "foray_fire_point";
 const FIRE_SOURCE_LAYER = "fire";
-export const FIRE_LAYER_IDS = [FIRE_FILL_LAYER_ID, FIRE_POINT_LAYER_ID];
+export const FIRE_LAYER_IDS = [FIRE_FILL_LAYER_ID, FIRE_LINE_LAYER_ID, FIRE_POINT_LAYER_ID];
 
 // Same palette as the old Leaflet layer (map.ts's FIRE_ACTIVE/FIRE_SCAR).
 export const FIRE_ACTIVE = "#ff3b1f"; // hot red - active wildfire perimeter/point
@@ -66,22 +67,39 @@ function scarOpacityExpression(currentYear: number): ExpressionSpecification {
   ] as unknown as ExpressionSpecification;
 }
 
-/** Fill (polygons: perimeters + burn scars) + circle (points: a WFIGS location with no
- * perimeter yet) layers, shown/hidden for `visible` right from the build - same "one place
+// A visible perimeter/scar boundary, not just a translucent fill - matches the old Leaflet
+// layer's `color`/`weight` outline (Copilot review, PR #369: a fill-only replacement dropped
+// that boundary cue). An active perimeter draws a touch heavier than a scar, same as before.
+function fireLineWidthExpression(): ExpressionSpecification {
+  return ["case", ["==", ["get", "status"], "active"], 2, 1] as unknown as ExpressionSpecification;
+}
+
+/** Fill + outline (polygons: perimeters + burn scars) + circle (points: a WFIGS location with
+ * no perimeter yet) layers, shown/hidden for `visible` right from the build - same "one place
  * decides, basemap.ts's initial build and setFireLayerState's live update both call it" reasoning
- * as `landLayers`. Fire has one toggle for both layers, unlike land's per-agency split. */
+ * as `landLayers`. Fire has one toggle for all three layers, unlike land's per-agency split. */
 export function fireLayers(visible: boolean, currentYear = new Date().getFullYear()): LayerSpecification[] {
   const color = fireColorExpression();
   const visibility = visible ? "visible" : "none";
+  const polygonFilter = ["==", ["geometry-type"], "Polygon"] as const;
   return [
     {
       id: FIRE_FILL_LAYER_ID,
       type: "fill",
       source: FIRE_SOURCE_ID,
       "source-layer": FIRE_SOURCE_LAYER,
-      filter: ["==", ["geometry-type"], "Polygon"],
+      filter: polygonFilter,
       layout: { visibility },
       paint: { "fill-color": color, "fill-opacity": scarOpacityExpression(currentYear) },
+    },
+    {
+      id: FIRE_LINE_LAYER_ID,
+      type: "line",
+      source: FIRE_SOURCE_ID,
+      "source-layer": FIRE_SOURCE_LAYER,
+      filter: polygonFilter,
+      layout: { visibility },
+      paint: { "line-color": color, "line-width": fireLineWidthExpression(), "line-opacity": 0.9 },
     },
     {
       id: FIRE_POINT_LAYER_ID,

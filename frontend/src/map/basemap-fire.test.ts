@@ -18,20 +18,27 @@ describe("fireSource", () => {
 });
 
 describe("fireLayers", () => {
-  it("shows/hides both layers together", () => {
+  it("shows/hides all three layers together", () => {
     const hidden = fireLayers(false) as { layout: { visibility: string } }[];
-    expect(hidden.map((layer) => layer.layout.visibility)).toEqual(["none", "none"]);
+    expect(hidden.map((layer) => layer.layout.visibility)).toEqual(["none", "none", "none"]);
     const shown = fireLayers(true) as { layout: { visibility: string } }[];
-    expect(shown.map((layer) => layer.layout.visibility)).toEqual(["visible", "visible"]);
+    expect(shown.map((layer) => layer.layout.visibility)).toEqual(["visible", "visible", "visible"]);
   });
 
-  it("splits fill (polygons) from circle (points) by MVT geometry type", () => {
-    const [fill, point] = fireLayers(true) as { id: string; type: string; filter: unknown }[];
-    expect([fill!.id, point!.id]).toEqual(FIRE_LAYER_IDS);
+  it("splits fill+outline (polygons) from circle (points) by MVT geometry type", () => {
+    const [fill, line, point] = fireLayers(true) as { id: string; type: string; filter: unknown }[];
+    expect([fill!.id, line!.id, point!.id]).toEqual(FIRE_LAYER_IDS);
     expect(fill!.type).toBe("fill");
     expect(fill!.filter).toEqual(["==", ["geometry-type"], "Polygon"]);
+    expect(line!.type).toBe("line");
+    expect(line!.filter).toEqual(["==", ["geometry-type"], "Polygon"]);
     expect(point!.type).toBe("circle");
     expect(point!.filter).toEqual(["==", ["geometry-type"], "Point"]);
+  });
+
+  it("draws an active perimeter's outline heavier than a scar's", () => {
+    const [, line] = fireLayers(true) as { paint: { "line-width": unknown } }[];
+    expect(line!.paint["line-width"]).toEqual(["case", ["==", ["get", "status"], "active"], 2, 1]);
   });
 
   it.each([true, false])("produces a spec-valid style (visible=%s)", (visible) => {
