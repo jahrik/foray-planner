@@ -803,6 +803,22 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         TRUNCATE precip_daily, precipitation, region_satellite, region_places;
         """,
     ),
+    # issue #380: pinning gfs_seamless/era5_seamless on the precip fetches (precip.py) changed
+    # what every existing precip_daily/precipitation/observations.precip_*_mm row means, but
+    # `backfill_precip`'s pending-set and `refresh_precipitation`'s TTL only revisit rows that
+    # are NULL or stale - already-enriched data would silently keep the old default-blend values
+    # forever (Copilot review, PR #381). Same fix migration 50 used for the H3 grid cutover: wipe
+    # the two cache tables and null the derived observation columns so the existing self-healing
+    # backfill/refresh jobs (already running on cron, no one-off ops step needed) repopulate
+    # everything with the new models on their normal schedule.
+    (
+        51,
+        """
+        TRUNCATE precip_daily, precipitation;
+        UPDATE observations SET precip_7d_mm = NULL, precip_30d_mm = NULL
+        WHERE precip_7d_mm IS NOT NULL OR precip_30d_mm IS NOT NULL;
+        """,
+    ),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]

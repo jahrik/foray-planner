@@ -39,6 +39,7 @@ def test_archive_parses_series_and_nulls() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params["start_date"] == "2026-01-01"
         assert request.url.params["daily"] == "precipitation_sum"
+        assert request.url.params["models"] == precip._ARCHIVE_MODEL
         return httpx.Response(
             200,
             json={"daily": {"time": ["2026-01-01", "2026-01-02", "2026-01-03"], "precipitation_sum": [1.5, None, 0.0]}},
@@ -53,6 +54,7 @@ def test_archive_parses_series_and_nulls() -> None:
 def test_recent_passes_past_days() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params["past_days"] == "30"
+        assert request.url.params["models"] == precip._FORECAST_MODEL
         return httpx.Response(200, json={"daily": {"time": ["2026-01-01"], "precipitation_sum": [2.0]}})
 
     series = precip.fetch_recent_precip(45.0, -122.0, past_days=30, client=_client(handler))
@@ -94,6 +96,7 @@ def test_recent_batch_returns_one_series_per_center_in_order() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params["latitude"] == "45.0000,10.0000"
         assert request.url.params["longitude"] == "-122.0000,20.0000"
+        assert request.url.params["models"] == precip._FORECAST_MODEL
         return httpx.Response(
             200,
             json=[
