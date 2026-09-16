@@ -9,12 +9,27 @@ import { buildPopup } from "./popup";
 import { pickRoadFeature, roadLineLayerIds, roadPopupSpec, type RoadProps } from "./road-inspect";
 
 // A few px of slop around the click point so a thin forest-road line is still an easy tap
-// target - shared by every `queryRenderedFeatures` box below.
+// target - but a fixed screen-space slop covers a huge ground area at low zoom, so it can catch
+// a road/trail the user has no way of seeing (issue #377). Ramp it from 0 below the zoom where
+// our own track/path layers even start rendering (basemap-roads.ts's minzoom 12/13) up to the
+// full 5px once they're on screen, so a low-zoom click only inspects something actually visible
+// under the cursor.
+const SLOP_MIN_ZOOM = 9;
+const SLOP_MAX_ZOOM = 14;
+const SLOP_MAX_PX = 5;
+
+export function hitSlop(zoom: number): number {
+  if (zoom <= SLOP_MIN_ZOOM) return 0;
+  if (zoom >= SLOP_MAX_ZOOM) return SLOP_MAX_PX;
+  return (SLOP_MAX_PX * (zoom - SLOP_MIN_ZOOM)) / (SLOP_MAX_ZOOM - SLOP_MIN_ZOOM);
+}
+
 function hitBox(gl: MaplibreMap, latlng: L.LatLng): [[number, number], [number, number]] {
   const point = gl.project([latlng.lng, latlng.lat]);
+  const slop = hitSlop(gl.getZoom());
   return [
-    [point.x - 5, point.y - 5],
-    [point.x + 5, point.y + 5],
+    [point.x - slop, point.y - slop],
+    [point.x + slop, point.y + slop],
   ];
 }
 
