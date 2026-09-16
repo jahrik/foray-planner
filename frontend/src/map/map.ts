@@ -5,7 +5,7 @@ import type { Map as MaplibreMap } from "maplibre-gl";
 import type { CampSite, Home } from "../api/types";
 import { FIRE_ACTIVE, FIRE_LAYER_IDS, FIRE_SCAR, firePopupSpec, type FireProps } from "./basemap-fire";
 import { LAND_COLORS, LAND_DEFAULT, LAND_LAYER_IDS, landPopupSpec, type LandProps } from "./basemap-land";
-import { TRAILS_LAYER_ID, type TrailTileProps } from "./basemap-trails";
+import { TRAILS_LAYER_ID, trailPopupSpec, type TrailTileProps } from "./basemap-trails";
 import { FORAGE_RAMP, FORAGE_TIER_LABELS } from "./forage";
 import { clearLayer, clearLayerList } from "./layer-lifecycle";
 import { circleStyle } from "./markers";
@@ -327,23 +327,19 @@ function hitBox(gl: MaplibreMap, latlng: L.LatLng): [[number, number], [number, 
   ];
 }
 
-// Click-to-select for our own trails layer (issue #336 PR 2): a hit selects + draws that trail
-// exactly like clicking its Trails-tab chip or trailhead marker (layers.ts's `selectTrailhead`),
-// keyed by the tile's promoted `id` - no proximity guessing, since the click landed on that
-// exact line. Late-bound the same way `onMapClick` is (map.ts can't import layers.ts - layers.ts
-// already imports from here - so main.ts wires the real handler at startup).
-let onTrailSelect: ((id: string, lat: number, lng: number) => void) | null = null;
-
-export function setTrailSelectHandler(handler: (id: string, lat: number, lng: number) => void): void {
-  onTrailSelect = handler;
-}
-
-function trySelectTrailAt(gl: MaplibreMap, latlng: L.LatLng): boolean {
-  if (!onTrailSelect || !gl.getLayer(TRAILS_LAYER_ID)) return false;
+// A hit on our own trails layer just pops up what the tile carries (name/kind/length/land
+// unit), same as the land/fire helper below - it used to select + draw the trail outright
+// (issue #336 PR 2), but that's the destination card's Trails-tab gesture (layers.ts's
+// `selectTrailhead`/`selectTrailOnMap`); a plain map click should show what was clicked, not
+// act on it.
+function tryInspectTrailAt(gl: MaplibreMap, latlng: L.LatLng): boolean {
+  if (!gl.getLayer(TRAILS_LAYER_ID)) return false;
   const [hit] = gl.queryRenderedFeatures(hitBox(gl, latlng), { layers: [TRAILS_LAYER_ID] });
-  const id = (hit?.properties as TrailTileProps | undefined)?.id;
-  if (!id) return false;
-  onTrailSelect(id, latlng.lat, latlng.lng);
+  if (!hit) return false;
+  L.popup()
+    .setLatLng(latlng)
+    .setContent(buildPopup(trailPopupSpec((hit.properties ?? {}) as TrailTileProps)))
+    .openOn(map);
   return true;
 }
 
@@ -389,7 +385,7 @@ function tryInspectLandOrFireAt(gl: MaplibreMap, latlng: L.LatLng): boolean {
 export function inspectRoadAt(latlng: L.LatLng): boolean {
   const gl = basemapModule?.getGlMap();
   if (!gl) return false;
-  if (trySelectTrailAt(gl, latlng)) return true;
+  if (tryInspectTrailAt(gl, latlng)) return true;
   if (tryInspectLandOrFireAt(gl, latlng)) return true;
   const layerIds = roadLineLayerIds(gl.getStyle().layers);
   if (layerIds.length === 0) return false;

@@ -1,8 +1,9 @@
 // Click-to-inspect for the vector basemap: turn a rendered Protomaps road feature into a popup
 // of its OSM tags - a tap reads them straight off the tile, no API call. A click that instead
-// lands on our own `foray_trails` layer (issue #336) skips this entirely and selects the trail
-// (map.ts, same as clicking a Trails-tab trailhead) rather than popping up its tags - that layer
-// replaced the old fallback `GET /api/trails` name lookup this module used to do here.
+// lands on our own `foray_trails` layer (issue #336) skips this entirely and pops up that tile's
+// own tags (map.ts's `tryInspectTrailAt`, basemap-trails.ts's `trailPopupSpec`) rather than this
+// module's OSM-tag popup - that layer replaced the old fallback `GET /api/trails` name lookup
+// this module used to do here.
 //
 // Pure helpers only (no maplibre/leaflet imports) so they unit-test without a GL context;
 // map.ts does the `queryRenderedFeatures` and opens the Leaflet popup.

@@ -158,10 +158,8 @@ function animateTrail(layer: L.Polyline, parts: L.LatLngTuple[][]): void {
   requestAnimationFrame(frame);
 }
 
-// Draws the real trail for a given trail id, either from a destination card's Trails tab
-// (selectTrailhead below) or a direct click on our own rendered trails layer (selectTrailOnMap,
-// map.ts's click-to-select, issue #336 PR 2 - promoteId gives that click an exact id instead of
-// the old fuzzy `/api/trails` proximity lookup). Fetches `/api/trails/network`, which resolves
+// Draws the real trail for a given trail id, from a destination card's Trails tab
+// (selectTrailhead below). Fetches `/api/trails/network`, which resolves
 // via live OSM topology when the trail sits on a real way/route, falling back to the nearest
 // already-cached path/route otherwise - drawn solid for the former, dashed for the latter so the
 // UI doesn't overstate confidence in a guess. At most one selected trail shows at a time
@@ -169,13 +167,13 @@ function animateTrail(layer: L.Polyline, parts: L.LatLngTuple[][]): void {
 // (trailhead_network) can take a beat, and waiting for it before moving the camera reads as the
 // whole thing being slow, not just the data. Once the real geometry arrives, the view re-fits to
 // the trail's actual extent and animates the line drawing in (animateTrail) rather than snapping
-// it in instantly. `requestedName` (optional - a map click has no name to ask for ahead of the
-// fetch) labels the non-authoritative "nearest mapped trail" fallback message.
+// it in instantly. `requestedName` labels the non-authoritative "nearest mapped trail" fallback
+// message.
 async function drawSelectedTrail(
   id: string,
   flyLat: number,
   flyLng: number,
-  requestedName?: string,
+  requestedName: string,
 ): Promise<void> {
   clearSelectedTrail();
   map.flyTo([flyLat, flyLng], Math.max(map.getZoom(), 14), { duration: 0.5 });
@@ -214,9 +212,7 @@ async function drawSelectedTrail(
   // path - say so plainly rather than letting a stand-in trail read as the one that was picked
   // (issue #306 C3).
   if (!path.authoritative) {
-    const label = `Nearest mapped trail: ${path.trail.name}${
-      requestedName ? ` (exact path for “${requestedName}” unavailable)` : ""
-    }`;
+    const label = `Nearest mapped trail: ${path.trail.name} (exact path for “${requestedName}” unavailable)`;
     // OSM names are untrusted - bind the tooltip as a text node, not an HTML string.
     const tip = document.createElement("span");
     tip.textContent = label;
@@ -232,12 +228,6 @@ async function drawSelectedTrail(
 /** A destination card's Trails tab row was selected (views.ts / destination-tabs.ts). */
 export function selectTrailhead(trail: Trail): Promise<void> {
   return drawSelectedTrail(trail.id, trail.center_lat, trail.center_lng, trail.name);
-}
-
-/** A click landed directly on our own rendered trails layer (map.ts's `setTrailSelectHandler`,
- * issue #336 PR 2). */
-export function selectTrailOnMap(id: string, lat: number, lng: number): Promise<void> {
-  return drawSelectedTrail(id, lat, lng);
 }
 
 // Fetch + plot individually-precise observations (issue #161): unlike the coarse per-region
