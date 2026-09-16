@@ -504,7 +504,6 @@ dependencies = [
     { name = "sentry-sdk" },
     { name = "shapely" },
     { name = "stream-unzip" },
-    { name = "tqdm" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -539,7 +538,6 @@ requires-dist = [
     { name = "sentry-sdk", specifier = ">=2.69.1" },
     { name = "shapely", specifier = ">=2.0,<3.0" },
     { name = "stream-unzip", specifier = ">=0.0.90,<1.0" },
-    { name = "tqdm", specifier = ">=4.70.0,<5.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.4,<1.0" },
 ]
 
@@ -1600,18 +1598,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/90/b7/f72e759ce9e0a9036101122541f5c9609bb9f7bd28d0fdbba4ff900ee8ae/stream_unzip-0.0.101-cp314-cp314-musllinux_1_2_armv7l.whl", hash = "sha256:098407a85cf42405f140f176aa6ce651fc4446d7c184997af168044c37a458f7", size = 271483, upload-time = "2026-03-03T08:37:01.606Z" },
     { url = "https://files.pythonhosted.org/packages/22/83/176686b32f3cdf634beb0f5e4cbb846da6e5005ff3f5b1bc8c0ac0dd8b04/stream_unzip-0.0.101-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:96fb9ca570e761178bf08e3c080b4a34ef83c34112fd72bd5fc43b552182e0b4", size = 344016, upload-time = "2026-03-03T08:37:03.282Z" },
     { url = "https://files.pythonhosted.org/packages/23/6c/0b00655bf7a8f34338d12bcf7d0a4e0b28febeff9c75ea191a13496bcb95/stream_unzip-0.0.101-cp314-cp314-win_amd64.whl", hash = "sha256:07ef1ee12417dfae182a72dfa6b3658edab5eeb1f6fe79fcf6f08005b97ebfb0", size = 132951, upload-time = "2026-03-03T08:37:04.934Z" },
-]
-
-[[package]]
-name = "tqdm"
-version = "4.70.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/21/3b/6c24bec5be5e743ffd99576daa5cc077722fc7d5bbc00bd133fa0c698dc6/tqdm-4.70.0.tar.gz", hash = "sha256:55b0b0dbd97462d06ebee91e4dac24ed4d4702be82b24f07e6c1d27e08cea220", size = 795438, upload-time = "2026-07-27T11:33:15.271Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/1c/01bfd571a64e7f270e6bab5e33777debe0edc56759233ce84f27dec92d14/tqdm-4.70.0-py3-none-any.whl", hash = "sha256:7f585706bfddbdebf89daac705b2dfcc16890130727d3197ca62c732b4310953", size = 80184, upload-time = "2026-07-27T11:33:13.167Z" },
 ]
 
 [[package]]
