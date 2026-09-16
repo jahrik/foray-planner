@@ -83,6 +83,7 @@
     networks:
       - name: "{{ foray_docker_network }}"
   listen: restart postgres-exporter
+  no_log: true
 
 - name: Restart alloy
   community.docker.docker_container:
@@ -98,6 +99,7 @@
       - "/etc/alloy/config.alloy"
     volumes:
       - /opt/foray-planner/alloy-config.alloy:/etc/alloy/config.alloy:ro
+      - "foray-planner-alloy-data:/var/lib/alloy/data"
     networks:
       - name: "{{ foray_docker_network }}"
   listen: restart alloy
