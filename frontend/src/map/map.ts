@@ -330,8 +330,7 @@ function hitBox(gl: MaplibreMap, latlng: L.LatLng): [[number, number], [number, 
 // A hit on our own trails layer just pops up what the tile carries (name/kind/length/land
 // unit), same as the land/fire helper below - it used to select + draw the trail outright
 // (issue #336 PR 2), but that's the destination card's Trails-tab gesture (layers.ts's
-// `selectTrailhead`/`selectTrailOnMap`); a plain map click should show what was clicked, not
-// act on it.
+// `selectTrailhead`); a plain map click should show what was clicked, not act on it.
 function tryInspectTrailAt(gl: MaplibreMap, latlng: L.LatLng): boolean {
   if (!gl.getLayer(TRAILS_LAYER_ID)) return false;
   const [hit] = gl.queryRenderedFeatures(hitBox(gl, latlng), { layers: [TRAILS_LAYER_ID] });
