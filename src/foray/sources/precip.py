@@ -32,6 +32,15 @@ from foray.sources.http import USER_AGENT, Throttle, retry_after_seconds
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
+# Higher-resolution models over each API's default blend (issue #380 - the default global
+# model under-resolves small coastal/mountain destinations). Both are "seamless" combos that
+# fall back to the coarser global model outside their high-res domain instead of erroring, so
+# every US destination (including Alaska, outside HRRR's CONUS-only domain) still gets a
+# response - verified live 2026-09-16: `ncep_hrrr_conus`/`era5_land` alone 400 on an Alaska
+# point ("No data is available for this location"), the seamless variants don't.
+_FORECAST_MODEL = "gfs_seamless"  # NOAA GFS, blended with 3km HRRR over the CONUS
+_ARCHIVE_MODEL = "era5_seamless"  # ERA5, blended with ~9km ERA5-Land where available
+
 ARCHIVE_SOURCE = "open-meteo-archive"
 FORECAST_SOURCE = "open-meteo-forecast"
 
@@ -94,6 +103,7 @@ def fetch_archive_precip(
             "end_date": end.isoformat(),
             "daily": "precipitation_sum",
             "timezone": "GMT",
+            "models": _ARCHIVE_MODEL,
         },
         client=client,
     )
@@ -114,6 +124,7 @@ def fetch_recent_precip(
             "forecast_days": 1,
             "daily": "precipitation_sum",
             "timezone": "GMT",
+            "models": _FORECAST_MODEL,
         },
         client=client,
     )
@@ -153,6 +164,7 @@ def fetch_recent_precip_batch(
         "forecast_days": 1,
         "daily": "precipitation_sum",
         "timezone": "GMT",
+        "models": _FORECAST_MODEL,
     }
     owns = client is None
     client = client or httpx.Client(timeout=30.0, headers={"User-Agent": USER_AGENT})
