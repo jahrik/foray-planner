@@ -5,7 +5,7 @@ import {
 } from "@maplibre/maplibre-gl-style-spec";
 import { describe, expect, it } from "vitest";
 
-import { TRAILS_SOURCE_ID, trailsLayer, trailsSource } from "./basemap-trails";
+import { TRAILS_SOURCE_ID, trailPopupSpec, trailsLayer, trailsSource } from "./basemap-trails";
 
 describe("trailsSource", () => {
   it("builds a vector source pointed at the given tiles URL", () => {
@@ -51,5 +51,49 @@ describe("trailsLayer", () => {
       (error) => error.severity !== "warning" && !/glyphs/.test(error.message),
     );
     expect(errors).toEqual([]);
+  });
+});
+
+describe("trailPopupSpec", () => {
+  it("labels a path with its length", () => {
+    const spec = trailPopupSpec({ name: "Moorman Pond Trail", kind: "path", length_km: 0.6 });
+    expect(spec.title).toBe("Moorman Pond Trail");
+    expect(spec.lines?.[0]).toBe("Trail · 0.6 km");
+  });
+
+  it("labels a route distinctly from a plain path", () => {
+    const spec = trailPopupSpec({ name: "Pacific Crest Trail", kind: "route", length_km: 12 });
+    expect(spec.lines?.[0]).toBe("Route · 12.0 km");
+  });
+
+  it("omits the length when the tile doesn't carry one", () => {
+    const spec = trailPopupSpec({ name: "X", kind: "path" });
+    expect(spec.lines?.[0]).toBe("Trail");
+  });
+
+  it("falls back to a generic title and kind when the tile is unnamed/untyped", () => {
+    const spec = trailPopupSpec({});
+    expect(spec.title).toBe("Unnamed trail");
+    expect(spec.lines?.[0]).toBe("Trail");
+  });
+
+  it("prefers the land unit over the bare agency when both are present", () => {
+    const spec = trailPopupSpec({
+      name: "X",
+      kind: "path",
+      land_unit: "Six Rivers National Forest",
+      land_agency: "USFS",
+    });
+    expect(spec.lines?.[1]).toBe("Six Rivers National Forest");
+  });
+
+  it("falls back to the agency when no land unit is carried", () => {
+    const spec = trailPopupSpec({ name: "X", kind: "path", land_agency: "BLM" });
+    expect(spec.lines?.[1]).toBe("BLM");
+  });
+
+  it("omits the second line when neither land unit nor agency is carried", () => {
+    const spec = trailPopupSpec({ name: "X", kind: "path" });
+    expect(spec.lines).toHaveLength(1);
   });
 });
