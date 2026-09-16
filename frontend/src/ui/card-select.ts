@@ -2,7 +2,7 @@
 // the trail-draw animation. No DOM template, no network - see card-select.test.ts.
 import type L from "leaflet";
 
-import { deselectSize, selectSize } from "../map/map";
+import { deselectSize, selectSize } from "../map/destinations";
 import { state, type View } from "../state";
 
 /**

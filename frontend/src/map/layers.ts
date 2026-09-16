@@ -9,27 +9,25 @@ import { FORAGE_RAMP, forageTier } from "./forage";
 import { isRoughSurface } from "./trail-attrs";
 import { circleStyle } from "./markers";
 import { buildPopup } from "./popup";
+import { regionRadiusKm, setFocused } from "./destinations";
 import {
-  addCampMarker,
   addPreciseMarker,
   CAMP_FREE,
   CAMP_OSM,
   CAMP_PAID,
-  clearCamps,
   clearPrecise,
   clearSelectedTrail,
   HOME_RING,
   map,
   markerPalette,
-  regionRadiusKm,
   renderLegend,
   setFireVisibility,
-  setFocused,
   setLandVisibility,
   setSelectedTrail,
   TRAIL,
   TRAIL_WALKIN,
 } from "./map";
+import { addCampMarker, clearCamps } from "./pins";
 import { dist, displayName, errorDetail, monthsParam, qs, setStatus, state } from "../state";
 
 export const campsOn = (): boolean => qs<HTMLInputElement>("#show-camps").checked;

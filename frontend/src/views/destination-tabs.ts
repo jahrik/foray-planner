@@ -5,16 +5,16 @@ import type { Calendar, CampSite, RecentObservation, RecentObservationsPage, Tra
 import { FORAGE_HI_THRESHOLD } from "../map/forage";
 import { gradeLabel, seasonalNote } from "../map/trail-attrs";
 import { selectTrailhead } from "../map/layers";
+import { regionRadiusKm } from "../map/destinations";
+import { HEAT_RGB } from "../map/map";
 import {
   clearCardCampMarkers,
   clearTrailheadMarkers,
-  HEAT_RGB,
   plotCardCamp,
   plotTrailhead,
-  regionRadiusKm,
   setCardCampActive,
   setTrailheadActive,
-} from "../map/map";
+} from "../map/pins";
 import { escapeHtml, feeLabel } from "../format";
 import { dist, displayName, errorDetail, monthsParam, MONTHS, setStatus } from "../state";
 

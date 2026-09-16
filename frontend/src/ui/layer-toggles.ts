@@ -4,7 +4,8 @@
 // Part 2d).
 
 import { loadCamps, loadFire, loadLand } from "../map/layers";
-import { setAerialEnabled, setContoursEnabled, setSatelliteBasemapEnabled } from "../map/map";
+import { setAerialEnabled } from "../map/destinations";
+import { setContoursEnabled, setSatelliteBasemapEnabled } from "../map/map";
 import { cancelRefresh, startRefresh } from "../refresh";
 import { qs, state } from "../state";
 

@@ -12,7 +12,9 @@ import { inShortlist, toggleShortlist } from "./shortlist";
 import { focusRegion } from "../map/layers";
 import { setMonths } from "../prefs";
 import { focusOnMap, sheetEnabled, snapTo } from "../map/sheet";
-import { clearMarkers, inspectRoadAt, map, plot } from "../map/map";
+import { plot } from "../map/destinations";
+import { inspectRoadAt } from "../map/inspect";
+import { clearMarkers, map } from "../map/map";
 import {
   dist,
   displayName,
