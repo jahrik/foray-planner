@@ -22,18 +22,26 @@ export function addCampMarker(marker: L.CircleMarker): void {
 // marker selects that trailhead's real trail (layers.ts's selectTrailhead), same as clicking
 // its matching list chip; setTrailheadActive keeps the two in visual sync. Drawn in the same
 // TRAIL red as the selected trail line, with a dark keyline so it holds up on either basemap.
-const TRAILHEAD_SVG = [
-  `<svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">`,
-  `<path d="M12 3.5v18" stroke="${HOME_RING}" stroke-width="3.4" stroke-linecap="round"/>`,
-  `<path d="M12 3.5v18" stroke="${TRAIL}" stroke-width="1.8" stroke-linecap="round"/>`,
-  `<path d="M12 5.2h8l3 2.6-3 2.6h-8z" fill="${TRAIL}" stroke="${HOME_RING}" stroke-width="1.1" stroke-linejoin="round"/>`,
-  `<path d="M12 12.4H5l-3 2.5 3 2.5h7z" fill="${TRAIL}" stroke="${HOME_RING}" stroke-width="1.1" stroke-linejoin="round"/>`,
-  `</svg>`,
-].join("");
+//
+// Built lazily inside trailheadIcon(), not as a module-level const: map.ts and pins.ts import
+// each other (map.ts needs pins.ts's clear* functions; pins.ts needs map.ts's HOME_RING/TRAIL),
+// and a top-level template literal reading those bindings at pins.ts's own module-eval time can
+// run before map.ts's `const HOME_RING = ...` has executed, hitting the TDZ and throwing
+// "Cannot access 'HOME_RING' before initialization" on load (Copilot review, PR #376).
+function trailheadSvg(): string {
+  return [
+    `<svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">`,
+    `<path d="M12 3.5v18" stroke="${HOME_RING}" stroke-width="3.4" stroke-linecap="round"/>`,
+    `<path d="M12 3.5v18" stroke="${TRAIL}" stroke-width="1.8" stroke-linecap="round"/>`,
+    `<path d="M12 5.2h8l3 2.6-3 2.6h-8z" fill="${TRAIL}" stroke="${HOME_RING}" stroke-width="1.1" stroke-linejoin="round"/>`,
+    `<path d="M12 12.4H5l-3 2.5 3 2.5h7z" fill="${TRAIL}" stroke="${HOME_RING}" stroke-width="1.1" stroke-linejoin="round"/>`,
+    `</svg>`,
+  ].join("");
+}
 
 function trailheadIcon(active: boolean): L.DivIcon {
   return L.divIcon({
-    html: `<div class="trailhead-marker${active ? " active" : ""}">${TRAILHEAD_SVG}</div>`,
+    html: `<div class="trailhead-marker${active ? " active" : ""}">${trailheadSvg()}</div>`,
     className: "trailhead-icon",
     iconSize: [24, 24],
     iconAnchor: [12, 22],
