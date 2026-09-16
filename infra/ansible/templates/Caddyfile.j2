@@ -29,6 +29,15 @@ https://{{ foray_domain }} {
 		header Cache-Control "no-store"
 	}
 
+	# /metrics (issue #338 PR 1) is unauthenticated at the app level - only ever meant to be
+	# pulled by the Alloy sidecar over the internal docker network (issue #338 PR 2), never by
+	# a public request through here. Deny it before the catch-all reverse_proxy below would
+	# otherwise expose it (Copilot review, PR #382).
+	@metrics path /metrics
+	handle @metrics {
+		respond 404
+	}
+
 	handle {
 		reverse_proxy {{ foray_app_container_name }}:8000
 	}

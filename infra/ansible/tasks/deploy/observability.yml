@@ -1,7 +1,8 @@
 ---
 # Grafana Cloud observability stack (issue #338 PR 2) - node_exporter + postgres_exporter
 # sidecars, and a Grafana Alloy container that scrapes them plus the app's own /metrics
-# (issue #338 PR 1) and remote_writes to Grafana Cloud's hosted Mimir. Skipped entirely when
+# (issue #338 PR 1) and remote_writes to Grafana Cloud's hosted Mimir. The whole stack is
+# skipped (and torn down if it was previously running) when
 # foray_grafana_cloud_remote_write_url is unset - prod-only, no local dev compose profile ties
 # to a Grafana Cloud account.
 
@@ -44,6 +45,9 @@
       - name: "{{ foray_docker_network }}"
   when: foray_grafana_cloud_remote_write_url | trim | length > 0
   notify: restart postgres-exporter
+  # DATA_SOURCE_NAME embeds the DB password in module args - without no_log, --diff/-vvv would
+  # print it in plain sight (Copilot review, PR #382).
+  no_log: true
 
 - name: Copy the Grafana Alloy config
   ansible.builtin.template:
@@ -54,6 +58,9 @@
     group: root
   when: foray_grafana_cloud_remote_write_url | trim | length > 0
   notify: restart alloy
+  # The rendered file embeds foray_grafana_cloud_api_token - without no_log, --diff would print
+  # the full rendered content including the token (Copilot review, PR #382).
+  no_log: true
 
 - name: Run Grafana Alloy
   community.docker.docker_container:
@@ -68,6 +75,37 @@
       - "/etc/alloy/config.alloy"
     volumes:
       - /opt/foray-planner/alloy-config.alloy:/etc/alloy/config.alloy:ro
+      # Named volume (docker creates it automatically) so the remote_write WAL survives a
+      # container recreate (image upgrade, recovery) instead of losing samples buffered during
+      # a Grafana Cloud outage (Copilot review, PR #382).
+      - "foray-planner-alloy-data:/var/lib/alloy/data"
     networks:
       - name: "{{ foray_docker_network }}"
   when: foray_grafana_cloud_remote_write_url | trim | length > 0
+
+# Teardown path: if the stack was previously deployed and the Grafana Cloud credentials are
+# since unset, stop it rather than leaving it running (and remote-writing with a possibly
+# revoked token) just because the `when` guards above skip re-creating it (Copilot review,
+# PR #382).
+- name: Tear down the observability stack (credentials unset)
+  when: foray_grafana_cloud_remote_write_url | trim | length == 0
+  block:
+    - name: Remove Grafana Alloy container
+      community.docker.docker_container:
+        name: "{{ foray_alloy_container_name }}"
+        state: absent
+
+    - name: Remove postgres_exporter container
+      community.docker.docker_container:
+        name: "{{ foray_postgres_exporter_container_name }}"
+        state: absent
+
+    - name: Remove node_exporter container
+      community.docker.docker_container:
+        name: "{{ foray_node_exporter_container_name }}"
+        state: absent
+
+    - name: Remove the Grafana Alloy config (contained the API token)
+      ansible.builtin.file:
+        path: /opt/foray-planner/alloy-config.alloy
+        state: absent
