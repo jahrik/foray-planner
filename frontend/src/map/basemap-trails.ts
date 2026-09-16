@@ -12,6 +12,8 @@
 
 import type { LayerSpecification, SourceSpecification } from "@maplibre/maplibre-gl-style-spec";
 
+import type { PopupSpec } from "./popup";
+
 export const TRAILS_SOURCE_ID = "foray-trails";
 export const TRAILS_LAYER_ID = "foray_trails";
 // martin names the vector tile's source-layer after the published table (infra/martin-config.yaml).
@@ -71,4 +73,23 @@ export function trailsLayer(theme: "dark" | "light"): LayerSpecification {
       "line-opacity": 0.8,
     },
   } as LayerSpecification;
+}
+
+const KIND_LABEL: Record<string, string> = {
+  path: "Trail",
+  route: "Route",
+};
+
+/** Popup contents straight off the tile - name/kind/length/land unit the martin-config.yaml
+ * `trails` table already carries, no `/api/trails/network` round-trip needed just to show what
+ * was clicked (map.ts's click-to-inspect, same pattern as basemap-land.ts/basemap-fire.ts). */
+export function trailPopupSpec(props: TrailTileProps): PopupSpec {
+  const lines: string[] = [];
+  const kindLabel = props.kind ? (KIND_LABEL[props.kind] ?? props.kind) : "Trail";
+  const bits = [kindLabel];
+  if (props.length_km != null) bits.push(`${props.length_km.toFixed(1)} km`);
+  lines.push(bits.join(" · "));
+  if (props.land_unit) lines.push(props.land_unit);
+  else if (props.land_agency) lines.push(props.land_agency);
+  return { title: props.name ?? "Unnamed trail", lines };
 }
