@@ -184,6 +184,20 @@
         - foray
         - "foray:deploy"
 
+    # After app.yml - Alloy scrapes the app's own /metrics, so the app container needs to
+    # already be up. Skipped entirely (see observability.yml) when no Grafana Cloud
+    # credentials are configured.
+    - name: Include Grafana Cloud observability stack tasks
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/observability.yml
+        apply:
+          tags:
+            - foray
+            - "foray:deploy"
+      tags:
+        - foray
+        - "foray:deploy"
+
     # Tagged foray:deploy as well as foray:cron so CD (which runs --tags foray:deploy)
     # re-renders the job units on every deploy - otherwise a jobs.yaml change only reaches the
     # droplet on a manual `just ansible cron` run. Tag kept as `foray:cron` (not renamed to

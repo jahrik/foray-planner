@@ -50,3 +50,54 @@
     networks:
       - name: "{{ foray_docker_network }}"
   listen: restart martin
+
+- name: Restart node-exporter
+  community.docker.docker_container:
+    name: "{{ foray_node_exporter_container_name }}"
+    image: "{{ foray_node_exporter_image }}"
+    state: started
+    restart: true
+    restart_policy: unless-stopped
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - name: "{{ foray_docker_network }}"
+  listen: restart node-exporter
+
+- name: Restart postgres-exporter
+  community.docker.docker_container:
+    name: "{{ foray_postgres_exporter_container_name }}"
+    image: "{{ foray_postgres_exporter_image }}"
+    state: started
+    restart: true
+    restart_policy: unless-stopped
+    env:
+      DATA_SOURCE_NAME: "postgresql://{{ foray_db_user | urlencode }}:{{ foray_db_password | urlencode }}@{{ foray_db_host }}:{{ foray_db_port }}/{{ foray_do_db_name }}?sslmode=require"
+    networks:
+      - name: "{{ foray_docker_network }}"
+  listen: restart postgres-exporter
+
+- name: Restart alloy
+  community.docker.docker_container:
+    name: "{{ foray_alloy_container_name }}"
+    image: "{{ foray_alloy_image }}"
+    state: started
+    restart: true
+    restart_policy: unless-stopped
+    command:
+      - "run"
+      - "--server.http.listen-addr=127.0.0.1:12345"
+      - "--storage.path=/var/lib/alloy/data"
+      - "/etc/alloy/config.alloy"
+    volumes:
+      - /opt/foray-planner/alloy-config.alloy:/etc/alloy/config.alloy:ro
+    networks:
+      - name: "{{ foray_docker_network }}"
+  listen: restart alloy

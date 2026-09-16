@@ -1,0 +1,46 @@
+// Managed by the foray-planner ansible role - do not edit on the droplet, edit
+// infra/ansible/templates/alloy-config.alloy.j2 instead.
+//
+// Scrapes the app's own /metrics (issue #338 PR 1), node_exporter, and postgres_exporter over
+// the internal docker network, then remote_writes to Grafana Cloud's hosted Mimir. All three
+// targets are internal-only container names - nothing here is reachable outside
+// {{ foray_docker_network }}.
+
+prometheus.remote_write "metrics_service" {
+  endpoint {
+    url = "{{ foray_grafana_cloud_remote_write_url }}"
+
+    basic_auth {
+      username = "{{ foray_grafana_cloud_username }}"
+      password = "{{ foray_grafana_cloud_api_token }}"
+    }
+  }
+}
+
+prometheus.scrape "foray_app" {
+  targets = [
+    {"__address__" = "{{ foray_app_container_name }}:8000"},
+  ]
+  metrics_path   = "/metrics"
+  scrape_interval = "{{ foray_alloy_scrape_interval }}"
+  job_name       = "foray-app"
+  forward_to     = [prometheus.remote_write.metrics_service.receiver]
+}
+
+prometheus.scrape "node_exporter" {
+  targets = [
+    {"__address__" = "{{ foray_node_exporter_container_name }}:9100"},
+  ]
+  scrape_interval = "{{ foray_alloy_scrape_interval }}"
+  job_name       = "node-exporter"
+  forward_to     = [prometheus.remote_write.metrics_service.receiver]
+}
+
+prometheus.scrape "postgres_exporter" {
+  targets = [
+    {"__address__" = "{{ foray_postgres_exporter_container_name }}:9187"},
+  ]
+  scrape_interval = "{{ foray_alloy_scrape_interval }}"
+  job_name       = "postgres-exporter"
+  forward_to     = [prometheus.remote_write.metrics_service.receiver]
+}

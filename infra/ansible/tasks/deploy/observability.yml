@@ -1,0 +1,73 @@
+---
+# Grafana Cloud observability stack (issue #338 PR 2) - node_exporter + postgres_exporter
+# sidecars, and a Grafana Alloy container that scrapes them plus the app's own /metrics
+# (issue #338 PR 1) and remote_writes to Grafana Cloud's hosted Mimir. Skipped entirely when
+# foray_grafana_cloud_remote_write_url is unset - prod-only, no local dev compose profile ties
+# to a Grafana Cloud account.
+
+- name: Run node_exporter (host metrics)
+  community.docker.docker_container:
+    name: "{{ foray_node_exporter_container_name }}"
+    image: "{{ foray_node_exporter_image }}"
+    state: started
+    restart_policy: unless-stopped
+    # Bind-mounted host paths rather than --net=host + --pid=host, so node_exporter stays on
+    # the same bridge network as everything else here (simpler than juggling a mixed-network
+    # Alloy container) - the trade-off is host network-interface metrics are less accurate,
+    # which doesn't matter for what this stack watches (CPU/memory/disk, same signals DO's own
+    # alert policies already cover).
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - name: "{{ foray_docker_network }}"
+  when: foray_grafana_cloud_remote_write_url | trim | length > 0
+  notify: restart node-exporter
+
+- name: Run postgres_exporter (managed Postgres metrics)
+  community.docker.docker_container:
+    name: "{{ foray_postgres_exporter_container_name }}"
+    image: "{{ foray_postgres_exporter_image }}"
+    state: started
+    restart_policy: unless-stopped
+    # Percent-encoded credentials, same reasoning as martin.yml's DATABASE_URL - a managed-PG
+    # password can contain URI-reserved characters.
+    env:
+      DATA_SOURCE_NAME: "postgresql://{{ foray_db_user | urlencode }}:{{ foray_db_password | urlencode }}@{{ foray_db_host }}:{{ foray_db_port }}/{{ foray_do_db_name }}?sslmode=require"
+    networks:
+      - name: "{{ foray_docker_network }}"
+  when: foray_grafana_cloud_remote_write_url | trim | length > 0
+  notify: restart postgres-exporter
+
+- name: Copy the Grafana Alloy config
+  ansible.builtin.template:
+    src: alloy-config.alloy.j2
+    dest: /opt/foray-planner/alloy-config.alloy
+    mode: "0600"
+    owner: root
+    group: root
+  when: foray_grafana_cloud_remote_write_url | trim | length > 0
+  notify: restart alloy
+
+- name: Run Grafana Alloy
+  community.docker.docker_container:
+    name: "{{ foray_alloy_container_name }}"
+    image: "{{ foray_alloy_image }}"
+    state: started
+    restart_policy: unless-stopped
+    command:
+      - "run"
+      - "--server.http.listen-addr=127.0.0.1:12345"
+      - "--storage.path=/var/lib/alloy/data"
+      - "/etc/alloy/config.alloy"
+    volumes:
+      - /opt/foray-planner/alloy-config.alloy:/etc/alloy/config.alloy:ro
+    networks:
+      - name: "{{ foray_docker_network }}"
+  when: foray_grafana_cloud_remote_write_url | trim | length > 0

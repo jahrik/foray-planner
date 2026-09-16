@@ -212,3 +212,21 @@ foray_cloudflare_ipv6:
   - 2405:8100::/32
   - 2a06:98c0::/29
   - 2c0f:f248::/32
+
+# Grafana Cloud observability stack (issue #338 PR 2) - a Grafana Alloy container on the
+# droplet scrapes the app's /metrics (issue #338 PR 1) + node_exporter + postgres_exporter over
+# the internal docker network, then remote_writes to Grafana Cloud's hosted Mimir. Push, not
+# pull - Grafana Cloud's free/standard tiers can't reach into this infra to scrape a URL
+# directly (that needs the paid Private Datasource Connect add-on). Unset -> the whole stack
+# (node_exporter/postgres_exporter/alloy containers) is skipped entirely, same pattern as
+# foray_spaces_access_key_id skipping the basemap Space.
+foray_grafana_cloud_remote_write_url: "{{ lookup('ansible.builtin.env', 'GRAFANA_CLOUD_REMOTE_WRITE_URL', default='') }}"
+foray_grafana_cloud_username: "{{ lookup('ansible.builtin.env', 'GRAFANA_CLOUD_USERNAME', default='') }}"
+foray_grafana_cloud_api_token: "{{ lookup('ansible.builtin.env', 'GRAFANA_CLOUD_API_TOKEN', default='') }}"
+foray_alloy_image: "grafana/alloy:v1.5.1"
+foray_alloy_container_name: foray-planner-alloy
+foray_node_exporter_image: "prom/node-exporter:v1.8.2"
+foray_node_exporter_container_name: foray-planner-node-exporter
+foray_postgres_exporter_image: "quay.io/prometheuscommunity/postgres-exporter:v0.15.0"
+foray_postgres_exporter_container_name: foray-planner-postgres-exporter
+foray_alloy_scrape_interval: 60s

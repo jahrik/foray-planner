@@ -52,8 +52,9 @@ The health check polls `GET /healthz` every 30 seconds (liveness only, no DB rou
 see `GET /healthz/data` for data-freshness monitoring). `GET /metrics` (issue #338 PR 1) is a
 Prometheus text-exposition scrape target - job run counts/durations/rows/429s, backfill depth
 and drain rate, and per-layer age/staleness gauges, all queried from Postgres fresh on every
-scrape. Unauthenticated, same as the `/healthz*` routes - restrict scrape access at the network
-layer if it's exposed beyond a private Prometheus (issue #338 PR 2).
+scrape. Unauthenticated, same as the `/healthz*` routes - never exposed beyond the droplet's
+internal docker network in prod, since it's only ever pulled by the Grafana Alloy sidecar
+described below (issue #338 PR 2).
 
 ---
 
@@ -252,6 +253,30 @@ just ansible deploy
 | `foray:build-basemap-once` | Manual/opt-in (`just ansible build-basemap-once`) - `pmtiles extract` a CONUS bbox from Protomaps' daily planet build and upload it to the basemap Space. Runs on the control node (the extract is ~15-40 GB), not the droplet. Needs `DO_SPACES_KEY` / `DO_SPACES_SECRET`. Re-run monthly to refresh. |
 | `foray:backfill-satellite-once` | Manual/opt-in one-off satellite-fill backfill (`just ansible backfill-satellite-once`, issue #293) - runs `foray backfill-satellite` on the droplet. Esri's tile CDN throttles a wide fan-out, so the run paces itself + retries and takes tens of minutes at national scale; the task fails (non-zero exit) if failures dominate, so re-run until clean. A plain run only fetches regions still missing from `region_satellite`; pass `-e foray_satellite_backfill_args=--refresh` to `TRUNCATE` the table first and re-fetch every region (needed after a change to what a region's raster should contain - bbox, zoom, tile sources, compositing in `sources/satellite.py`). Browsers pick up changed rasters within a day (`Cache-Control: max-age=86400`, not `immutable`). Same env-file dependency and fail-fast as `foray:ingest-once`. |
 | `foray:firewall-allow-runner` / `foray:firewall-revoke-runner` | CI-internal only - adds/removes the GitHub Actions runner's own IP from the live SSH firewall rule around an automated `foray:deploy` run (see below). Not something an operator runs directly. |
+
+### Observability (Grafana Cloud, issue #338 PR 2)
+
+Optional, prod-only, part of the standard `foray:deploy` tag (skipped entirely when unset - no
+local dev compose profile ties to a Grafana Cloud account). A Grafana Alloy container on the
+droplet scrapes the app's own `/metrics` (above) plus `node_exporter` and `postgres_exporter`
+sidecars over the internal docker network, then `remote_write`s to Grafana Cloud's hosted
+Mimir over HTTPS - push, not pull, since Grafana Cloud's free/standard tiers can't reach into
+this infra to scrape a URL directly (that needs the paid Private Datasource Connect add-on).
+
+Set up a free-tier Grafana Cloud stack, then generate a scoped `metrics:write` API token
+(Connections -> Alloy, or the stack's Prometheus "Details" page -> Generate now), and export
+before deploying:
+
+```bash
+export GRAFANA_CLOUD_REMOTE_WRITE_URL=https://prometheus-prod-XX-....grafana.net/api/prom/push
+export GRAFANA_CLOUD_USERNAME=<stack instance id>
+export GRAFANA_CLOUD_API_TOKEN=<scoped write token>
+just ansible deploy
+```
+
+In CI/CD these come from the `GRAFANA_CLOUD_REMOTE_WRITE_URL` / `GRAFANA_CLOUD_USERNAME` /
+`GRAFANA_CLOUD_API_TOKEN` repo secrets (`.github/workflows/cd.yml`). See
+`infra/ansible/tasks/deploy/observability.yml`.
 
 ---
 

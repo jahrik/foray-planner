@@ -168,6 +168,12 @@ jobs:
           # -> both features fall back to their no-Space behavior.
           DO_SPACES_KEY: ${{ secrets.DO_SPACES_KEY }}
           DO_SPACES_SECRET: ${{ secrets.DO_SPACES_SECRET }}
+          # Grafana Cloud push-metrics stack (issue #338 PR 2, observability.yml). Unset -> the
+          # whole node_exporter/postgres_exporter/alloy stack is skipped, same as DO_SPACES_KEY
+          # skipping the basemap Space.
+          GRAFANA_CLOUD_REMOTE_WRITE_URL: ${{ secrets.GRAFANA_CLOUD_REMOTE_WRITE_URL }}
+          GRAFANA_CLOUD_USERNAME: ${{ secrets.GRAFANA_CLOUD_USERNAME }}
+          GRAFANA_CLOUD_API_TOKEN: ${{ secrets.GRAFANA_CLOUD_API_TOKEN }}
         run: |
           uv run ansible-playbook site.yml --tags foray:deploy \
             -i inventory/hosts.yml \
