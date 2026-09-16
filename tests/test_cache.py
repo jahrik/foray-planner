@@ -776,7 +776,7 @@ def test_save_region_satellite_uploads_to_space_when_configured(
         uploaded[key] = data
         return f"{spaces_cfg.base_url}/{key}"
 
-    monkeypatch.setattr("foray.cache.spaces.put_object", fake_put_object)
+    monkeypatch.setattr("foray.cache.region_cache.spaces.put_object", fake_put_object)
 
     save_region_satellite(con, cfg, "425_-1099", b"image-bytes", b"labels-bytes")
 
