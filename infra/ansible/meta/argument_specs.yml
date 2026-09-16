@@ -244,3 +244,18 @@ argument_specs:
           Session-mode pool size for cron/migration connections - the schema advisory lock and
           any per-job SET work_mem/maintenance_work_mem need a session, not just a transaction.
         default: 3
+      foray_grafana_cloud_remote_write_url:
+        type: str
+        description: >
+          Grafana Cloud Mimir remote_write endpoint (issue #338 PR 2, read from
+          GRAFANA_CLOUD_REMOTE_WRITE_URL env). Unset skips the whole observability stack
+          (node_exporter/postgres_exporter/Alloy containers).
+        default: ""
+      foray_grafana_cloud_username:
+        type: str
+        description: Grafana Cloud stack/instance id, used as the remote_write basic-auth username (read from GRAFANA_CLOUD_USERNAME env)
+        default: ""
+      foray_grafana_cloud_api_token:
+        type: str
+        description: Grafana Cloud scoped metrics:write API token, used as the remote_write basic-auth password (read from GRAFANA_CLOUD_API_TOKEN env)
+        default: ""

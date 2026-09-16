@@ -20,6 +20,7 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 | `foray_terrain_url` | Terrarium DEM tile URL template for hillshade + contours (from `FORAY_TERRAIN_URL` env, else AWS Open Data's `elevation-tiles-prod`) |
 | `foray_pg_log_min_duration_ms` / `foray_pg_jit` / `foray_pg_max_parallel_workers_per_gather` / `foray_pg_work_mem_kb` / `foray_pg_shared_buffers_percentage` | Cluster-config tuning knobs (issue #333), applied every `foray:provision` |
 | `foray_pgbouncer_api_pool_size` / `foray_pgbouncer_cron_pool_size` | Managed PgBouncer pool sizes (issue #333), created every `foray:provision` |
+| `foray_grafana_cloud_remote_write_url` / `_username` / `_api_token` | Grafana Cloud push-metrics credentials (issue #338 PR 2, from `GRAFANA_CLOUD_REMOTE_WRITE_URL` / `_USERNAME` / `_API_TOKEN` env). Unset skips the whole node_exporter/postgres_exporter/Alloy stack (`tasks/deploy/observability.yml`) |
 
 ## Key Files
 
@@ -31,6 +32,7 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 | `tasks/provision/database.yml` | Cluster + app DB creation, then cluster-config tuning + PgBouncer pools (issue #333), all on every `foray:provision`. `ALTER ROLE`/per-table autovacuum are in `cache._MIGRATIONS` instead (the app's own DB role has sufficient privilege); the unused-index audit, SP-GiST vs GiST A/B, and the PG major-version upgrade aren't on DO's config surface and stay manual |
 | `tasks/provision/build_basemap_once.yml` | `foray:build-basemap-once` - extract the US PMTiles archive and upload it to the Space (runs on localhost) |
 | `tasks/deploy/` | App deployment + scheduled-job (systemd timer) setup |
+| `tasks/deploy/observability.yml` | Grafana Cloud push-metrics stack (issue #338 PR 2) - node_exporter + postgres_exporter sidecars, Grafana Alloy scraping them plus the app's own `/metrics` (issue #338 PR 1), `remote_write` to Grafana Cloud's hosted Mimir. Skipped entirely when no Grafana Cloud credentials are set |
 | `tasks/deploy/systemd_jobs.yml` | Generates one systemd service+timer per entry in `../../jobs.yaml` (issue #332 PR 2 - the repo-root job manifest, also read by `foray scheduler` for dev) |
 | `templates/foray.env.j2` | Runtime env file (secrets loaded from DO managed DB) |
 | `meta/argument_specs.yml` | Variable documentation and types |
