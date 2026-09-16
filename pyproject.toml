@@ -23,7 +23,11 @@ dependencies = [
     # pyinaturalist to keep pulling them in.
     "requests>=2.32,<3.0",
     "pyrate-limiter>=2.10,<3.0",
-    "tqdm>=4.70.0,<5.0",
+    # sources/elevation_dem.py samples local Copernicus GLO-90 DEM tiles - the steady-state
+    # elevation-backfill-dem cron job (jobs.yaml, daily). A genuine runtime dep, not a one-off
+    # leftover: every job in jobs.yaml runs via the same `foray_app_image` the web server uses
+    # (infra/ansible/templates/foray-job.service.j2 - `docker run ... {{ foray_app_image }}
+    # foray job ...`), so there's no separate CLI-only image to move this out of.
     "rasterio>=1.4,<2.0",
     # sources/satellite.py stitches Esri XYZ map tiles into one raster per destination.
     "pillow>=12.3.0,<13.0",
