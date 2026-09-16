@@ -1,16 +1,15 @@
 import L from "leaflet";
 import "leaflet.markercluster";
-import type { Map as MaplibreMap } from "maplibre-gl";
 
-import type { CampSite, Home } from "../api/types";
-import { FIRE_ACTIVE, FIRE_LAYER_IDS, FIRE_SCAR, firePopupSpec, type FireProps } from "./basemap-fire";
-import { LAND_COLORS, LAND_DEFAULT, LAND_LAYER_IDS, landPopupSpec, type LandProps } from "./basemap-land";
-import { TRAILS_LAYER_ID, trailPopupSpec, type TrailTileProps } from "./basemap-trails";
+import type { Home } from "../api/types";
+import { FIRE_ACTIVE, FIRE_SCAR } from "./basemap-fire";
+import { LAND_COLORS, LAND_DEFAULT } from "./basemap-land";
 import { FORAGE_RAMP, FORAGE_TIER_LABELS } from "./forage";
+import { clearCardCampMarkers, clearCamps, clearTrailheadMarkers } from "./pins";
 import { clearLayer, clearLayerList } from "./layer-lifecycle";
+import { clearSatelliteOverlay, resetSelection } from "./destinations";
+import { inspectRoadAt } from "./inspect";
 import { circleStyle } from "./markers";
-import { buildPopup } from "./popup";
-import { pickRoadFeature, roadLineLayerIds, roadPopupSpec, type RoadProps } from "./road-inspect";
 import { dist, onScopeChange, qs, state } from "../state";
 
 // Marker palette. Destination + recency markers now read their colour from tokens.css at
@@ -96,15 +95,6 @@ export function markerPalette(): MarkerPalette {
   return paletteCache;
 }
 
-// Marker hierarchy (issue #301): the map used to draw ~200 near-identical circles. Now rank
-// drives three tiers so the shortlist reads at a glance -
-//   top 3   (rank 0-2)  : score-scaled circle with a translucent fill + a permanent rank numeral
-//   next 7  (rank 3-9)   : ring only (no fill), fixed radius - a marker, not a region wash
-//   the rest (rank 10+)  : a small dim moss dot, fixed size, no score scaling
-const HERO_RANK_MAX = 2;
-const PROMINENT_RANK_MAX = 9;
-const DIM_DOT_RADIUS_M = 900; // fixed ground radius for the rank-11+ dots
-
 // Mount the MapLibre GL vector basemap, or swap its style on a later theme change. Named
 // setTiles() because ui-prefs.ts's theme toggle calls it after flipping data-theme. A no-op
 // when the server sent no basemap_url - the map then has overlays but no base layer.
@@ -117,6 +107,11 @@ let vectorMounting = false;
 // Held after the first load so the synchronous map-click handler can reach getGlMap() for
 // click-to-inspect without another dynamic import.
 let basemapModule: typeof import("./basemap") | null = null;
+
+// The inspect module needs the live GL map handle without another dynamic import of its own.
+export function getBasemapModule(): typeof import("./basemap") | null {
+  return basemapModule;
+}
 
 // Grouped once here (see basemap.ts's `TileUrls` doc) rather than re-spelled at each call site.
 function tileUrls(): import("./basemap").TileUrls {
@@ -251,8 +246,9 @@ let attributionOpen = false;
 
 // Leaflet rebuilds the attribution container's innerHTML on every _update (each addAttribution /
 // removeAttribution / layer add), which wipes the button + wrapper, so re-run this after any such
-// call rather than once at init.
-function decorateAttribution(target: L.Map): void {
+// call rather than once at init. Exported: destinations.ts's satellite-overlay functions also
+// add/remove an attribution entry and need to re-decorate the same way.
+export function decorateAttribution(target: L.Map): void {
   const container = target.attributionControl.getContainer();
   if (!container || container.querySelector(".attrib-toggle")) return;
 
@@ -317,87 +313,6 @@ export function initMap(home: Home): void {
   });
 }
 
-// A few px of slop around the click point so a thin forest-road line is still an easy tap
-// target - shared by every `queryRenderedFeatures` box below.
-function hitBox(gl: MaplibreMap, latlng: L.LatLng): [[number, number], [number, number]] {
-  const point = gl.project([latlng.lng, latlng.lat]);
-  return [
-    [point.x - 5, point.y - 5],
-    [point.x + 5, point.y + 5],
-  ];
-}
-
-// A hit on our own trails layer just pops up what the tile carries (name/kind/length/land
-// unit), same as the land/fire helper below - it used to select + draw the trail outright
-// (issue #336 PR 2), but that's the destination card's Trails-tab gesture (layers.ts's
-// `selectTrailhead`); a plain map click should show what was clicked, not act on it.
-function tryInspectTrailAt(gl: MaplibreMap, latlng: L.LatLng): boolean {
-  if (!gl.getLayer(TRAILS_LAYER_ID)) return false;
-  const [hit] = gl.queryRenderedFeatures(hitBox(gl, latlng), { layers: [TRAILS_LAYER_ID] });
-  if (!hit) return false;
-  L.popup()
-    .setLatLng(latlng)
-    .setContent(buildPopup(trailPopupSpec((hit.properties ?? {}) as TrailTileProps)))
-    .openOn(map);
-  return true;
-}
-
-// Land/fire (issue #336 PR 2): a hit just pops up what the tile carries - no click-to-select
-// story for these, unlike trails. `LAND_LAYER_IDS`/`FIRE_LAYER_IDS` are hidden (`visibility:
-// "none"`) whenever their Layers-pill toggle is off, and `queryRenderedFeatures` never returns
-// features from a hidden layer, so no extra toggle check is needed here.
-function tryInspectLandOrFireAt(gl: MaplibreMap, latlng: L.LatLng): boolean {
-  const box = hitBox(gl, latlng);
-  const landLayers = LAND_LAYER_IDS.filter((id) => gl.getLayer(id));
-  if (landLayers.length > 0) {
-    const [hit] = gl.queryRenderedFeatures(box, { layers: landLayers });
-    if (hit) {
-      L.popup()
-        .setLatLng(latlng)
-        .setContent(buildPopup(landPopupSpec((hit.properties ?? {}) as LandProps)))
-        .openOn(map);
-      return true;
-    }
-  }
-  const fireLayers = FIRE_LAYER_IDS.filter((id) => gl.getLayer(id));
-  if (fireLayers.length > 0) {
-    const [hit] = gl.queryRenderedFeatures(box, { layers: fireLayers });
-    if (hit) {
-      L.popup()
-        .setLatLng(latlng)
-        .setContent(buildPopup(firePopupSpec((hit.properties ?? {}) as FireProps)))
-        .openOn(map);
-      return true;
-    }
-  }
-  return false;
-}
-
-// Click-to-inspect: if the tap landed on a rendered trail/land/fire/road feature, act on it (see
-// the three helpers above) and report the hit so the caller skips the set-home behaviour. A
-// miss, or no vector basemap, returns false and the click falls through.
-//
-// Exported because the destination-region circles set `bubblingMouseEvents: false` (their own
-// click selects the region and must not also stomp the home location), so a click on a feature
-// that runs under a hero circle's translucent fill never reaches the map handler above - the
-// circle's own handler (views.ts) calls this first so a road line still wins.
-export function inspectRoadAt(latlng: L.LatLng): boolean {
-  const gl = basemapModule?.getGlMap();
-  if (!gl) return false;
-  if (tryInspectTrailAt(gl, latlng)) return true;
-  if (tryInspectLandOrFireAt(gl, latlng)) return true;
-  const layerIds = roadLineLayerIds(gl.getStyle().layers);
-  if (layerIds.length === 0) return false;
-  const feature = pickRoadFeature(gl.queryRenderedFeatures(hitBox(gl, latlng), { layers: layerIds }));
-  if (!feature) return false;
-  const props = (feature.properties ?? {}) as RoadProps;
-  L.popup()
-    .setLatLng(latlng)
-    .setContent(buildPopup(roadPopupSpec(props, latlng.lat, latlng.lng)))
-    .openOn(map);
-  return true;
-}
-
 let onMapClick: ((lat: number, lng: number) => void) | null = null;
 
 export function setMapClickHandler(handler: (lat: number, lng: number) => void): void {
@@ -416,156 +331,40 @@ export function updateHome(home: Home): void {
   onScopeChange();
 }
 
-// Same footprint plot() uses for a region's true (not score-scaled) circle - see selectSize.
-// Exported so layers.ts can scope the precise-observations fetch to exactly the ground a
-// selected destination bubble represents, instead of the whole search radius (issue #161
-// follow-up: a radius-wide fetch put a cluster badge on every destination on the map at once,
-// visually burying the destination bubbles they were competing with).
-//
-// issue #337: the server now sends this radius precomputed (an H3 cell's real-world size is
-// the same everywhere, unlike the old cell_deg degree grid, which needed a 111 km/deg
-// conversion done here that also silently assumed the equator - no distortion math belongs in
-// the frontend at all any more).
-export const regionRadiusKm = (): number => state.regionRadiusKm;
-
-// Per-marker sizing so a selected region can snap between its score size and its true
-// geographic footprint (see selectSize/deselectSize below) without re-plotting. `regionId` rides
-// along so selectSize can address this marker's satellite fill (showSatelliteOverlay) without
-// widening its own signature - every caller already has the marker, not all of them the region.
-const sizing = new WeakMap<
-  L.Circle,
-  {
-    scoreRadius: number;
-    trueRadius: number;
-    weight: number;
-    regionId: string;
-    baseColor: string;
-    restFillOpacity: number;
-  }
->();
-
-// The score-scaled fill a destination circle sits at when nothing is selected. Pulled out so
-// selectSize/deselectSize and the "dim everything else" pass below all agree on one formula.
-const scoreFillOpacity = (weight: number): number => 0.15 + 0.45 * weight;
-
-// When a region is selected its circle grows to its true footprint and can blanket a big patch
-// of map; in a dense area (Puget Sound) the other circles it overlaps used to keep compositing
-// their fills into a near-opaque blob over it. So on select, every *other* destination circle
-// drops to stroke-only (ring, no fill) - the rings still show where the other candidates are
-// without burying the focused circle or the basemap under it. Restored on the next select/
-// deselect. Scoped to plot()-drawn circles via the `sizing` map, so plan pins and the like are
-// untouched.
-function setOthersFill(selected: L.Circle, ringOnly: boolean): void {
-  for (const marker of state.markers) {
-    if (marker === selected) continue;
-    const info = sizing.get(marker as L.Circle);
-    if (!info) continue; // not a plot()-drawn destination circle (plan pin, etc.)
-    marker.setStyle({ fillOpacity: ringOnly ? 0 : info.restFillOpacity });
-  }
+export function clearMarkers(): void {
+  clearLayerList(map, state.markers);
+  clearCamps();
+  clearTrailheadMarkers();
+  clearCardCampMarkers();
+  clearSelectedTrail();
+  clearPlanRoute();
+  clearPrecise();
+  clearSatelliteOverlay();
+  resetSelection();
+  state.focused = null;
 }
 
-// No popup bound here - a bubble hovering over the marker you're trying to look at was jarring,
-// and the same info (rank, distance, species) already lives on the matching card in the side
-// panel. Callers wire the marker's click to highlight/scroll to that card instead.
-//
-// `rank` (0-indexed position in the ranked list) drives the marker hierarchy - see the tier
-// constants up top. Colour: rust for a ranked destination, moss for the dim 11+ dots, flush
-// green when the region has recent observations. Score is still carried by size + fill opacity
-// within the top-10 tier. Uses L.circle (a geographic radius in meters, not L.circleMarker's
-// fixed pixel radius) so selecting a region can snap it to its true H3-cell footprint
-// (selectSize) and so the circle scales with zoom instead of reading as a screen-space blob.
-export function plot(
-  lat: number,
-  lng: number,
-  weight: number,
-  live: boolean,
-  regionId: string,
-  rank: number,
-): L.Circle {
-  const palette = markerPalette();
-  const trueRadius = state.regionRadiusKm * 1000;
-  const isDim = rank > PROMINENT_RANK_MAX;
-  const isHero = rank <= HERO_RANK_MAX;
-  const baseColor = live ? palette.flush : isDim ? palette.moss : palette.rust;
-  // Hero circles stay score-scaled (their size is part of the read); ranks 4-10 shrink to a
-  // tighter ring that reads as a marker, not a region wash; 11+ are small solid dots.
-  const scoreRadius = isDim
-    ? DIM_DOT_RADIUS_M
-    : isHero
-      ? trueRadius * (0.35 + weight * 0.65)
-      : trueRadius * 0.5;
-  // Only the top 3 carry a fill - at this zoom the score-scaled cell circles overlap heavily,
-  // so a translucent fill on every one of the top 10 composited into an unreadable blob. Ranks
-  // 4-10 are rings only; 11+ are small solid dots (too small to blob).
-  const restFillOpacity = isHero ? Math.max(0.35, scoreFillOpacity(weight)) : isDim ? 0.6 : 0;
-  const marker = L.circle([lat, lng], {
-    radius: scoreRadius,
-    color: baseColor,
-    fillColor: baseColor,
-    fillOpacity: restFillOpacity,
-    opacity: isDim ? 0.75 : isHero ? 0.95 : 0.9,
-    weight: isDim ? 1 : isHero ? 2 : 2.5,
-    bubblingMouseEvents: false,
-  }).addTo(map);
-  sizing.set(marker, { scoreRadius, trueRadius, weight, regionId, baseColor, restFillOpacity });
-  state.markers.push(marker);
-  if (isHero) {
-    marker.bindTooltip(String(rank + 1), {
-      permanent: true,
-      direction: "center",
-      className: "rank-numeral",
-    });
-  }
-  return marker;
+export function clearPrecise(): void {
+  preciseCluster.clearLayers();
 }
 
-// Register a marker that plan.ts drew itself (start/destination/stop pins) into the same
-// state.markers set plot() feeds, so clearMarkers() tears it down too. Keeps state.markers
-// writable only from map.ts (issue #103).
-export function addMarker(marker: L.CircleMarker): void {
-  state.markers.push(marker);
+// Adds a precise-observation pin into the cluster group (see preciseCluster above) instead of
+// directly onto the map - the cluster group itself decides whether it renders standalone or
+// folded into a nearby cluster badge at the current zoom.
+export function addPreciseMarker(marker: L.CircleMarker): void {
+  preciseCluster.addLayer(marker);
 }
 
-// The focused destination drives loadCamps()/loadPreciseObservations() (layers.ts). map.ts owns
-// it because clearMarkers() is what resets it to null (issue #103).
-export function setFocused(lat: number, lng: number): void {
-  state.focused = { lat, lng };
+// Public-land agency toggles (#show-land-blm/usfs/tribal, layers.ts's loadLand) - live
+// setLayoutProperty/setFilter on the vector layers, no fetch (issue #336 PR 2). Same lazy
+// `import("./basemap")` pattern as setContoursEnabled/setSatelliteBasemapEnabled below.
+export function setLandVisibility(agencies: readonly string[]): void {
+  void import("./basemap").then((basemap) => basemap.setLandLayerState(agencies));
 }
 
-// Proxied and cached through our own API (sources/satellite.py, #293 follow-up) rather than the
-// browser hitting Esri directly: a live export at full resolution takes 25-45s server-side, and
-// `foray backfill-satellite` pre-fetches every known region so a selection is normally an
-// instant cache hit instead of paying that render time in the browser. `regionId` addresses the
-// same fixed grid cell the circle's true footprint (regionRadiusKm) already matches server-side.
-const SATELLITE_ATTRIBUTION = "Imagery © Esri";
-
-export function satelliteImageUrl(regionId: string): string {
-  return `/api/destinations/${regionId}/satellite/image`;
-}
-
-export function satelliteLabelsUrl(regionId: string): string {
-  return `/api/destinations/${regionId}/satellite/labels`;
-}
-
-let satelliteOverlay: L.ImageOverlay | null = null;
-let satelliteLabelsOverlay: L.ImageOverlay | null = null;
-
-// The aerial fill for the selected destination is opt-in now (issue #301): selecting a region
-// no longer drops a satellite photo over it by default - the "Aerial" layer toggle does. When
-// it's on and a region is already selected, flip the overlay straight on/off without needing a
-// re-select. selectedRegionMarker is the circle selectSize() last grew to its true footprint.
-let aerialEnabled = false;
-let selectedRegionMarker: L.Circle | null = null;
-
-export function setAerialEnabled(on: boolean): void {
-  aerialEnabled = on;
-  if (!map) return;
-  const info = selectedRegionMarker && sizing.get(selectedRegionMarker);
-  if (on && selectedRegionMarker && info) {
-    showSatelliteOverlay(selectedRegionMarker, info.regionId);
-  } else {
-    clearSatelliteOverlay();
-  }
+// The Fire toggle (#show-fire, layers.ts's loadFire) - same reasoning as setLandVisibility.
+export function setFireVisibility(visible: boolean): void {
+  void import("./basemap").then((basemap) => basemap.setFireLayerState(visible));
 }
 
 // The Layers-pill "Contours" toggle. The hillshade is always on with the vector basemap; only
@@ -588,9 +387,11 @@ export function setContoursEnabled(on: boolean): void {
 // The Layers-pill "Satellite basemap" toggle (issue #340): swaps the whole vector style for
 // real Esri imagery with our own roads/boundaries/labels drawn over it (basemap-satellite.ts)
 // instead of the vector map's land/water fills - a different feature from the per-destination
-// aerial photo fill above (setAerialEnabled), which stays independently available. Hidden when
-// there is no basemap or no satellite tile URL configured, same guard shape as
+// aerial photo fill (destinations.ts's setAerialEnabled), which stays independently available.
+// Hidden when there is no basemap or no satellite tile URL configured, same guard shape as
 // setContoursEnabled.
+const SATELLITE_ATTRIBUTION = "Imagery © Esri";
+
 export function setSatelliteBasemapEnabled(on: boolean): void {
   if (!state.basemapUrl || !state.satelliteTilesUrl) {
     const box = qs("#show-satellite-basemap") as HTMLInputElement;
@@ -610,201 +411,6 @@ export function setSatelliteBasemapEnabled(on: boolean): void {
     }
     decorateAttribution(map);
   });
-}
-
-// Fills the selected destination's true footprint with a satellite image plus its matching
-// roads/labels overlay (so streets and city names stay readable, not just the bare photo),
-// clipped to a circle in CSS (style.css's .sat-circle-overlay) rather than requested
-// pre-clipped, so each is one plain rectangular image request. Both render in their own pane
-// between the tiles and the vector overlay pane (see initMap) so the destination circle's
-// ring/stroke and every other layer still draw on top - only the basemap underneath the
-// selection is replaced, nothing else dims or hides. Fetched once - not re-requested on zoom
-// (Leaflet re-scales the same raster onto `bounds` for free), so selecting a destination costs
-// exactly one load, not a fresh reload/flash on every zoom step.
-export function showSatelliteOverlay(marker: L.Circle, regionId: string): void {
-  if (!map) return; // unit tests exercise selectSize()'s fill logic without a real map/initMap()
-  clearSatelliteOverlay();
-  const bounds = marker.getBounds();
-  satelliteOverlay = L.imageOverlay(satelliteImageUrl(regionId), bounds, {
-    className: "sat-circle-overlay",
-    pane: "satellite",
-    interactive: false,
-  }).addTo(map);
-  satelliteLabelsOverlay = L.imageOverlay(satelliteLabelsUrl(regionId), bounds, {
-    className: "sat-circle-overlay",
-    pane: "satellite",
-    interactive: false,
-  }).addTo(map);
-  map.attributionControl.addAttribution(SATELLITE_ATTRIBUTION);
-  decorateAttribution(map);
-}
-
-export function clearSatelliteOverlay(): void {
-  // Checks both, not just satelliteOverlay - the two are always set/cleared together in normal
-  // use, but gating on only one risks leaving the other (or the attribution) stale if that ever
-  // stops being true (#293 Copilot review).
-  if (!satelliteOverlay && !satelliteLabelsOverlay) return;
-  satelliteOverlay = clearLayer(map, satelliteOverlay);
-  satelliteLabelsOverlay = clearLayer(map, satelliteLabelsOverlay);
-  map.attributionControl.removeAttribution(SATELLITE_ATTRIBUTION);
-  decorateAttribution(map);
-}
-
-// Selecting a region (marker or card click) snaps its circle from the score-sized preview to
-// its true real-world H3-cell footprint, computed from the same live config value as plot()
-// (never hard-coded), so the user can see exactly how much ground that dot actually represents.
-// Fill drops to fully transparent at this size - the circle's own vector fill draws in Leaflet's
-// overlayPane, which sits *above* the "satellite" pane (see initMap/showSatelliteOverlay), so
-// any nonzero fillOpacity here would tint the satellite imagery underneath with the circle's
-// score hue instead of leaving it true-color. The satellite overlay (below, z-order-wise) fills
-// the footprint with imagery; only the ring needs to stay drawn on top of it.
-export function selectSize(marker: L.Circle): void {
-  const info = sizing.get(marker);
-  if (!info) return;
-  marker.setRadius(info.trueRadius);
-  marker.setStyle({ fillOpacity: 0, color: markerPalette().purple });
-  setOthersFill(marker, true);
-  selectedRegionMarker = marker;
-  if (aerialEnabled) showSatelliteOverlay(marker, info.regionId);
-}
-
-// Reverts a previously selected marker back to its score-scaled preview size/opacity - called
-// when a different region gets selected, so only one circle shows its true footprint at a time.
-// The new selection's own selectSize() re-dims the rest; this just restores the one being
-// dropped (and, when nothing new is selected, brings every circle's fill back). Size and fill
-// both come from the marker's own `sizing` entry, so every restore path uses one source of
-// truth (plot()'s weight), never a caller-passed value that could drift.
-export function deselectSize(marker: L.Circle): void {
-  const info = sizing.get(marker);
-  if (!info) return;
-  marker.setRadius(info.scoreRadius);
-  marker.setStyle({ fillOpacity: info.restFillOpacity, color: info.baseColor });
-  setOthersFill(marker, false);
-  if (selectedRegionMarker === marker) selectedRegionMarker = null;
-  clearSatelliteOverlay();
-}
-
-export function clearMarkers(): void {
-  clearLayerList(map, state.markers);
-  clearCamps();
-  clearTrailheadMarkers();
-  clearCardCampMarkers();
-  clearSelectedTrail();
-  clearPlanRoute();
-  clearPrecise();
-  clearSatelliteOverlay();
-  selectedRegionMarker = null;
-  state.focused = null;
-}
-
-export function clearPrecise(): void {
-  preciseCluster.clearLayers();
-}
-
-// Adds a precise-observation pin into the cluster group (see preciseCluster above) instead of
-// directly onto the map - the cluster group itself decides whether it renders standalone or
-// folded into a nearby cluster badge at the current zoom.
-export function addPreciseMarker(marker: L.CircleMarker): void {
-  preciseCluster.addLayer(marker);
-}
-
-export function clearCamps(): void {
-  clearLayerList(map, state.campMarkers);
-}
-
-export function addCampMarker(marker: L.CircleMarker): void {
-  state.campMarkers.push(marker);
-}
-
-// Public-land agency toggles (#show-land-blm/usfs/tribal, layers.ts's loadLand) - live
-// setLayoutProperty/setFilter on the vector layers, no fetch (issue #336 PR 2). Same lazy
-// `import("./basemap")` pattern as setContoursEnabled/setSatelliteBasemapEnabled below.
-export function setLandVisibility(agencies: readonly string[]): void {
-  void import("./basemap").then((basemap) => basemap.setLandLayerState(agencies));
-}
-
-// The Fire toggle (#show-fire, layers.ts's loadFire) - same reasoning as setLandVisibility.
-export function setFireVisibility(visible: boolean): void {
-  void import("./basemap").then((basemap) => basemap.setFireLayerState(visible));
-}
-
-// Signpost marker for a destination card's Trails tab trailhead list (views.ts) - only the
-// currently open card's trailheads are on the map at once (plotTrailhead clears the previous
-// set first), same "one destination's detail at a time" approach as camps/land. Clicking a
-// marker selects that trailhead's real trail (layers.ts's selectTrailhead), same as clicking
-// its matching list chip; setTrailheadActive keeps the two in visual sync. Drawn in the same
-// TRAIL red as the selected trail line, with a dark keyline so it holds up on either basemap.
-const TRAILHEAD_SVG = [
-  `<svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">`,
-  `<path d="M12 3.5v18" stroke="${HOME_RING}" stroke-width="3.4" stroke-linecap="round"/>`,
-  `<path d="M12 3.5v18" stroke="${TRAIL}" stroke-width="1.8" stroke-linecap="round"/>`,
-  `<path d="M12 5.2h8l3 2.6-3 2.6h-8z" fill="${TRAIL}" stroke="${HOME_RING}" stroke-width="1.1" stroke-linejoin="round"/>`,
-  `<path d="M12 12.4H5l-3 2.5 3 2.5h7z" fill="${TRAIL}" stroke="${HOME_RING}" stroke-width="1.1" stroke-linejoin="round"/>`,
-  `</svg>`,
-].join("");
-
-function trailheadIcon(active: boolean): L.DivIcon {
-  return L.divIcon({
-    html: `<div class="trailhead-marker${active ? " active" : ""}">${TRAILHEAD_SVG}</div>`,
-    className: "trailhead-icon",
-    iconSize: [24, 24],
-    iconAnchor: [12, 22],
-  });
-}
-
-export function clearTrailheadMarkers(): void {
-  clearLayerList(map, state.trailheadMarkers);
-}
-
-export function plotTrailhead(lat: number, lng: number, name: string, onSelect: () => void): L.Marker {
-  // textContent, not a bare string: Leaflet renders a string tooltip as innerHTML and the name
-  // is external OSM data (same guard as plotCardCamp).
-  const tooltip = document.createElement("span");
-  tooltip.textContent = name;
-  const marker = L.marker([lat, lng], { icon: trailheadIcon(false), bubblingMouseEvents: false })
-    .addTo(map)
-    .bindTooltip(tooltip, { direction: "top", offset: [0, -22] });
-  marker.on("click", onSelect);
-  state.trailheadMarkers.push(marker);
-  return marker;
-}
-
-export function setTrailheadActive(marker: L.Marker, active: boolean): void {
-  marker.setIcon(trailheadIcon(active));
-}
-
-// Campground marker for a destination card's Campgrounds tab (views.ts) - same "one card's
-// detail at a time" scoping as the Trails tab's trailhead markers, kept in a dedicated
-// state.cardCampMarkers array rather than reusing state.campMarkers so this doesn't interact
-// with the global #show-camps/#show-dispersed toggle's own marker set (loadCamps in layers.ts).
-// Styled the same free/paid gold-vs-amber as that toggle's markers for visual consistency.
-function cardCampStyle(site: CampSite, active: boolean): L.CircleMarkerOptions {
-  return circleStyle({
-    radius: active ? 8 : 6,
-    fill: site.free === true ? CAMP_FREE : CAMP_PAID,
-    stroke: HOME_RING,
-    weight: active ? 2 : 1,
-    fillOpacity: 0.9,
-  });
-}
-
-export function clearCardCampMarkers(): void {
-  clearLayerList(map, state.cardCampMarkers);
-}
-
-export function plotCardCamp(site: CampSite, onSelect: () => void): L.CircleMarker {
-  const tooltip = document.createElement("span");
-  tooltip.textContent = site.name;
-  const marker = L.circleMarker([site.center_lat, site.center_lng], cardCampStyle(site, false))
-    .addTo(map)
-    .bindTooltip(tooltip, { direction: "top", offset: [0, -6] });
-  marker.on("click", onSelect);
-  state.cardCampMarkers.push(marker);
-  return marker;
-}
-
-export function setCardCampActive(marker: L.CircleMarker, site: CampSite, active: boolean): void {
-  marker.setStyle(cardCampStyle(site, active));
 }
 
 // Clears whichever trail is currently drawn from a destination card's Trails tab selection

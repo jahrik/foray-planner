@@ -47,7 +47,7 @@ vi.mock("../state", () => ({
   qs: () => null,
 }));
 
-import { deselectSize, plot, satelliteImageUrl, satelliteLabelsUrl, selectSize } from "./map";
+import { deselectSize, plot, satelliteImageUrl, satelliteLabelsUrl, selectSize } from "./destinations";
 
 beforeEach(() => {
   fakeState.markers = [];
