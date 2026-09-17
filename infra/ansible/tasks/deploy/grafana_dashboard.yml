@@ -30,6 +30,9 @@
     # every dashboard query silently returns "No data" against usage insights instead of our
     # own metrics (found live after deploy, PR #383).
     foray_grafana_prom_sources: "{{ foray_grafana_datasources.json | selectattr('type', 'equalto', 'prometheus') | rejectattr('name', 'search', 'usage') | list }}"
+    # Prefer the default datasource if there's more than one Prometheus source, else the first
+    # (Copilot review, PR #383).
+    foray_grafana_prom_default_sources: "{{ foray_grafana_prom_sources | selectattr('isDefault', 'defined') | selectattr('isDefault') | list }}"
   block:
     - name: Fail cleanly if no Prometheus datasource is provisioned
       ansible.builtin.fail:
@@ -42,11 +45,12 @@
 
     - name: Set the Prometheus datasource UID fact
       ansible.builtin.set_fact:
-        # Prefer the default datasource if there's more than one Prometheus source, else the
-        # first (Copilot review, PR #383).
-        foray_grafana_prom_datasource_uid: >-
-          {% set default_sources = foray_grafana_prom_sources | selectattr('isDefault', 'defined') | selectattr('isDefault') | list %}
-          {{ (default_sources[0] if default_sources else foray_grafana_prom_sources[0]).uid }}
+        # A single-line expression, deliberately - a multi-line {% set %} + {{ }} inside a
+        # YAML folded (">-") scalar gets a literal space injected between the lines by YAML's
+        # own line-folding, *before* Jinja ever runs, producing a UID with a leading space that
+        # Grafana silently fails to resolve (every panel's datasource picker showed blank -
+        # found live after deploy, PR #383/#384).
+        foray_grafana_prom_datasource_uid: "{{ (foray_grafana_prom_default_sources[0] if foray_grafana_prom_default_sources else foray_grafana_prom_sources[0]).uid | trim }}"
 
 - name: Push the Foray Planner overview dashboard
   ansible.builtin.uri:
