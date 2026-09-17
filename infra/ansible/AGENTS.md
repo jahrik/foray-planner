@@ -21,6 +21,7 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 | `foray_pg_log_min_duration_ms` / `foray_pg_jit` / `foray_pg_max_parallel_workers_per_gather` / `foray_pg_work_mem_kb` / `foray_pg_shared_buffers_percentage` | Cluster-config tuning knobs (issue #333), applied every `foray:provision` |
 | `foray_pgbouncer_api_pool_size` / `foray_pgbouncer_cron_pool_size` | Managed PgBouncer pool sizes (issue #333), created every `foray:provision` |
 | `foray_grafana_cloud_remote_write_url` / `_username` / `_api_token` | Grafana Cloud push-metrics credentials (issue #338 PR 2, from `GRAFANA_CLOUD_REMOTE_WRITE_URL` / `_USERNAME` / `_API_TOKEN` env). Unset skips the whole node_exporter/postgres_exporter/Alloy stack (`tasks/deploy/observability.yml`) |
+| `foray_grafana_cloud_url` / `_sa_token` | Grafana Cloud dashboard-provisioning credentials (issue #338 PR 3, from `GRAFANA_CLOUD_URL` / `_SA_TOKEN` env) - a service-account token (Editor/Admin role), separate from the metrics:write-only token above. Unset skips dashboard provisioning (`tasks/deploy/grafana_dashboard.yml`) |
 
 ## Key Files
 
@@ -33,6 +34,7 @@ Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet
 | `tasks/provision/build_basemap_once.yml` | `foray:build-basemap-once` - extract the US PMTiles archive and upload it to the Space (runs on localhost) |
 | `tasks/deploy/` | App deployment + scheduled-job (systemd timer) setup |
 | `tasks/deploy/observability.yml` | Grafana Cloud push-metrics stack (issue #338 PR 2) - node_exporter + postgres_exporter sidecars, Grafana Alloy scraping them plus the app's own `/metrics` (issue #338 PR 1), `remote_write` to Grafana Cloud's hosted Mimir. Skipped entirely when no Grafana Cloud credentials are set |
+| `tasks/deploy/grafana_dashboard.yml` | Grafana dashboards as code (issue #338 PR 3) - pushes `templates/grafana-dashboard.json.j2` via the Grafana HTTP API on every deploy, so a manual UI edit gets clobbered back to the committed version instead of drifting. Skipped when no dashboard-provisioning credentials are set |
 | `tasks/deploy/systemd_jobs.yml` | Generates one systemd service+timer per entry in `../../jobs.yaml` (issue #332 PR 2 - the repo-root job manifest, also read by `foray scheduler` for dev) |
 | `templates/foray.env.j2` | Runtime env file (secrets loaded from DO managed DB) |
 | `meta/argument_specs.yml` | Variable documentation and types |

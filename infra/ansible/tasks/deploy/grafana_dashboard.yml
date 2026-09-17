@@ -1,0 +1,37 @@
+---
+# Grafana dashboards as code (issue #338 PR 3) - the dashboard JSON model lives in the repo
+# (templates/grafana-dashboard.json.j2) and gets pushed via the Grafana HTTP API on every
+# deploy, so it survives a stack recreate and any UI edit gets clobbered back to the committed
+# version rather than drifting silently. Skipped when foray_grafana_cloud_url is unset - same
+# opt-in pattern as observability.yml, and independent of it (a dashboard needs the Grafana API
+# service-account token, not the Mimir remote_write token observability.yml uses).
+
+- name: Look up the Grafana Cloud Prometheus datasource
+  ansible.builtin.uri:
+    url: "{{ foray_grafana_cloud_url }}/api/datasources"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ foray_grafana_cloud_sa_token }}"
+    return_content: true
+  register: foray_grafana_datasources
+  when: foray_grafana_cloud_url | trim | length > 0
+  # Authorization header carries the service-account token.
+  no_log: true
+
+- name: Set the Prometheus datasource UID fact
+  ansible.builtin.set_fact:
+    foray_grafana_prom_datasource_uid: >-
+      {{ (foray_grafana_datasources.json | selectattr('type', 'equalto', 'prometheus') | list | first).uid }}
+  when: foray_grafana_cloud_url | trim | length > 0
+
+- name: Push the Foray Planner overview dashboard
+  ansible.builtin.uri:
+    url: "{{ foray_grafana_cloud_url }}/api/dashboards/db"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ foray_grafana_cloud_sa_token }}"
+    body_format: json
+    body: "{{ lookup('ansible.builtin.template', 'grafana-dashboard.json.j2') | from_json }}"
+    status_code: [200]
+  when: foray_grafana_cloud_url | trim | length > 0
+  no_log: true

@@ -1,0 +1,143 @@
+{
+  "overwrite": true,
+  "message": "Provisioned by infra/ansible (issue #338 PR 3) - edits made in the Grafana UI are overwritten on the next deploy.",
+  "dashboard": {
+    "uid": "foray-planner-overview",
+    "title": "Foray Planner - Overview",
+    "editable": true,
+    "graphTooltip": 1,
+    "schemaVersion": 39,
+    "timezone": "browser",
+    "time": { "from": "now-24h", "to": "now" },
+    "refresh": "1m",
+    "panels": [
+      { "id": 1, "type": "row", "title": "ETL jobs", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 } },
+      {
+        "id": 2, "type": "timeseries", "title": "Job runs by status",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [
+          { "expr": "sum by (job, status) (increase(foray_job_runs_total[1h]))", "legendFormat": "{{ '{{' }}job{{ '}}' }} ({{ '{{' }}status{{ '}}' }})" }
+        ]
+      },
+      {
+        "id": 3, "type": "bargauge", "title": "Last run duration by job (s)",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [
+          { "expr": "foray_job_last_duration_seconds", "legendFormat": "{{ '{{' }}job{{ '}}' }}" }
+        ]
+      },
+      {
+        "id": 4, "type": "bargauge", "title": "Last run rows by job",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [
+          { "expr": "foray_job_last_rows", "legendFormat": "{{ '{{' }}job{{ '}}' }}" }
+        ]
+      },
+      {
+        "id": 5, "type": "timeseries", "title": "HTTP 429s by job",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [
+          { "expr": "foray_job_http_429_total", "legendFormat": "{{ '{{' }}job{{ '}}' }}" }
+        ]
+      },
+
+      { "id": 10, "type": "row", "title": "Backlog & data freshness", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 } },
+      {
+        "id": 11, "type": "timeseries", "title": "Backlog depth by kind",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [
+          { "expr": "foray_backlog_depth", "legendFormat": "{{ '{{' }}kind{{ '}}' }}" }
+        ]
+      },
+      {
+        "id": 12, "type": "timeseries", "title": "Backlog drain rate by kind (rows/hr)",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [
+          { "expr": "foray_backlog_drain_rate_per_hour", "legendFormat": "{{ '{{' }}kind{{ '}}' }}" }
+        ]
+      },
+      {
+        "id": 13, "type": "timeseries", "title": "Layer age by layer (hours)",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [
+          { "expr": "foray_layer_age_seconds / 3600", "legendFormat": "{{ '{{' }}layer{{ '}}' }}" }
+        ]
+      },
+      {
+        "id": 14, "type": "stat", "title": "Stale layers",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [
+          { "expr": "foray_layer_stale == 1", "legendFormat": "{{ '{{' }}layer{{ '}}' }}" }
+        ],
+        "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null }, { "color": "red", "value": 1 }
+        ] } }, "overrides": [] }
+      },
+
+      { "id": 20, "type": "row", "title": "Stack health", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 } },
+      {
+        "id": 21, "type": "stat", "title": "Targets up",
+        "gridPos": { "h": 6, "w": 24, "x": 0, "y": 35 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [
+          { "expr": "up{job=~\"foray-app|node-exporter|postgres-exporter\"}", "legendFormat": "{{ '{{' }}job{{ '}}' }}" }
+        ],
+        "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [
+          { "color": "red", "value": null }, { "color": "green", "value": 1 }
+        ] } }, "overrides": [] }
+      },
+      {
+        "id": 22, "type": "timeseries", "title": "Droplet CPU load (1m)",
+        "gridPos": { "h": 8, "w": 8, "x": 0, "y": 41 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [ { "expr": "node_load1" } ]
+      },
+      {
+        "id": 23, "type": "timeseries", "title": "Droplet memory available",
+        "gridPos": { "h": 8, "w": 8, "x": 8, "y": 41 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [ { "expr": "node_memory_MemAvailable_bytes" } ],
+        "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
+      },
+      {
+        "id": 24, "type": "timeseries", "title": "Droplet disk free %",
+        "gridPos": { "h": 8, "w": 8, "x": 16, "y": 41 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [
+          { "expr": "100 * node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"}" }
+        ],
+        "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 }, "overrides": [] }
+      },
+      {
+        "id": 25, "type": "stat", "title": "Postgres up",
+        "gridPos": { "h": 8, "w": 8, "x": 0, "y": 49 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [ { "expr": "pg_up" } ],
+        "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [
+          { "color": "red", "value": null }, { "color": "green", "value": 1 }
+        ] } }, "overrides": [] }
+      },
+      {
+        "id": 26, "type": "timeseries", "title": "Postgres connections",
+        "gridPos": { "h": 8, "w": 8, "x": 8, "y": 49 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [ { "expr": "sum(pg_stat_database_numbackends)" } ]
+      },
+      {
+        "id": 27, "type": "timeseries", "title": "Database size",
+        "gridPos": { "h": 8, "w": 8, "x": 16, "y": 49 },
+        "datasource": { "type": "prometheus", "uid": "{{ foray_grafana_prom_datasource_uid }}" },
+        "targets": [ { "expr": "pg_database_size_bytes" } ],
+        "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
+      }
+    ]
+  }
+}
