@@ -198,6 +198,20 @@
         - foray
         - "foray:deploy"
 
+    # Independent of observability.yml (different credential - the Grafana API needs a
+    # service-account token, not the Mimir remote_write token) - order doesn't matter relative
+    # to it, kept after for readability.
+    - name: Include Grafana dashboard-as-code tasks
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/grafana_dashboard.yml
+        apply:
+          tags:
+            - foray
+            - "foray:deploy"
+      tags:
+        - foray
+        - "foray:deploy"
+
     # Tagged foray:deploy as well as foray:cron so CD (which runs --tags foray:deploy)
     # re-renders the job units on every deploy - otherwise a jobs.yaml change only reaches the
     # droplet on a manual `just ansible cron` run. Tag kept as `foray:cron` (not renamed to

@@ -278,6 +278,21 @@ In CI/CD these come from the `GRAFANA_CLOUD_REMOTE_WRITE_URL` / `GRAFANA_CLOUD_U
 `GRAFANA_CLOUD_API_TOKEN` repo secrets (`.github/workflows/cd.yml`). See
 `infra/ansible/tasks/deploy/observability.yml`.
 
+**Dashboards as code (issue #338 PR 3).** `infra/ansible/templates/grafana-dashboard.json.j2`
+is the source of truth for the "Foray Planner - Overview" dashboard - it's pushed to Grafana
+Cloud via the dashboard HTTP API on every deploy (`overwrite: true`), so a manual edit in the
+Grafana UI gets clobbered back to the committed version rather than drifting silently. Needs a
+separate Grafana Cloud **service-account token** (Administration -> Service accounts, Editor or
+Admin role - not the metrics:write token above, which can't touch the dashboard API):
+
+```bash
+export GRAFANA_CLOUD_URL=https://<your-stack>.grafana.net
+export GRAFANA_CLOUD_SA_TOKEN=<service account token>
+```
+
+In CI/CD these come from the `GRAFANA_CLOUD_URL` / `GRAFANA_CLOUD_SA_TOKEN` repo secrets. See
+`infra/ansible/tasks/deploy/grafana_dashboard.yml`.
+
 ---
 
 ## CI/CD deploy (automated)

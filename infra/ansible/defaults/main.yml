@@ -230,3 +230,11 @@ foray_node_exporter_container_name: foray-planner-node-exporter
 foray_postgres_exporter_image: "quay.io/prometheuscommunity/postgres-exporter:v0.15.0"
 foray_postgres_exporter_container_name: foray-planner-postgres-exporter
 foray_alloy_scrape_interval: 60s
+
+# Grafana dashboards as code (issue #338 PR 3) - pushed via the Grafana HTTP API on every
+# deploy (tasks/deploy/grafana_dashboard.yml), not hand-built in the UI, so they survive a
+# stack recreate. Needs a Grafana Cloud service-account token (Editor/Admin role, created under
+# Administration -> Service accounts) - separate from foray_grafana_cloud_api_token above,
+# which is scoped metrics:write only and can't touch the dashboard API. Unset -> skipped.
+foray_grafana_cloud_url: "{{ lookup('ansible.builtin.env', 'GRAFANA_CLOUD_URL', default='') }}"
+foray_grafana_cloud_sa_token: "{{ lookup('ansible.builtin.env', 'GRAFANA_CLOUD_SA_TOKEN', default='') }}"

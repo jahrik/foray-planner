@@ -259,3 +259,13 @@ argument_specs:
         type: str
         description: Grafana Cloud scoped metrics:write API token, used as the remote_write basic-auth password (read from GRAFANA_CLOUD_API_TOKEN env)
         default: ""
+      foray_grafana_cloud_url:
+        type: str
+        description: >
+          Grafana Cloud stack base URL (issue #338 PR 3, read from GRAFANA_CLOUD_URL env), used
+          for the dashboard-provisioning HTTP API. Unset skips dashboard provisioning.
+        default: ""
+      foray_grafana_cloud_sa_token:
+        type: str
+        description: Grafana Cloud service-account token (Editor/Admin role, read from GRAFANA_CLOUD_SA_TOKEN env) - separate from foray_grafana_cloud_api_token, which can't touch the dashboard API
+        default: ""
