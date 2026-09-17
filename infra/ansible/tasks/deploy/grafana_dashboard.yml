@@ -24,23 +24,29 @@
   when:
     - foray_grafana_cloud_url | trim | length > 0
     - foray_grafana_cloud_sa_token | trim | length > 0
+  vars:
+    # Grafana Cloud auto-provisions two type=prometheus datasources: the real metrics one, and
+    # "grafanacloud-usage" for its own usage-insights metrics - exclude the latter by name, or
+    # every dashboard query silently returns "No data" against usage insights instead of our
+    # own metrics (found live after deploy, PR #383).
+    foray_grafana_prom_sources: "{{ foray_grafana_datasources.json | selectattr('type', 'equalto', 'prometheus') | rejectattr('name', 'search', 'usage') | list }}"
   block:
     - name: Fail cleanly if no Prometheus datasource is provisioned
       ansible.builtin.fail:
         msg: >-
-          No datasource of type "prometheus" found at {{ foray_grafana_cloud_url }} - Grafana
-          Cloud auto-provisions one per stack, so this likely means the stack isn't fully set up
-          yet, or the service-account token can't see it.
-      when: foray_grafana_datasources.json | selectattr('type', 'equalto', 'prometheus') | list | length == 0
+          No datasource of type "prometheus" (excluding Grafana Cloud's own
+          "grafanacloud-usage" usage-insights source) found at {{ foray_grafana_cloud_url }} -
+          this likely means the stack isn't fully set up yet, or the service-account token
+          can't see it.
+      when: foray_grafana_prom_sources | length == 0
 
     - name: Set the Prometheus datasource UID fact
       ansible.builtin.set_fact:
         # Prefer the default datasource if there's more than one Prometheus source, else the
         # first (Copilot review, PR #383).
         foray_grafana_prom_datasource_uid: >-
-          {% set prom_sources = foray_grafana_datasources.json | selectattr('type', 'equalto', 'prometheus') | list %}
-          {% set default_sources = prom_sources | selectattr('isDefault', 'defined') | selectattr('isDefault') | list %}
-          {{ (default_sources[0] if default_sources else prom_sources[0]).uid }}
+          {% set default_sources = foray_grafana_prom_sources | selectattr('isDefault', 'defined') | selectattr('isDefault') | list %}
+          {{ (default_sources[0] if default_sources else foray_grafana_prom_sources[0]).uid }}
 
 - name: Push the Foray Planner overview dashboard
   ansible.builtin.uri:
