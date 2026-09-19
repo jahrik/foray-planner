@@ -25,13 +25,13 @@ prometheus.scrape "foray_app" {
   scrape_interval = "{{ foray_alloy_scrape_interval }}"
   job_name       = "foray-app"
   forward_to     = [prometheus.remote_write.metrics_service.receiver]
-  # foray/metrics.py exposes its own "job" label (the ETL job name - ingest, layers, precip,
-  # ...). Prometheus's scrape process overwrites any incoming label of the same name with the
-  # scrape target's job_name ("foray-app") by default (honor_labels = false), which is what
-  # made every "Last run duration by job" bar show "foray-app" instead of the real job name
-  # (found live after deploy, issue #338 PR 2/3). honor_labels = true keeps the app's own
-  # "job" label intact for this target - node_exporter/postgres_exporter don't expose a "job"
-  # label of their own, so they don't need it.
+  // foray/metrics.py exposes its own "job" label (the ETL job name - ingest, layers, precip,
+  // ...). Prometheus's scrape process overwrites any incoming label of the same name with the
+  // scrape target's job_name ("foray-app") by default (honor_labels = false), which is what
+  // made every "Last run duration by job" bar show "foray-app" instead of the real job name
+  // (found live after deploy, issue #338 PR 2/3). honor_labels = true keeps the app's own
+  // "job" label intact for this target - node_exporter/postgres_exporter don't expose a "job"
+  // label of their own, so they don't need it.
   honor_labels = true
 }
 
