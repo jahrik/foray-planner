@@ -79,7 +79,10 @@ _TILE_DEG = 2.0
 #   2 - adds highway=track / service=forestry (kind='road') and highway=bridleway
 #   3 - adds barrier=gate/bollard/... nodes, matched onto road ways as a synthetic barrier attr
 #   4 - keeps the seasonal / *:conditional access tags in `attrs`
-_TRAILS_QUERY_VERSION = 4
+#   5 - stops caching a route=hiking relation's member ways a second time as their own `path`
+#       row (issue #394) - the region re-pull needed to stop new duplicates appearing; existing
+#       duplicate rows are cleared separately by cache migration 52
+_TRAILS_QUERY_VERSION = 5
 
 # Way classes we ingest, by the ``kind`` they become. Trails are foot/horse ways; roads are the
 # old logging / forest-service roads foragers actually walk and drive (issue: forest roads are a
@@ -339,13 +342,39 @@ def _gate_points(payload: dict[str, Any]) -> frozenset[tuple[float, float]]:
     )
 
 
+def _route_member_way_ids(payload: dict[str, Any]) -> frozenset[int]:
+    """Way ids that are members of a ``route=hiking`` relation elsewhere in this payload.
+
+    A route relation's own row (``kind='route'``) already carries the stitched geometry of every
+    member way - if a member way *also* became its own standalone ``kind='path'`` row, the map
+    drew the identical line twice (issue #394): once from the path row, once again as part of
+    the route's line, each independently vertex-thinned so the two never quite lined up. Fed to
+    ``_parse_element`` so it can skip re-emitting those ways as separate path rows."""
+    ids: set[int] = set()
+    for element in payload.get("elements", []):
+        if element.get("type") != "relation":
+            continue
+        for member in element.get("members") or []:
+            if member.get("type") == "way" and (ref := member.get("ref")) is not None:
+                ids.add(int(ref))
+    return frozenset(ids)
+
+
 def _parse_element(
-    element: dict[str, Any], *, gate_points: frozenset[tuple[float, float]] = frozenset()
+    element: dict[str, Any],
+    *,
+    gate_points: frozenset[tuple[float, float]] = frozenset(),
+    route_way_ids: frozenset[int] = frozenset(),
 ) -> tuple[Any, ...] | None:
     """One Overpass element -> a trails row tuple, or None if it carries no usable geometry.
 
     ``gate_points`` (from ``_gate_points``): a road way with one of these on its line gets a
-    synthetic ``barrier=gate`` attr so ``scoring.queries._walk_in`` reads it as walk-in."""
+    synthetic ``barrier=gate`` attr so ``scoring.queries._walk_in`` reads it as walk-in.
+    ``route_way_ids`` (from ``_route_member_way_ids``): a ``path`` way already covered by a
+    hiking route's own row is skipped rather than cached a second time - see that function's
+    docstring. Scoped to ``path`` only, not ``road``: a forest road that happens to be part of a
+    named route keeps its own row, since it carries surface/access/gate attrs (walk-in scoring,
+    ``scoring.queries._walk_in``) the route relation's row does not."""
     etype = element.get("type")
     eid = element.get("id")
     if eid is None:
@@ -367,6 +396,8 @@ def _parse_element(
         if not coords:
             return None
         kind = "road" if _is_road(tags) else "path"
+        if kind == "path" and int(eid) in route_way_ids:
+            return None
         fallback = "Forest road (OSM)" if kind == "road" else "Trail (OSM)"
         name = tags.get("name") or tags.get("ref") or fallback
         attrs = _attrs(tags)
@@ -512,9 +543,10 @@ def _parse_trails(payload: dict[str, Any]) -> list[tuple[Any, ...]]:
     """
     links = _link_trailheads(payload)
     gate_points = _gate_points(payload)
+    route_way_ids = _route_member_way_ids(payload)
     by_id: dict[str, tuple[Any, ...]] = {}
     for element in payload.get("elements", []):
-        row = _parse_element(element, gate_points=gate_points)
+        row = _parse_element(element, gate_points=gate_points, route_way_ids=route_way_ids)
         if row is None:
             continue
         row_id: str = row[0]
@@ -621,6 +653,7 @@ def trailhead_network(node_id: int, *, client: httpx.Client | None = None) -> di
     rows: list[tuple[Any, ...]] = []
     name = None
     kind = "path"
+    route_way_ids = _route_member_way_ids(payload)
     for element in payload.get("elements", []):
         tags = element.get("tags") or {}
         if element.get("type") == "way":
@@ -638,7 +671,12 @@ def trailhead_network(node_id: int, *, client: httpx.Client | None = None) -> di
             kind = "route"
         # A proper cache row for each way/route, so resolve_trail_network can persist the link
         # (issue #306): the next selection of this trailhead reads from cache, not Overpass.
-        if element.get("type") in ("way", "relation") and (row := _parse_element(element)) is not None:
+        # ``route_way_ids`` keeps this consistent with ``_parse_trails`` - a route member way
+        # doesn't also get cached as its own standalone path row (issue #394).
+        if (
+            element.get("type") in ("way", "relation")
+            and (row := _parse_element(element, route_way_ids=route_way_ids)) is not None
+        ):
             rows.append(row)
     if not lines:
         return None

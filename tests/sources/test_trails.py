@@ -24,6 +24,7 @@ from foray.sources.trails import (
     _parse_element,
     _parse_trailhead_id,
     _parse_trails,
+    _route_member_way_ids,
     _sample,
     _tile_bboxes,
     _trails_query,
@@ -214,6 +215,60 @@ def test_parse_element_skips_geometryless_way_and_relation() -> None:
     assert _parse_element({"type": "way", "id": 3, "tags": {"highway": "path"}}) is None
     assert _parse_element({"type": "relation", "id": 4, "members": []}) is None
     assert _parse_element({"type": "way", "tags": {}}) is None  # no id
+
+
+_A_LINE = [{"lat": 47.6, "lon": -122.3}, {"lat": 47.61, "lon": -122.29}]
+
+
+def test_parse_element_skips_a_path_way_already_covered_by_a_route() -> None:
+    row = _parse_element(
+        {"type": "way", "id": 42, "tags": {"highway": "path"}, "geometry": _A_LINE},
+        route_way_ids=frozenset({42}),
+    )
+    assert row is None
+
+
+def test_parse_element_keeps_a_road_way_even_when_it_is_a_route_member() -> None:
+    # A forest road that happens to be part of a named hiking route keeps its own row - it
+    # carries surface/access/gate attrs (walk-in scoring) the route relation's row does not.
+    row = _parse_element(
+        {"type": "way", "id": 42, "tags": {"highway": "track"}, "geometry": _A_LINE},
+        route_way_ids=frozenset({42}),
+    )
+    assert row is not None
+    assert row[2] == "road"
+
+
+def test_route_member_way_ids_collects_way_refs_from_relation_members() -> None:
+    payload = {
+        "elements": [
+            {
+                "type": "relation",
+                "id": 7,
+                "tags": {"route": "hiking"},
+                "members": [
+                    {"type": "way", "ref": 10, "geometry": _A_LINE},
+                    {"type": "node", "ref": 11},  # not a way -> ignored
+                    {"type": "way", "ref": 12, "geometry": _A_LINE},
+                ],
+            }
+        ]
+    }
+    assert _route_member_way_ids(payload) == frozenset({10, 12})
+
+
+def test_parse_trails_drops_a_path_row_already_covered_by_its_route() -> None:
+    # issue #394: a route=hiking relation's member way used to also get cached as its own
+    # standalone `path` row, so the map drew the same trail twice.
+    way = {"type": "way", "id": 10, "tags": {"highway": "path"}, "geometry": _A_LINE}
+    relation = {
+        "type": "relation",
+        "id": 7,
+        "tags": {"route": "hiking", "name": "PCT Section"},
+        "members": [{"type": "way", "ref": 10, "geometry": _A_LINE}],
+    }
+    rows = _parse_trails({"elements": [way, relation]})
+    assert [row[2] for row in rows] == ["route"]
 
 
 def test_parse_trails_dedupes_by_id() -> None:
@@ -1297,6 +1352,42 @@ def test_trailhead_network_merges_way_and_route_members() -> None:
     assert result["kind"] == "route"
     assert result["geometry"]["type"] == "MultiLineString"
     assert len(result["geometry"]["coordinates"]) == 2
+
+
+def test_trailhead_network_does_not_double_cache_a_route_member_way() -> None:
+    # issue #394: way 10 is both a standalone element in the payload and a member (by `ref`) of
+    # the route relation - only the route's row should end up in `rows` for persisting.
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "elements": [
+                    {
+                        "type": "way",
+                        "id": 10,
+                        "tags": {"highway": "path"},
+                        "geometry": [{"lat": 47.6, "lon": -122.3}, {"lat": 47.61, "lon": -122.29}],
+                    },
+                    {
+                        "type": "relation",
+                        "id": 20,
+                        "tags": {"route": "hiking", "name": "Ridge Loop"},
+                        "members": [
+                            {
+                                "type": "way",
+                                "ref": 10,
+                                "geometry": [{"lat": 47.6, "lon": -122.3}, {"lat": 47.61, "lon": -122.29}],
+                            }
+                        ],
+                    },
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = trailhead_network(1, client=client)
+    assert result is not None
+    assert [row[0] for row in result["rows"]] == ["osm:relation/20"]  # way 10's own row dropped
 
 
 def test_trailhead_network_returns_none_when_no_elements() -> None:

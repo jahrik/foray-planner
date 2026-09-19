@@ -819,6 +819,22 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         WHERE precip_7d_mm IS NOT NULL OR precip_30d_mm IS NOT NULL;
         """,
     ),
+    # issue #394: trails.py used to cache a route=hiking relation's member ways twice - once as
+    # the route's own stitched row, once again as each member's standalone `kind='path'` row -
+    # so the map drew the same trail twice (each row independently vertex-thinned, so the two
+    # lines never quite lined up). `_TRAILS_QUERY_VERSION` 5 stops new duplicates from being
+    # cached, but a version bump only triggers a re-pull, it doesn't delete what's already
+    # cached, so the ~94k existing duplicate `path` rows (measured nationwide at the time of the
+    # fix) need a one-off cleanup. A `path` row within 5m of any `route` row's own geometry is
+    # that route's own member way re-cached - safe to drop outright.
+    (
+        52,
+        """
+        DELETE FROM trails p
+        USING trails r
+        WHERE p.kind = 'path' AND r.kind = 'route' AND ST_DWithin(p.geom, r.geom, 5);
+        """,
+    ),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]
