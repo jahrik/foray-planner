@@ -1111,7 +1111,7 @@ def test_healthz_data_includes_camps_when_ridb_key_is_set(client: TestClient, mo
 def test_healthz_data_fire_and_precip_are_non_blocking(client: TestClient, con: psycopg.Connection) -> None:
     # fire/precip aren't scheduled in prod cron yet (#332 PR 2) - they must report stale
     # without forcing a 503 on an otherwise-healthy deployment.
-    for prefix in ("obs:fungi:place:1:x", "land:coverage", "trails:place:1:q1", "dispersed:coverage:v1"):
+    for prefix in ("obs:fungi:place:1:x", "land:coverage", "trails:place:1:q1", "dispersed:place:1:v1"):
         con.execute("INSERT INTO ingest_log (key, fetched_at, row_count) VALUES (%s, now(), 1)", [prefix])
 
     response = client.get("/healthz/data")
@@ -1133,7 +1133,7 @@ def test_healthz_data_ok_when_every_layer_is_fresh(
         "land:coverage",
         "trails:place:1:q1",
         "camps:coverage:v1",
-        "dispersed:coverage:v1",
+        "dispersed:place:1:v1",
     ):
         con.execute("INSERT INTO ingest_log (key, fetched_at, row_count) VALUES (%s, now(), 1)", [prefix])
     for job in ("fire", "refresh-precip"):
@@ -1202,7 +1202,7 @@ def test_healthz_data_bulk_source_fresh_when_recently_staged(
         "land:coverage",
         "trails:place:1:q1",
         "camps:coverage:v1",
-        "dispersed:coverage:v1",
+        "dispersed:place:1:v1",
     ):
         con.execute("INSERT INTO ingest_log (key, fetched_at, row_count) VALUES (%s, now(), 1)", [prefix])
     for job in ("fire", "refresh-precip"):

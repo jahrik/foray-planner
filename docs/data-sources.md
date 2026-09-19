@@ -70,9 +70,10 @@ hiking routes, trailheads).
 - **Dispersed camping (`sources/dispersed.py`):**
   - `tourism=camp_site`, `tourism=camp_pitch`, `backcountry=yes` → `kind='reported'` campsites
   - `foray refresh --with dispersed` covers the home disk; `--with dispersed --all` (the weekly
-    cron) tiles the whole `FORAY_COVERAGE` envelope, same one-shot-per-version marker
-    (`dispersed:coverage:v{N}`) and tile-retry semantics as the trail ingest. State Parks and
-    other non-federal campgrounds RIDB doesn't carry come in through this path.
+    cron) loops per coverage region, same one-shot-per-region-per-version marker
+    (`dispersed:place:{place_id}:v{N}`) and tile-retry semantics as the trail ingest - a single
+    Overpass hiccup only costs a re-crawl of that one region next run, not the whole coverage.
+    State Parks and other non-federal campgrounds RIDB doesn't carry come in through this path.
 - **Trails (`sources/trails.py`):**
   - `highway=path` / `highway=bridleway` ways → `kind='path'` (we exclude `highway=footway` -
     ~6x the rows, mostly urban sidewalks, and heavy enough to time the query out)
