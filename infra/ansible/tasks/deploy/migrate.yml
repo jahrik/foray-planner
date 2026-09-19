@@ -24,35 +24,6 @@
     name: "{{ foray_app_image }}"
     pull: always
 
-# One-time cleanup for a droplet that still has the pre-#332-PR-2 crontab + shell scripts:
-# cron.yml (which created these) no longer runs, so they'd otherwise be orphaned - never
-# updated again, but still firing forever alongside the new systemd timers, duplicating every
-# job. Fixed, historical list (cron.yml itself is gone, so this can't grow again). `state:
-# absent` no-ops cleanly on a droplet that never had them (fresh provision, or already migrated).
-- name: Remove legacy cron entries (pre-systemd-timer prod cron)
-  ansible.builtin.cron:
-    name: "{{ item }}"
-    state: absent
-  loop:
-    - foray-ingest
-    - foray-layers
-    - foray-genera
-    - foray-revalidate
-    - foray-resync
-    - foray-backfill-elevation
-
-- name: Remove legacy cron shell scripts
-  ansible.builtin.file:
-    path: "/opt/foray-planner/scripts/{{ item }}"
-    state: absent
-  loop:
-    - cron-ingest.sh
-    - cron-layers.sh
-    - cron-genera.sh
-    - cron-revalidate.sh
-    - cron-resync.sh
-    - cron-backfill-elevation.sh
-
 # A schema-breaking migration must not run while the old image is still up - it's still
 # serving requests (app container) and any in-flight systemd job unit (issue #332 PR 2,
 # tasks/deploy/systemd_jobs.yml) is still able to fire against the new schema. Stopping the
