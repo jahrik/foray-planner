@@ -35,8 +35,8 @@ from foray.sources.trails import _tile_bboxes
 logger = logging.getLogger(__name__)
 
 # Bump when the Overpass selector set below changes: the marker ``dispersed:place:{id}:v{N}``
-# stops matching and the next ``refresh --with dispersed --all`` cron re-pulls every region
-# (issue #306 workstream B, same self-heal as trails).
+# stops matching and the next ``dispersed --all`` cron (jobs.yaml's ``dispersed-coverage``)
+# re-pulls every region (issue #306 workstream B, same self-heal as trails).
 _DISPERSED_COVERAGE_VERSION = 1
 
 _SELECTORS = ('nwr["tourism"="camp_site"]', 'nwr["tourism"="camp_pitch"]', 'nwr["backcountry"="yes"]')
