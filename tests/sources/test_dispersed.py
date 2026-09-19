@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import unquote
+
 import httpx
 import psycopg
 import pytest
@@ -16,6 +18,7 @@ from foray.sources.dispersed import (
     fetch_reported_campsites,
     ingest_dispersed,
     ingest_dispersed_coverage,
+    ingest_dispersed_region,
 )
 
 HOME_LAT, HOME_LNG = 47.6, -122.3
@@ -168,7 +171,7 @@ def test_ingest_dispersed_coverage_tiles_the_envelope_and_is_one_shot(
     total = ingest_dispersed_coverage(cfg, con, client=client)
     assert total >= 1
     assert len(calls) >= 1  # tiled the 1x1 deg envelope
-    assert is_ingested(con, f"dispersed:coverage:v{_DISPERSED_COVERAGE_VERSION}")
+    assert is_ingested(con, f"dispersed:place:5:v{_DISPERSED_COVERAGE_VERSION}")
     sites = camps_near(con, lat=41.3, lng=-124.0, radius_km=50.0)
     assert [s.kind for s in sites] == ["reported"]
 
@@ -176,3 +179,64 @@ def test_ingest_dispersed_coverage_tiles_the_envelope_and_is_one_shot(
     calls.clear()
     assert ingest_dispersed_coverage(cfg, con, client=client) == 0
     assert calls == []
+
+
+def test_ingest_dispersed_region_does_not_mark_ingested_when_a_tile_fails(con: psycopg.Connection) -> None:
+    ok_response = httpx.Response(
+        200,
+        json={"elements": [{"type": "node", "id": 1, "lat": 41.3, "lon": -124.0, "tags": {"tourism": "camp_site"}}]},
+    )
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        # First tile succeeds, every other tile fails - simulates a transient Overpass outage
+        # partway through a region.
+        return ok_response if calls["n"] == 1 else httpx.Response(500)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    region = CoverageRegion(name="Redwoods", place_id=5, bbox=(-124.5, 41.0, -122.0, 43.0))
+    count = ingest_dispersed_region(region, con, client=client)
+    assert count == 1  # only the one tile that succeeded
+    assert con.execute("SELECT count(*) FROM campsites WHERE source = 'osm'").fetchone() == (1,)
+    assert not is_ingested(
+        con, f"dispersed:place:5:v{_DISPERSED_COVERAGE_VERSION}"
+    )  # not done - a retry fills the gaps
+
+
+def test_ingest_dispersed_coverage_a_failing_region_does_not_block_others(con: psycopg.Connection) -> None:
+    calls = {"redwoods": 0, "cascades": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = unquote(request.content.decode())
+        if "41.0,-124.5" in body:  # Redwoods tile - always fails
+            calls["redwoods"] += 1
+            return httpx.Response(500)
+        calls["cascades"] += 1
+        return httpx.Response(
+            200,
+            json={
+                "elements": [{"type": "node", "id": 2, "lat": 47.5, "lon": -122.0, "tags": {"tourism": "camp_site"}}]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    cfg = Settings(
+        coverage=[
+            CoverageRegion(name="Redwoods", place_id=5, bbox=(-124.5, 41.0, -123.5, 42.0)),
+            CoverageRegion(name="Cascades", place_id=6, bbox=(-123.0, 47.0, -122.0, 48.0)),
+        ],
+        h3_resolution=4,
+        ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=4),
+    )
+
+    total = ingest_dispersed_coverage(cfg, con, client=client)
+    assert total >= 1  # Cascades still ingested despite Redwoods failing
+    assert not is_ingested(con, f"dispersed:place:5:v{_DISPERSED_COVERAGE_VERSION}")  # Redwoods: not marked done
+    assert is_ingested(con, f"dispersed:place:6:v{_DISPERSED_COVERAGE_VERSION}")  # Cascades: marked done
+
+    # Retrying only re-crawls Redwoods - Cascades is skipped as already done, not re-requested.
+    calls["cascades"] = 0
+    ingest_dispersed_coverage(cfg, con, client=client)
+    assert calls["redwoods"] >= 1
+    assert calls["cascades"] == 0

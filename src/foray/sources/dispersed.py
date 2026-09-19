@@ -26,7 +26,7 @@ import psycopg
 
 from foray import cache
 from foray.cache import upsert_campsites
-from foray.config import Settings, coverage_envelope
+from foray.config import CoverageRegion, Settings, coverage_envelope
 from foray.sources import overpass
 from foray.sources.http import SOURCE_ERRORS
 from foray.sources.ingest_base import run_area_ingest
@@ -34,8 +34,8 @@ from foray.sources.trails import _tile_bboxes
 
 logger = logging.getLogger(__name__)
 
-# Bump when the Overpass selector set below changes: the marker ``dispersed:coverage:v{N}``
-# stops matching and the next ``refresh --with dispersed --all`` cron re-pulls every tile
+# Bump when the Overpass selector set below changes: the marker ``dispersed:place:{id}:v{N}``
+# stops matching and the next ``refresh --with dispersed --all`` cron re-pulls every region
 # (issue #306 workstream B, same self-heal as trails).
 _DISPERSED_COVERAGE_VERSION = 1
 
@@ -191,36 +191,42 @@ def ingest_dispersed(
     )
 
 
-def ingest_dispersed_coverage(
-    cfg: Settings,
+def ingest_dispersed_region(
+    region: CoverageRegion,
     con: psycopg.Connection | None = None,
     *,
     client: httpx.Client | None = None,
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
-    """Ingest OSM reported campsites across all of ``cfg.coverage``, tiled like trails.
+    """Ingest OSM reported campsites for one coverage region (state), tiled like trails.
 
-    Overpass can't take a whole-coverage query in one request, so the union envelope is carved
-    into tiles (``trails._tile_bboxes``) and each tile's rows upserted as they arrive. One-shot
-    per query version: skips once ``dispersed:coverage:v{N}`` is in ``ingest_log``. A tile
-    failure leaves the run unmarked so the next cron retries the whole envelope. Returns rows
+    Mirrors ``trails.ingest_trails_region``: checkpointed per region rather than one
+    combined-envelope crawl, so a single Overpass tile failure only costs a re-crawl of this
+    one region next run - not the whole multi-state coverage (issue #338, found live: one
+    504 mid-run invalidated a ~62-hour coverage-wide crawl entirely). One-shot per region+query
+    version: skips once ``dispersed:place:{place_id}:v{N}`` is in ``ingest_log``. Returns rows
     upserted (a site straddling a tile edge is counted once per tile, same caveat as trails).
     """
-    key = f"dispersed:coverage:v{_DISPERSED_COVERAGE_VERSION}"
+    if region.bbox is None:
+        raise ValueError(f"{region.name} has no bbox configured for dispersed-coverage ingest")
+    key = f"dispersed:place:{region.place_id}:v{_DISPERSED_COVERAGE_VERSION}"
     with cache.connection(con) as db:
         if cache.is_ingested(db, key):
-            logger.info("dispersed: coverage-wide sites already ingested at v%d, skipping", _DISPERSED_COVERAGE_VERSION)
+            logger.info("dispersed: %s already ingested at v%d, skipping", region.name, _DISPERSED_COVERAGE_VERSION)
             if progress_cb:
-                progress_cb("Dispersed camping already cached, skipping…", 100.0)
+                progress_cb(f"Dispersed camping already cached for {region.name}, skipping…", 100.0)
             return 0
-        west, south, east, north = coverage_envelope(cfg.coverage)
+        west, south, east, north = region.bbox
         tiles = _tile_bboxes(south, west, north, east)
-        logger.info("dispersed: fetching OSM reported campsites across coverage (%d tiles)…", len(tiles))
+        logger.info("dispersed: fetching OSM reported campsites for %s (%d tiles)…", region.name, len(tiles))
         total = 0
         had_failures = False
         for index, (tile_south, tile_west, tile_north, tile_east) in enumerate(tiles, start=1):
             if progress_cb:
-                progress_cb(f"Fetching dispersed camping ({index}/{len(tiles)})…", (index / len(tiles)) * 100.0)
+                progress_cb(
+                    f"Fetching dispersed camping for {region.name} ({index}/{len(tiles)})…",
+                    (index / len(tiles)) * 100.0,
+                )
             try:
                 rows = fetch_reported_campsites_bbox(
                     min_lat=tile_south,
@@ -231,16 +237,63 @@ def ingest_dispersed_coverage(
                     raise_on_error=True,
                 )
             except SOURCE_ERRORS as error:
-                logger.warning("dispersed: tile %d/%d failed (%s) - will retry next run", index, len(tiles), error)
+                logger.warning(
+                    "dispersed: tile %d/%d for %s failed (%s) - region won't be marked ingested, will retry next run",
+                    index,
+                    len(tiles),
+                    region.name,
+                    error,
+                )
                 had_failures = True
                 continue
             upsert_campsites(db, rows)
             total += len(rows)
-        pruned = cache.prune_campsites_outside_bounds(db, "osm", west, south, east, north)
         if had_failures:
-            logger.warning("dispersed: coverage only partially ingested (%d rows) - not recording as done", total)
+            logger.warning(
+                "dispersed: %s only partially ingested (%d rows) - not recording as done", region.name, total
+            )
         else:
             cache.record_ingest(db, key, total)
-            db.execute("DELETE FROM ingest_log WHERE key LIKE %s AND key <> %s", ["dispersed:coverage:v%", key])
-        logger.info("dispersed: cached %d reported campsites coverage-wide (pruned %d outside envelope)", total, pruned)
+            db.execute(
+                "DELETE FROM ingest_log WHERE key LIKE %s AND key <> %s",
+                [f"dispersed:place:{region.place_id}:v%", key],
+            )
+        logger.info("dispersed: cached %d reported campsites in %s", total, region.name)
         return total
+
+
+def ingest_dispersed_coverage(
+    cfg: Settings,
+    con: psycopg.Connection | None = None,
+    *,
+    client: httpx.Client | None = None,
+    progress_cb: Callable[[str, float], None] | None = None,
+) -> int:
+    """Ingest OSM reported campsites across all of ``cfg.coverage``, one region at a time.
+
+    Loops ``ingest_dispersed_region`` per region (see there for why) rather than tiling one
+    combined envelope. Pruning still runs against the full coverage envelope after every region
+    has been attempted, regardless of which ones succeeded - a region left stale by a tile
+    failure keeps its previously-cached rows either way. Returns total rows upserted this run.
+    """
+    regions = [region for region in cfg.coverage if region.bbox is not None]
+    if not regions:
+        return 0
+    total = 0
+    for index, region in enumerate(regions, start=1):
+        if progress_cb:
+            progress_cb(
+                f"Fetching dispersed camping ({index}/{len(regions)} regions)…",
+                (index / len(regions)) * 100.0,
+            )
+        total += ingest_dispersed_region(region, con, client=client)
+    with cache.connection(con) as db:
+        west, south, east, north = coverage_envelope(cfg.coverage)
+        pruned = cache.prune_campsites_outside_bounds(db, "osm", west, south, east, north)
+    logger.info(
+        "dispersed: cached %d reported campsites across %d regions (pruned %d outside envelope)",
+        total,
+        len(regions),
+        pruned,
+    )
+    return total
