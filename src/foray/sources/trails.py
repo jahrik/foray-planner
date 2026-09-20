@@ -50,9 +50,16 @@ import httpx
 import psycopg
 
 from foray import scoring
-from foray.cache import connection, forget_ingest, is_ingested, record_ingest, upsert_trails
+from foray.cache import (
+    connection,
+    forget_ingest,
+    is_ingested,
+    prune_duplicate_route_paths,
+    record_ingest,
+    upsert_trails,
+)
 from foray.config import CoverageRegion, Settings
-from foray.geo import haversine_km
+from foray.geo import bbox_around, haversine_km
 from foray.sources import overpass
 from foray.sources.http import SOURCE_ERRORS
 from foray.sources.ingest_base import run_area_ingest
@@ -605,6 +612,17 @@ def ingest_trails(
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest the OSM trail network near home into ``trails``. Returns rows upserted."""
+
+    def upsert_and_dedupe(db: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
+        result = upsert_trails(db, rows)
+        # Self-heals any route-member `path` rows this disk cached before the issue #394 fix -
+        # see `prune_duplicate_route_paths`'s docstring for why this is scoped, not table-wide.
+        bbox = bbox_around(cfg.home.lat, cfg.home.lng, cfg.home.radius_km)
+        prune_duplicate_route_paths(
+            db, min_lat=bbox.min_lat, min_lng=bbox.min_lng, max_lat=bbox.max_lat, max_lng=bbox.max_lng
+        )
+        return result
+
     return run_area_ingest(
         cfg,
         con,
@@ -612,7 +630,7 @@ def ingest_trails(
         label="trails",
         noun="Trails",
         fetch=lambda **kw: fetch_trails(client=client, **kw),
-        upsert=upsert_trails,
+        upsert=upsert_and_dedupe,
         progress_cb=progress_cb,
     )
 
@@ -903,6 +921,12 @@ def ingest_trails_region(
                 had_failures = True
                 continue
             upsert_trails(database, rows)
+            # Self-heals any route-member `path` rows this tile cached before the issue #394 fix
+            # - see `prune_duplicate_route_paths`'s docstring for why this is scoped per tile,
+            # not table-wide.
+            prune_duplicate_route_paths(
+                database, min_lat=tile_south, min_lng=tile_west, max_lat=tile_north, max_lng=tile_east
+            )
             total += len(rows)
         # Only mark the region done if every tile succeeded - a partial failure still leaves
         # its successful tiles' rows cached (upserted above), but a future run needs to retry

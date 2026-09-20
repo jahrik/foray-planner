@@ -67,6 +67,7 @@ from foray.cache.ingest_log import (
 from foray.cache.land_trails import (
     _assign_trail_land,
     backfill_trail_land,
+    prune_duplicate_route_paths,
     prune_trails_missing_from,
     upsert_public_land,
     upsert_trails,
@@ -149,6 +150,7 @@ __all__ = [
     "prune_campsites_missing_from",
     "prune_campsites_outside_bounds",
     "prune_campsites_outside_radius",
+    "prune_duplicate_route_paths",
     "prune_trails_missing_from",
     "record_ingest",
     "record_job_run",
