@@ -1388,6 +1388,47 @@ def test_trailhead_network_does_not_double_cache_a_route_member_way() -> None:
     result = trailhead_network(1, client=client)
     assert result is not None
     assert [row[0] for row in result["rows"]] == ["osm:relation/20"]  # way 10's own row dropped
+    # The *returned* geometry (what the map draws right away, before any persisted row is read
+    # back) must also drop way 10's line - a LineString, not a MultiLineString repeating it
+    # alongside the route's own stitched copy of the same line (Copilot review, PR #395).
+    assert result["geometry"]["type"] == "LineString"
+
+
+def test_trailhead_network_keeps_a_road_ways_line_even_when_a_route_member() -> None:
+    # A forest-road way that happens to also be a route member keeps its own line in the
+    # returned geometry - same road/path distinction as `_parse_element`.
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "elements": [
+                    {
+                        "type": "way",
+                        "id": 10,
+                        "tags": {"highway": "track"},
+                        "geometry": [{"lat": 47.6, "lon": -122.3}, {"lat": 47.61, "lon": -122.29}],
+                    },
+                    {
+                        "type": "relation",
+                        "id": 20,
+                        "tags": {"route": "hiking", "name": "Ridge Loop"},
+                        "members": [
+                            {
+                                "type": "way",
+                                "ref": 10,
+                                "geometry": [{"lat": 47.6, "lon": -122.3}, {"lat": 47.61, "lon": -122.29}],
+                            }
+                        ],
+                    },
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = trailhead_network(1, client=client)
+    assert result is not None
+    assert result["geometry"]["type"] == "MultiLineString"  # road's own line + the route's copy
+    assert sorted(row[0] for row in result["rows"]) == ["osm:relation/20", "osm:way/10"]
 
 
 def test_trailhead_network_returns_none_when_no_elements() -> None:

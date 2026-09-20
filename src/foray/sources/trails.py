@@ -659,7 +659,14 @@ def trailhead_network(node_id: int, *, client: httpx.Client | None = None) -> di
         if element.get("type") == "way":
             coords = _line_coords(element.get("geometry") or [])
             if coords:
-                lines.append(coords)
+                eid = element.get("id")
+                # Same path/route-member skip as `_parse_element` (a road keeps its own line
+                # regardless), applied here too - not just when building `rows` below. Otherwise
+                # the *returned* geometry, what the map actually draws on this live-resolve path,
+                # still carried the duplicate even after the persisted row was deduped (Copilot
+                # review, PR #395).
+                if not (eid is not None and int(eid) in route_way_ids and not _is_road(tags)):
+                    lines.append(coords)
                 name = name or tags.get("name") or tags.get("ref")
         elif element.get("type") == "relation":
             lines.extend(

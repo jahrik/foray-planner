@@ -825,14 +825,28 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # lines never quite lined up). `_TRAILS_QUERY_VERSION` 5 stops new duplicates from being
     # cached, but a version bump only triggers a re-pull, it doesn't delete what's already
     # cached, so the ~94k existing duplicate `path` rows (measured nationwide at the time of the
-    # fix) need a one-off cleanup. A `path` row within 5m of any `route` row's own geometry is
-    # that route's own member way re-cached - safe to drop outright.
+    # fix) need a one-off cleanup.
+    #
+    # `ST_DWithin(p.geom, r.geom, 5)` (Copilot review, PR #395) is too loose for that: it's true
+    # the moment *any* point of the path comes within 5m of *any* point of the route - which a
+    # genuinely distinct trail can do at a crossing, a shared trailhead, or a short paralleling
+    # stretch, without actually being one of the route's own member ways. Requiring the path's
+    # *entire* line to sit inside a 5m buffer around the route (`ST_CoveredBy` on a buffered
+    # route geography) only matches a path whose whole geometry is essentially the route's own
+    # line re-cached - a path that merely touches or briefly runs beside a route, but extends
+    # beyond that buffer, is correctly left alone.
     (
         52,
         """
         DELETE FROM trails p
         USING trails r
-        WHERE p.kind = 'path' AND r.kind = 'route' AND ST_DWithin(p.geom, r.geom, 5);
+        WHERE p.kind = 'path'
+          AND r.kind = 'route'
+          -- cheap index-accelerated prefilter (uses ix_trails_geom_notnull) - ST_CoveredBy alone
+          -- has no such index support, so this keeps the join from scanning every path x route
+          -- pair with a per-pair ST_Buffer call
+          AND ST_DWithin(p.geom, r.geom, 5)
+          AND ST_CoveredBy(p.geom, ST_Buffer(r.geom, 5));
         """,
     ),
 ]
