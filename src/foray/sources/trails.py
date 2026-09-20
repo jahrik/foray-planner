@@ -612,17 +612,19 @@ def ingest_trails(
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> int:
     """Ingest the OSM trail network near home into ``trails``. Returns rows upserted."""
-
-    def upsert_and_dedupe(db: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
-        result = upsert_trails(db, rows)
-        # Self-heals any route-member `path` rows this disk cached before the issue #394 fix -
-        # see `prune_duplicate_route_paths`'s docstring for why this is scoped, not table-wide.
+    # Self-heals any route-member `path` rows this disk cached before the issue #394 fix - see
+    # `prune_duplicate_route_paths`'s docstring for why this is scoped, not table-wide. Run
+    # *unconditionally*, before `run_area_ingest`'s own `is_area_covered` check (Copilot review,
+    # PR #396): the home disk's coverage marker isn't versioned like `ingest_trails_region`'s, so
+    # once a disk is covered it stays covered forever and the `upsert` callback below - the only
+    # other place this could run - never fires again. `ingest_trails` rides the frequent
+    # `foray-ingest` cron (`refresh.run_home_refresh`), not just the weekly regional sweep, so
+    # this still converges promptly even though the fetch/upsert itself may be skipped.
+    with connection(con) as db:
         bbox = bbox_around(cfg.home.lat, cfg.home.lng, cfg.home.radius_km)
         prune_duplicate_route_paths(
             db, min_lat=bbox.min_lat, min_lng=bbox.min_lng, max_lat=bbox.max_lat, max_lng=bbox.max_lng
         )
-        return result
-
     return run_area_ingest(
         cfg,
         con,
@@ -630,7 +632,7 @@ def ingest_trails(
         label="trails",
         noun="Trails",
         fetch=lambda **kw: fetch_trails(client=client, **kw),
-        upsert=upsert_and_dedupe,
+        upsert=upsert_trails,
         progress_cb=progress_cb,
     )
 
