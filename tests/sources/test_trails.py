@@ -1056,6 +1056,47 @@ def test_ingest_trails_upserts_into_cache(con: psycopg.Connection) -> None:
     assert trails[0].kind == "path"
 
 
+def test_ingest_trails_prunes_duplicates_even_when_the_disk_is_already_covered(con: psycopg.Connection) -> None:
+    # Copilot review, PR #396: the home disk's `is_area_covered` marker isn't versioned like
+    # `ingest_trails_region`'s, so once recorded it stays "covered" forever and `run_area_ingest`
+    # returns before the fetch/upsert callback ever runs again - a pre-existing duplicate row
+    # must still be cleaned up by a later `ingest_trails` call, not just a brand-new one.
+    cfg = Settings(
+        home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=40.0),
+        h3_resolution=4,
+        ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=4),
+    )
+    record_ingest(con, f"trails:{HOME_LAT}:{HOME_LNG}:40.0", 0, lat=HOME_LAT, lng=HOME_LNG, radius_km=40.0)
+    route = _parse_element(
+        {
+            "type": "relation",
+            "id": 1,
+            "tags": {"route": "hiking", "name": "Ridge Route"},
+            "members": [
+                {"type": "way", "geometry": [{"lat": HOME_LAT, "lon": HOME_LNG}, {"lat": 47.61, "lon": -122.29}]}
+            ],
+        }
+    )
+    duplicate_path = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "path"},
+            "geometry": [{"lat": HOME_LAT, "lon": HOME_LNG}, {"lat": 47.61, "lon": -122.29}],
+        }
+    )
+    assert route and duplicate_path
+    upsert_trails(con, [route, duplicate_path])
+
+    # No client passed - if the fetch/upsert path ran, this would try (and fail) to reach the
+    # real Overpass API, proving the disk really was skipped as already-covered.
+    count = ingest_trails(cfg, con)
+
+    assert count == 0
+    remaining_ids = {row[0] for row in con.execute("SELECT id FROM trails").fetchall()}
+    assert remaining_ids == {"osm:relation/1"}
+
+
 def test_bbox_filter_formats_south_west_north_east() -> None:
     from foray.sources import overpass
 
@@ -1158,6 +1199,41 @@ def test_prune_duplicate_route_paths_deletes_only_the_routes_own_member_way(con:
     assert deleted == 1
     remaining_ids = {row[0] for row in con.execute("SELECT id FROM trails").fetchall()}
     assert remaining_ids == {"osm:relation/1", "osm:way/2"}
+
+
+def test_prune_duplicate_route_paths_never_deletes_a_bulk_sourced_row(con: psycopg.Connection) -> None:
+    # Copilot review, PR #396: `trails` also holds authoritative `source='usfs'` rows
+    # (usfs_trails.py's Trail_NFS bulk import), also cached as `kind='path'`. An OSM route
+    # covering the same physical trail must never prune the USFS source's own row.
+    route = _parse_element(
+        {
+            "type": "relation",
+            "id": 1,
+            "tags": {"route": "hiking", "name": "Ridge Route"},
+            "members": [{"type": "way", "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.29}]}],
+        }
+    )
+    assert route
+    usfs_row = (
+        "usfs:trail/1",
+        "Ridge Route (USFS)",
+        "path",
+        "usfs",
+        "https://example.com",
+        47.605,
+        -122.295,
+        json.dumps({"type": "LineString", "coordinates": [[-122.30, 47.60], [-122.29, 47.61]]}),
+        None,
+        1.0,
+        None,
+    )
+    upsert_trails(con, [route, usfs_row])
+
+    deleted = prune_duplicate_route_paths(con, min_lat=47.5, min_lng=-122.4, max_lat=47.8, max_lng=-122.2)
+
+    assert deleted == 0
+    remaining_ids = {row[0] for row in con.execute("SELECT id FROM trails").fetchall()}
+    assert remaining_ids == {"osm:relation/1", "usfs:trail/1"}
 
 
 def test_ingest_trails_region_re_pulls_a_region_ingested_under_an_older_query_version(

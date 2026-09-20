@@ -10,7 +10,6 @@ from typing import Any, LiteralString, cast
 import psycopg
 
 from foray.cache.core import _invalidate_rank_cache, upsert_rows
-from foray.geo import KM_PER_DEG_LAT
 
 logger = logging.getLogger(__name__)
 
@@ -269,50 +268,56 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
     return result
 
 
-# ~5m in degrees, used as a planar buffer tolerance below - `geometry` buffering at this tiny
-# scale is materially cheaper than `geography`'s spheroidal ST_Buffer (issue #394: the latter,
-# run table-wide as a migration, took the prod droplet's SSH connection down mid-deploy). The
-# equatorial approximation (not per-latitude) only overstates the tolerance by ~1/cos(lat),
-# immaterial at 5m.
-_ROUTE_DEDUP_TOLERANCE_DEG = 5.0 / (KM_PER_DEG_LAT * 1000)
-
-
 def prune_duplicate_route_paths(
     con: psycopg.Connection, *, min_lat: float, min_lng: float, max_lat: float, max_lng: float
 ) -> int:
-    """Delete ``path`` rows in this bbox that duplicate a ``route`` row's own member-way
-    geometry (issue #394) - the self-healing complement to ``trails._parse_trails``'s
-    ingest-time dedup, which only stops *new* duplicate rows from being cached, not clean up
-    ones already cached under an older ``_TRAILS_QUERY_VERSION``. Every trails ingest
-    (``ingest_trails``, ``ingest_trails_region``) calls this right after its own upsert, scoped
-    to that call's own area, so the weekly ``refresh --with trails --all`` cron (already
-    re-pulling every region on a version bump) converges the whole cache on its normal schedule
-    - no one-off migration or manual ops step.
+    """Delete OSM ``path`` rows in this bbox that duplicate an OSM ``route`` row's own
+    member-way geometry (issue #394) - the self-healing complement to
+    ``trails._parse_trails``'s ingest-time dedup, which only stops *new* duplicate rows from
+    being cached, not clean up ones already cached under an older ``_TRAILS_QUERY_VERSION``.
+    Every trails ingest (``ingest_trails``, ``ingest_trails_region``) calls this right after its
+    own upsert, scoped to that call's own area, so the weekly ``refresh --with trails --all``
+    cron (already re-pulling every region on a version bump) converges the whole cache on its
+    normal schedule - no one-off migration or manual ops step.
+
+    ``source = 'osm'`` on both sides (Copilot review, PR #396) - ``trails`` also holds
+    authoritative bulk-loaded rows (``usfs_trails.py``'s Trail_NFS import, ``source='usfs'``,
+    also cached as ``kind='path'``); those two sources intentionally overlap in places and
+    neither should ever prune the other's rows just because an OSM route happens to cover the
+    same physical trail.
 
     Scoped, not table-wide: a nationwide sweep has to ``ST_Buffer`` every cached route -
     including genuinely huge ones (a 675km hiking route) - against every candidate path row.
     That's what this issue's first fix shipped as a global migration, and it took the prod
     droplet's SSH connection down mid-deploy (buffering ~8.3k routes, some enormous, plus the
     resulting nested-loop join, ran past the ansible task's patience). Scoping to one ingest
-    call's bbox keeps each call's route set to a handful - cheap enough to run on every ingest.
+    call's bbox keeps each call's route set to a handful - cheap enough to run on every ingest,
+    and (measured) cheap enough at that scale to buffer on ``geography`` directly rather than
+    the ``geometry`` cast with a hand-rolled degree tolerance the first version of this function
+    used - that planar approximation used one degree size for both axes (`KM_PER_DEG_LAT` for
+    longitude too), understating the true east-west tolerance away from the equator (Copilot
+    review, PR #396: ~3.4m instead of 5m at this app's ~47N latitude) and so missing some real
+    duplicates. ``geography``'s buffer is isotropic - a true 5m radius everywhere - with no
+    latitude correction to get wrong.
     """
     envelope = "ST_MakeEnvelope(%s, %s, %s, %s, 4326)::geography"
     envelope_params = [min_lng, min_lat, max_lng, max_lat]
     result = con.execute(
         f"""
         WITH area_routes AS MATERIALIZED (
-            SELECT geom AS route_geom, ST_Buffer(geom::geometry, %s) AS buf
+            SELECT geom AS route_geom, ST_Buffer(geom, 5) AS buf
             FROM trails
-            WHERE kind = 'route' AND geom && {envelope}
+            WHERE kind = 'route' AND source = 'osm' AND geom && {envelope}
         )
         DELETE FROM trails p
         USING area_routes r
         WHERE p.kind = 'path'
+          AND p.source = 'osm'
           AND p.geom && {envelope}
           AND ST_DWithin(p.geom, r.route_geom, 5)
-          AND ST_CoveredBy(p.geom::geometry, r.buf)
+          AND ST_CoveredBy(p.geom, r.buf)
         """,
-        [_ROUTE_DEDUP_TOLERANCE_DEG, *envelope_params, *envelope_params],
+        [*envelope_params, *envelope_params],
     )
     con.commit()
     if result.rowcount:
