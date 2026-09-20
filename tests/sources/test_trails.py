@@ -11,6 +11,7 @@ import pytest
 from foray.cache import (
     backfill_trail_land,
     is_ingested,
+    prune_duplicate_route_paths,
     record_ingest,
     upsert_campsites,
     upsert_public_land,
@@ -1119,6 +1120,44 @@ def test_ingest_trails_region_upserts_and_records_ingest(con: psycopg.Connection
     assert ingest_trails_region(region, con) == 0
     # ...unless forced: re-fetches without a query-version bump (OSM drift / debugging).
     assert ingest_trails_region(region, con, client=client, force=True) == expected_tiles
+
+
+def test_prune_duplicate_route_paths_deletes_only_the_routes_own_member_way(con: psycopg.Connection) -> None:
+    # issue #394: a `path` row cached before the ingest-time fix, whose geometry is the same
+    # line as a `route` row's own member way, should be pruned - but a genuinely distinct path
+    # elsewhere in the same bbox must survive.
+    route = _parse_element(
+        {
+            "type": "relation",
+            "id": 1,
+            "tags": {"route": "hiking", "name": "Ridge Route"},
+            "members": [{"type": "way", "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.29}]}],
+        }
+    )
+    duplicate_path = _parse_element(
+        {
+            "type": "way",
+            "id": 1,
+            "tags": {"highway": "path"},
+            "geometry": [{"lat": 47.60, "lon": -122.30}, {"lat": 47.61, "lon": -122.29}],
+        }
+    )
+    distinct_path = _parse_element(
+        {
+            "type": "way",
+            "id": 2,
+            "tags": {"highway": "path"},
+            "geometry": [{"lat": 47.70, "lon": -122.30}, {"lat": 47.71, "lon": -122.29}],
+        }
+    )
+    assert route and duplicate_path and distinct_path
+    upsert_trails(con, [route, duplicate_path, distinct_path])
+
+    deleted = prune_duplicate_route_paths(con, min_lat=47.5, min_lng=-122.4, max_lat=47.8, max_lng=-122.2)
+
+    assert deleted == 1
+    remaining_ids = {row[0] for row in con.execute("SELECT id FROM trails").fetchall()}
+    assert remaining_ids == {"osm:relation/1", "osm:way/2"}
 
 
 def test_ingest_trails_region_re_pulls_a_region_ingested_under_an_older_query_version(
