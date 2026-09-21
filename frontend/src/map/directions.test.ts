@@ -1,18 +1,36 @@
 import { describe, expect, it } from "vitest";
 
-import { directionsLink, GOOGLE_MAPS_WAYPOINT_CAP, googleMapsRouteUrl } from "./directions";
+import { directionsHref, directionsLink, GOOGLE_MAPS_WAYPOINT_CAP, googleMapsRouteUrl } from "./directions";
 
-describe("directionsLink", () => {
-  it("builds a geo: URI with a pin label, URL-encoded", () => {
-    const link = directionsLink(41.3, -124.02, "Six Rivers Trailhead");
-    expect(link.href).toBe("geo:41.300000,-124.020000?q=41.300000,-124.020000(Six%20Rivers%20Trailhead)");
-    expect(link.text).toBe("Directions");
+const ANDROID_UA = "Mozilla/5.0 (Linux; Android 14)";
+const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)";
+const DESKTOP_UA = "Mozilla/5.0 (X11; Linux x86_64)";
+
+describe("directionsHref", () => {
+  it("builds a geo: URI with a pin label, URL-encoded, on Android", () => {
+    const href = directionsHref(41.3, -124.02, "Six Rivers Trailhead", ANDROID_UA);
+    expect(href).toBe("geo:41.300000,-124.020000?q=41.300000,-124.020000(Six%20Rivers%20Trailhead)");
   });
 
-  it("encodes characters that would otherwise break the query string", () => {
-    const link = directionsLink(0, 0, "A & B (Trail)");
-    expect(link.href).toContain(encodeURIComponent("A & B (Trail)"));
-    expect(link.href).not.toContain("&B");
+  it("builds a geo: URI on iOS too", () => {
+    const href = directionsHref(41.3, -124.02, "Trailhead", IPHONE_UA);
+    expect(href.startsWith("geo:")).toBe(true);
+  });
+
+  it("falls back to a Google Maps web destination link on desktop, where geo: has no handler", () => {
+    const href = directionsHref(41.3, -124.02, "Trailhead", DESKTOP_UA);
+    expect(href).toBe("https://www.google.com/maps/dir/?api=1&destination=41.300000,-124.020000");
+  });
+
+  it("encodes characters that would otherwise break the geo: query string", () => {
+    const href = directionsHref(0, 0, "A & B (Trail)", ANDROID_UA);
+    expect(href).toContain(encodeURIComponent("A & B (Trail)"));
+  });
+});
+
+describe("directionsLink", () => {
+  it("always labels the link 'Directions'", () => {
+    expect(directionsLink(0, 0, "Anywhere").text).toBe("Directions");
   });
 });
 

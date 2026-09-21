@@ -4,9 +4,11 @@ import { getJson } from "../api/client";
 import type { Calendar, CampSite, RecentObservation, RecentObservationsPage, Trail } from "../api/types";
 import { FORAGE_HI_THRESHOLD } from "../map/forage";
 import { gradeLabel, seasonalNote } from "../map/trail-attrs";
+import { directionsLink } from "../map/directions";
 import { selectTrailhead } from "../map/layers";
 import { regionRadiusKm } from "../map/destinations";
 import { HEAT_RGB } from "../map/map";
+import { buildPopup } from "../map/popup";
 import {
   clearCardCampMarkers,
   clearTrailheadMarkers,
@@ -331,7 +333,11 @@ export async function loadCampgroundsInto(
     button.textContent = `${site.name} · ${dist(site.distance_km)} · ${feeText}${resv}`;
     const marker = plotCardCamp(site, () => selectRow(site, button, marker));
     marker.bindPopup(
-      `<b>${escapeHtml(site.name)}</b><br>${dist(site.distance_km)} · ${escapeHtml(feeText)}${escapeHtml(resv)}`,
+      buildPopup({
+        title: site.name,
+        lines: [`${dist(site.distance_km)} · ${feeText}${resv}`],
+        directions: directionsLink(site.center_lat, site.center_lng, site.name),
+      }),
     );
     button.onclick = (e) => {
       e.stopPropagation();
