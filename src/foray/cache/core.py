@@ -313,7 +313,7 @@ CREATE TABLE IF NOT EXISTS meta (
 # Bump whenever the SCHEMA string above OR the CONCURRENTLY index set in apply_schema changes,
 # so a running instance re-executes them once on its next apply_schema. (New _MIGRATIONS
 # entries are tracked separately by version and don't need a bump.)
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Fixed advisory-lock key so two processes starting together (API + scheduler) serialize on
 # the full apply_schema path instead of racing CREATE INDEX CONCURRENTLY.
@@ -389,6 +389,18 @@ _CONCURRENT_INDEXES: list[LiteralString | tuple[LiteralString, str]] = [
     # until a live `EXPLAIN ANALYZE` caught it.
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_trails_center_point_geog ON trails "
     "USING GIST ((ST_SetSRID(ST_MakePoint(center_lng, center_lat), 4326)::geography))",
+    # issue #397: `queries.region_access`'s trailhead KNN lookup filtered `kind = 'trailhead'`
+    # against `ix_trails_geom_notnull`, which spans all ~2.08M trails rows (path/road/route
+    # included) - only 10.8k of those are trailheads. The bbox-bounded index scan (`&&` from
+    # `ST_DWithin`) has no way to know that ahead of time, so it pulled in every path/road
+    # geometry within the 45km search radius before filtering client-side. Measured locally:
+    # 4,511 regions went from 54s to 0.6s once this partial index scoped the scan to just the
+    # trailhead rows the query actually wants. `ranking._apply_access` calls this once per
+    # ranking request on a cache miss (deliberately live, see its own docstring) - it was this
+    # scan, not the LATERAL/KNN shape, that blew past the API's 5s statement timeout on a large
+    # candidate-region set.
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_trails_trailhead_geom ON trails USING GIST (geom) "
+    "WHERE kind = 'trailhead' AND geom IS NOT NULL",
 ]
 
 # Schema changes past the initial CREATE TABLE/INDEX IF NOT EXISTS baseline above, applied in
