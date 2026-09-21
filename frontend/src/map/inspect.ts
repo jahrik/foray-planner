@@ -43,7 +43,7 @@ function tryInspectTrailAt(gl: MaplibreMap, latlng: L.LatLng): boolean {
   if (!hit) return false;
   L.popup()
     .setLatLng(latlng)
-    .setContent(buildPopup(trailPopupSpec((hit.properties ?? {}) as TrailTileProps)))
+    .setContent(buildPopup(trailPopupSpec((hit.properties ?? {}) as TrailTileProps, latlng.lat, latlng.lng)))
     .openOn(map);
   return true;
 }

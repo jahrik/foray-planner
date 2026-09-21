@@ -18,6 +18,9 @@ export interface PopupSpec {
   lines?: string[];
   /** Optional trailing anchor, opened in a new tab. */
   link?: PopupLink;
+  /** Optional second trailing anchor - a "Directions" deep link (see map/directions.ts) that
+   * sits alongside `link` rather than replacing it. */
+  directions?: PopupLink;
 }
 
 export function buildPopup(spec: PopupSpec): HTMLElement {
@@ -29,12 +32,13 @@ export function buildPopup(spec: PopupSpec): HTMLElement {
   for (const line of spec.lines ?? []) {
     root.append(document.createElement("br"), document.createTextNode(line));
   }
-  if (spec.link) {
+  for (const anchorSpec of [spec.link, spec.directions]) {
+    if (!anchorSpec) continue;
     const anchor = document.createElement("a");
-    anchor.href = spec.link.href;
+    anchor.href = anchorSpec.href;
     anchor.target = "_blank";
     anchor.rel = "noopener";
-    anchor.textContent = spec.link.text;
+    anchor.textContent = anchorSpec.text;
     root.append(document.createElement("br"), anchor);
   }
   return root;

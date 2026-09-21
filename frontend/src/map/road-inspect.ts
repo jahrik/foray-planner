@@ -8,6 +8,7 @@
 // Pure helpers only (no maplibre/leaflet imports) so they unit-test without a GL context;
 // map.ts does the `queryRenderedFeatures` and opens the Leaflet popup.
 
+import { directionsLink } from "./directions";
 import type { PopupSpec } from "./popup";
 
 /** The Protomaps flat-schema fields we read off a `roads` feature. All optional - a minor
@@ -125,5 +126,6 @@ export function roadPopupSpec(props: RoadProps, lat: number, lng: number): Popup
   if (props.ref) lines.push(`Ref ${props.ref}`);
   if (flagged(props.is_bridge)) lines.push("Bridge");
   if (flagged(props.is_tunnel)) lines.push("Tunnel");
-  return { title: name ?? fallbackTitle(props), lines, link: osmLink(lat, lng) };
+  const title = name ?? fallbackTitle(props);
+  return { title, lines, link: osmLink(lat, lng), directions: directionsLink(lat, lng, title) };
 }

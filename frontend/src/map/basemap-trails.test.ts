@@ -96,4 +96,15 @@ describe("trailPopupSpec", () => {
     const spec = trailPopupSpec({ name: "X", kind: "path" });
     expect(spec.lines).toHaveLength(1);
   });
+
+  it("omits the directions link when no click point is given", () => {
+    expect(trailPopupSpec({ name: "X", kind: "path" }).directions).toBeUndefined();
+  });
+
+  it("adds a directions link labeled with the trail's title when a click point is given", () => {
+    const spec = trailPopupSpec({ name: "Moorman Pond Trail", kind: "path" }, 41.3, -124.02);
+    expect(spec.directions?.href).toBe(
+      "geo:41.300000,-124.020000?q=41.300000,-124.020000(Moorman%20Pond%20Trail)",
+    );
+  });
 });

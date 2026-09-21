@@ -12,6 +12,7 @@
 
 import type { LayerSpecification, SourceSpecification } from "@maplibre/maplibre-gl-style-spec";
 
+import { directionsLink } from "./directions";
 import type { PopupSpec } from "./popup";
 
 export const TRAILS_SOURCE_ID = "foray-trails";
@@ -82,8 +83,10 @@ const KIND_LABEL: Record<string, string> = {
 
 /** Popup contents straight off the tile - name/kind/length/land unit the martin-config.yaml
  * `trails` table already carries, no `/api/trails/network` round-trip needed just to show what
- * was clicked (map.ts's click-to-inspect, same pattern as basemap-land.ts/basemap-fire.ts). */
-export function trailPopupSpec(props: TrailTileProps): PopupSpec {
+ * was clicked (map.ts's click-to-inspect, same pattern as basemap-land.ts/basemap-fire.ts).
+ * `lat`/`lng` (the click point) are optional so existing tests that don't care about the
+ * Directions link don't need to pass them - map.ts's real caller always does (issue #310). */
+export function trailPopupSpec(props: TrailTileProps, lat?: number, lng?: number): PopupSpec {
   const lines: string[] = [];
   const kindLabel = props.kind ? (KIND_LABEL[props.kind] ?? props.kind) : "Trail";
   const bits = [kindLabel];
@@ -91,5 +94,7 @@ export function trailPopupSpec(props: TrailTileProps): PopupSpec {
   lines.push(bits.join(" · "));
   if (props.land_unit) lines.push(props.land_unit);
   else if (props.land_agency) lines.push(props.land_agency);
-  return { title: props.name ?? "Unnamed trail", lines };
+  const title = props.name ?? "Unnamed trail";
+  const directions = lat != null && lng != null ? directionsLink(lat, lng, title) : undefined;
+  return { title, lines, ...(directions ? { directions } : {}) };
 }
