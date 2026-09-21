@@ -1,10 +1,12 @@
 // Deep links that hand a location (or a whole planned route) off to the user's own maps app
 // (issue #310). `geo:` is the only URI scheme that reliably triggers the OS "open with" chooser
 // on Android/iOS - it drops a pin, and the user taps "Directions" one tap later in whichever app
-// opens. There's no cross-app URI that starts turn-by-turn directly. `google.com/maps/dir` is
-// the one exception worth building for: it's the only maps app URL that accepts a multi-stop
-// route, so it's used for the whole-trip "Open in Google Maps" button instead of a per-app
-// chooser (planner.ts).
+// opens. A `geo:` link has no registered handler on a normal desktop browser though (issue #310
+// explicitly calls for Google Maps web there), so the per-location link branches on platform:
+// `geo:` on Android/iOS, a `google.com/maps/dir` destination link everywhere else.
+// `google.com/maps/dir` is also the one exception worth building for a *route*: it's the only
+// maps-app URL that accepts multiple stops, so it's used for the whole-trip "Open in Google
+// Maps" button too (plan.ts), regardless of platform - there's no per-app chooser for a route.
 //
 // Every href here is built from numeric lat/lng plus a caller-supplied label that we
 // URL-encode ourselves - never raw external text dropped into a URL - so this holds the same
@@ -17,10 +19,25 @@ function geoUri(lat: number, lng: number, label: string): string {
   return `geo:${coords}?q=${coords}(${encodeURIComponent(label)})`;
 }
 
-/** A "Directions" popup link for a single point - see the module doc for why `geo:` over a
- * provider-specific URL. */
+function googleMapsDirectionsUrl(lat: number, lng: number): string {
+  return `https://www.google.com/maps/dir/?api=1&destination=${lat.toFixed(6)},${lng.toFixed(6)}`;
+}
+
+function isMobilePlatform(userAgent: string): boolean {
+  return /android|iphone|ipad|ipod/i.test(userAgent);
+}
+
+/** The href a "Directions" link should use for the given user agent - `geo:` (OS chooser) on
+ * Android/iOS, a Google Maps web destination link everywhere else. Exported separately from
+ * `directionsLink` so the platform branch is unit-testable without mocking `navigator`. */
+export function directionsHref(lat: number, lng: number, label: string, userAgent: string): string {
+  return isMobilePlatform(userAgent) ? geoUri(lat, lng, label) : googleMapsDirectionsUrl(lat, lng);
+}
+
+/** A "Directions" popup link for a single point - see the module doc for the platform split. */
 export function directionsLink(lat: number, lng: number, label: string): PopupLink {
-  return { href: geoUri(lat, lng, label), text: "Directions" };
+  const userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  return { href: directionsHref(lat, lng, label, userAgent), text: "Directions" };
 }
 
 export interface RoutePoint {
