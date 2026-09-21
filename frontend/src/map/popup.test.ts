@@ -38,6 +38,25 @@ describe("buildPopup", () => {
     expect(anchor?.textContent).toBe("Source ↗");
   });
 
+  it("renders the directions link after the source link, each on its own row", () => {
+    const root = buildPopup({
+      title: "Camp",
+      link: { href: "https://x.test/a", text: "Source ↗" },
+      directions: { href: "geo:1,2?q=1,2(Camp)", text: "Directions" },
+    });
+    const anchors = root.querySelectorAll("a");
+    expect(anchors).toHaveLength(2);
+    expect(anchors[0]?.textContent).toBe("Source ↗");
+    expect(anchors[1]?.textContent).toBe("Directions");
+    expect(anchors[1]?.getAttribute("href")).toBe("geo:1,2?q=1,2(Camp)");
+    expect(root.querySelectorAll("br")).toHaveLength(2);
+  });
+
+  it("renders just the directions link when there is no source link", () => {
+    const root = buildPopup({ title: "Obs", directions: { href: "geo:1,2?q=1,2(Obs)", text: "Directions" } });
+    expect(root.querySelectorAll("a")).toHaveLength(1);
+  });
+
   it("omits the anchor and lines when neither is provided", () => {
     const root = buildPopup({ title: "Destination" });
     expect(root.querySelector("a")).toBeNull();

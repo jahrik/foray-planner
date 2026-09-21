@@ -7,6 +7,7 @@ import { feeLabel } from "../format";
 import { LAND_AGENCIES } from "./basemap-land";
 import { FORAGE_RAMP, forageTier } from "./forage";
 import { isRoughSurface } from "./trail-attrs";
+import { directionsLink } from "./directions";
 import { circleStyle } from "./markers";
 import { buildPopup } from "./popup";
 import { regionRadiusKm, setFocused } from "./destinations";
@@ -85,6 +86,7 @@ function campPopup(site: CampSite): HTMLElement {
     title: site.name,
     lines: [`${dist(site.distance_km)} · ${detail}`],
     link: { href: site.url, text: isOsm ? "OpenStreetMap ↗" : "Recreation.gov ↗" },
+    directions: directionsLink(site.center_lat, site.center_lng, site.name),
   });
 }
 
@@ -268,10 +270,12 @@ export async function loadPreciseObservations(): Promise<void> {
 // name/observed_on come from an external API (buildPopup sets them via textContent); `obs.uri`
 // is server-constructed (a fixed iNaturalist observation URL).
 function precisePopup(obs: PreciseObservation): HTMLElement {
+  const name = displayName(obs);
   return buildPopup({
-    title: displayName(obs),
+    title: name,
     lines: obs.observed_on ? [obs.observed_on] : [],
     ...(obs.uri ? { link: { href: obs.uri, text: "iNaturalist ↗" } } : {}),
+    directions: directionsLink(obs.lat, obs.lng, name),
   });
 }
 

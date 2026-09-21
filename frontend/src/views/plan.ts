@@ -3,6 +3,7 @@ import L from "leaflet";
 import { getJson } from "../api/client";
 import type { Stop, TripPlan } from "../api/types";
 import { escapeXml, feeLabel } from "../format";
+import { GOOGLE_MAPS_WAYPOINT_CAP, googleMapsRouteUrl, type RoutePoint } from "../map/directions";
 import { focusRegion } from "../map/layers";
 import { dockOffsetPx, focusOnMap } from "../map/sheet";
 import { addMarker } from "../map/destinations";
@@ -136,6 +137,13 @@ function renderPlan(trip: TripPlan): void {
     ? ` <span class="plan-skipped">${trip.skipped_unreachable} skipped (too far)</span>`
     : "";
   const autoNote = trip.auto_destination ? ` <span class="plan-auto">auto-picked destination</span>` : "";
+  // Google Maps' dir/?api=1 URL silently drops waypoints past GOOGLE_MAPS_WAYPOINT_CAP, so a
+  // longer trip disables the button rather than sending a route that quietly loses stops - the
+  // GPX export (no such cap) stays the way to get the full route into any other maps app.
+  const tooManyStops = trip.stops.length > GOOGLE_MAPS_WAYPOINT_CAP;
+  const gmapsDisabled = tooManyStops
+    ? `disabled title="Too many stops for a Google Maps link (max ${GOOGLE_MAPS_WAYPOINT_CAP}) - use the GPX export instead"`
+    : "";
   panel.innerHTML = `
     <div class="plan-header">
       <div class="plan-summary">
@@ -144,6 +152,7 @@ function renderPlan(trip: TripPlan): void {
       <div class="plan-export">
         <button id="export-gpx" class="primary">⬇ GPX</button>
         <button id="export-json">⬇ JSON</button>
+        <button id="export-gmaps" ${gmapsDisabled}>Open in Google Maps</button>
       </div>
     </div>
   `;
@@ -152,6 +161,7 @@ function renderPlan(trip: TripPlan): void {
   // Wire export buttons - trip is captured in closure.
   qs<HTMLButtonElement>("#export-gpx").onclick = () => exportGpx(trip);
   qs<HTMLButtonElement>("#export-json").onclick = () => exportJson(trip);
+  qs<HTMLButtonElement>("#export-gmaps").onclick = () => openGoogleMapsRoute(trip);
 
   setStatus(`${trip.n_stops} stops · ${dist(trip.total_drive_km)}`);
 }
@@ -264,12 +274,20 @@ function buildStopCard(stop: Stop): HTMLElement {
   return card;
 }
 
+/** A stop's navigable point: its camp when one's in range, else the region center - the same
+ * "best point available today" fallback the whole trip uses (issue #310's Part 2), so the GPX
+ * export and the Google Maps route always point at the same places. */
+function stopPoint(stop: Stop): RoutePoint {
+  return stop.camp
+    ? { lat: stop.camp.center_lat, lng: stop.camp.center_lng }
+    : { lat: stop.center_lat, lng: stop.center_lng };
+}
+
 /** Export the trip plan as a GPX file: start, one waypoint per stop (camp if available), destination. */
 function exportGpx(trip: TripPlan): void {
   const monthNames = trip.months.map((month) => MONTHS[month - 1]).join("-");
   const stopWpts = trip.stops.map((stop) => {
-    const lat = stop.camp ? stop.camp.center_lat : stop.center_lat;
-    const lng = stop.camp ? stop.camp.center_lng : stop.center_lng;
+    const { lat, lng } = stopPoint(stop);
     const name = stop.camp ? `Stop ${stop.order}: ${stop.camp.name}` : `Stop ${stop.order}`;
     const stopFire = stop.fire_nearby[0];
     const fireNote = stopFire
@@ -307,6 +325,16 @@ function wptXml(lat: number, lng: number, name: string, desc: string): string {
 /** Export the trip plan as a pretty-printed JSON file. */
 function exportJson(trip: TripPlan): void {
   downloadFile("foray-trip.json", JSON.stringify(trip, null, 2), "application/json");
+}
+
+/** Open the whole trip as a Google Maps multi-stop driving route (issue #310 Part 2) - the only
+ * maps-app URL that accepts more than one stop, so this is additive to the GPX/JSON exports
+ * rather than a replacement for them. */
+function openGoogleMapsRoute(trip: TripPlan): void {
+  const origin: RoutePoint = { lat: trip.start_lat, lng: trip.start_lng };
+  const destination: RoutePoint = { lat: trip.destination_lat, lng: trip.destination_lng };
+  const waypoints = trip.stops.map(stopPoint);
+  window.open(googleMapsRouteUrl(origin, destination, waypoints), "_blank", "noopener");
 }
 
 /** Trigger a client-side file download without a round-trip to the server. */
