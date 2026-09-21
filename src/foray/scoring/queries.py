@@ -596,15 +596,15 @@ def region_access(
     """Nearest trailhead / campground to each ``(region_id, lat, lng)`` in km (within
     ``ACCESS_SEARCH_KM``), plus whether that nearest campsite is free-tagged.
 
-    One batched KNN pass off ``ix_trails_geom`` / ``ix_campsites_geom`` - feeds the ``access``
-    multiplier and the card why-sentence (issue #306). A region with nothing cached within the
-    search radius comes back ``None`` in that slot - treated as "unknown", not "remote".
+    One batched KNN pass, scoped by ``ix_trails_trailhead_geom`` (partial, `kind = 'trailhead'`
+    only - issue #397) / ``ix_campsites_geom`` - feeds the ``access`` multiplier and the card
+    why-sentence (issue #306). A region with nothing cached within the search radius comes back
+    ``None`` in that slot - treated as "unknown", not "remote".
 
-    Live/on-demand version, scoped to whatever ``regions`` the caller passes - kept for
-    call sites that need a region not yet in the materialized ``regions`` table (or a custom
-    center not on the grid). ``ranking._apply_access`` itself now reads
-    ``regions.cached_region_access`` instead (issue #333 PR 2) - see that function's docstring
-    for why a live per-ranking-call KNN was replaced with a materialized read.
+    ``ranking._apply_access`` calls this on every ranking request, scoped to whatever
+    ``regions`` it passes - issue #333 PR 2 considered materializing this into `regions` on the
+    phenology cadence and rejected it (see `_apply_access`'s own docstring for why); it's still
+    a live call.
     """
     if not regions:
         return {}
