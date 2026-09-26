@@ -110,3 +110,10 @@ backfill-geom-once: (_playbook "backfill-geom-once")
 [doc('One-time full resync catch-up on the droplet (~3h, run detached)')]
 [group('deploy-once')]
 resync-once: (_playbook "resync-once")
+
+# Manual/opt-in only - the weekly foray-layers-land cron already re-pulls every coverage region
+# and self-heals issue #394's duplicate route/path rows on each pass; this just runs the trails
+# target once, now, across all coverage regions instead of waiting on the cron's 168h pace.
+[doc('Speed up issue #394 dedup convergence: run trails refresh across all coverage now')]
+[group('deploy-once')]
+trails-once: (_playbook "trails-once")

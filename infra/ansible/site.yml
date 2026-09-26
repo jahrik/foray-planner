@@ -299,6 +299,17 @@
         - "foray:backfill-geom-once"
         - never
 
+    - name: Include one-off trails refresh task
+      ansible.builtin.include_tasks:
+        file: tasks/deploy/trails_once.yml
+        apply:
+          tags:
+            - "foray:trails-once"
+            - never
+      tags:
+        - "foray:trails-once"
+        - never
+
   handlers:
     - name: Include handlers
       ansible.builtin.import_tasks:
