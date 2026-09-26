@@ -11,6 +11,7 @@ import pytest
 from foray.cache import (
     backfill_trail_land,
     is_ingested,
+    prune_duplicate_cross_source_paths,
     prune_duplicate_route_paths,
     record_ingest,
     upsert_campsites,
@@ -1234,6 +1235,81 @@ def test_prune_duplicate_route_paths_never_deletes_a_bulk_sourced_row(con: psyco
     assert deleted == 0
     remaining_ids = {row[0] for row in con.execute("SELECT id FROM trails").fetchall()}
     assert remaining_ids == {"osm:relation/1", "usfs:trail/1"}
+
+
+def test_prune_duplicate_cross_source_paths_deletes_the_osm_row_matching_a_usfs_row(
+    con: psycopg.Connection,
+) -> None:
+    # issue #404: the same physical trail cached separately from OSM and the USFS Trail_NFS
+    # bulk import - USFS wins (the authoritative source), matching the precedent already set
+    # for the road layer (MVUM preferred over OSM's guessed legality tags).
+    osm_path = _parse_element(
+        {
+            "type": "way",
+            "id": 5159158,
+            "tags": {"highway": "path", "name": "Mule Mountain Trail #919"},
+            # ~22m east of the USFS row's line below - well within the 50m buffer.
+            "geometry": [{"lat": 47.60, "lon": -122.2997}, {"lat": 47.61, "lon": -122.2897}],
+        }
+    )
+    assert osm_path
+    usfs_row = (
+        "usfs:trail/5031.005121",
+        "MULE MOUNTAIN",
+        "path",
+        "usfs",
+        "https://example.com",
+        47.605,
+        -122.295,
+        json.dumps({"type": "LineString", "coordinates": [[-122.30, 47.60], [-122.29, 47.61]]}),
+        None,
+        1.34,
+        None,
+    )
+    upsert_trails(con, [osm_path, usfs_row])
+
+    deleted = prune_duplicate_cross_source_paths(con, min_lat=47.5, min_lng=-122.4, max_lat=47.8, max_lng=-122.2)
+
+    assert deleted == 1
+    remaining_ids = {row[0] for row in con.execute("SELECT id FROM trails").fetchall()}
+    assert remaining_ids == {"usfs:trail/5031.005121"}
+
+
+def test_prune_duplicate_cross_source_paths_keeps_a_length_mismatched_partial_overlap(
+    con: psycopg.Connection,
+) -> None:
+    # A short OSM spur fully contained within a much longer USFS trail's buffer corridor is a
+    # real, distinct trail - not a duplicate of the whole thing. The length-ratio guard (30%)
+    # must keep both rows.
+    osm_spur = _parse_element(
+        {
+            "type": "way",
+            "id": 999,
+            "tags": {"highway": "path", "name": "Short Spur"},
+            "geometry": [{"lat": 47.60, "lon": -122.2997}, {"lat": 47.605, "lon": -122.2947}],
+        }
+    )
+    assert osm_spur
+    usfs_row = (
+        "usfs:trail/5031.005121",
+        "MULE MOUNTAIN",
+        "path",
+        "usfs",
+        "https://example.com",
+        47.605,
+        -122.295,
+        json.dumps({"type": "LineString", "coordinates": [[-122.30, 47.60], [-122.29, 47.61]]}),
+        None,
+        1.34,
+        None,
+    )
+    upsert_trails(con, [osm_spur, usfs_row])
+
+    deleted = prune_duplicate_cross_source_paths(con, min_lat=47.5, min_lng=-122.4, max_lat=47.8, max_lng=-122.2)
+
+    assert deleted == 0
+    remaining_ids = {row[0] for row in con.execute("SELECT id FROM trails").fetchall()}
+    assert remaining_ids == {"osm:way/999", "usfs:trail/5031.005121"}
 
 
 def test_ingest_trails_region_re_pulls_a_region_ingested_under_an_older_query_version(
