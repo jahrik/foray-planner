@@ -325,6 +325,59 @@ def prune_duplicate_route_paths(
     return result.rowcount
 
 
+def prune_duplicate_cross_source_paths(
+    con: psycopg.Connection, *, min_lat: float, min_lng: float, max_lat: float, max_lng: float
+) -> int:
+    """Delete an OSM ``path`` row in this bbox that duplicates a USFS ``path`` row's geometry
+    (issue #404) - the cross-source sibling of ``prune_duplicate_route_paths``. That function
+    deliberately never touches a ``source='usfs'`` row (Copilot review, PR #396); this is the
+    fix for the case it left open - the same physical trail cached separately from OSM and from
+    the USFS Trail_NFS bulk import (``usfs_trails.py``), confirmed live for Mule Mountain Trail
+    #919 (``osm:way/5159158`` vs ``usfs:trail/5031.005121``, Hausdorff distance ~140m).
+
+    USFS wins on a match: it's the authoritative source, matching the precedent already set for
+    the road layer (MVUM preferred over OSM's guessed vehicle-legality tags). Only the OSM row
+    is ever deleted here - a USFS row is never pruned for duplicating an OSM one.
+
+    Two independently-digitized lines for the same physical trail don't align anywhere near as
+    tightly as an OSM route and its own member way (``prune_duplicate_route_paths``'s 5m), so
+    this uses a much wider buffer (50m) - but guards against false merges between genuinely
+    distinct, roughly parallel trails with two checks a same-source match doesn't need: the OSM
+    path's *entire* length must fall within the buffer (``ST_CoveredBy``, not just endpoints),
+    and the two paths' ``length_km`` must be within 30% of each other (a spur or a short cutoff
+    contained in a longer trail's buffer would fail this even if geometrically covered).
+
+    Scoped per ingest-call bbox, same reasoning as ``prune_duplicate_route_paths`` - a
+    table-wide sweep already took prod down once for the same-source case; this only ever runs
+    against the handful of USFS rows in one tile.
+    """
+    envelope = "ST_MakeEnvelope(%s, %s, %s, %s, 4326)::geography"
+    envelope_params = [min_lng, min_lat, max_lng, max_lat]
+    result = con.execute(
+        f"""
+        WITH area_usfs AS MATERIALIZED (
+            SELECT geom AS usfs_geom, ST_Buffer(geom, 50) AS buf, length_km
+            FROM trails
+            WHERE kind = 'path' AND source = 'usfs' AND geom && {envelope}
+        )
+        DELETE FROM trails p
+        USING area_usfs u
+        WHERE p.kind = 'path'
+          AND p.source = 'osm'
+          AND p.geom && {envelope}
+          AND ST_CoveredBy(p.geom, u.buf)
+          AND p.length_km IS NOT NULL
+          AND u.length_km IS NOT NULL
+          AND abs(p.length_km - u.length_km) <= 0.3 * greatest(p.length_km, u.length_km)
+        """,
+        [*envelope_params, *envelope_params],
+    )
+    con.commit()
+    if result.rowcount:
+        _invalidate_rank_cache()
+    return result.rowcount
+
+
 def prune_trails_missing_from(con: psycopg.Connection, source: str, ids: Sequence[str]) -> int:
     """Delete ``source`` trails whose id isn't in ``ids``. Returns rows deleted.
 

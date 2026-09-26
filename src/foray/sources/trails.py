@@ -54,6 +54,7 @@ from foray.cache import (
     connection,
     forget_ingest,
     is_ingested,
+    prune_duplicate_cross_source_paths,
     prune_duplicate_route_paths,
     record_ingest,
     upsert_trails,
@@ -625,6 +626,10 @@ def ingest_trails(
         prune_duplicate_route_paths(
             db, min_lat=bbox.min_lat, min_lng=bbox.min_lng, max_lat=bbox.max_lat, max_lng=bbox.max_lng
         )
+        # issue #404: same self-heal, for an OSM `path` that duplicates a USFS bulk-loaded one.
+        prune_duplicate_cross_source_paths(
+            db, min_lat=bbox.min_lat, min_lng=bbox.min_lng, max_lat=bbox.max_lat, max_lng=bbox.max_lng
+        )
     return run_area_ingest(
         cfg,
         con,
@@ -927,6 +932,10 @@ def ingest_trails_region(
             # - see `prune_duplicate_route_paths`'s docstring for why this is scoped per tile,
             # not table-wide.
             prune_duplicate_route_paths(
+                database, min_lat=tile_south, min_lng=tile_west, max_lat=tile_north, max_lng=tile_east
+            )
+            # issue #404: same self-heal, for an OSM `path` that duplicates a USFS bulk-loaded one.
+            prune_duplicate_cross_source_paths(
                 database, min_lat=tile_south, min_lng=tile_west, max_lat=tile_north, max_lng=tile_east
             )
             total += len(rows)
