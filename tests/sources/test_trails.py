@@ -1275,6 +1275,123 @@ def test_prune_duplicate_cross_source_paths_deletes_the_osm_row_matching_a_usfs_
     assert remaining_ids == {"usfs:trail/5031.005121"}
 
 
+def test_prune_duplicate_cross_source_paths_deletes_the_real_mule_mountain_pair(
+    con: psycopg.Connection,
+) -> None:
+    # The actual production geometry (queried live 2026-09-26) for the pair issue #404 was
+    # opened against - Copilot review, PR #405: the first draft's 50m buffer + synthetic test
+    # geometry passed, but never matched this real pair (its directed OSM->USFS distance is
+    # ~123m, not the ~5-20m an OSM/OSM route-vs-member-way match sees). This is the regression
+    # test for the 150m buffer that actually clears it.
+    osm_way = (
+        "osm:way/5159158",
+        "Mule Mountain Trail #919",
+        "path",
+        "osm",
+        "https://www.openstreetmap.org/way/5159158",
+        42.09,
+        -123.08,
+        json.dumps(
+            {
+                "type": "LineString",
+                "coordinates": [
+                    [-123.0430394, 42.0914315],
+                    [-123.0439568, 42.0923869],
+                    [-123.0458671, 42.0926168],
+                    [-123.0470593, 42.0921178],
+                    [-123.0484951, 42.0918663],
+                    [-123.050417, 42.0924548],
+                    [-123.0520531, 42.0921455],
+                    [-123.0538215, 42.0921657],
+                    [-123.055775, 42.091826],
+                    [-123.0578139, 42.0916709],
+                    [-123.0598784, 42.0911029],
+                    [-123.0637461, 42.090185],
+                    [-123.0662799, 42.0899008],
+                    [-123.0692399, 42.089105],
+                    [-123.0692975, 42.0883504],
+                    [-123.0711696, 42.0869266],
+                    [-123.0730577, 42.0867329],
+                    [-123.0751443, 42.0857966],
+                    [-123.0772406, 42.0849314],
+                    [-123.0784781, 42.0860385],
+                    [-123.0816853, 42.0866656],
+                    [-123.0820026, 42.0894842],
+                    [-123.0832052, 42.089918],
+                    [-123.0833062, 42.0879093],
+                    [-123.0873953, 42.0874766],
+                    [-123.0887567, 42.0883724],
+                    [-123.0871449, 42.0889261],
+                    [-123.0897865, 42.0900371],
+                    [-123.0929393, 42.0908491],
+                    [-123.0969118, 42.0908748],
+                ],
+            }
+        ),
+        None,
+        6.15663333142602,
+        None,
+    )
+    usfs_row = (
+        "usfs:trail/5031.005121",
+        "MULE MOUNTAIN",
+        "path",
+        "usfs",
+        "https://example.com",
+        42.09,
+        -123.07,
+        json.dumps(
+            {
+                "type": "LineString",
+                "coordinates": [
+                    [-123.09703, 42.09093],
+                    [-123.09171, 42.09106],
+                    [-123.09019, 42.09015],
+                    [-123.08744, 42.08958],
+                    [-123.08897, 42.08856],
+                    [-123.08729, 42.08816],
+                    [-123.08759, 42.08737],
+                    [-123.08668, 42.08811],
+                    [-123.08538, 42.08828],
+                    [-123.08286, 42.08822],
+                    [-123.08172, 42.08856],
+                    [-123.08195, 42.0889],
+                    [-123.08324, 42.08981],
+                    [-123.08042, 42.08873],
+                    [-123.0805, 42.08833],
+                    [-123.08202, 42.08714],
+                    [-123.08141, 42.08646],
+                    [-123.07866, 42.08606],
+                    [-123.07744, 42.0851],
+                    [-123.07569, 42.08532],
+                    [-123.07203, 42.08646],
+                    [-123.06935, 42.08879],
+                    [-123.0692, 42.0893],
+                    [-123.06768, 42.08976],
+                    [-123.06455, 42.08982],
+                    [-123.06195, 42.09095],
+                    [-123.0573, 42.0918],
+                    [-123.05394, 42.0922],
+                    [-123.04982, 42.09237],
+                    [-123.04806, 42.0918],
+                    [-123.04593, 42.09259],
+                    [-123.04396, 42.0923],
+                ],
+            }
+        ),
+        None,
+        6.227,
+        None,
+    )
+    upsert_trails(con, [osm_way, usfs_row])
+
+    deleted = prune_duplicate_cross_source_paths(con, min_lat=41.9, min_lng=-123.2, max_lat=42.2, max_lng=-122.9)
+
+    assert deleted == 1
+    remaining_ids = {row[0] for row in con.execute("SELECT id FROM trails").fetchall()}
+    assert remaining_ids == {"usfs:trail/5031.005121"}
+
+
 def test_prune_duplicate_cross_source_paths_keeps_a_length_mismatched_partial_overlap(
     con: psycopg.Connection,
 ) -> None:
