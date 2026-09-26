@@ -88,9 +88,15 @@ _TILE_DEG = 2.0
 #   3 - adds barrier=gate/bollard/... nodes, matched onto road ways as a synthetic barrier attr
 #   4 - keeps the seasonal / *:conditional access tags in `attrs`
 #   5 - stops caching a route=hiking relation's member ways a second time as their own `path`
-#       row (issue #394) - the region re-pull needed to stop new duplicates appearing; existing
-#       duplicate rows are cleared separately by cache migration 52
-_TRAILS_QUERY_VERSION = 5
+#       row (issue #394) - the region re-pull needed to stop new duplicates appearing; already-
+#       cached duplicates self-heal via `cache.prune_duplicate_route_paths` (Copilot review, PR
+#       #396 dropped the original global migration - it took prod's SSH connection down)
+#   6 - no query change - forces one re-pull per region so `cache.prune_duplicate_cross_source_
+#       paths` (issue #404) gets a chance to run against every already-ingested region. Without
+#       this bump, `ingest_trails_region`'s `is_ingested` check would skip the fetch/upsert/
+#       prune loop entirely for any region already at the current version (Copilot review, PR
+#       #405) - same reasoning #394 already relied on for its own prune
+_TRAILS_QUERY_VERSION = 6
 
 # Way classes we ingest, by the ``kind`` they become. Trails are foot/horse ways; roads are the
 # old logging / forest-service roads foragers actually walk and drive (issue: forest roads are a

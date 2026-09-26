@@ -333,19 +333,25 @@ def prune_duplicate_cross_source_paths(
     deliberately never touches a ``source='usfs'`` row (Copilot review, PR #396); this is the
     fix for the case it left open - the same physical trail cached separately from OSM and from
     the USFS Trail_NFS bulk import (``usfs_trails.py``), confirmed live for Mule Mountain Trail
-    #919 (``osm:way/5159158`` vs ``usfs:trail/5031.005121``, Hausdorff distance ~140m).
+    #919 (``osm:way/5159158`` vs ``usfs:trail/5031.005121``).
 
     USFS wins on a match: it's the authoritative source, matching the precedent already set for
     the road layer (MVUM preferred over OSM's guessed vehicle-legality tags). Only the OSM row
     is ever deleted here - a USFS row is never pruned for duplicating an OSM one.
 
     Two independently-digitized lines for the same physical trail don't align anywhere near as
-    tightly as an OSM route and its own member way (``prune_duplicate_route_paths``'s 5m), so
-    this uses a much wider buffer (50m) - but guards against false merges between genuinely
-    distinct, roughly parallel trails with two checks a same-source match doesn't need: the OSM
-    path's *entire* length must fall within the buffer (``ST_CoveredBy``, not just endpoints),
-    and the two paths' ``length_km`` must be within 30% of each other (a spur or a short cutoff
-    contained in a longer trail's buffer would fail this even if geometrically covered).
+    tightly as an OSM route and its own member way (``prune_duplicate_route_paths``'s 5m). The
+    Mule Mountain pair's *directed* distance - every OSM vertex's distance to the nearest point
+    on the USFS line, which is what ``ST_CoveredBy`` against a buffered USFS line actually
+    tests - measures ~123m (queried live; the symmetric Hausdorff distance, ~140m, is a looser,
+    wrong number for this check since it's dominated by the reverse direction). A 50m buffer
+    (Copilot review, PR #405 first draft) can never match this real case; 150m clears it with
+    margin. That's still a targeted tolerance, not an unbounded one - it's paired with two
+    checks a same-source match doesn't need, both required to guard against false merges
+    between genuinely distinct, roughly parallel trails: the OSM path's *entire* length must
+    fall within the buffer (``ST_CoveredBy``, not just endpoints), and the two paths'
+    ``length_km`` must be within 30% of each other (a spur or a short cutoff contained in a
+    longer trail's buffer would fail this even if geometrically covered).
 
     Scoped per ingest-call bbox, same reasoning as ``prune_duplicate_route_paths`` - a
     table-wide sweep already took prod down once for the same-source case; this only ever runs
@@ -356,7 +362,7 @@ def prune_duplicate_cross_source_paths(
     result = con.execute(
         f"""
         WITH area_usfs AS MATERIALIZED (
-            SELECT geom AS usfs_geom, ST_Buffer(geom, 50) AS buf, length_km
+            SELECT geom AS usfs_geom, ST_Buffer(geom, 150) AS buf, length_km
             FROM trails
             WHERE kind = 'path' AND source = 'usfs' AND geom && {envelope}
         )
