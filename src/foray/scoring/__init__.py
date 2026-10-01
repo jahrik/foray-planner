@@ -20,6 +20,7 @@ from __future__ import annotations
 from foray.scoring.models import (
     CampSite,
     FireNear,
+    LandParcel,
     RegionScore,
     SpeciesHit,
     Stop,
@@ -36,6 +37,7 @@ from foray.scoring.queries import (
     connected_trails,
     fire_near,
     get_trail,
+    land_near,
     nearest_trail,
     place_calendar,
     precise_observations,
@@ -51,6 +53,7 @@ from foray.scoring.regions import build_phenology
 __all__ = [
     "CampSite",
     "FireNear",
+    "LandParcel",
     "RegionScore",
     "SpeciesHit",
     "Stop",
@@ -65,6 +68,7 @@ __all__ = [
     "connected_trails",
     "fire_near",
     "get_trail",
+    "land_near",
     "nearest_trail",
     "place_calendar",
     "plan_route",

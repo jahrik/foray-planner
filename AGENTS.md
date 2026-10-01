@@ -148,10 +148,15 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
     shapes an auto-picked trip) and never dropped for score, a missing free camp, or an
     over-long leg; the corridor widens to include every pick and, with no explicit destination,
     the trip runs to the farthest waypoint. `GET /api/plan?waypoints=` bounds-checks each id's
-    implied cell centre before the corridor math. Optional `pin=<region>:<camp|trail>:<id>`
-    params (issue #311) pin a waypoint to a specific cached campground / trail row
-    (`queries.resolve_pin`, coordinates never taken from the client): legs are measured to the
-    pin and it rides on `Stop.pin` for the route line, GPX and Google Maps exports.
+    implied cell centre before the corridor math. Optional `pin=<region>:<camp|trail|land>:<id>`
+    params (issue #311) pin a waypoint to a specific cached campground / trail row / public-land
+    parcel (`queries.resolve_pin`, coordinates never taken from the client): legs are measured
+    to the pin and it rides on `Stop.pin` for the route line, GPX and Google Maps exports. A
+    parcel resolves to its *entrance* seen from the region's cell centre
+    (`queries._land_entrance`): nearest in-parcel point of a cached forest road / trailhead,
+    else of a path, else the nearest boundary point - `Stop.pin.feature_kind` says which. Only
+    `PINNABLE_LAND_AGENCIES` (federal/state public-land managers) are offered; tribal, military
+    and city land stays map-only.
   - `_sql.py` - the SQL fragments shared by the three query modules (grid binning
     `BINNED`, the decoy-aware center expressions, the `taxon_id` / `IN (...)` helpers,
     `genus_name_map`).
@@ -225,14 +230,16 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
     select/Details/shortlist; `collapsibleRankList()` keeps the top 3 as hero cards and collapses
     the rest behind "Show N more regions". `sort.ts` holds the `Sort` labels/order.
   - `src/views/details.ts` - the Details view (per-region Calendar / Photos / Trails /
-    Campgrounds tabs, full ARIA tab pattern), swapped into `#panel` from a card's "Details"
-    button; a back button restores the list from cache. `destination-tabs.ts` holds the four tab
+    Campgrounds / Public land tabs, full ARIA tab pattern), swapped into `#panel` from a card's "Details"
+    button; a back button restores the list from cache. `destination-tabs.ts` holds the five tab
     loaders (`createLazyLoader`-guarded).
   - `src/views/shortlist.ts` - the route shortlist. "+ Plan" on a card adds a region id; the
     `#route-bar` at the panel's foot ("Plan a road trip" / "N spots picked") enters Plan mode,
     and `views/plan.ts`'s `runPlan()` sends the picks as `/api/plan?waypoints=`. Each pick can
     also carry a pin: `views/stop-pin.ts`'s "Use as trip stop" button under the Details Trails /
-    Campgrounds lists (issue #311). `views/plan-points.ts` holds the pin -> camp -> centroid
+    Campgrounds / Public land lists (issue #311; the land list is `GET /api/land`). A plan stop
+    card's "Choose stop point" opens that stop's Details on Trails (freezing the current stops
+    into the shortlist first, so pinning one doesn't collapse an auto-picked trip to it). `views/plan-points.ts` holds the pin -> camp -> centroid
     point fallback shared by the route render and both exports.
   - `src/views/plan.ts` - the route-planning UI (form + `TripPlan` render + GPX/JSON export).
     `src/views/view-run.ts` - `refreshCurrentView` / `rerenderCurrentView`, the single

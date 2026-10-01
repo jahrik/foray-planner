@@ -37,6 +37,26 @@ const PIN_KIND_LABELS: Record<string, string> = {
   road: "forest road",
 };
 
+// How a land parcel's entrance was found (queries._land_entrance) - always "public land", since
+// the entrance is a point we derived, not the feature the user picked.
+const LAND_ENTRANCE_LABELS: Record<string, string> = {
+  road: "public land · where a forest road enters",
+  trailhead: "public land · at a trailhead inside",
+  path: "public land · where a trail enters",
+  edge: "public land · nearest boundary point",
+};
+
 export function pinKindLabel(pin: StopPin): string {
-  return pin.kind === "camp" ? "campground" : (PIN_KIND_LABELS[pin.feature_kind] ?? "trail");
+  if (pin.kind === "camp") return "campground";
+  if (pin.kind === "land") return LAND_ENTRANCE_LABELS[pin.feature_kind] ?? "public land";
+  return PIN_KIND_LABELS[pin.feature_kind] ?? "trail";
+}
+
+/** Drop a point identical to the one before it. Neighbouring stops can resolve to the same
+ * nearest campground, and Google Maps would otherwise route a zero-length leg between them. */
+export function withoutRepeats(points: readonly RoutePoint[]): RoutePoint[] {
+  return points.filter(
+    (point, index) =>
+      index === 0 || point.lat !== points[index - 1]!.lat || point.lng !== points[index - 1]!.lng,
+  );
 }

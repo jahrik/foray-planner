@@ -1,5 +1,6 @@
-"""Map-layer reads around a region or an explicit point: camps, trails, place. Public land and
-wildfire polygons are served as vector tiles instead (issue #336 PR 2, api/routes/tiles.py)."""
+"""Map-layer reads around a region or an explicit point: camps, trails, place, and the
+public-land parcel *list* a Details tab pins from (issue #311). Public land and wildfire
+polygons themselves are served as vector tiles (issue #336 PR 2, api/routes/tiles.py)."""
 
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ from foray.api.deps import (
     set_device_cookie,
 )
 from foray.api.state import AppState
-from foray.api_models import CampSite, RegionPlace, Trail, TrailPath
+from foray.api_models import CampSite, LandParcel, RegionPlace, Trail, TrailPath
 from foray.cache import load_region_place as db_load_region_place
 from foray.cache import load_region_places as db_load_region_places
 from foray.cache import load_region_satellite as db_load_region_satellite
@@ -225,6 +226,23 @@ def get_region_satellite_labels(
     require_idle(state)
     _image, labels = _region_satellite_bytes(region_id, state, pool)
     return Response(content=labels, media_type="image/png", headers={"Cache-Control": _SATELLITE_CACHE_CONTROL})
+
+
+@router.get("/api/land")
+def get_land(
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+    radius_km: float = Query(30.0, gt=0, le=200),
+    limit: int = Query(20, gt=0, le=50),
+    state: AppState = Depends(get_state),
+    pool: ConnectionPool = Depends(get_pool),
+) -> list[LandParcel]:
+    """Pinnable public-land parcels near a point, nearest first (issue #311) - the Details
+    view's "Public land" tab. Ownership only, no geometry (the map draws parcels from tiles)."""
+    require_idle(state)
+    with pool.connection() as conn:
+        found = scoring.land_near(conn, lat=lat, lng=lng, radius_km=radius_km, limit=limit)
+    return [LandParcel.model_validate(parcel) for parcel in found]
 
 
 @router.get("/api/trails")

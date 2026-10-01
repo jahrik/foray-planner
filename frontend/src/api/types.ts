@@ -55,8 +55,11 @@ export type TrailPath = Omit<components["schemas"]["TrailPath"], "trail"> & { tr
 /** One week-long stay in a planned trip (a `TripPlan.stops` entry). */
 export type Stop = components["schemas"]["Stop"];
 
-/** The campground / trail a user pinned as a stop's exact point (issue #311). */
+/** The campground / trail / land-parcel entrance a user pinned as a stop's exact point (issue #311). */
 export type StopPin = components["schemas"]["StopPin"];
+
+/** A pinnable public-land parcel near a point (`GET /api/land`, issue #311) - ownership only. */
+export type LandParcel = components["schemas"]["LandParcel"];
 
 /** A greedy multi-stop itinerary (`GET /api/plan`). */
 export type TripPlan = components["schemas"]["TripPlan"];

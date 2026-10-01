@@ -4,14 +4,15 @@
 // State only - no DOM template here; main.ts wires the action bar's button, views.ts re-renders
 // cards' plan buttons through card-dom's syncPlan.
 //
-// Each shortlisted region can also carry a pin (issue #311): the specific campground or trail
-// the user picked in its Details view as the stop's exact point. Pins are sent alongside the
+// Each shortlisted region can also carry a pin (issue #311): the specific campground, trail or
+// public-land parcel the user picked in its Details view as the stop's exact point (a parcel
+// resolves server-side to its entrance). Pins are sent alongside the
 // waypoints as `pin=<region>:<kind>:<id>`; the server resolves the coordinates itself.
 
 import { qs, state } from "../state";
 
 export interface PinRef {
-  kind: "camp" | "trail";
+  kind: "camp" | "trail" | "land";
   id: string;
   name: string;
 }
@@ -42,6 +43,16 @@ export function toggleShortlist(regionId: string): void {
     ids.splice(at, 1);
     pins.delete(regionId);
   }
+  renderActionBar();
+}
+
+/** Add regions to the end of the shortlist, skipping ones already on it. Used to freeze an
+ * auto-picked trip's stops before the user pins one of them, so pinning doesn't collapse the
+ * trip down to just that stop (a non-empty shortlist is the whole trip). */
+export function addToShortlist(regionIds: readonly string[]): void {
+  regionIds.forEach((regionId) => {
+    if (!ids.includes(regionId)) ids.push(regionId);
+  });
   renderActionBar();
 }
 

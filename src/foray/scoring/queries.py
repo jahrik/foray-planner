@@ -18,7 +18,7 @@ from typing import Any, Literal, LiteralString, cast
 import psycopg
 
 from foray.cache import region_precip
-from foray.geo import haversine_km
+from foray.geo import bbox_around, haversine_km
 from foray.scoring._sql import (
     ACCESS_SEARCH_KM,
     BINNED,
@@ -29,7 +29,7 @@ from foray.scoring._sql import (
     sql_in,
     taxon_filter,
 )
-from foray.scoring.models import CampSite, FireNear, StopPin, Trail
+from foray.scoring.models import CampSite, FireNear, LandParcel, StopPin, Trail
 
 _CALENDAR_SPECIES_PER_MONTH = 15
 
@@ -543,16 +543,186 @@ def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
     )
 
 
-PinKind = Literal["camp", "trail"]
+# Public-land managers whose parcels can be pinned as a trip stop (issue #311): federal / state
+# lands generally open to the public. Tribal, military and city/county land is cached for the
+# ownership map but isn't somewhere to send a road trip, so it's not offered. Listing a parcel
+# still asserts nothing about access or camping legality (AGENTS.md "No claims").
+PINNABLE_LAND_AGENCIES: tuple[str, ...] = (
+    "BLM",
+    "Bureau of Land Management",
+    "USFS",
+    "Forest Service",
+    "National Park Service",
+    "U.S. Fish and Wildlife Service",
+    "Bureau of Reclamation",
+    "Army Corps of Engineers",
+    "State Department of Natural Resources",
+    "State Park and Recreation",
+)
+
+# How far from the reference point to look for a parcel's entrance feature, and how many of the
+# nearest candidates of each pool to test against the parcel. A wider search on trail-dense
+# ground sorts thousands of paths (40 km around Tacoma: ~7,800) - 20 km keeps the entrance
+# within the destination's own neighbourhood and the query well inside the 5 s statement cap.
+_ENTRANCE_SEARCH_KM = 20.0
+_ENTRANCE_CANDIDATES = 100
+# Vertex cap per piece when subdividing the clipped parcel - a BLM multipolygon can run to 50k+
+# vertices, and intersecting each candidate with the whole thing is what blew the timeout.
+_ENTRANCE_PIECE_VERTICES = 128
 
 
-def resolve_pin(con: psycopg.Connection, kind: PinKind, feature_id: str) -> StopPin | None:
-    """A cached campsite or trail row as a trip-stop pin (issue #311), or None when it's no
-    longer cached (re-ingest dropped it) - the planner then falls back to the region centroid.
+def land_near(
+    con: psycopg.Connection, *, lat: float, lng: float, radius_km: float, limit: int = 20
+) -> list[LandParcel]:
+    """Pinnable public-land parcels within ``radius_km`` of a point, nearest first (0 km = the
+    point is inside). Index-backed KNN on ``public_land.geom``, like the other near-* reads."""
+    sql: LiteralString = f"""
+        WITH pt AS (SELECT {GEOG_POINT} AS g)
+        SELECT p.id, p.agency, p.unit, p.url, ST_Distance(p.geom, pt.g) / 1000.0 AS dist_km
+        FROM public_land p, pt
+        WHERE p.geom IS NOT NULL AND ST_DWithin(p.geom, pt.g, %s) AND p.agency = ANY(%s)
+        ORDER BY p.geom <-> pt.g
+        LIMIT %s
+        """
+    rows = con.execute(sql, [lng, lat, radius_km * 1000.0, list(PINNABLE_LAND_AGENCIES), limit]).fetchall()
+    return [
+        LandParcel(id=parcel_id, agency=agency, unit=unit, url=url, distance_km=round(dist_km, 2))
+        for parcel_id, agency, unit, url, dist_km in rows
+    ]
+
+
+def _land_entrance(con: psycopg.Connection, parcel_id: str, *, lat: float, lng: float) -> StopPin | None:
+    """``_land_entrance_lookup`` with JIT off for its statements only.
+
+    PostGIS functions carry very high planner cost estimates, so these small queries cross
+    ``jit_above_cost`` and spent 300-800 ms in LLVM compilation for ~60 ms of real work (measured
+    on a 53k-vertex BLM parcel and a 244-vertex forest alike). Connections are autocommit, so
+    the lookup gets its own transaction (a savepoint when the caller already opened one) and
+    ``SET LOCAL`` ends with it - the rest of the request keeps the server default.
+    """
+    with con.transaction():
+        con.execute("SET LOCAL jit = off")
+        return _land_entrance_lookup(con, parcel_id, lat=lat, lng=lng)
+
+
+def _land_entrance_lookup(con: psycopg.Connection, parcel_id: str, *, lat: float, lng: float) -> StopPin | None:
+    """A parcel's entrance as seen from ``(lat, lng)``: the nearest point *inside* the parcel on a
+    cached forest road or at a trailhead, else on a trail, else the parcel's nearest boundary
+    point. Approached from outside, the nearest in-parcel point of a road is where it crosses
+    into the parcel - the practical "entrance"; from inside, it's the nearest road point.
+
+    Two queries. First the parcel's nearest point to ``(lat, lng)`` (the "edge" fallback, and
+    the point inside if the reference is already on the parcel) - also the anchor for step two,
+    so a parcel listed from a widened Details search still has its entrance looked for where
+    you'd actually approach it, not 50 km back at the destination. Then the entrance search,
+    bounded for huge parcels: candidate features within ``_ENTRANCE_SEARCH_KM`` of the anchor
+    (nearest ``_ENTRANCE_CANDIDATES`` per pool), and the polygon clipped to that box and
+    subdivided into small pieces (bbox-prefiltered with ``&&``) before any intersection - a
+    50k-vertex BLM multipolygon intersected whole per candidate hit the 5 s statement cap.
+    """
+    edge = con.execute(
+        """
+        SELECT id, agency, unit, ST_Y(near_point), ST_X(near_point)
+        FROM (
+            SELECT id, agency, unit,
+                   ST_ClosestPoint(geom::geometry, ST_SetSRID(ST_MakePoint(%s, %s), 4326)) AS near_point
+            FROM public_land
+            WHERE id = %s AND geom IS NOT NULL AND agency = ANY(%s)
+        ) parcel
+        """,
+        [lng, lat, parcel_id, list(PINNABLE_LAND_AGENCIES)],
+    ).fetchone()
+    if edge is None:
+        return None
+    pin_id, agency, unit, anchor_lat, anchor_lng = edge
+    # Candidate features near the anchor: the nearest of each pool, as plain index-ordered reads,
+    # handed to the clip/intersect statement below as EWKB parameters.
+    candidates = con.execute(
+        """
+        (SELECT kind, ST_AsEWKB(geom::geometry) FROM trails
+         WHERE kind IN ('road', 'trailhead') AND geom IS NOT NULL
+           AND ST_DWithin(geom, ST_SetSRID(ST_MakePoint(%(lng)s, %(lat)s), 4326)::geography, %(search_m)s)
+         ORDER BY geom <-> ST_SetSRID(ST_MakePoint(%(lng)s, %(lat)s), 4326)::geography
+         LIMIT %(cand)s)
+        UNION ALL
+        (SELECT kind, ST_AsEWKB(geom::geometry) FROM trails
+         WHERE kind = 'path' AND geom IS NOT NULL
+           AND ST_DWithin(geom, ST_SetSRID(ST_MakePoint(%(lng)s, %(lat)s), 4326)::geography, %(search_m)s)
+         ORDER BY geom <-> ST_SetSRID(ST_MakePoint(%(lng)s, %(lat)s), 4326)::geography
+         LIMIT %(cand)s)
+        """,
+        {"lat": anchor_lat, "lng": anchor_lng, "search_m": _ENTRANCE_SEARCH_KM * 1000.0, "cand": _ENTRANCE_CANDIDATES},
+    ).fetchall()
+    best = None
+    if candidates:
+        box = bbox_around(anchor_lat, anchor_lng, _ENTRANCE_SEARCH_KM)
+        best = con.execute(
+            """
+            WITH piece AS MATERIALIZED (
+                SELECT ST_Subdivide(
+                    ST_ClipByBox2D(geom::geometry, ST_MakeEnvelope(%(west)s, %(south)s, %(east)s, %(north)s, 4326)),
+                    %(piece_vertices)s
+                ) AS g
+                FROM public_land WHERE id = %(parcel)s
+            ),
+            cand AS MATERIALIZED (
+                SELECT kind, ST_GeomFromEWKB(wkb) AS g FROM unnest(%(kinds)s::text[], %(wkbs)s::bytea[]) AS c(kind, wkb)
+            ),
+            entrance AS (
+                SELECT cand.kind,
+                       ST_ClosestPoint(
+                           ST_Intersection(cand.g, piece.g), ST_SetSRID(ST_MakePoint(%(lng)s, %(lat)s), 4326)
+                       ) AS g
+                FROM cand JOIN piece ON cand.g && piece.g AND ST_Intersects(cand.g, piece.g)
+            )
+            SELECT kind, ST_Y(g), ST_X(g) FROM entrance
+            WHERE NOT ST_IsEmpty(g)
+            ORDER BY (kind = 'path'), g <-> ST_SetSRID(ST_MakePoint(%(lng)s, %(lat)s), 4326)
+            LIMIT 1
+            """,
+            {
+                "parcel": parcel_id,
+                "lat": lat,
+                "lng": lng,
+                "kinds": [kind for kind, _wkb in candidates],
+                "wkbs": [wkb for _kind, wkb in candidates],
+                "west": box.min_lng,
+                "south": box.min_lat,
+                "east": box.max_lng,
+                "north": box.max_lat,
+                "piece_vertices": _ENTRANCE_PIECE_VERTICES,
+            },
+        ).fetchone()
+    entrance_kind, entrance_lat, entrance_lng = best if best else ("edge", anchor_lat, anchor_lng)
+    return StopPin(
+        kind="land",
+        id=pin_id,
+        name=unit or agency or "Public land",
+        feature_kind=entrance_kind,
+        lat=entrance_lat,
+        lng=entrance_lng,
+    )
+
+
+PinKind = Literal["camp", "trail", "land"]
+
+
+def resolve_pin(
+    con: psycopg.Connection, kind: PinKind, feature_id: str, *, near: tuple[float, float] | None = None
+) -> StopPin | None:
+    """A cached campsite, trail or public-land parcel as a trip-stop pin (issue #311), or None
+    when it's no longer cached (re-ingest dropped it) - the planner then falls back to the
+    region centroid.
 
     A trail's point is its stored representative ``center_lat``/``center_lng``: the node itself
-    for a trailhead, the line's representative point for a path / route / forest road.
+    for a trailhead, the line's representative point for a path / route / forest road. A land
+    parcel has no single point, so its pin is the entrance seen from ``near`` (the stop's
+    region centre) - see ``_land_entrance``; ``near`` is required for ``kind='land'``.
     """
+    if kind == "land":
+        if near is None:
+            raise ValueError("resolve_pin(kind='land') needs a `near` reference point")
+        return _land_entrance(con, feature_id, lat=near[0], lng=near[1])
     sql: LiteralString = (
         "SELECT id, name, kind, lat, lng FROM campsites WHERE id = %s"
         if kind == "camp"

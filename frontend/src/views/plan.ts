@@ -15,8 +15,9 @@ import { addMarker } from "../map/destinations";
 import { clearMarkers, map, setPlanRoute, HOME_DOT_STYLE, PLAN_STOP } from "../map/map";
 import { circleStyle } from "../map/markers";
 import { buildPopup } from "../map/popup";
-import { legPoint, pinKindLabel, routeEnd, stopPoint } from "./plan-points";
-import { pinParams, shortlistIds } from "./shortlist";
+import { legPoint, pinKindLabel, routeEnd, stopPoint, withoutRepeats } from "./plan-points";
+import { openDetails } from "./details";
+import { addToShortlist, pinParams, shortlistIds } from "./shortlist";
 import { dist, displayName, errorDetail, inatUrl, monthsParam, MONTHS, qs, setStatus, state } from "../state";
 
 export async function runPlan({ reuseCache = false }: { reuseCache?: boolean } = {}): Promise<void> {
@@ -195,7 +196,7 @@ function renderPlan(trip: TripPlan): void {
       </div>
     </div>
   `;
-  trip.stops.forEach((stop) => panel.appendChild(buildStopCard(stop)));
+  trip.stops.forEach((stop) => panel.appendChild(buildStopCard(stop, trip)));
 
   // Wire export buttons - trip is captured in closure.
   qs<HTMLButtonElement>("#export-gpx").onclick = () => exportGpx(trip);
@@ -206,7 +207,7 @@ function renderPlan(trip: TripPlan): void {
 }
 
 /** Build a per-stop card using DOM methods so user-controlled text is never injected as HTML. */
-function buildStopCard(stop: Stop): HTMLElement {
+function buildStopCard(stop: Stop, trip: TripPlan): HTMLElement {
   const card = document.createElement("div");
   card.className = "stop-card";
 
@@ -313,6 +314,31 @@ function buildStopCard(stop: Stop): HTMLElement {
     card.appendChild(fireEl);
   }
 
+  // "Choose stop point" (issue #311): opens this stop's Details view on the Trails tab, where a
+  // trail / campground / public-land row can be pinned as the stop's exact point. The current
+  // stops are frozen into the shortlist first - otherwise pinning one stop of an auto-picked
+  // trip would make the shortlist (and so the whole trip) just that one stop. Back re-plans so
+  // the new pin takes effect.
+  const actions = document.createElement("div");
+  actions.className = "card-actions";
+  const choose = document.createElement("button");
+  choose.type = "button";
+  choose.className = "card-action";
+  choose.textContent = stop.pin ? "📍 Change stop point" : "📍 Choose stop point";
+  choose.onclick = (event) => {
+    event.stopPropagation();
+    addToShortlist(trip.stops.map((tripStop) => tripStop.region_id));
+    focusOnMap(stop.center_lat, stop.center_lng, 10);
+    openDetails(
+      { region_id: stop.region_id, center_lat: stop.center_lat, center_lng: stop.center_lng },
+      `Stop ${stop.order}`,
+      () => void runPlan(),
+      { tab: "trails", backLabel: "Back to trip" },
+    );
+  };
+  actions.appendChild(choose);
+  card.appendChild(actions);
+
   // Click → zoom the map to this stop and load layers around it. focusOnMap keeps the stop
   // clear of the desktop dock / mobile sheet (issue #297).
   card.onclick = () => {
@@ -381,7 +407,10 @@ function openGoogleMapsRoute(trip: TripPlan): void {
   const origin: RoutePoint = { lat: trip.start_lat, lng: trip.start_lng };
   const end = routeEnd(trip);
   const stops = end.lastStopIsDestination ? trip.stops.slice(0, -1) : trip.stops;
-  window.open(googleMapsRouteUrl(origin, end.point, stops.map(stopPoint)), "_blank", "noopener");
+  // Collapse back-to-back duplicates (two stops sharing a nearest camp), including a last
+  // waypoint that equals the destination.
+  const points = withoutRepeats([...stops.map(stopPoint), end.point]);
+  window.open(googleMapsRouteUrl(origin, end.point, points.slice(0, -1)), "_blank", "noopener");
 }
 
 /** Trigger a client-side file download without a round-trip to the server. */

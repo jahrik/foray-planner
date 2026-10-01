@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  addToShortlist,
   clearShortlist,
   inShortlist,
   pinFor,
@@ -92,5 +93,11 @@ describe("shortlist", () => {
     setPin("ccc", { kind: "camp", id: "ridb:8", name: "X" });
     clearShortlist();
     expect(pinFor("ccc")).toBeUndefined();
+  });
+
+  it("addToShortlist appends only regions not already picked, keeping order", () => {
+    toggleShortlist("b");
+    addToShortlist(["a", "b", "c"]);
+    expect(shortlistIds()).toEqual(["b", "a", "c"]);
   });
 });

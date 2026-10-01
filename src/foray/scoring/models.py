@@ -152,16 +152,32 @@ class TrailPath:
 
 
 @dataclass
+class LandParcel:
+    """A public-land parcel near a point - a Details "Public land" row a user can pin as a trip
+    stop (issue #311). Ownership only: it links the official source and asserts no access or
+    camping legality (AGENTS.md "No claims")."""
+
+    id: str
+    agency: str | None
+    unit: str | None
+    url: str | None
+    distance_km: float  # 0 when the point is inside the parcel
+
+
+@dataclass
 class StopPin:
     """The specific feature a user pinned as a trip stop's coordinate (issue #311) - a
     campground or a trail row (trailhead / path / route / forest road) picked from the
     destination's Details view. When set, it replaces the region centroid for leg distances and
     every export (GPX, Google Maps)."""
 
-    kind: str  # 'camp' | 'trail'
+    kind: str  # 'camp' | 'trail' | 'land'
     id: str
     name: str
-    feature_kind: str  # the camp's or trail's own kind ('campground', 'trailhead', 'road', ...)
+    # The camp's or trail's own kind ('campground', 'trailhead', 'road', ...). For a land parcel,
+    # how its entrance point was found: 'road' / 'trailhead' / 'path' (nearest point of that
+    # cached feature inside the parcel) or 'edge' (nearest parcel boundary point, no feature).
+    feature_kind: str
     lat: float
     lng: float
 
