@@ -1,7 +1,14 @@
 import L from "leaflet";
 
 import { getJson } from "../api/client";
-import type { Calendar, CampSite, RecentObservation, RecentObservationsPage, Trail } from "../api/types";
+import type {
+  Calendar,
+  CampSite,
+  LandParcel,
+  RecentObservation,
+  RecentObservationsPage,
+  Trail,
+} from "../api/types";
 import { FORAGE_HI_THRESHOLD } from "../map/forage";
 import { gradeLabel, seasonalNote } from "../map/trail-attrs";
 import { directionsLink } from "../map/directions";
@@ -34,6 +41,19 @@ const LAND_SUFFIXES: [RegExp, string][] = [
   [/\bState Forest$/, "SF"],
   [/\bState Recreation Area$/, "SRA"],
 ];
+
+// Whether a parcel's display name already says who manages it - the agency itself, or spelled
+// out ("Bureau of Land Management" for BLM: the capitalised words' initials) - so the Public land
+// row doesn't repeat it as a suffix.
+export function namesAgency(name: string, agency: string): boolean {
+  if (name === agency) return true;
+  const initials = name
+    .split(/\s+/)
+    .filter((word) => /^[A-Z]/.test(word))
+    .map((word) => word[0])
+    .join("");
+  return initials === agency;
+}
 
 function landLabel(agency: string | null | undefined, unit: string | null | undefined): string {
   if (unit) {
@@ -356,6 +376,82 @@ export async function loadCampgroundsInto(
     list.appendChild(button);
   });
   container.append(list, pinAction.element);
+  syncPinnedChips(container, region.region_id);
+  return true;
+}
+
+// Public-land parcels in and around the destination (issue #311), nearest first - pinnable as
+// the trip stop. A parcel has no single point, so the server resolves a pinned parcel to its
+// entrance (where a cached forest road / trail enters it, else its nearest edge) when planning.
+// Ownership only: rows link the managing agency's source and assert nothing about access or
+// camping rules (AGENTS.md "No claims"). Same widen-once fallback as the Campgrounds tab.
+export async function loadLandInto(
+  region: { region_id: string; center_lat: number; center_lng: number },
+  container: HTMLElement,
+): Promise<boolean> {
+  container.innerHTML = "<p class='hint'>Loading…</p>";
+  const parcels = (radiusKm: number): Promise<LandParcel[]> =>
+    getJson("/api/land", { query: { lat: region.center_lat, lng: region.center_lng, radius_km: radiusKm } });
+  let found: LandParcel[];
+  let widened = false;
+  try {
+    found = await parcels(regionRadiusKm());
+    if (!found.length) {
+      widened = true;
+      found = await parcels(Math.min(regionRadiusKm() * 3, 200));
+    }
+  } catch (error) {
+    container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
+    return false;
+  }
+  if (!found.length) {
+    container.innerHTML = "<p class='hint'>No public land cached near this destination yet.</p>";
+    return true;
+  }
+  container.innerHTML = "";
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent =
+    (widened ? "None inside the destination - showing the nearest parcels. " : "") +
+    "Ownership only - check the managing agency for access and camping rules.";
+  container.appendChild(hint);
+  const list = document.createElement("div");
+  list.className = "chips";
+  const pinAction = createPinAction(region.region_id);
+  const sourceLink = document.createElement("a");
+  sourceLink.className = "show-more";
+  sourceLink.target = "_blank";
+  sourceLink.rel = "noopener";
+  sourceLink.hidden = true;
+  const rows: HTMLButtonElement[] = [];
+  found.forEach((parcel) => {
+    const name = parcel.unit || parcel.agency || "Public land";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "chip";
+    const where = parcel.distance_km === 0 ? "inside" : dist(parcel.distance_km);
+    const agency = parcel.agency && !namesAgency(name, parcel.agency) ? ` · ${parcel.agency}` : "";
+    button.textContent = `${landLabel(parcel.agency, parcel.unit) || name}${agency} · ${where}`;
+    const ref = { kind: "land" as const, id: parcel.id, name };
+    markPinnable(button, ref);
+    button.onclick = (e) => {
+      e.stopPropagation();
+      rows.forEach((row) => row.classList.remove("active"));
+      button.classList.add("active");
+      pinAction.select(ref);
+      // Only https links from the source are surfaced (same rule as the photo links).
+      if (parcel.url && parcel.url.startsWith("https://")) {
+        sourceLink.href = parcel.url;
+        sourceLink.textContent = `${parcel.agency ?? "Official"} source ↗`;
+        sourceLink.hidden = false;
+      } else {
+        sourceLink.hidden = true;
+      }
+    };
+    rows.push(button);
+    list.appendChild(button);
+  });
+  container.append(list, pinAction.element, sourceLink);
   syncPinnedChips(container, region.region_id);
   return true;
 }

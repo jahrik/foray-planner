@@ -24,6 +24,7 @@ from foray.api.deps import (
 from foray.api.state import AppState
 from foray.api_models import TripPlan
 from foray.geo import grid_cell_center
+from foray.scoring.models import StopPin
 from foray.scoring.queries import PinKind
 from foray.sources import geocode
 
@@ -54,8 +55,9 @@ def plan(
 
     ``destination`` is auto-picked (best-scoring region reachable from ``start``) when omitted.
     ``waypoints``, when given, are the whole itinerary. Each ``pin`` is
-    ``{region_id}:{camp|trail}:{feature_id}`` - a campground or trail the user picked as that
-    waypoint's exact stop point (issue #311); a pin whose feature is no longer cached falls back
+    ``{region_id}:{camp|trail|land}:{feature_id}`` - a campground, trail or public-land parcel
+    the user picked as that waypoint's exact stop point (issue #311; a parcel resolves to its
+    entrance); a pin whose feature is no longer cached falls back
     to the region centroid.
     """
     require_idle(state)
@@ -90,15 +92,17 @@ def plan(
     for raw_pin in pin:
         region_id, kind, feature_id = ([*raw_pin.split(":", 2), "", ""])[:3]
         if region_id not in picked_waypoints or not feature_id or len(raw_pin) > 300:
-            raise HTTPException(422, f"pin {raw_pin!r} must be <waypoint region id>:<camp|trail>:<feature id>")
+            raise HTTPException(422, f"pin {raw_pin!r} must be <waypoint region id>:<camp|trail|land>:<feature id>")
         if region_id in pin_refs:
             raise HTTPException(422, f"waypoint {region_id!r} has more than one pin")
         if kind == "camp":
             pin_refs[region_id] = ("camp", feature_id)
         elif kind == "trail":
             pin_refs[region_id] = ("trail", feature_id)
+        elif kind == "land":
+            pin_refs[region_id] = ("land", feature_id)
         else:
-            raise HTTPException(422, f"pin kind {kind!r} must be 'camp' or 'trail'")
+            raise HTTPException(422, f"pin kind {kind!r} must be 'camp', 'trail' or 'land'")
 
     def resolve_point(query: str) -> tuple[float, float]:
         try:
@@ -115,11 +119,20 @@ def plan(
             home = resolve_home(conn, device_id, cfg)
             start_lat, start_lng = resolve_point(start) if start else (home.lat, home.lng)
             dest_lat, dest_lng = resolve_point(destination) if destination else (None, None)
-            pins = {
-                region_id: resolved
-                for region_id, (kind, feature_id) in pin_refs.items()
-                if (resolved := scoring.resolve_pin(conn, kind, feature_id)) is not None
-            }
+            pins: dict[str, StopPin] = {}
+            for region_id, (kind, feature_id) in pin_refs.items():
+                # A savepoint per pin: a land parcel's entrance is real geometry work, and if it
+                # ever hits the statement timeout the stop should fall back to its centroid
+                # rather than the whole plan 500ing on an aborted transaction.
+                try:
+                    with conn.transaction():
+                        # A land parcel's entrance is measured from the region's own cell centre.
+                        resolved = scoring.resolve_pin(conn, kind, feature_id, near=grid_cell_center(region_id))
+                except psycopg.errors.QueryCanceled:
+                    logger.warning("plan: resolving pin %s:%s timed out - using the centroid", kind, feature_id)
+                    continue
+                if resolved is not None:
+                    pins[region_id] = resolved
             trip = scoring.plan_route(
                 conn,
                 months=selected_months,

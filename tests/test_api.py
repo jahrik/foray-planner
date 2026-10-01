@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import threading
 import time
 from collections.abc import Iterator
@@ -13,9 +14,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from foray.api import create_app
-from foray.cache import upsert_campsites, upsert_fungi_genera, upsert_trails
+from foray.cache import upsert_campsites, upsert_fungi_genera, upsert_public_land, upsert_trails
 from foray.config import Home, Settings
-from foray.geo import grid_cell, h3_edge_length_km
+from foray.geo import grid_cell, grid_cell_center, h3_edge_length_km
 from foray.scoring import TripPlan, build_phenology
 from foray.sources.trails import _parse_element
 
@@ -726,6 +727,69 @@ def test_plan_route_resolves_pins_to_cached_features(
     assert pin.lat == pytest.approx(HOME_LAT + 0.01)
 
 
+def _seed_forest_around_home(con: psycopg.Connection) -> None:
+    ring = [
+        [HOME_LNG - 0.2, HOME_LAT - 0.2],
+        [HOME_LNG + 0.2, HOME_LAT - 0.2],
+        [HOME_LNG + 0.2, HOME_LAT + 0.2],
+        [HOME_LNG - 0.2, HOME_LAT + 0.2],
+        [HOME_LNG - 0.2, HOME_LAT - 0.2],
+    ]
+    upsert_public_land(
+        con,
+        [
+            (
+                "usfs:9",
+                "USFS",
+                "Home NF",
+                "usfs",
+                "https://example.test",
+                json.dumps({"type": "Polygon", "coordinates": [ring]}),
+            )
+        ],
+    )
+
+
+def test_land_lists_parcels_near_a_point(client: TestClient, con: psycopg.Connection) -> None:
+    _seed_forest_around_home(con)
+    response = client.get("/api/land", params={"lat": HOME_LAT, "lng": HOME_LNG})
+    assert response.status_code == 200
+    assert response.json() == [
+        {"id": "usfs:9", "agency": "USFS", "unit": "Home NF", "url": "https://example.test", "distance_km": 0.0}
+    ]
+
+
+def test_plan_route_resolves_a_land_pin_to_the_parcel_entrance(
+    client: TestClient, con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_forest_around_home(con)
+    home_cell = grid_cell(HOME_LAT, HOME_LNG, CELL).cell_id
+    captured = _capture_plan_route(monkeypatch)
+    response = client.get("/api/plan", params={"waypoints": home_cell, "pin": f"{home_cell}:land:usfs:9"})
+    assert response.status_code == 200
+    pins = captured["pins"]
+    assert isinstance(pins, dict)
+    pin = pins[home_cell]
+    # No cached roads/trails here, and the cell centre sits inside the forest: the "nearest edge"
+    # from inside is the reference point itself.
+    assert (pin.kind, pin.name, pin.feature_kind) == ("land", "Home NF", "edge")
+    assert (pin.lat, pin.lng) == pytest.approx(grid_cell_center(home_cell), abs=1e-6)
+
+
+def test_plan_route_survives_a_pin_lookup_timeout(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A land entrance that hits the statement timeout drops just that pin (centroid fallback),
+    # inside a savepoint so the rest of the plan's queries still run on a live transaction.
+    def slow_resolve_pin(*args: object, **kwargs: object) -> None:
+        raise psycopg.errors.QueryCanceled("canceling statement due to statement timeout")
+
+    monkeypatch.setattr("foray.api.scoring.resolve_pin", slow_resolve_pin)
+    captured = _capture_plan_route(monkeypatch)
+    home_cell = grid_cell(HOME_LAT, HOME_LNG, CELL).cell_id
+    response = client.get("/api/plan", params={"waypoints": home_cell, "pin": f"{home_cell}:land:blm:31"})
+    assert response.status_code == 200
+    assert captured["pins"] == {}
+
+
 def test_plan_route_rejects_two_pins_for_one_waypoint(client: TestClient) -> None:
     home_cell = grid_cell(HOME_LAT, HOME_LNG, CELL).cell_id
     other_cell = grid_cell(HOME_LAT + 1, HOME_LNG, CELL).cell_id
@@ -742,7 +806,7 @@ def test_plan_route_rejects_two_pins_for_one_waypoint(client: TestClient) -> Non
 
 @pytest.mark.parametrize(
     "bad_pin",
-    ["{cell}", "{cell}:camp", "{cell}:camp:", "{cell}:land:blm:1", "not-a-waypoint:camp:ridb:7"],
+    ["{cell}", "{cell}:camp", "{cell}:camp:", "{cell}:parcel:blm:1", "not-a-waypoint:camp:ridb:7"],
 )
 def test_plan_route_rejects_malformed_pins(client: TestClient, bad_pin: str) -> None:
     home_cell = grid_cell(HOME_LAT, HOME_LNG, CELL).cell_id

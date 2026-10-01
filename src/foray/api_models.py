@@ -264,6 +264,18 @@ class TrailPath(BaseModel):
     authoritative: bool
 
 
+class LandParcel(BaseModel):
+    """A public-land parcel near a point (``GET /api/land``, issue #311) - ownership only."""
+
+    model_config = _FROM_DATACLASS
+
+    id: str
+    agency: str | None
+    unit: str | None
+    url: str | None
+    distance_km: float
+
+
 class StopPin(BaseModel):
     model_config = _FROM_DATACLASS
 

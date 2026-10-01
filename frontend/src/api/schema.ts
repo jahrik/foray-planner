@@ -397,6 +397,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/land": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Land
+         * @description Pinnable public-land parcels near a point, nearest first (issue #311) - the Details
+         *     view's "Public land" tab. Ownership only, no geometry (the map draws parcels from tiles).
+         */
+        get: operations["get_land_api_land_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/trails": {
         parameters: {
             query?: never;
@@ -543,8 +564,9 @@ export interface paths {
          *
          *     ``destination`` is auto-picked (best-scoring region reachable from ``start``) when omitted.
          *     ``waypoints``, when given, are the whole itinerary. Each ``pin`` is
-         *     ``{region_id}:{camp|trail}:{feature_id}`` - a campground or trail the user picked as that
-         *     waypoint's exact stop point (issue #311); a pin whose feature is no longer cached falls back
+         *     ``{region_id}:{camp|trail|land}:{feature_id}`` - a campground, trail or public-land parcel
+         *     the user picked as that waypoint's exact stop point (issue #311; a parcel resolves to its
+         *     entrance); a pin whose feature is no longer cached falls back
          *     to the region centroid.
          */
         get: operations["plan_api_plan_get"];
@@ -889,6 +911,22 @@ export interface components {
              * @default 150
              */
             radius_km: number;
+        };
+        /**
+         * LandParcel
+         * @description A public-land parcel near a point (``GET /api/land``, issue #311) - ownership only.
+         */
+        LandParcel: {
+            /** Id */
+            id: string;
+            /** Agency */
+            agency: string | null;
+            /** Unit */
+            unit: string | null;
+            /** Url */
+            url: string | null;
+            /** Distance Km */
+            distance_km: number;
         };
         /**
          * LayerFreshnessResponse
@@ -1782,6 +1820,40 @@ export interface operations {
                 };
                 content: {
                     "image/png": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_land_api_land_get: {
+        parameters: {
+            query: {
+                lat: number;
+                lng: number;
+                radius_km?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LandParcel"][];
                 };
             };
             /** @description Validation Error */

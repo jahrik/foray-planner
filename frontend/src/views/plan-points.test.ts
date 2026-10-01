@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Stop, StopPin, TripPlan } from "../api/types";
-import { legPoint, pinKindLabel, routeEnd, stopPoint } from "./plan-points";
+import { legPoint, pinKindLabel, routeEnd, stopPoint, withoutRepeats } from "./plan-points";
 
 function makeStop(regionId: string, overrides: Partial<Stop> = {}): Stop {
   return {
@@ -80,6 +80,12 @@ describe("stop points", () => {
     expect(pinKindLabel(PIN)).toBe("trailhead");
     expect(pinKindLabel({ ...PIN, feature_kind: "road" })).toBe("forest road");
     expect(pinKindLabel({ ...PIN, kind: "camp", feature_kind: "dispersed" })).toBe("campground");
+    expect(pinKindLabel({ ...PIN, kind: "land", feature_kind: "road" })).toBe(
+      "public land · where a forest road enters",
+    );
+    expect(pinKindLabel({ ...PIN, kind: "land", feature_kind: "edge" })).toBe(
+      "public land · nearest boundary point",
+    );
   });
 });
 
@@ -100,5 +106,14 @@ describe("routeEnd", () => {
   it("keeps an auto-picked destination that isn't the last stop", () => {
     const trip = makeTrip([makeStop("a")], { auto_destination: true, destination_name: "z" });
     expect(routeEnd(trip).lastStopIsDestination).toBe(false);
+  });
+});
+
+describe("withoutRepeats", () => {
+  it("drops only back-to-back duplicate points", () => {
+    const camp = { lat: 47.58, lng: -122.52 };
+    const pin = { lat: 47.33, lng: -122.57 };
+    expect(withoutRepeats([pin, camp, camp, pin])).toEqual([pin, camp, pin]);
+    expect(withoutRepeats([])).toEqual([]);
   });
 });

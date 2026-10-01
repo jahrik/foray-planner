@@ -1,5 +1,5 @@
 // The Details view (issue #301): the per-region tabs that used to be nested inside every
-// destination card - Calendar / Photos / Trails / Campgrounds - moved out here so the result
+// destination card - Calendar / Photos / Trails / Campgrounds (+ Public land, issue #311) - moved out here so the result
 // list stays a scannable column of summary cards. "Details" on a card swaps #panel to this
 // pane; the back button restores the list from its last payload (no refetch). The tab loaders
 // themselves are unchanged (views/destination-tabs.ts) - just re-hosted.
@@ -11,11 +11,19 @@ import { stopLinkPropagation } from "../ui/card-dom";
 import {
   loadCalendarInto,
   loadCampgroundsInto,
+  loadLandInto,
   loadPhotosInto,
   loadTrailheadsInto,
 } from "./destination-tabs";
 
-type DetailTab = "calendar" | "photos" | "trails" | "camps";
+export type DetailTab = "calendar" | "photos" | "trails" | "camps" | "land";
+
+export interface DetailOptions {
+  /** The tab to open on (default Calendar) - plan mode opens straight onto Trails. */
+  tab?: DetailTab;
+  /** The back button's label (default "Back to results"). */
+  backLabel?: string;
+}
 
 // The region id plus its observation centroid: the calendar/photos loaders query by id, the
 // trails/camps loaders query by the centroid (issue #306 C4 - a grid cell's centre can sit
@@ -26,41 +34,53 @@ export interface DetailRegion {
   center_lng: number;
 }
 
-export function openDetails(region: DetailRegion, title: string, onBack: () => void): void {
+export function openDetails(
+  region: DetailRegion,
+  title: string,
+  onBack: () => void,
+  options: DetailOptions = {},
+): void {
   const panel = qs("#panel");
   panel.innerHTML = `
     <div class="details-view">
-      <button type="button" class="details-back">&larr; Back to results</button>
+      <button type="button" class="details-back"></button>
       <h3 class="details-title">${escapeHtml(title)}</h3>
       <div class="rank-tabs" role="tablist" aria-label="Region details">
         <button type="button" role="tab" id="dtab-calendar" aria-controls="dpanel-calendar" aria-selected="true" class="rank-tab active" data-tab="calendar">Calendar</button>
         <button type="button" role="tab" id="dtab-photos" aria-controls="dpanel-photos" aria-selected="false" tabindex="-1" class="rank-tab" data-tab="photos">Photos</button>
         <button type="button" role="tab" id="dtab-trails" aria-controls="dpanel-trails" aria-selected="false" tabindex="-1" class="rank-tab" data-tab="trails">Trails</button>
         <button type="button" role="tab" id="dtab-camps" aria-controls="dpanel-camps" aria-selected="false" tabindex="-1" class="rank-tab" data-tab="camps">Campgrounds</button>
+        <button type="button" role="tab" id="dtab-land" aria-controls="dpanel-land" aria-selected="false" tabindex="-1" class="rank-tab" data-tab="land">Public land</button>
       </div>
       <div class="rank-calendar" id="dpanel-calendar" role="tabpanel" aria-labelledby="dtab-calendar" tabindex="0" data-tab-content="calendar"></div>
       <div class="rank-photos" id="dpanel-photos" role="tabpanel" aria-labelledby="dtab-photos" tabindex="0" data-tab-content="photos" hidden></div>
       <div class="rank-trails" id="dpanel-trails" role="tabpanel" aria-labelledby="dtab-trails" tabindex="0" data-tab-content="trails" hidden></div>
       <div class="rank-camps" id="dpanel-camps" role="tabpanel" aria-labelledby="dtab-camps" tabindex="0" data-tab-content="camps" hidden></div>
+      <div class="rank-land" id="dpanel-land" role="tabpanel" aria-labelledby="dtab-land" tabindex="0" data-tab-content="land" hidden></div>
     </div>`;
 
-  qs<HTMLButtonElement>(".details-back", panel).onclick = onBack;
+  const back = qs<HTMLButtonElement>(".details-back", panel);
+  back.textContent = `← ${options.backLabel ?? "Back to results"}`;
+  back.onclick = onBack;
 
   const bodies: Record<DetailTab, HTMLElement> = {
     calendar: qs('[data-tab-content="calendar"]', panel),
     photos: qs('[data-tab-content="photos"]', panel),
     trails: qs('[data-tab-content="trails"]', panel),
     camps: qs('[data-tab-content="camps"]', panel),
+    land: qs('[data-tab-content="land"]', panel),
   };
   stopLinkPropagation(bodies.photos);
   stopLinkPropagation(bodies.trails);
   stopLinkPropagation(bodies.camps);
+  stopLinkPropagation(bodies.land);
 
   const loaders: Record<DetailTab, { open: () => void }> = {
     calendar: createLazyLoader(() => loadCalendarInto(region.region_id, bodies.calendar)),
     photos: createLazyLoader(() => loadPhotosInto(region.region_id, bodies.photos)),
     trails: createLazyLoader(() => loadTrailheadsInto(region, bodies.trails)),
     camps: createLazyLoader(() => loadCampgroundsInto(region, bodies.camps)),
+    land: createLazyLoader(() => loadLandInto(region, bodies.land)),
   };
 
   const tabs = [...panel.querySelectorAll<HTMLButtonElement>(".rank-tab")];
@@ -93,5 +113,5 @@ export function openDetails(region: DetailRegion, title: string, onBack: () => v
     };
   });
 
-  show("calendar");
+  show(options.tab ?? "calendar");
 }
