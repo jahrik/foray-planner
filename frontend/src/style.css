@@ -966,6 +966,10 @@ a.chip:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The author-level display:block above beats the UA [hidden] rule - restore it explicitly. */
+.pin-action[hidden] {
+  display: none;
+}
 
 /* Details view - the per-region tabs, swapped into #panel in place of the list. */
 .details-back {

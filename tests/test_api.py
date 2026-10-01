@@ -726,6 +726,20 @@ def test_plan_route_resolves_pins_to_cached_features(
     assert pin.lat == pytest.approx(HOME_LAT + 0.01)
 
 
+def test_plan_route_rejects_two_pins_for_one_waypoint(client: TestClient) -> None:
+    home_cell = grid_cell(HOME_LAT, HOME_LNG, CELL).cell_id
+    other_cell = grid_cell(HOME_LAT + 1, HOME_LNG, CELL).cell_id
+    response = client.get(
+        "/api/plan",
+        params={
+            "waypoints": f"{home_cell},{other_cell}",
+            "pin": [f"{home_cell}:camp:ridb:7", f"{home_cell}:trail:osm:node/1"],
+        },
+    )
+    assert response.status_code == 422
+    assert "more than one pin" in response.text
+
+
 @pytest.mark.parametrize(
     "bad_pin",
     ["{cell}", "{cell}:camp", "{cell}:camp:", "{cell}:land:blm:1", "not-a-waypoint:camp:ridb:7"],
