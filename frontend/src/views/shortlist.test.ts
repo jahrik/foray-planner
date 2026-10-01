@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearShortlist,
   inShortlist,
+  pinFor,
+  pinParams,
   renderActionBar,
+  setPin,
   setShortlistChangeHook,
   shortlistIds,
   toggleShortlist,
@@ -63,5 +66,31 @@ describe("shortlist", () => {
     state.view = "plan";
     renderActionBar();
     expect(bar.hidden).toBe(true);
+  });
+
+  it("pinning shortlists the region and rides along as a pin query value", () => {
+    const camp = { kind: "camp" as const, id: "ridb:7", name: "Lost Lake" };
+    toggleShortlist("aaa");
+    setPin("bbb", camp);
+    expect(shortlistIds()).toEqual(["aaa", "bbb"]);
+    expect(pinFor("bbb")).toEqual(camp);
+    expect(pinParams()).toEqual(["bbb:camp:ridb:7"]);
+    // Re-pinning replaces; unpinning keeps the region in the route.
+    setPin("bbb", { kind: "trail", id: "osm:node/9", name: "Foo TH" });
+    expect(pinParams()).toEqual(["bbb:trail:osm:node/9"]);
+    setPin("bbb", null);
+    expect(pinParams()).toEqual([]);
+    expect(inShortlist("bbb")).toBe(true);
+  });
+
+  it("drops a region's pin when the region leaves the shortlist", () => {
+    setPin("bbb", { kind: "camp", id: "ridb:7", name: "Lost Lake" });
+    toggleShortlist("bbb");
+    expect(pinFor("bbb")).toBeUndefined();
+    toggleShortlist("bbb");
+    expect(pinParams()).toEqual([]);
+    setPin("ccc", { kind: "camp", id: "ridb:8", name: "X" });
+    clearShortlist();
+    expect(pinFor("ccc")).toBeUndefined();
   });
 });

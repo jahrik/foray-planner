@@ -19,6 +19,7 @@ import {
 } from "../map/pins";
 import { escapeHtml, feeLabel } from "../format";
 import { dist, displayName, errorDetail, monthsParam, MONTHS, setStatus } from "../state";
+import { createPinAction, markPinnable, syncPinnedChips } from "./stop-pin";
 
 // "Six Rivers National Forest" -> "Six Rivers NF" for a trail row's public-land suffix. Falls
 // back to the raw unit name, then the agency code, then nothing.
@@ -209,6 +210,8 @@ export async function loadTrailheadsInto(
   // Only one card's trailheads are plotted at a time (plotTrailhead clears the previous set),
   // same as camps/land - opening a different card's Trails tab replaces these, it doesn't add on.
   clearTrailheadMarkers();
+  // Selecting a row also offers it as the trip stop's exact point (issue #311).
+  const pinAction = createPinAction(region.region_id);
   const rows: { button: HTMLButtonElement; marker: L.Marker }[] = [];
   const selectRow = (trailhead: Trail, button: HTMLButtonElement, marker: L.Marker): void => {
     rows.forEach((row) => {
@@ -218,6 +221,7 @@ export async function loadTrailheadsInto(
     button.classList.add("active");
     setTrailheadActive(marker, true);
     selectTrailhead(trailhead);
+    pinAction.select({ kind: "trail", id: trailhead.id, name: trailhead.name });
   };
   trailheads.forEach((trailhead) => {
     const button = document.createElement("button");
@@ -255,6 +259,7 @@ export async function loadTrailheadsInto(
       button.textContent += " · seasonal";
       button.title = [button.title, `Seasonal access: ${seasonal}`].filter(Boolean).join(" · ");
     }
+    markPinnable(button, { kind: "trail", id: trailhead.id, name: trailhead.name });
     const marker = plotTrailhead(trailhead.center_lat, trailhead.center_lng, trailhead.name, () =>
       selectRow(trailhead, button, marker),
     );
@@ -265,7 +270,8 @@ export async function loadTrailheadsInto(
     rows.push({ button, marker });
     list.appendChild(button);
   });
-  container.appendChild(list);
+  container.append(list, pinAction.element);
+  syncPinnedChips(container, region.region_id);
   return true;
 }
 
@@ -313,6 +319,7 @@ export async function loadCampgroundsInto(
   // Only one card's campgrounds are plotted at a time (clearCardCampMarkers below clears the
   // previous set), same as the Trails tab's trailhead markers.
   clearCardCampMarkers();
+  const pinAction = createPinAction(region.region_id);
   const rows: { button: HTMLButtonElement; marker: L.CircleMarker; site: CampSite }[] = [];
   const selectRow = (site: CampSite, button: HTMLButtonElement, marker: L.CircleMarker): void => {
     rows.forEach((row) => {
@@ -322,6 +329,7 @@ export async function loadCampgroundsInto(
     button.classList.add("active");
     setCardCampActive(marker, site, true);
     marker.openPopup();
+    pinAction.select({ kind: "camp", id: site.id, name: site.name });
   };
   sites.forEach((site) => {
     const button = document.createElement("button");
@@ -331,6 +339,7 @@ export async function loadCampgroundsInto(
     const resv =
       site.reservable === true ? " · reservable" : site.reservable === false ? " · first-come" : "";
     button.textContent = `${site.name} · ${dist(site.distance_km)} · ${feeText}${resv}`;
+    markPinnable(button, { kind: "camp", id: site.id, name: site.name });
     const marker = plotCardCamp(site, () => selectRow(site, button, marker));
     marker.bindPopup(
       buildPopup({
@@ -346,6 +355,7 @@ export async function loadCampgroundsInto(
     rows.push({ button, marker, site });
     list.appendChild(button);
   });
-  container.appendChild(list);
+  container.append(list, pinAction.element);
+  syncPinnedChips(container, region.region_id);
   return true;
 }

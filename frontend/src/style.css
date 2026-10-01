@@ -776,6 +776,14 @@ a.chip:hover {
   border-color: #ff8c42;
   color: #ff8c42;
 }
+/* The row pinned as its destination's trip stop (issue #311, views/stop-pin.ts). */
+.chip.pinned {
+  border-color: var(--rust);
+  border-width: 2px;
+}
+.chip.pinned::before {
+  content: "📍 ";
+}
 .chip.removable {
   display: inline-flex;
   align-items: center;
@@ -941,6 +949,17 @@ a.chip:hover {
   background: var(--rust);
   border-color: var(--rust);
   color: var(--on-accent);
+}
+
+/* "Use as trip stop" under a Details Trails / Campgrounds list (issue #311) - full-width so a
+   long trail/camp name ellipsizes rather than overflowing the panel. */
+.pin-action {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Details view - the per-region tabs, swapped into #panel in place of the list. */
@@ -1367,6 +1386,7 @@ table.cal .heat {
   font-size: 12px;
   color: var(--muted);
 }
+.stop-pin,
 .stop-camp,
 .stop-trail {
   font-size: 12px;
@@ -1379,6 +1399,10 @@ table.cal .heat {
 .stop-camp.muted,
 .stop-trail.muted {
   color: var(--muted);
+}
+/* The user-pinned stop point (issue #311) - same rust mark as its pinned Details chip. */
+.stop-pin {
+  border-color: var(--rust);
 }
 
 /* Leaflet ships `.leaflet-container .leaflet-control-attribution` as a hard-coded white box with
@@ -1461,6 +1485,7 @@ table.cal .heat {
    still need a nudge. */
 :root[data-text-size="large"] .plan-summary,
 :root[data-text-size="large"] .stop-drive,
+:root[data-text-size="large"] .stop-pin,
 :root[data-text-size="large"] .stop-camp,
 :root[data-text-size="large"] .stop-trail {
   font-size: 14px;

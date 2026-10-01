@@ -9,8 +9,8 @@ import psycopg
 import pytest
 
 from foray.cache import upsert_campsites, upsert_trails
-from foray.geo import grid_cell
-from foray.scoring import build_phenology, plan_route
+from foray.geo import grid_cell, haversine_km
+from foray.scoring import StopPin, build_phenology, plan_route
 
 CELL = 5
 MOREL = 111
@@ -193,6 +193,38 @@ def test_waypoints_pick_farthest_as_destination_when_none_given(con: psycopg.Con
     assert trip.auto_destination is True
     assert trip.destination_name == far_region
     assert {mid_region, far_region} <= {s.region_id for s in trip.stops}
+
+
+def test_waypoints_are_the_whole_itinerary(con: psycopg.Connection) -> None:
+    # A shortlist means "just these" - NEAR and FAR are on the corridor and out-score nothing
+    # here, but they must not be auto-filled in around the one picked region.
+    mid_region = _region_id(*MID)
+    trip = plan_route(con, **_kwargs(require_free_camp=False, max_stops=5, waypoints=[mid_region]))
+    assert [stop.region_id for stop in trip.stops] == [mid_region]
+
+
+def test_pinned_stop_routes_legs_through_the_pin(con: psycopg.Connection) -> None:
+    near_region, mid_region = _region_id(*NEAR), _region_id(*MID)
+    # Pin NEAR's stop ~0.5 deg (~55 km) further north than its centroid.
+    pin = StopPin(kind="camp", id="osm:1", name="Pinned Camp", feature_kind="dispersed", lat=44.7, lng=-121.0)
+    trip = plan_route(
+        con,
+        **_kwargs(require_free_camp=False, waypoints=[near_region, mid_region], pins={near_region: pin}),
+    )
+    near_stop, mid_stop = trip.stops
+    assert near_stop.pin == pin
+    assert mid_stop.pin is None
+    assert near_stop.drive_km_from_prev == pytest.approx(haversine_km(START_LAT, START_LNG, 44.7, -121.0), abs=0.1)
+    assert mid_stop.drive_km_from_prev == pytest.approx(
+        haversine_km(44.7, -121.0, mid_stop.center_lat, mid_stop.center_lng), abs=0.1
+    )
+
+
+def test_pins_for_regions_off_the_shortlist_are_ignored(con: psycopg.Connection) -> None:
+    near_region = _region_id(*NEAR)
+    pin = StopPin(kind="camp", id="osm:1", name="Stray", feature_kind="dispersed", lat=44.7, lng=-121.0)
+    trip = plan_route(con, **_kwargs(require_free_camp=False, pins={near_region: pin}))
+    assert all(stop.pin is None for stop in trip.stops)
 
 
 def test_empty_when_no_data_returns_empty_plan(con: psycopg.Connection) -> None:

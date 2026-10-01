@@ -3,14 +3,20 @@ import L from "leaflet";
 import { getJson } from "../api/client";
 import type { Stop, TripPlan } from "../api/types";
 import { escapeXml, feeLabel } from "../format";
-import { GOOGLE_MAPS_WAYPOINT_CAP, googleMapsRouteUrl, type RoutePoint } from "../map/directions";
+import {
+  directionsLink,
+  GOOGLE_MAPS_WAYPOINT_CAP,
+  googleMapsRouteUrl,
+  type RoutePoint,
+} from "../map/directions";
 import { focusRegion } from "../map/layers";
 import { dockOffsetPx, focusOnMap } from "../map/sheet";
 import { addMarker } from "../map/destinations";
 import { clearMarkers, map, setPlanRoute, HOME_DOT_STYLE, PLAN_STOP } from "../map/map";
 import { circleStyle } from "../map/markers";
 import { buildPopup } from "../map/popup";
-import { shortlistIds } from "./shortlist";
+import { legPoint, pinKindLabel, routeEnd, stopPoint } from "./plan-points";
+import { pinParams, shortlistIds } from "./shortlist";
 import { dist, displayName, errorDetail, inatUrl, monthsParam, MONTHS, qs, setStatus, state } from "../state";
 
 export async function runPlan({ reuseCache = false }: { reuseCache?: boolean } = {}): Promise<void> {
@@ -24,16 +30,21 @@ export async function runPlan({ reuseCache = false }: { reuseCache?: boolean } =
     return;
   }
 
-  const stopsInput = Math.round((document.getElementById("plan-stops") as HTMLInputElement).valueAsNumber);
+  // Regions the user added with "+ Plan" on a result card are the whole trip (issue #311 -
+  // nothing auto-filled around them), each optionally pinned to a specific camp/trail. Empty
+  // list = the server auto-picks up to Max stops, so that field only applies then.
+  const waypoints = shortlistIds();
+  const stopsField = document.getElementById("plan-stops") as HTMLInputElement;
+  stopsField.disabled = waypoints.length > 0;
+  stopsField.title = waypoints.length > 0 ? "Your picked spots are the stops - clear them to auto-pick" : "";
+  const stopsInput = Math.round(stopsField.valueAsNumber);
   const maxStops = Math.max(1, Math.min(20, Number.isNaN(stopsInput) ? 5 : stopsInput));
   const driveInput = (document.getElementById("plan-drive") as HTMLInputElement).valueAsNumber;
   const maxDrive = Math.max(50, Number.isNaN(driveInput) ? 400 : driveInput);
   const requireFree = (document.getElementById("plan-free-camp") as HTMLInputElement).checked;
   const start = (document.getElementById("plan-start") as HTMLInputElement).value.trim();
   const destination = (document.getElementById("plan-destination") as HTMLInputElement).value.trim();
-  // Regions the user added with "+ Plan" on a result card - threaded through the corridor as
-  // ordered required stops (issue #301). Empty list = the server auto-picks stops as before.
-  const waypoints = shortlistIds();
+  const pins = pinParams();
 
   let trip: TripPlan;
   try {
@@ -46,6 +57,7 @@ export async function runPlan({ reuseCache = false }: { reuseCache?: boolean } =
         max_drive_km: maxDrive,
         require_free_camp: requireFree,
         waypoints: waypoints.length ? waypoints.join(",") : null,
+        pin: pins.length ? pins : null,
       },
     });
   } catch (error) {
@@ -68,11 +80,17 @@ function renderPlan(trip: TripPlan): void {
     return;
   }
 
-  // Route polyline: start → stop1 → stop2 → … → destination.
+  // Route polyline: start → stop1 → stop2 → … → destination, through each stop's pinned
+  // feature when it has one (the same points the server measured the legs between). A trip that
+  // ends at its last picked stop doesn't repeat it as a separate destination point.
+  const end = routeEnd(trip);
   const routePoints: L.LatLngExpression[] = [
     [trip.start_lat, trip.start_lng],
-    ...trip.stops.map((stop): L.LatLngExpression => [stop.center_lat, stop.center_lng]),
-    [trip.destination_lat, trip.destination_lng],
+    ...trip.stops.map((stop): L.LatLngExpression => {
+      const point = legPoint(stop);
+      return [point.lat, point.lng];
+    }),
+    ...(end.lastStopIsDestination ? [] : [[end.point.lat, end.point.lng] as L.LatLngExpression]),
   ];
   setPlanRoute(
     L.polyline(routePoints, {
@@ -92,11 +110,15 @@ function renderPlan(trip: TripPlan): void {
 
   // Destination marker - a larger hollow ring in the plan-stop gold so it reads as the "goal",
   // distinct from the filled stop circles along the way.
-  const destLabel = trip.auto_destination
-    ? `Auto-picked destination${trip.destination_name ? ` (region ${trip.destination_name})` : ""}`
-    : "Destination";
+  // When the trip ends at its last stop, the ring sits on that stop's end of the route line.
+  const destLabel = end.lastStopIsDestination
+    ? `Destination · Stop ${trip.stops.length}`
+    : trip.auto_destination
+      ? `Auto-picked destination${trip.destination_name ? ` (region ${trip.destination_name})` : ""}`
+      : "Destination";
+  const destPoint = end.lastStopIsDestination ? legPoint(trip.stops[trip.stops.length - 1]!) : end.point;
   const destMarker = L.circleMarker(
-    [trip.destination_lat, trip.destination_lng],
+    [destPoint.lat, destPoint.lng],
     circleStyle({ radius: 10, fill: PLAN_STOP, weight: 3, fillOpacity: 0.15 }),
   )
     .addTo(map)
@@ -122,6 +144,23 @@ function renderPlan(trip: TripPlan): void {
       .addTo(map)
       .bindPopup(popupEl);
     addMarker(marker);
+    // The pinned trailhead / campground itself (issue #311) - a small solid dot on the route.
+    if (stop.pin) {
+      const pinMarker = L.circleMarker(
+        [stop.pin.lat, stop.pin.lng],
+        circleStyle({ radius: 5, fill: PLAN_STOP, fillOpacity: 1, weight: 2 }),
+      )
+        .addTo(map)
+        .bindPopup(
+          buildPopup({
+            title: stop.pin.name,
+            titleSuffix: ` · Stop ${stop.order}`,
+            lines: [pinKindLabel(stop.pin)],
+            directions: directionsLink(stop.pin.lat, stop.pin.lng, stop.pin.name),
+          }),
+        );
+      addMarker(pinMarker);
+    }
   });
 
   // Fit the map to the full route, keeping it clear of the desktop results dock (issue #297)
@@ -140,7 +179,7 @@ function renderPlan(trip: TripPlan): void {
   // Google Maps' dir/?api=1 URL silently drops waypoints past GOOGLE_MAPS_WAYPOINT_CAP, so a
   // longer trip disables the button rather than sending a route that quietly loses stops - the
   // GPX export (no such cap) stays the way to get the full route into any other maps app.
-  const tooManyStops = trip.stops.length > GOOGLE_MAPS_WAYPOINT_CAP;
+  const tooManyStops = trip.stops.length - (end.lastStopIsDestination ? 1 : 0) > GOOGLE_MAPS_WAYPOINT_CAP;
   const gmapsDisabled = tooManyStops
     ? `disabled title="Too many stops for a Google Maps link (max ${GOOGLE_MAPS_WAYPOINT_CAP}) - use the GPX export instead"`
     : "";
@@ -226,6 +265,16 @@ function buildStopCard(stop: Stop): HTMLElement {
   });
   card.appendChild(chips);
 
+  // The pinned feature, when the user picked one in the Details view (issue #311).
+  if (stop.pin) {
+    const pinEl = document.createElement("div");
+    pinEl.className = "stop-pin";
+    const pinName = document.createElement("strong");
+    pinName.textContent = stop.pin.name;
+    pinEl.append("📍 Stop at ", pinName, ` · ${pinKindLabel(stop.pin)}`);
+    card.appendChild(pinEl);
+  }
+
   // Camp info.
   const campEl = document.createElement("div");
   campEl.className = stop.camp ? "stop-camp" : "stop-camp muted";
@@ -267,20 +316,17 @@ function buildStopCard(stop: Stop): HTMLElement {
   // Click → zoom the map to this stop and load layers around it. focusOnMap keeps the stop
   // clear of the desktop dock / mobile sheet (issue #297).
   card.onclick = () => {
-    focusOnMap(stop.center_lat, stop.center_lng, 10);
+    const point = legPoint(stop);
+    focusOnMap(point.lat, point.lng, 10);
     focusRegion(stop.center_lat, stop.center_lng);
   };
 
   return card;
 }
 
-/** A stop's navigable point: its camp when one's in range, else the region center - the same
- * "best point available today" fallback the whole trip uses (issue #310's Part 2), so the GPX
- * export and the Google Maps route always point at the same places. */
-function stopPoint(stop: Stop): RoutePoint {
-  return stop.camp
-    ? { lat: stop.camp.center_lat, lng: stop.camp.center_lng }
-    : { lat: stop.center_lat, lng: stop.center_lng };
+function stopName(stop: Stop): string {
+  const place = stop.pin?.name ?? stop.camp?.name;
+  return place ? `Stop ${stop.order}: ${place}` : `Stop ${stop.order}`;
 }
 
 /** Export the trip plan as a GPX file: start, one waypoint per stop (camp if available), destination. */
@@ -288,7 +334,7 @@ function exportGpx(trip: TripPlan): void {
   const monthNames = trip.months.map((month) => MONTHS[month - 1]).join("-");
   const stopWpts = trip.stops.map((stop) => {
     const { lat, lng } = stopPoint(stop);
-    const name = stop.camp ? `Stop ${stop.order}: ${stop.camp.name}` : `Stop ${stop.order}`;
+    const name = stopName(stop);
     const stopFire = stop.fire_nearby[0];
     const fireNote = stopFire
       ? ` · ⚠ active fire ~${dist(stopFire.distance_km)} away (verify officially)`
@@ -300,10 +346,11 @@ function exportGpx(trip: TripPlan): void {
     return wptXml(lat, lng, name, desc);
   });
   const destName = trip.auto_destination ? "Destination (auto-picked)" : "Destination";
+  const end = routeEnd(trip);
   const wpts = [
     wptXml(trip.start_lat, trip.start_lng, "Start", ""),
     ...stopWpts,
-    wptXml(trip.destination_lat, trip.destination_lng, destName, ""),
+    ...(end.lastStopIsDestination ? [] : [wptXml(end.point.lat, end.point.lng, destName, "")]),
   ].join("\n");
 
   const gpx = `<?xml version="1.0" encoding="UTF-8"?>
@@ -332,9 +379,9 @@ function exportJson(trip: TripPlan): void {
  * rather than a replacement for them. */
 function openGoogleMapsRoute(trip: TripPlan): void {
   const origin: RoutePoint = { lat: trip.start_lat, lng: trip.start_lng };
-  const destination: RoutePoint = { lat: trip.destination_lat, lng: trip.destination_lng };
-  const waypoints = trip.stops.map(stopPoint);
-  window.open(googleMapsRouteUrl(origin, destination, waypoints), "_blank", "noopener");
+  const end = routeEnd(trip);
+  const stops = end.lastStopIsDestination ? trip.stops.slice(0, -1) : trip.stops;
+  window.open(googleMapsRouteUrl(origin, end.point, stops.map(stopPoint)), "_blank", "noopener");
 }
 
 /** Trigger a client-side file download without a round-trip to the server. */

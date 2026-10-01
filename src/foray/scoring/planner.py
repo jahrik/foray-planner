@@ -11,7 +11,7 @@ from foray.geo import (
     project_to_plane,
     segment_progress_and_offset,
 )
-from foray.scoring.models import CampSite, RegionScore, Stop, Trail, TripPlan
+from foray.scoring.models import CampSite, RegionScore, Stop, StopPin, Trail, TripPlan
 from foray.scoring.queries import camps_near, trails_near
 from foray.scoring.rank_cache import DEFAULT_TTL_SECONDS
 from foray.scoring.ranking import rank_destinations, rank_destinations_corridor
@@ -37,6 +37,7 @@ def plan_route(
     require_free_camp: bool = False,
     min_score_norm: float = 0.0,
     waypoints: list[str] | None = None,
+    pins: dict[str, StopPin] | None = None,
     ttl_seconds: float = DEFAULT_TTL_SECONDS,
 ) -> TripPlan:
     """Plan a trip from ``start`` to ``destination`` (auto-picked if not given), stopping at the
@@ -67,11 +68,16 @@ def plan_route(
     skipped individually rather than truncating the rest of the itinerary.
 
     ``waypoints`` is an ordered list of region ids the caller has hand-picked (the redesign's
-    "+ Plan" shortlist): they are threaded in as **required** stops - never dropped for score,
-    a missing free camp, or an over-long leg - and the remaining ``max_stops`` slots are
-    auto-filled from the best other corridor regions. When no ``destination`` is given, the
-    trip runs to the waypoint farthest from ``start`` (so the corridor spans the picks), and
-    the corridor is widened as needed so every waypoint falls inside it.
+    "+ Plan" shortlist): when given, they are the **whole** itinerary - never dropped for score,
+    a missing free camp, or an over-long leg, and no other corridor regions are auto-filled in
+    around them (``max_stops`` / ``min_score_norm`` / ``require_free_camp`` only shape an
+    auto-picked trip). When no ``destination`` is given, the trip runs to the waypoint farthest
+    from ``start`` (so the corridor spans the picks), and the corridor is widened as needed so
+    every waypoint falls inside it.
+
+    ``pins`` maps a waypoint region id to the specific campground / trail the user pinned in
+    it (issue #311). A pinned stop's leg distances run to and from the pin instead of the
+    region centroid, and the pin rides along on ``Stop.pin`` for the exports.
 
     Missing tables (nothing ingested yet) surface as ``rank_destinations``/
     ``rank_destinations_corridor`` raising, mirroring the other modes; an empty candidate set
@@ -79,6 +85,7 @@ def plan_route(
     """
     forced_ids = list(dict.fromkeys(waypoints or []))  # dedup, preserve caller order
     forced_set = set(forced_ids)
+    pins = {region_id: pin for region_id, pin in (pins or {}).items() if region_id in forced_set}
     auto = destination_lat is None or destination_lng is None
     destination_name: str | None = None
     if auto and forced_ids:
@@ -151,13 +158,15 @@ def plan_route(
     )
 
     # Select - annotate + filter, preserving the score-desc order rank_destinations_corridor
-    # returns. Hand-picked waypoints (forced_set) are kept unconditionally; the rest fill the
-    # remaining slots. Stop scanning once we have every waypoint and enough fill candidates.
+    # returns. Hand-picked waypoints (forced_set), when given, are kept unconditionally and are
+    # the only stops; otherwise the best corridor regions fill up to max_stops.
     forced: list[tuple[RegionScore, CampSite | None, bool, Trail | None]] = []
     optional: list[tuple[RegionScore, CampSite | None, bool, Trail | None]] = []
     seen_forced: set[str] = set()
     for region in ranked:
         is_forced = region.region_id in forced_set
+        if forced_set and not is_forced:
+            continue  # a shortlist is the whole trip - skip the per-region camp/trail lookups
         if not is_forced and region.score_norm < min_score_norm:
             continue
         # camps_near ranks free-first, so its nearest result is the nearest *free* camp when one
@@ -184,15 +193,15 @@ def plan_route(
             seen_forced.add(region.region_id)
         else:
             optional.append((region, camp, camp_is_free, trail))
-        # Once every waypoint is in hand, only the fill slots that waypoints didn't claim
-        # still need candidates - keep scanning just for those.
-        remaining_fill = max(max_stops - len(forced_set), 0)
-        if seen_forced >= forced_set and len(optional) >= remaining_fill:
+        # Hand-picked waypoints are the whole itinerary, so once they're all in hand there's
+        # nothing left to look for; an auto-picked trip scans until max_stops candidates.
+        if forced_set and seen_forced >= forced_set:
+            break
+        if not forced_set and len(optional) >= max_stops:
             break
 
-    # Keep every waypoint, then fill up to max_stops with the best remaining regions.
-    fill = max(max_stops - len(forced), 0)
-    candidates = forced + optional[:fill]
+    # A shortlist is the whole trip; otherwise the best max_stops corridor regions.
+    candidates = forced if forced_set else optional[:max_stops]
 
     # Order - by progress along the start->destination line ("along the way"), not nearest-neighbour.
     candidates.sort(key=lambda item: item[0].distance_km)
@@ -202,7 +211,9 @@ def plan_route(
     cumulative = 0.0
     skipped = 0
     for region, camp, camp_is_free, trail in candidates:
-        leg = haversine_km(cur_lat, cur_lng, region.center_lat, region.center_lng)
+        pin = pins.get(region.region_id)
+        stop_lat, stop_lng = (pin.lat, pin.lng) if pin else (region.center_lat, region.center_lng)
+        leg = haversine_km(cur_lat, cur_lng, stop_lat, stop_lng)
         if leg > max_drive_km and region.region_id not in forced_set:
             # Progress-ordered, not nearest-neighbour, so legs aren't guaranteed monotonic (a wide
             # corridor can zigzag off-axis) - skip just this stop rather than assuming everything
@@ -229,9 +240,10 @@ def plan_route(
                 trail_distance_km=trail.distance_km if trail else None,
                 # Active-fire warnings only - a burn scar near a stop isn't a hazard (issue #227).
                 fire_nearby=[fire for fire in region.fire_nearby if fire.status == "active"],
+                pin=pin,
             )
         )
-        cur_lat, cur_lng = region.center_lat, region.center_lng
+        cur_lat, cur_lng = stop_lat, stop_lng
 
     return TripPlan(
         start_lat=start_lat,
