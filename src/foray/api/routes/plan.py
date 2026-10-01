@@ -91,6 +91,8 @@ def plan(
         region_id, kind, feature_id = ([*raw_pin.split(":", 2), "", ""])[:3]
         if region_id not in picked_waypoints or not feature_id or len(raw_pin) > 300:
             raise HTTPException(422, f"pin {raw_pin!r} must be <waypoint region id>:<camp|trail>:<feature id>")
+        if region_id in pin_refs:
+            raise HTTPException(422, f"waypoint {region_id!r} has more than one pin")
         if kind == "camp":
             pin_refs[region_id] = ("camp", feature_id)
         elif kind == "trail":
