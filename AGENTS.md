@@ -144,10 +144,14 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
     straight-line buffer, each annotated with a nearby camp *and* trail, ordered by progress;
     auto-picks a destination when the caller doesn't - see "no real road routing yet" below).
     Optional `waypoints` (ordered region ids, from the frontend's "+ Plan" shortlist, issue #301)
-    are threaded in as **required** stops - never dropped for score, a missing free camp, or an
+    are the **whole** itinerary (issue #311 - nothing auto-filled around them; `max_stops` only
+    shapes an auto-picked trip) and never dropped for score, a missing free camp, or an
     over-long leg; the corridor widens to include every pick and, with no explicit destination,
     the trip runs to the farthest waypoint. `GET /api/plan?waypoints=` bounds-checks each id's
-    implied cell centre before the corridor math.
+    implied cell centre before the corridor math. Optional `pin=<region>:<camp|trail>:<id>`
+    params (issue #311) pin a waypoint to a specific cached campground / trail row
+    (`queries.resolve_pin`, coordinates never taken from the client): legs are measured to the
+    pin and it rides on `Stop.pin` for the route line, GPX and Google Maps exports.
   - `_sql.py` - the SQL fragments shared by the three query modules (grid binning
     `BINNED`, the decoy-aware center expressions, the `taxon_id` / `IN (...)` helpers,
     `genus_name_map`).
@@ -226,7 +230,10 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
     loaders (`createLazyLoader`-guarded).
   - `src/views/shortlist.ts` - the route shortlist. "+ Plan" on a card adds a region id; the
     `#route-bar` at the panel's foot ("Plan a road trip" / "N spots picked") enters Plan mode,
-    and `views/plan.ts`'s `runPlan()` sends the picks as `/api/plan?waypoints=`.
+    and `views/plan.ts`'s `runPlan()` sends the picks as `/api/plan?waypoints=`. Each pick can
+    also carry a pin: `views/stop-pin.ts`'s "Use as trip stop" button under the Details Trails /
+    Campgrounds lists (issue #311). `views/plan-points.ts` holds the pin -> camp -> centroid
+    point fallback shared by the route render and both exports.
   - `src/views/plan.ts` - the route-planning UI (form + `TripPlan` render + GPX/JSON export).
     `src/views/view-run.ts` - `refreshCurrentView` / `rerenderCurrentView`, the single
     "re-run the open panel" owner (now just `plan` vs. everything-else).
