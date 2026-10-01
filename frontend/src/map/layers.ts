@@ -29,7 +29,7 @@ import {
   TRAIL_WALKIN,
 } from "./map";
 import { addCampMarker, clearCamps } from "./pins";
-import { dist, displayName, errorDetail, monthsParam, qs, setStatus, state } from "../state";
+import { dist, displayName, errorDetail, monthsParam, observationUrl, qs, setStatus, state } from "../state";
 
 export const campsOn = (): boolean => qs<HTMLInputElement>("#show-camps").checked;
 export const dispersedOn = (): boolean => qs<HTMLInputElement>("#show-dispersed").checked;
@@ -267,14 +267,14 @@ export async function loadPreciseObservations(): Promise<void> {
   });
 }
 
-// name/observed_on come from an external API (buildPopup sets them via textContent); `obs.uri`
-// is server-constructed (a fixed iNaturalist observation URL).
+// name/observed_on come from an external API (buildPopup sets them via textContent); the link is
+// built from the numeric observation id (observationUrl), not the cached upstream `uri`.
 function precisePopup(obs: PreciseObservation): HTMLElement {
   const name = displayName(obs);
   return buildPopup({
     title: name,
     lines: obs.observed_on ? [obs.observed_on] : [],
-    ...(obs.uri ? { link: { href: obs.uri, text: "iNaturalist ↗" } } : {}),
+    link: { href: observationUrl(obs.id), text: "iNaturalist ↗" },
     directions: directionsLink(obs.lat, obs.lng, name),
   });
 }

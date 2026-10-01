@@ -1,11 +1,11 @@
-// Hover list for a precise-observation cluster badge: the observations folded into the badge,
-// newest first, each linking to its iNaturalist page. Built from DOM nodes (textContent, never
-// innerHTML) for the same reason as popup.ts - names/dates come from an external API. `obs.uri`
-// is server-constructed (a fixed iNaturalist observation URL). No state - see
-// cluster-popup.test.ts.
+// List for a precise-observation cluster badge: the observations folded into the badge, newest
+// first, each linking to its iNaturalist page. Built from DOM nodes (textContent, never
+// innerHTML) for the same reason as popup.ts - names/dates come from an external API. Links are
+// built from the numeric observation id (observationUrl), not the cached upstream `uri`. No
+// state - see cluster-popup.test.ts.
 
 import type { PreciseObservation } from "../api/types";
-import { displayName } from "../state";
+import { displayName, observationUrl } from "../state";
 
 /** Rows shown before the list collapses into a "+N more" line - a dense cluster can hold
  * hundreds of pins, and the hover card should stay glanceable. */
@@ -33,17 +33,12 @@ export function buildClusterList(
   const sorted = [...observations].sort(newestFirst);
   for (const obs of sorted.slice(0, limit)) {
     const item = document.createElement("li");
-    const name = displayName(obs);
-    if (obs.uri) {
-      const anchor = document.createElement("a");
-      anchor.href = obs.uri;
-      anchor.target = "_blank";
-      anchor.rel = "noopener";
-      anchor.textContent = name;
-      item.append(anchor);
-    } else {
-      item.append(document.createTextNode(name));
-    }
+    const anchor = document.createElement("a");
+    anchor.href = observationUrl(obs.id);
+    anchor.target = "_blank";
+    anchor.rel = "noopener";
+    anchor.textContent = displayName(obs);
+    item.append(anchor);
     if (obs.observed_on) {
       const date = document.createElement("span");
       date.className = "cluster-list-date";
