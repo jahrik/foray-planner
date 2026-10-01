@@ -264,6 +264,17 @@ class TrailPath(BaseModel):
     authoritative: bool
 
 
+class StopPin(BaseModel):
+    model_config = _FROM_DATACLASS
+
+    kind: str
+    id: str
+    name: str
+    feature_kind: str
+    lat: float
+    lng: float
+
+
 class Stop(BaseModel):
     model_config = _FROM_DATACLASS
 
@@ -283,6 +294,7 @@ class Stop(BaseModel):
     trail: Trail | None
     trail_distance_km: float | None
     fire_nearby: list[FireNear] = []
+    pin: StopPin | None = None  # user-pinned camp/trail point (issue #311)
 
 
 class TripPlan(BaseModel):

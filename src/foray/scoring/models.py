@@ -152,6 +152,21 @@ class TrailPath:
 
 
 @dataclass
+class StopPin:
+    """The specific feature a user pinned as a trip stop's coordinate (issue #311) - a
+    campground or a trail row (trailhead / path / route / forest road) picked from the
+    destination's Details view. When set, it replaces the region centroid for leg distances and
+    every export (GPX, Google Maps)."""
+
+    kind: str  # 'camp' | 'trail'
+    id: str
+    name: str
+    feature_kind: str  # the camp's or trail's own kind ('campground', 'trailhead', 'road', ...)
+    lat: float
+    lng: float
+
+
+@dataclass
 class Stop:
     """One week-long stay in a planned trip: a destination + how you get there + where you sleep."""
 
@@ -171,6 +186,7 @@ class Stop:
     trail: Trail | None  # closest trail in range, if any
     trail_distance_km: float | None
     fire_nearby: list[FireNear] = field(default_factory=list)  # active-fire warnings on this stop (issue #227)
+    pin: StopPin | None = None  # user-pinned feature for this stop (issue #311); None = centroid
 
 
 @dataclass

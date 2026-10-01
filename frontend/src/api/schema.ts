@@ -542,6 +542,10 @@ export interface paths {
          * @description Corridor trip plan: fruiting stops (with nearby camp + trail) from start to destination.
          *
          *     ``destination`` is auto-picked (best-scoring region reachable from ``start``) when omitted.
+         *     ``waypoints``, when given, are the whole itinerary. Each ``pin`` is
+         *     ``{region_id}:{camp|trail}:{feature_id}`` - a campground or trail the user picked as that
+         *     waypoint's exact stop point (issue #311); a pin whose feature is no longer cached falls back
+         *     to the region centroid.
          */
         get: operations["plan_api_plan_get"];
         put?: never;
@@ -1103,6 +1107,22 @@ export interface components {
              * @default []
              */
             fire_nearby: components["schemas"]["FireNear"][];
+            pin?: components["schemas"]["StopPin"] | null;
+        };
+        /** StopPin */
+        StopPin: {
+            /** Kind */
+            kind: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Feature Kind */
+            feature_kind: string;
+            /** Lat */
+            lat: number;
+            /** Lng */
+            lng: number;
         };
         /** Trail */
         Trail: {
@@ -1990,6 +2010,7 @@ export interface operations {
                 camp_radius_km?: number;
                 require_free_camp?: boolean;
                 waypoints?: string | null;
+                pin?: string[] | null;
             };
             header?: never;
             path?: never;

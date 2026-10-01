@@ -23,6 +23,7 @@ from foray.scoring.models import (
     RegionScore,
     SpeciesHit,
     Stop,
+    StopPin,
     Trail,
     TrailPath,
     TripPlan,
@@ -40,6 +41,7 @@ from foray.scoring.queries import (
     precise_observations,
     recent_observations,
     region_access,
+    resolve_pin,
     trail_segments_by_name,
     trails_near,
 )
@@ -52,6 +54,7 @@ __all__ = [
     "RegionScore",
     "SpeciesHit",
     "Stop",
+    "StopPin",
     "Trail",
     "TrailPath",
     "TrailSort",
@@ -70,6 +73,7 @@ __all__ = [
     "rank_destinations_corridor",
     "recent_observations",
     "region_access",
+    "resolve_pin",
     "trail_segments_by_name",
     "trails_near",
 ]

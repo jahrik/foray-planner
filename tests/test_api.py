@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from foray.api import create_app
 from foray.cache import upsert_campsites, upsert_fungi_genera, upsert_trails
 from foray.config import Home, Settings
-from foray.geo import h3_edge_length_km
+from foray.geo import grid_cell, h3_edge_length_km
 from foray.scoring import TripPlan, build_phenology
 from foray.sources.trails import _parse_element
 
@@ -657,6 +657,83 @@ def test_plan_route_rejects_out_of_range_waypoint(client: TestClient) -> None:
     response = client.get("/api/plan", params={"waypoints": "9999999_9999999"})
     assert response.status_code == 422
     assert "valid coordinates" in response.text
+
+
+def _capture_plan_route(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    captured: dict[str, object] = {}
+
+    def fake_plan_route(con, **kwargs):
+        captured.update(kwargs)
+        return TripPlan(
+            start_lat=kwargs["start_lat"],
+            start_lng=kwargs["start_lng"],
+            destination_lat=kwargs["start_lat"],
+            destination_lng=kwargs["start_lng"],
+            destination_name=None,
+            auto_destination=True,
+            corridor_km=kwargs["corridor_km"],
+            months=kwargs["months"],
+            n_stops=0,
+            total_drive_km=0.0,
+            stops=[],
+            skipped_unreachable=0,
+        )
+
+    monkeypatch.setattr("foray.api.scoring.plan_route", fake_plan_route)
+    return captured
+
+
+def test_plan_route_resolves_pins_to_cached_features(
+    client: TestClient, con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Issue #311: a pin names a cached camp/trail by id; the server resolves its point + name
+    # (never trusting client-sent coordinates) and drops one whose feature isn't cached.
+    upsert_campsites(
+        con,
+        [
+            (
+                "ridb:7",
+                "Lost Lake CG",
+                "campground",
+                None,
+                None,
+                HOME_LAT + 0.01,
+                HOME_LNG,
+                "ridb",
+                "u",
+                None,
+                None,
+                None,
+            )
+        ],
+    )
+    home_cell = grid_cell(HOME_LAT, HOME_LNG, CELL).cell_id
+    other_cell = grid_cell(HOME_LAT + 1, HOME_LNG, CELL).cell_id
+    captured = _capture_plan_route(monkeypatch)
+    response = client.get(
+        "/api/plan",
+        params={
+            "waypoints": f"{home_cell},{other_cell}",
+            "pin": [f"{home_cell}:camp:ridb:7", f"{other_cell}:trail:osm:way/404"],
+        },
+    )
+    assert response.status_code == 200
+    pins = captured["pins"]
+    assert isinstance(pins, dict)
+    assert set(pins) == {home_cell}  # the uncached trail pin falls back to the centroid
+    pin = pins[home_cell]
+    assert (pin.kind, pin.id, pin.name, pin.feature_kind) == ("camp", "ridb:7", "Lost Lake CG", "campground")
+    assert pin.lat == pytest.approx(HOME_LAT + 0.01)
+
+
+@pytest.mark.parametrize(
+    "bad_pin",
+    ["{cell}", "{cell}:camp", "{cell}:camp:", "{cell}:land:blm:1", "not-a-waypoint:camp:ridb:7"],
+)
+def test_plan_route_rejects_malformed_pins(client: TestClient, bad_pin: str) -> None:
+    home_cell = grid_cell(HOME_LAT, HOME_LNG, CELL).cell_id
+    response = client.get("/api/plan", params={"waypoints": home_cell, "pin": bad_pin.format(cell=home_cell)})
+    assert response.status_code == 422
 
 
 def test_plan_route_geocode_network_failure_is_502_without_leaking_detail(

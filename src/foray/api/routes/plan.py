@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from typing import Annotated
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -23,6 +24,7 @@ from foray.api.deps import (
 from foray.api.state import AppState
 from foray.api_models import TripPlan
 from foray.geo import grid_cell_center
+from foray.scoring.queries import PinKind
 from foray.sources import geocode
 
 logger = logging.getLogger(__name__)
@@ -44,12 +46,17 @@ def plan(
     camp_radius_km: float = Query(40.0, gt=0),
     require_free_camp: bool = Query(False),
     waypoints: str | None = Query(None, max_length=400),
+    pin: Annotated[list[str] | None, Query()] = None,
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
 ) -> TripPlan:
     """Corridor trip plan: fruiting stops (with nearby camp + trail) from start to destination.
 
     ``destination`` is auto-picked (best-scoring region reachable from ``start``) when omitted.
+    ``waypoints``, when given, are the whole itinerary. Each ``pin`` is
+    ``{region_id}:{camp|trail}:{feature_id}`` - a campground or trail the user picked as that
+    waypoint's exact stop point (issue #311); a pin whose feature is no longer cached falls back
+    to the region centroid.
     """
     require_idle(state)
     cfg = state.cfg
@@ -74,6 +81,23 @@ def plan(
             except ValueError:
                 raise HTTPException(422, f"waypoint {waypoint!r} is not valid coordinates") from None
 
+    # region_id -> (kind, feature_id). Region ids (H3 hex) and kinds never contain ':', so
+    # splitting at most twice leaves feature ids like "osm:node/123" intact.
+    pin = pin or []
+    if len(pin) > len(picked_waypoints):
+        raise HTTPException(422, "at most one pin per waypoint")
+    pin_refs: dict[str, tuple[PinKind, str]] = {}
+    for raw_pin in pin:
+        region_id, kind, feature_id = ([*raw_pin.split(":", 2), "", ""])[:3]
+        if region_id not in picked_waypoints or not feature_id or len(raw_pin) > 300:
+            raise HTTPException(422, f"pin {raw_pin!r} must be <waypoint region id>:<camp|trail>:<feature id>")
+        if kind == "camp":
+            pin_refs[region_id] = ("camp", feature_id)
+        elif kind == "trail":
+            pin_refs[region_id] = ("trail", feature_id)
+        else:
+            raise HTTPException(422, f"pin kind {kind!r} must be 'camp' or 'trail'")
+
     def resolve_point(query: str) -> tuple[float, float]:
         try:
             location = geocode.resolve(query)
@@ -89,6 +113,11 @@ def plan(
             home = resolve_home(conn, device_id, cfg)
             start_lat, start_lng = resolve_point(start) if start else (home.lat, home.lng)
             dest_lat, dest_lng = resolve_point(destination) if destination else (None, None)
+            pins = {
+                region_id: resolved
+                for region_id, (kind, feature_id) in pin_refs.items()
+                if (resolved := scoring.resolve_pin(conn, kind, feature_id)) is not None
+            }
             trip = scoring.plan_route(
                 conn,
                 months=selected_months,
@@ -106,6 +135,7 @@ def plan(
                 camp_radius_km=camp_radius_km,
                 require_free_camp=require_free_camp,
                 waypoints=picked_waypoints,
+                pins=pins,
                 ttl_seconds=cfg.observability.ranking_cache_ttl_seconds,
             )
     except psycopg.errors.UndefinedTable:

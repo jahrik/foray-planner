@@ -29,7 +29,7 @@ from foray.scoring._sql import (
     sql_in,
     taxon_filter,
 )
-from foray.scoring.models import CampSite, FireNear, Trail
+from foray.scoring.models import CampSite, FireNear, StopPin, Trail
 
 _CALENDAR_SPECIES_PER_MONTH = 15
 
@@ -541,6 +541,28 @@ def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
         land_unit=land_unit,
         forage_obs=forage_obs,
     )
+
+
+PinKind = Literal["camp", "trail"]
+
+
+def resolve_pin(con: psycopg.Connection, kind: PinKind, feature_id: str) -> StopPin | None:
+    """A cached campsite or trail row as a trip-stop pin (issue #311), or None when it's no
+    longer cached (re-ingest dropped it) - the planner then falls back to the region centroid.
+
+    A trail's point is its stored representative ``center_lat``/``center_lng``: the node itself
+    for a trailhead, the line's representative point for a path / route / forest road.
+    """
+    sql: LiteralString = (
+        "SELECT id, name, kind, lat, lng FROM campsites WHERE id = %s"
+        if kind == "camp"
+        else "SELECT id, name, kind, center_lat, center_lng FROM trails WHERE id = %s"
+    )
+    row = con.execute(sql, [feature_id]).fetchone()
+    if row is None:
+        return None
+    pin_id, name, feature_kind, lat, lng = row
+    return StopPin(kind=kind, id=pin_id, name=name, feature_kind=feature_kind, lat=lat, lng=lng)
 
 
 def connected_trails(con: psycopg.Connection, trail_ids: Sequence[str]) -> list[Trail]:
