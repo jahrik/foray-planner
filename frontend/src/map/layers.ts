@@ -263,7 +263,7 @@ export async function loadPreciseObservations(): Promise<void> {
       [obs.lat, obs.lng],
       circleStyle({ radius: 4, fill: spore, stroke: HOME_RING, weight: 1, fillOpacity: 0.9 }),
     ).bindPopup(precisePopup(obs));
-    addPreciseMarker(marker);
+    addPreciseMarker(marker, obs);
   });
 }
 
