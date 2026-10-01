@@ -1,7 +1,7 @@
 import L from "leaflet";
 import "leaflet.markercluster";
 
-import type { Home } from "../api/types";
+import type { Home, PreciseObservation } from "../api/types";
 import { FIRE_ACTIVE, FIRE_SCAR } from "./basemap-fire";
 import { LAND_COLORS, LAND_DEFAULT } from "./basemap-land";
 import { FORAGE_RAMP, FORAGE_TIER_LABELS } from "./forage";
@@ -9,6 +9,7 @@ import { clearCardCampMarkers, clearCamps, clearTrailheadMarkers } from "./pins"
 import { clearLayer, clearLayerList } from "./layer-lifecycle";
 import { clearSatelliteOverlay, resetSelection } from "./destinations";
 import { inspectRoadAt } from "./inspect";
+import { buildClusterList } from "./cluster-popup";
 import { circleStyle } from "./markers";
 import { dist, onScopeChange, qs, state } from "../state";
 
@@ -61,6 +62,9 @@ let homeMarker: L.CircleMarker;
 // reload) rather than recreated per fetch, since MarkerClusterGroup itself owns the spatial
 // index that makes re-clustering on zoom cheap.
 let preciseCluster: L.MarkerClusterGroup;
+// Each precise pin's source observation, so a cluster's observation list (wirePreciseClusterList) can
+// read back what's folded into it from getAllChildMarkers().
+const preciseObservations = new WeakMap<L.Layer, PreciseObservation>();
 
 export const currentTheme = (): "dark" | "light" =>
   document.documentElement.dataset.theme === "light" ? "light" : "dark";
@@ -294,11 +298,16 @@ export function initMap(home: Home): void {
   // top of the satellite image, not under it (see showSatelliteOverlay).
   map.createPane("satellite");
   map.getPane("satellite")!.style.zIndex = "350";
+  const hover = hoverCapable();
   preciseCluster = L.markerClusterGroup({
     iconCreateFunction: preciseClusterIcon,
     maxClusterRadius: 40,
     spiderfyOnMaxZoom: true,
+    // Touch: a tap opens the observation list (which has its own Zoom in button) - see
+    // wirePreciseClusterList.
+    zoomToBoundsOnClick: hover,
   }).addTo(map);
+  wirePreciseClusterList(preciseCluster, hover);
   renderLegend();
   homeMarker = L.circleMarker([home.lat, home.lng], HOME_DOT_STYLE)
     .addTo(map)
@@ -351,8 +360,69 @@ export function clearPrecise(): void {
 // Adds a precise-observation pin into the cluster group (see preciseCluster above) instead of
 // directly onto the map - the cluster group itself decides whether it renders standalone or
 // folded into a nearby cluster badge at the current zoom.
-export function addPreciseMarker(marker: L.CircleMarker): void {
+export function addPreciseMarker(marker: L.CircleMarker, obs: PreciseObservation): void {
+  preciseObservations.set(marker, obs);
   preciseCluster.addLayer(marker);
+}
+
+// A cluster badge lists the observations folded into it (cluster-popup.ts). With a mouse,
+// hovering opens the list and clicking still zooms to the badge's bounds (the plugin default);
+// the popup stays open while the pointer moves from the badge onto it - the rows are iNaturalist
+// links, so it has to be reachable - and closes a beat after the pointer leaves both. Touch
+// screens have no hover, so there a tap opens the list instead of zooming, and the list carries
+// a "Zoom in" button for the drill-down (see initMap's zoomToBoundsOnClick). The popup closes on
+// any zoom since the clusters re-form.
+const CLUSTER_POPUP_CLOSE_MS = 250;
+
+const hoverCapable = (): boolean => window.matchMedia?.("(hover: hover)").matches ?? true;
+
+function clusterObservations(cluster: L.MarkerCluster): PreciseObservation[] {
+  return cluster
+    .getAllChildMarkers()
+    .map((marker) => preciseObservations.get(marker))
+    .filter((obs): obs is PreciseObservation => obs !== undefined);
+}
+
+function wirePreciseClusterList(group: L.MarkerClusterGroup, hover: boolean): void {
+  let closeTimer: number | undefined;
+  const popup = L.popup({
+    className: "cluster-popup",
+    closeButton: !hover,
+    autoPan: !hover,
+    maxWidth: 320,
+    offset: L.point(0, -12),
+  });
+  const cancelClose = (): void => window.clearTimeout(closeTimer);
+  const scheduleClose = (): void => {
+    cancelClose();
+    closeTimer = window.setTimeout(() => map.closePopup(popup), CLUSTER_POPUP_CLOSE_MS);
+  };
+  const open = (cluster: L.MarkerCluster): void => {
+    const observations = clusterObservations(cluster);
+    if (!observations.length) return;
+    const options = hover ? {} : { onZoom: () => cluster.zoomToBounds({ padding: [20, 20] }) };
+    popup.setLatLng(cluster.getLatLng()).setContent(buildClusterList(observations, options)).openOn(map);
+  };
+
+  if (hover) {
+    group.on("clustermouseover", (event: L.LeafletEvent) => {
+      cancelClose();
+      open(event.layer as L.MarkerCluster);
+      const element = popup.getElement();
+      if (element && !element.dataset.hoverWired) {
+        element.dataset.hoverWired = "1";
+        L.DomEvent.on(element, "mouseenter", cancelClose);
+        L.DomEvent.on(element, "mouseleave", scheduleClose);
+      }
+    });
+    group.on("clustermouseout", scheduleClose);
+  } else {
+    group.on("clusterclick", (event: L.LeafletEvent) => open(event.layer as L.MarkerCluster));
+  }
+  map.on("zoomstart", () => {
+    cancelClose();
+    map.closePopup(popup);
+  });
 }
 
 // Public-land agency toggles (#show-land-blm/usfs/tribal, layers.ts's loadLand) - live

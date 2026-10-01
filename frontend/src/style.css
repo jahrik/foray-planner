@@ -816,6 +816,44 @@ a.chip:hover {
   transform: scale(1.25);
   transform-origin: 50% 92%;
 }
+/* Precise-observation cluster list (map.ts wirePreciseClusterList / cluster-popup.ts): hover
+   on desktop, tap on touch. Scrolls inside the popup rather than growing past the map. */
+.cluster-popup .cluster-list ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.cluster-popup .cluster-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  border-top: 1px solid var(--border);
+}
+.cluster-popup .cluster-list-date,
+.cluster-popup .cluster-list-more {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.cluster-popup .cluster-list-more {
+  margin-top: 4px;
+  font-style: italic;
+}
+.cluster-popup .cluster-list-zoom {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  min-height: 36px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
 /* Permanent rank numeral on the top-3 destination markers (map.ts plot). No box, no arrow -
    just the numeral sitting in the circle, in the display face to match the shortlist cards. */
 .leaflet-tooltip.rank-numeral {
