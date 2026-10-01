@@ -614,6 +614,11 @@ main {
   color: var(--ink);
   font-size: 13px;
 }
+/* Max stops while a shortlist drives the trip (issue #311) - the picks are the stops. */
+.plan-form input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 /* The selected destination's satellite fill (map.ts showSatelliteOverlay). The vector basemap
    has a real dark style, so there is no dark-mode tile-pane invert to work around any more.
    clip-path circle(50%) on a square bounding-box image lands exactly on the
