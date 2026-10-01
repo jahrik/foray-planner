@@ -33,11 +33,13 @@ describe("buildClusterList", () => {
     expect(names).toEqual(["New", "Old", "Undated"]);
   });
 
-  it("links each name to iNaturalist in a new tab, plain text when there's no uri", () => {
-    const root = buildClusterList([obs(), obs({ id: 2, name: "Unlinked", uri: null })]);
+  it("links each name to its iNaturalist page by id, never the cached uri", () => {
+    const root = buildClusterList([obs({ id: 7, uri: "javascript:alert(1)" }), obs({ id: 8, uri: null })]);
     const anchors = root.querySelectorAll("a");
-    expect(anchors).toHaveLength(1);
-    expect(anchors[0]?.href).toBe("https://www.inaturalist.org/observations/1");
+    expect([...anchors].map((anchor) => anchor.href)).toEqual([
+      "https://www.inaturalist.org/observations/7",
+      "https://www.inaturalist.org/observations/8",
+    ]);
     expect(anchors[0]?.target).toBe("_blank");
     expect(anchors[0]?.rel).toBe("noopener");
   });
@@ -64,7 +66,7 @@ describe("buildClusterList", () => {
   });
 
   it("sets external text via textContent (no markup injection)", () => {
-    const root = buildClusterList([obs({ name: "<img src=x onerror=alert(1)>", uri: null })]);
+    const root = buildClusterList([obs({ name: "<img src=x onerror=alert(1)>" })]);
     expect(root.querySelector("img")).toBeNull();
   });
 });

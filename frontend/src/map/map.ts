@@ -354,6 +354,7 @@ export function clearMarkers(): void {
 }
 
 export function clearPrecise(): void {
+  closeClusterPopup();
   preciseCluster.clearLayers();
 }
 
@@ -370,9 +371,19 @@ export function addPreciseMarker(marker: L.CircleMarker, obs: PreciseObservation
 // the popup stays open while the pointer moves from the badge onto it - the rows are iNaturalist
 // links, so it has to be reachable - and closes a beat after the pointer leaves both. Touch
 // screens have no hover, so there a tap opens the list instead of zooming, and the list carries
-// a "Zoom in" button for the drill-down (see initMap's zoomToBoundsOnClick). The popup closes on
-// any zoom since the clusters re-form.
+// a "Zoom in" button for the drill-down (see initMap's zoomToBoundsOnClick). Keyboard: focusing
+// a badge opens the list, Tab moves into it, Escape closes it back to the badge (Enter on the
+// badge still zooms). The popup closes on any zoom since the clusters re-form, and on
+// clearPrecise() since its pins are about to be replaced.
 const CLUSTER_POPUP_CLOSE_MS = 250;
+
+let clusterPopup: L.Popup | null = null;
+let clusterCloseTimer: number | undefined;
+
+function closeClusterPopup(): void {
+  window.clearTimeout(clusterCloseTimer);
+  if (clusterPopup) map.closePopup(clusterPopup);
+}
 
 const hoverCapable = (): boolean => window.matchMedia?.("(hover: hover)").matches ?? true;
 
@@ -383,8 +394,17 @@ function clusterObservations(cluster: L.MarkerCluster): PreciseObservation[] {
     .filter((obs): obs is PreciseObservation => obs !== undefined);
 }
 
+// The cluster whose badge is `element`, via the public getVisibleParent - cluster icons are
+// rebuilt on every re-cluster, so there's no stable element -> cluster handle to keep.
+function clusterForBadge(group: L.MarkerClusterGroup, element: Element): L.MarkerCluster | null {
+  for (const layer of group.getLayers()) {
+    const parent = group.getVisibleParent(layer as L.Marker) as L.Marker | null;
+    if (parent && parent !== layer && parent.getElement() === element) return parent as L.MarkerCluster;
+  }
+  return null;
+}
+
 function wirePreciseClusterList(group: L.MarkerClusterGroup, hover: boolean): void {
-  let closeTimer: number | undefined;
   const popup = L.popup({
     className: "cluster-popup",
     closeButton: !hover,
@@ -392,37 +412,74 @@ function wirePreciseClusterList(group: L.MarkerClusterGroup, hover: boolean): vo
     maxWidth: 320,
     offset: L.point(0, -12),
   });
-  const cancelClose = (): void => window.clearTimeout(closeTimer);
+  clusterPopup = popup;
+  let badge: HTMLElement | null = null;
+  // Set while Escape hands focus back to the badge, so that focusin doesn't reopen the list.
+  let returningFocus = false;
+  const cancelClose = (): void => window.clearTimeout(clusterCloseTimer);
   const scheduleClose = (): void => {
     cancelClose();
-    closeTimer = window.setTimeout(() => map.closePopup(popup), CLUSTER_POPUP_CLOSE_MS);
+    clusterCloseTimer = window.setTimeout(() => map.closePopup(popup), CLUSTER_POPUP_CLOSE_MS);
   };
+  const inPopup = (target: EventTarget | null): boolean =>
+    target instanceof Node && !!popup.getElement()?.contains(target);
   const open = (cluster: L.MarkerCluster): void => {
+    cancelClose();
     const observations = clusterObservations(cluster);
     if (!observations.length) return;
+    badge = (cluster as unknown as L.Marker).getElement() ?? null;
     const options = hover ? {} : { onZoom: () => cluster.zoomToBounds({ padding: [20, 20] }) };
     popup.setLatLng(cluster.getLatLng()).setContent(buildClusterList(observations, options)).openOn(map);
+    const element = popup.getElement();
+    if (element && !element.dataset.listWired) {
+      element.dataset.listWired = "1";
+      L.DomEvent.on(element, "mouseenter", cancelClose);
+      L.DomEvent.on(element, "mouseleave", scheduleClose);
+      L.DomEvent.on(element, "focusin", cancelClose);
+      L.DomEvent.on(element, "focusout", (event) => {
+        const next = (event as FocusEvent).relatedTarget;
+        if (!inPopup(next) && next !== badge) scheduleClose();
+      });
+      L.DomEvent.on(element, "keydown", (event) => {
+        if ((event as KeyboardEvent).key !== "Escape") return;
+        map.closePopup(popup);
+        returningFocus = true;
+        badge?.focus();
+        returningFocus = false;
+      });
+    }
   };
 
   if (hover) {
-    group.on("clustermouseover", (event: L.LeafletEvent) => {
-      cancelClose();
-      open(event.layer as L.MarkerCluster);
-      const element = popup.getElement();
-      if (element && !element.dataset.hoverWired) {
-        element.dataset.hoverWired = "1";
-        L.DomEvent.on(element, "mouseenter", cancelClose);
-        L.DomEvent.on(element, "mouseleave", scheduleClose);
-      }
-    });
+    group.on("clustermouseover", (event: L.LeafletEvent) => open(event.layer as L.MarkerCluster));
     group.on("clustermouseout", scheduleClose);
   } else {
     group.on("clusterclick", (event: L.LeafletEvent) => open(event.layer as L.MarkerCluster));
   }
-  map.on("zoomstart", () => {
-    cancelClose();
-    map.closePopup(popup);
+
+  // Keyboard path, delegated on the map container since badges are recreated on re-cluster.
+  const container = map.getContainer();
+  const badgeOf = (target: EventTarget | null): HTMLElement | null =>
+    target instanceof HTMLElement && target.classList.contains("precise-cluster-icon") ? target : null;
+  L.DomEvent.on(container, "focusin", (event) => {
+    const focused = returningFocus ? null : badgeOf(event.target);
+    const cluster = focused && clusterForBadge(group, focused);
+    if (cluster) open(cluster);
   });
+  L.DomEvent.on(container, "focusout", (event) => {
+    if (badgeOf(event.target) && !inPopup((event as FocusEvent).relatedTarget)) scheduleClose();
+  });
+  L.DomEvent.on(container, "keydown", (event) => {
+    const keyEvent = event as KeyboardEvent;
+    if (keyEvent.key !== "Tab" || keyEvent.shiftKey || !badgeOf(keyEvent.target) || !map.hasLayer(popup))
+      return;
+    const first = popup.getElement()?.querySelector<HTMLElement>(".cluster-list a, .cluster-list button");
+    if (!first) return;
+    keyEvent.preventDefault();
+    first.focus();
+  });
+
+  map.on("zoomstart", closeClusterPopup);
 }
 
 // Public-land agency toggles (#show-land-blm/usfs/tribal, layers.ts's loadLand) - live
