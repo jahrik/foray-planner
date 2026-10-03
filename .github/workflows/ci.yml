@@ -81,11 +81,12 @@ jobs:
       # infra/docker/postgres/Dockerfile, but a GitHub Actions `services:` container can only
       # be a pre-built image, not a build context) - install the same PGDG package directly
       # into the running service container instead of maintaining a second custom image just
-      # for CI.
+      # for CI. The image is Debian bullseye, whose PGDG suite moved to apt-archive.postgresql.org
+      # (apt.postgresql.org now 404s it) - same repoint as infra/docker/postgres/Dockerfile.
       - name: Install h3 extension into the service container
         run: |
           cid=$(docker ps --filter ancestor=docker.io/postgis/postgis:17-3.5 --format '{{.ID}}')
-          docker exec "$cid" bash -c "apt-get update -qq && apt-get install -y --no-install-recommends postgresql-17-h3"
+          docker exec "$cid" bash -c "sed -i 's|http://apt.postgresql.org/pub/repos/apt|https://apt-archive.postgresql.org/pub/repos/apt|' /etc/apt/sources.list.d/pgdg.list && apt-get update -qq && apt-get install -y --no-install-recommends postgresql-17-h3"
 
       - name: Apply the full schema + migrations chain from scratch
         run: uv run foray migrate
