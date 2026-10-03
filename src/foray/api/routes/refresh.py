@@ -58,8 +58,11 @@ def refresh(
         with pool.connection() as conn:
             home = resolve_home(conn, device_id, state.cfg)
     except Exception:
-        state.refreshing = False
-        state.rebuilding_phenology = False
+        # Under the same lock as the check-and-set: clearing `refreshing` first, unlocked, let a
+        # new mushroom refresh start in between and then lose its `rebuilding_phenology=True`.
+        with state.refresh_lock:
+            state.rebuilding_phenology = False
+            state.refreshing = False
         raise
     state.last_error = None
     state.last_progress = None
