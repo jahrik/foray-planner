@@ -140,3 +140,39 @@ def test_unpinnable_or_missing_parcel_resolves_to_none(con: psycopg.Connection) 
 def test_land_pin_needs_a_reference_point(con: psycopg.Connection) -> None:
     with pytest.raises(ValueError, match="near"):
         resolve_pin(con, "land", "usfs:1")
+
+
+def test_entrance_fallback_from_inside_is_the_nearest_boundary_point(con: psycopg.Connection) -> None:
+    # Reference point inside the forest, 0.01 deg from its north edge, no cached features:
+    # the pin must land on that edge, not stay at the interior reference point.
+    pin = resolve_pin(con, "land", "usfs:1", near=(NORTH - 0.01, -120.95))
+    assert pin is not None
+    assert pin.feature_kind == "edge"
+    assert (pin.lat, pin.lng) == pytest.approx((NORTH, -120.95), abs=1e-6)
+
+
+def test_state_land_managers_are_pinnable(con: psycopg.Connection) -> None:
+    upsert_public_land(
+        con,
+        [
+            (
+                "padus:slb1",
+                "State Land Board",
+                "Trust Lands",
+                "padus",
+                "https://example.test/slb",
+                _square(-121.3, 45.0, -121.25, 45.05),
+            ),
+            (
+                "padus:cty1",
+                "County Land",
+                "County Park",
+                "padus",
+                "https://example.test/cty",
+                _square(-121.3, 45.06, -121.25, 45.1),
+            ),
+        ],
+    )
+    ids = {parcel.id for parcel in land_near(con, lat=REF[0], lng=REF[1], radius_km=10)}
+    assert "padus:slb1" in ids
+    assert "padus:cty1" not in ids  # local government land stays map-only

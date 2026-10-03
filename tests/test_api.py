@@ -649,6 +649,16 @@ def test_plan_route_bad_destination_is_404(client: TestClient, monkeypatch: pyte
     assert response.status_code == 404
 
 
+def test_plan_route_accepts_as_many_waypoints_as_max_stops(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # "Choose stop point" freezes a whole planned trip (up to max_stops=20) into the shortlist,
+    # so 20 waypoints must round-trip; 21 is over the cap.
+    cells = list(dict.fromkeys(grid_cell(HOME_LAT + offset * 0.5, HOME_LNG, CELL).cell_id for offset in range(25)))
+    assert len(cells) >= 21
+    _capture_plan_route(monkeypatch)
+    assert client.get("/api/plan", params={"waypoints": ",".join(cells[:20])}).status_code == 200
+    assert client.get("/api/plan", params={"waypoints": ",".join(cells[:21])}).status_code == 422
+
+
 def test_plan_route_rejects_malformed_waypoints(client: TestClient) -> None:
     assert client.get("/api/plan", params={"waypoints": "not-a-region"}).status_code == 422
 
@@ -770,10 +780,18 @@ def test_plan_route_resolves_a_land_pin_to_the_parcel_entrance(
     pins = captured["pins"]
     assert isinstance(pins, dict)
     pin = pins[home_cell]
-    # No cached roads/trails here, and the cell centre sits inside the forest: the "nearest edge"
-    # from inside is the reference point itself.
+    # No cached roads/trails here, and the cell centre sits inside the forest: the fallback is the
+    # nearest point on the boundary - never the interior reference point itself.
     assert (pin.kind, pin.name, pin.feature_kind) == ("land", "Home NF", "edge")
-    assert (pin.lat, pin.lng) == pytest.approx(grid_cell_center(home_cell), abs=1e-6)
+    centre_lat, centre_lng = grid_cell_center(home_cell)
+    edge_offsets = [
+        abs(pin.lat - (HOME_LAT - 0.2)),
+        abs(pin.lat - (HOME_LAT + 0.2)),
+        abs(pin.lng - (HOME_LNG - 0.2)),
+        abs(pin.lng - (HOME_LNG + 0.2)),
+    ]
+    assert min(edge_offsets) == pytest.approx(0, abs=1e-6)
+    assert (pin.lat, pin.lng) != pytest.approx((centre_lat, centre_lng), abs=1e-3)
 
 
 def test_plan_route_survives_a_pin_lookup_timeout(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
