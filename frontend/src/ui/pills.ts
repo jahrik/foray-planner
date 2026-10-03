@@ -90,6 +90,7 @@ export function initPills(): void {
     "show-land-blm",
     "show-land-usfs",
     "show-land-tribal",
+    "show-land-other",
     "show-camps",
     "show-dispersed",
     "free-camps",

@@ -52,7 +52,7 @@ export function initLayerToggles(): void {
   // 409ing every read while it ran). Hidden outright when no martin instance is configured, same
   // gating shape as Contours/Satellite basemap below - otherwise a deployment with martin disabled
   // would let someone check these and see nothing render (Copilot review, PR #369).
-  for (const id of ["#show-land-blm", "#show-land-usfs", "#show-land-tribal"]) {
+  for (const id of ["#show-land-blm", "#show-land-usfs", "#show-land-tribal", "#show-land-other"]) {
     qs(id).onchange = () => loadLand();
     const row = qs(id).closest("label");
     if (row) row.hidden = !state.landTilesUrl;

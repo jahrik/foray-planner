@@ -77,7 +77,7 @@ let contoursVisible = false;
 let satelliteBasemapEnabled = false;
 // Public-land / fire layer toggles (issue #336 PR 2) - same "track it here so a theme swap
 // re-bakes the current state" reasoning as contoursVisible/satelliteBasemapEnabled. Land carries
-// one flag per agency toggle (map.ts's #show-land-blm/usfs/tribal); fire is a single on/off.
+// one flag per agency toggle (map.ts's #show-land-blm/usfs/tribal/other); fire is a single on/off.
 let landAgencies: readonly string[] = [];
 let fireVisible = false;
 
@@ -186,7 +186,7 @@ export function setSatelliteBasemapMode(urls: TileUrls, theme: "dark" | "light",
   glLayer?.getMaplibreMap().setStyle(buildStyle(urls, theme));
 }
 
-/** The Layers-pill land-agency toggles (#show-land-blm/usfs/tribal): live `setLayoutProperty` +
+/** The Layers-pill land-agency toggles (#show-land-blm/usfs/tribal/other): live `setLayoutProperty` +
  * `setFilter` on the already-mounted land layers, no full style rebuild (unlike the satellite/
  * contour toggles above, which change what else is in the style). `agencies` tracked module-side
  * so a later theme swap's rebuild keeps the current selection. No-op if land tiles are disabled

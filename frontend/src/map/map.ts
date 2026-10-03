@@ -194,6 +194,7 @@ export function renderLegend(): void {
   const blm = (document.getElementById("show-land-blm") as HTMLInputElement | null)?.checked;
   const usfs = (document.getElementById("show-land-usfs") as HTMLInputElement | null)?.checked;
   const tribal = (document.getElementById("show-land-tribal") as HTMLInputElement | null)?.checked;
+  const otherLand = (document.getElementById("show-land-other") as HTMLInputElement | null)?.checked;
   const palette = markerPalette();
   const entries: [string, string][] = [
     [palette.rust, "Top destination"],
@@ -212,6 +213,7 @@ export function renderLegend(): void {
   if (blm) entries.push([LAND_COLORS.BLM ?? LAND_DEFAULT, "BLM land"]);
   if (usfs) entries.push([LAND_COLORS.USFS ?? LAND_DEFAULT, "USFS land"]);
   if (tribal) entries.push([LAND_COLORS.Tribal ?? LAND_DEFAULT, "Tribal land"]);
+  if (otherLand) entries.push([LAND_DEFAULT, "State & other federal land"]);
   if (state.selectedTrailWalkIn) entries.push([TRAIL_WALKIN, "Walk-in forest road (gated)"]);
   if (state.selectedTrailForage > 0) {
     const idx = state.selectedTrailForage - 1; // 0..2 into the tier-1/2/3 ramp
