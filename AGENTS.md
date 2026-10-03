@@ -279,6 +279,13 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   preference (default **dark**), set before first paint by `public/theme-init.js` (external, so
   the CSP can stay `script-src 'self'`).
 
+  **`typescript` is deliberately not a direct devDependency.** npm installs it as the shared
+  peer of `openapi-typescript` and `typescript-eslint` (which also provides `tsc` for
+  `build`/`typecheck`), so its version is whatever both tools accept. Both drive the TS compiler
+  API, which TypeScript 7 (the native rewrite) no longer exposes - pinning `typescript` directly
+  just lets Dependabot propose a major they can't run on. Don't add it back; when both support
+  TS 7, npm pulls it in on its own.
+
   **Aerial imagery** is opt-in now (the Layers pill's "Aerial imagery" toggle; it was
   auto-on-select before #301). When on, selecting a destination fills its true footprint with an
   Esri World Imagery raster plus a matching roads/labels overlay (`showSatelliteOverlay`, its own
