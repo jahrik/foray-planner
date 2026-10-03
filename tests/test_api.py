@@ -13,11 +13,13 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
+from foray import refresh as refresh_module
 from foray.api import create_app
 from foray.cache import upsert_campsites, upsert_fungi_genera, upsert_public_land, upsert_trails
 from foray.config import Home, Settings
 from foray.geo import grid_cell, grid_cell_center, h3_edge_length_km
 from foray.scoring import TripPlan, build_phenology
+from foray.sources import land as land_source
 from foray.sources.trails import _parse_element
 
 CELL = 5
@@ -1094,6 +1096,52 @@ def _wait_for_idle(client: TestClient) -> None:
             return
         time.sleep(0.05)
     pytest.fail("refresh did not finish in time")
+
+
+def _block_until_released(
+    monkeypatch: pytest.MonkeyPatch, owner: object, attr: str
+) -> tuple[threading.Event, threading.Event]:
+    """Replace the ingest step ``owner.attr`` with one that waits for a release, so a test can
+    look at the API mid-refresh. Returns ``(started, release)``."""
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocked(*args: object, **kwargs: object) -> None:
+        started.set()
+        release.wait(5)
+
+    monkeypatch.setattr(owner, attr, blocked)
+    monkeypatch.setattr("foray.scoring.build_phenology", lambda *args, **kwargs: None)
+    return started, release
+
+
+def test_layer_refresh_does_not_block_reads(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Toggling BLM / Forest Service land on runs a land-only refresh. It never rebuilds
+    # phenology, so destinations (and the observations they carry) must keep loading - they
+    # used to 409 for the whole PAD-US fetch, emptying the map.
+    started, release = _block_until_released(monkeypatch, land_source, "ingest_public_land")
+    assert client.post("/api/refresh", params={"target": "land"}).status_code == 200
+    try:
+        assert started.wait(5)
+        config = client.get("/api/config").json()
+        assert (config["refreshing"], config["rebuilding_phenology"]) == (True, False)
+        assert client.get("/api/destinations", params={"months": "4"}).status_code == 200
+    finally:
+        release.set()
+    _wait_for_idle(client)
+
+
+def test_mushroom_refresh_still_blocks_reads(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    started, release = _block_until_released(monkeypatch, refresh_module, "ingest")
+    assert client.post("/api/refresh", params={"target": "mushrooms"}).status_code == 200
+    try:
+        assert started.wait(5)
+        assert client.get("/api/config").json()["rebuilding_phenology"] is True
+        assert client.get("/api/destinations", params={"months": "4"}).status_code == 409
+    finally:
+        release.set()
+    _wait_for_idle(client)
+    assert client.get("/api/config").json()["rebuilding_phenology"] is False
 
 
 def test_refresh_rate_limits_repeat_triggers_from_same_ip(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

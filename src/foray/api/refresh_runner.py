@@ -91,4 +91,5 @@ def run_refresh(state: AppState, pool: ConnectionPool, base_cfg: Settings, home:
         if state.http_client is not None:
             state.http_client.close()
             state.http_client = None
+        state.rebuilding_phenology = False
         state.refreshing = False

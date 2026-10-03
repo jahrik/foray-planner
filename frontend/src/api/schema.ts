@@ -786,6 +786,11 @@ export interface components {
             recent_weeks: number;
             /** Refreshing */
             refreshing: boolean;
+            /**
+             * Rebuilding Phenology
+             * @default false
+             */
+            rebuilding_phenology: boolean;
             /** Last Error */
             last_error: string | null;
             /**

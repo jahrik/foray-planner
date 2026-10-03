@@ -211,12 +211,17 @@ async function main(): Promise<void> {
     return home;
   });
 
-  // If a refresh is already running (e.g. page reload mid-fetch), reflect it.
+  // If a refresh is already running (e.g. page reload mid-fetch), reflect it. Only one that
+  // rebuilds phenology blocks reads; a layer-only refresh (land, camps, ...) still lets the
+  // destination list load underneath its progress bar.
   if (config.refreshing) {
     startRefresh("Fetching data…").then((succeeded) => {
       if (succeeded) refreshCurrentView();
     });
-  } else {
+  }
+  // A phenology rebuild 409s reads until it finishes - startRefresh's .then above re-runs the
+  // view then, so only load now when nothing is blocking.
+  if (!(config.refreshing && config.rebuilding_phenology)) {
     await Promise.race([geoPromise, sleep(GEOLOCATION_HEAD_START_MS)]);
     if (!geoApplied && state.view === "destinations") runDestinations();
   }

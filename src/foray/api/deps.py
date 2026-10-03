@@ -88,7 +88,10 @@ def resolve_genera(conn: psycopg.Connection, device_id: str) -> list[int]:
 
 
 def require_idle(state: AppState) -> None:
-    if state.refreshing:
+    """409 while a refresh is rebuilding phenology. A layer-only refresh (e.g. toggling BLM /
+    Forest Service land on) doesn't block reads - it used to, which emptied the destination
+    list and observations for the minutes a PAD-US land fetch can take."""
+    if state.rebuilding_phenology:
         raise HTTPException(409, "refreshing data for this area - try again shortly")
 
 

@@ -48,6 +48,8 @@ def refresh(
         if state.refreshing:
             return StatusResponse(status="already running")
         state.refreshing = True
+        # Only a mushrooms / all refresh rebuilds phenology (refresh.run_home_refresh).
+        state.rebuilding_phenology = target in ("mushrooms", "all")
     try:
         check_refresh_rate_limit(state, client_ip(request))
         device_id, is_new = resolve_device_id(request)
@@ -57,6 +59,7 @@ def refresh(
             home = resolve_home(conn, device_id, state.cfg)
     except Exception:
         state.refreshing = False
+        state.rebuilding_phenology = False
         raise
     state.last_error = None
     state.last_progress = None

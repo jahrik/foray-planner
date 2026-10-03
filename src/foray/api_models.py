@@ -32,6 +32,9 @@ class ConfigResponse(BaseModel):
     region_radius_km: float
     recent_weeks: int
     refreshing: bool
+    # Whether the running refresh blocks reads (it rebuilds phenology) - a layer-only refresh
+    # doesn't, so the client can load destinations while it runs.
+    rebuilding_phenology: bool = False
     last_error: str | None
     # Empty when no vector basemap is configured; the map then has no base layer (there is no
     # raster fallback).

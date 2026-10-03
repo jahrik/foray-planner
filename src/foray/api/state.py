@@ -26,6 +26,10 @@ class AppState:
 
     cfg: Settings
     refreshing: bool = False
+    # True only while the running refresh will rebuild phenology (target `mushrooms` / `all`) -
+    # the one step that swaps the tables destination / observation reads depend on. A layer-only
+    # refresh (land, camps, trails, dispersed) just upserts its own table, so reads stay open.
+    rebuilding_phenology: bool = False
     last_error: str | None = None
     listeners: list[queue.Queue[dict[str, Any]]] = field(default_factory=list)
     listeners_lock: threading.Lock = field(default_factory=threading.Lock)
