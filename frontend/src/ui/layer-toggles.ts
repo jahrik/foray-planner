@@ -1,7 +1,7 @@
-// The camp / dispersed / public-land checkbox wiring in the header. Turning a layer on first
+// The camp / dispersed / public-land checkbox wiring in the header. Turning a camp layer on first
 // runs an on-demand ingest for it (startRefresh) then plots it; turning it off cancels any
-// in-flight ingest for that layer and re-plots without it. Split out of main.ts (issue #242
-// Part 2d).
+// in-flight ingest for that layer and re-plots without it. Public land is visibility-only - see
+// below. Split out of main.ts (issue #242 Part 2d).
 
 import { loadCamps, loadFire, loadLand } from "../map/layers";
 import { setAerialEnabled } from "../map/destinations";
@@ -20,7 +20,6 @@ export function initLayerToggles(): void {
     if (currentRefreshTarget !== target) return;
     currentRefreshTarget = null;
     loadCamps();
-    loadLand();
   };
   const cancelLayerRefresh = (target: string) => {
     // Only cancel if the in-flight refresh is for this specific layer, so we
@@ -46,14 +45,15 @@ export function initLayerToggles(): void {
   wireLayerToggle("#show-camps", "camps", "Fetching campgrounds…", loadCamps);
   wireLayerToggle("#show-dispersed", "dispersed", "Fetching dispersed camping…", loadCamps);
   qs("#free-camps").onchange = () => loadCamps();
-  wireLayerToggle("#show-land-blm", "land", "Fetching public land…", loadLand);
-  wireLayerToggle("#show-land-usfs", "land", "Fetching public land…", loadLand);
-  wireLayerToggle("#show-land-tribal", "land", "Fetching public land…", loadLand);
-  // Land is a vector-tile layer now (issue #336 PR 2) - hidden outright when no martin instance
-  // is configured, same gating shape as Contours/Satellite basemap below. Without this, a
-  // deployment with martin disabled would still let someone check these and see nothing render,
-  // with no clue why (Copilot review, PR #369).
+  // Land is a vector-tile layer drawn straight from the cached `public_land` table (issue #336
+  // PR 2), which the scheduled `layers-land` job keeps filled coverage-wide - so a toggle is a
+  // style flip, no fetch, same as Fire below. It used to run the old per-home-radius land ingest
+  // first, re-fetching every agency from ArcGIS on each toggle for parcels already cached (and
+  // 409ing every read while it ran). Hidden outright when no martin instance is configured, same
+  // gating shape as Contours/Satellite basemap below - otherwise a deployment with martin disabled
+  // would let someone check these and see nothing render (Copilot review, PR #369).
   for (const id of ["#show-land-blm", "#show-land-usfs", "#show-land-tribal"]) {
+    qs(id).onchange = () => loadLand();
     const row = qs(id).closest("label");
     if (row) row.hidden = !state.landTilesUrl;
   }
