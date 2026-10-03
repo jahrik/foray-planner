@@ -438,7 +438,14 @@ def trails_near(
         # the best-ranked of each name so it isn't three "Beaver Pond Natural Area" rows or a
         # dozen "James Irvine Trail" segments. Unnamed rows (name None) are never collapsed.
         seen: set[str] = set()
-        candidates = [row for row in candidates if not row[1] or not (row[1] in seen or seen.add(row[1]))]
+        deduped = []
+        for row in candidates:
+            if row[1]:
+                if row[1] in seen:
+                    continue
+                seen.add(row[1])
+            deduped.append(row)
+        candidates = deduped
     trails = [
         _base_trail(
             row,
