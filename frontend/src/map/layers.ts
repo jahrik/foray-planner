@@ -4,7 +4,7 @@ import { getJson } from "../api/client";
 import type { CampSite, PreciseObservation, Trail, TrailPath } from "../api/types";
 import { createRunGuard } from "../ui/card-select";
 import { feeLabel } from "../format";
-import { LAND_AGENCIES } from "./basemap-land";
+import { LAND_AGENCIES, LAND_OTHER } from "./basemap-land";
 import { FORAGE_RAMP, forageTier } from "./forage";
 import { isRoughSurface } from "./trail-attrs";
 import { directionsLink } from "./directions";
@@ -37,7 +37,13 @@ export const freeOnly = (): boolean => qs<HTMLInputElement>("#free-camps").check
 export const blmOn = (): boolean => qs<HTMLInputElement>("#show-land-blm").checked;
 export const usfsOn = (): boolean => qs<HTMLInputElement>("#show-land-usfs").checked;
 export const tribalOn = (): boolean => qs<HTMLInputElement>("#show-land-tribal").checked;
-const LAND_TOGGLES: Record<string, () => boolean> = { BLM: blmOn, USFS: usfsOn, Tribal: tribalOn };
+export const otherLandOn = (): boolean => qs<HTMLInputElement>("#show-land-other").checked;
+const LAND_TOGGLES: Record<string, () => boolean> = {
+  BLM: blmOn,
+  USFS: usfsOn,
+  Tribal: tribalOn,
+  [LAND_OTHER]: otherLandOn,
+};
 
 // OSM dispersed-camping layer: sites tagged campable in OpenStreetMap (kind='reported').
 const isDispersed = (site: CampSite): boolean => site.kind === "reported";
@@ -96,7 +102,7 @@ function campPopup(site: CampSite): HTMLElement {
 // refresh.ts call it unawaited alongside the camps/precise loaders it used to run next to.
 export function loadLand(): void {
   renderLegend();
-  setLandVisibility(LAND_AGENCIES.filter((agency) => LAND_TOGGLES[agency]?.()));
+  setLandVisibility([...LAND_AGENCIES, LAND_OTHER].filter((agency) => LAND_TOGGLES[agency]?.()));
 }
 
 export const fireOn = (): boolean => qs<HTMLInputElement>("#show-fire").checked;
