@@ -29,8 +29,7 @@ def resolve_level(level: int | str | None) -> int:
         level = os.environ.get("FORAY_LOG_LEVEL") or _DEFAULT_LEVEL
     if isinstance(level, int):
         return level
-    numeric = logging.getLevelName(level.strip().upper())
-    return numeric if isinstance(numeric, int) else logging.INFO
+    return logging.getLevelNamesMapping().get(level.strip().upper(), logging.INFO)
 
 
 def _use_json() -> bool:
