@@ -31,6 +31,7 @@ def get_config(
         region_radius_km=h3_edge_length_km(cfg.h3_resolution),
         recent_weeks=cfg.recent_weeks,
         refreshing=state.refreshing,
+        rebuilding_phenology=state.rebuilding_phenology,
         last_error=state.last_error,
         basemap_url=cfg.basemap_url,
         terrain_url=cfg.terrain_url,
