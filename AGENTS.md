@@ -280,8 +280,9 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   the CSP can stay `script-src 'self'`).
 
   **`typescript` is deliberately not a direct devDependency.** npm installs it as the shared
-  peer of `openapi-typescript` and `typescript-eslint` (which also provides `tsc` for
-  `build`/`typecheck`), so its version is whatever both tools accept. Both drive the TS compiler
+  peer of `openapi-typescript` and `typescript-eslint`, so its version is whatever both tools
+  accept; that peer-installed `typescript` package is also what provides `tsc` for
+  `build`/`typecheck`. Both drive the TS compiler
   API, which TypeScript 7 (the native rewrite) no longer exposes - pinning `typescript` directly
   just lets Dependabot propose a major they can't run on. Don't add it back; when both support
   TS 7, npm pulls it in on its own.
