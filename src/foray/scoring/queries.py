@@ -543,11 +543,15 @@ def get_trail(con: psycopg.Connection, trail_id: str) -> Trail | None:
     )
 
 
-# Public-land managers whose parcels can be pinned as a trip stop (issue #311): federal / state
-# lands generally open to the public. Tribal, military and city/county land is cached for the
-# ownership map but isn't somewhere to send a road trip, so it's not offered. Listing a parcel
-# still asserts nothing about access or camping legality (AGENTS.md "No claims").
+# Public-land managers whose parcels can be pinned as a trip stop (issue #311): the federal
+# land-management agencies and every state land manager PAD-US distinguishes - the agency values
+# `sources.land` writes (BLM / USFS direct, PAD-US codes via `_PADUS_AGENCY_NAMES`). Not offered:
+# tribal and military land, local government (city / county / regional / water district),
+# private / NGO / joint / unknown, and federal agencies whose holdings aren't public recreation
+# land (DOE, NOAA, TVA, BPA, BOEM, NRCS, ARS, BIA). Those stay on the ownership map only. Listing
+# a parcel still asserts nothing about access or camping legality (AGENTS.md "No claims").
 PINNABLE_LAND_AGENCIES: tuple[str, ...] = (
+    # Federal
     "BLM",
     "Bureau of Land Management",
     "USFS",
@@ -556,8 +560,15 @@ PINNABLE_LAND_AGENCIES: tuple[str, ...] = (
     "U.S. Fish and Wildlife Service",
     "Bureau of Reclamation",
     "Army Corps of Engineers",
-    "State Department of Natural Resources",
+    "Other or Unknown Federal Land",
+    # State
     "State Park and Recreation",
+    "State Department of Conservation",
+    "State Land Board",
+    "State Fish and Wildlife",
+    "State Department of Natural Resources",
+    "State Department of Land",
+    "Other or Unknown State Land",
 )
 
 # How far from the reference point to look for a parcel's entrance feature, and how many of the
@@ -611,10 +622,11 @@ def _land_entrance_lookup(con: psycopg.Connection, parcel_id: str, *, lat: float
     point. Approached from outside, the nearest in-parcel point of a road is where it crosses
     into the parcel - the practical "entrance"; from inside, it's the nearest road point.
 
-    Two queries. First the parcel's nearest point to ``(lat, lng)`` (the "edge" fallback, and
-    the point inside if the reference is already on the parcel) - also the anchor for step two,
-    so a parcel listed from a widened Details search still has its entrance looked for where
-    you'd actually approach it, not 50 km back at the destination. Then the entrance search,
+    Two queries. First the parcel's nearest point to ``(lat, lng)`` (the reference point itself
+    when it's already inside) and its nearest *boundary* point (the "edge" fallback - from
+    inside, the interior point would be an arbitrary spot, not a way in). The nearest point is
+    the anchor for step two, so a parcel listed from a widened Details search still has its
+    entrance looked for where you'd actually approach it, not 50 km back at the destination. Then the entrance search,
     bounded for huge parcels: candidate features within ``_ENTRANCE_SEARCH_KM`` of the anchor
     (nearest ``_ENTRANCE_CANDIDATES`` per pool), and the polygon clipped to that box and
     subdivided into small pieces (bbox-prefiltered with ``&&``) before any intersection - a
@@ -622,11 +634,14 @@ def _land_entrance_lookup(con: psycopg.Connection, parcel_id: str, *, lat: float
     """
     edge = con.execute(
         """
-        SELECT id, agency, unit, ST_Y(near_point), ST_X(near_point)
+        SELECT id, agency, unit, ST_Y(near_point), ST_X(near_point), ST_Y(edge_point), ST_X(edge_point)
         FROM (
             SELECT id, agency, unit,
-                   ST_ClosestPoint(geom::geometry, ST_SetSRID(ST_MakePoint(%s, %s), 4326)) AS near_point
-            FROM public_land
+                   -- The search anchor: the reference point itself when it's inside the parcel.
+                   ST_ClosestPoint(geom::geometry, ref.g) AS near_point,
+                   -- The "edge" fallback: always an actual boundary point, never the interior.
+                   ST_ClosestPoint(ST_Boundary(geom::geometry), ref.g) AS edge_point
+            FROM public_land, (SELECT ST_SetSRID(ST_MakePoint(%s, %s), 4326) AS g) ref
             WHERE id = %s AND geom IS NOT NULL AND agency = ANY(%s)
         ) parcel
         """,
@@ -634,7 +649,7 @@ def _land_entrance_lookup(con: psycopg.Connection, parcel_id: str, *, lat: float
     ).fetchone()
     if edge is None:
         return None
-    pin_id, agency, unit, anchor_lat, anchor_lng = edge
+    pin_id, agency, unit, anchor_lat, anchor_lng, edge_lat, edge_lng = edge
     # Candidate features near the anchor: the nearest of each pool, as plain index-ordered reads,
     # handed to the clip/intersect statement below as EWKB parameters.
     candidates = con.execute(
@@ -693,7 +708,7 @@ def _land_entrance_lookup(con: psycopg.Connection, parcel_id: str, *, lat: float
                 "piece_vertices": _ENTRANCE_PIECE_VERTICES,
             },
         ).fetchone()
-    entrance_kind, entrance_lat, entrance_lng = best if best else ("edge", anchor_lat, anchor_lng)
+    entrance_kind, entrance_lat, entrance_lng = best if best else ("edge", edge_lat, edge_lng)
     return StopPin(
         kind="land",
         id=pin_id,

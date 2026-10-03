@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Matches `max_stops`'s ceiling: a plan stop card's "Choose stop point" freezes the current trip's
+# stops into the shortlist (issue #311), so any trip the planner can return must be re-sendable
+# as waypoints.
+MAX_WAYPOINTS = 20
+
 
 @router.get("/api/plan")
 def plan(
@@ -42,7 +47,7 @@ def plan(
     start: str | None = Query(None, max_length=200),
     destination: str | None = Query(None, max_length=200),
     corridor_km: float = Query(60.0, gt=0),
-    max_stops: int = Query(5, ge=1, le=20),
+    max_stops: int = Query(5, ge=1, le=MAX_WAYPOINTS),
     max_drive_km: float = Query(400.0, gt=0),
     camp_radius_km: float = Query(40.0, gt=0),
     require_free_camp: bool = Query(False),
@@ -75,8 +80,8 @@ def plan(
     picked_waypoints: list[str] = []
     if waypoints:
         picked_waypoints = [part.strip() for part in waypoints.split(",") if part.strip()]
-        if len(picked_waypoints) > 10:
-            raise HTTPException(422, "waypoints must be up to 10 comma-separated region ids")
+        if len(picked_waypoints) > MAX_WAYPOINTS:
+            raise HTTPException(422, f"waypoints must be up to {MAX_WAYPOINTS} comma-separated region ids")
         for waypoint in picked_waypoints:
             try:
                 grid_cell_center(waypoint)
