@@ -111,3 +111,22 @@ def test_configured_endpoints_defaults_then_honours_the_env_override(monkeypatch
 
     monkeypatch.setenv("FORAY_OVERPASS_URLS", "https://one.example/api , https://two.example/api ")
     assert overpass._configured_endpoints() == ("https://one.example/api", "https://two.example/api")
+
+
+def test_post_abandons_a_response_over_max_bytes_without_trying_the_mirrors() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.host)
+        return httpx.Response(200, content=b'{"elements": [' + b"1," * 5000 + b"1]}")
+
+    with pytest.raises(overpass.ResponseTooLarge):
+        overpass.post(_client(handler), "q", endpoints=ENDPOINTS, max_bytes=1000)
+    assert seen == ["primary.example"]
+
+
+def test_post_parses_a_response_under_max_bytes() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"elements": [1]})
+
+    assert overpass.post(_client(handler), "q", endpoints=ENDPOINTS, max_bytes=1000) == {"elements": [1]}

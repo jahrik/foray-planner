@@ -16,6 +16,7 @@ single instance or add a self-hosted one.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -64,19 +65,40 @@ def bbox(min_lat: float, min_lng: float, max_lat: float, max_lng: float) -> str:
     return f"({min_lat},{min_lng},{max_lat},{max_lng})"
 
 
-def _post_one(client: httpx.Client, url: str, query: str, *, attempts: int, base_delay: float) -> dict[str, Any]:
-    """POST ``query`` to one Overpass endpoint, retrying that host on 429/504."""
-    resp: httpx.Response | None = None
+class ResponseTooLarge(ValueError):
+    """An Overpass response grew past the caller's ``max_bytes`` cap and was abandoned unread.
+
+    A ``ValueError`` so best-effort callers that already treat ``SOURCE_ERRORS`` as "source
+    unavailable, skip" keep doing so; ``trails.ingest_trails_region`` catches it first and
+    splits the tile instead. Never failed over to another mirror - it would send the same data.
+    """
+
+
+def _post_one(
+    client: httpx.Client, url: str, query: str, *, attempts: int, base_delay: float, max_bytes: int | None
+) -> dict[str, Any]:
+    """POST ``query`` to one Overpass endpoint, retrying that host on 429/504.
+
+    The body is streamed and, with ``max_bytes`` set, abandoned the moment it passes that size
+    (:class:`ResponseTooLarge`) - parsing a dense 2-degree tile's response whole held >1 GB on
+    the 2 GB prod droplet and got the ingest OOM-killed, so the cap has to apply before
+    ``json.loads``, not after.
+    """
     for attempt in range(1, attempts + 1):
         _throttle.wait()
-        resp = client.post(url, data={"data": query}, headers={"User-Agent": USER_AGENT})
-        if resp.status_code in _RETRY_STATUS and attempt < attempts:
-            time.sleep(retry_after_seconds(resp, attempt, base_delay=base_delay))
-            continue
-        break
-    assert resp is not None
-    resp.raise_for_status()
-    return resp.json()
+        with client.stream("POST", url, data={"data": query}, headers={"User-Agent": USER_AGENT}) as resp:
+            if resp.status_code in _RETRY_STATUS and attempt < attempts:
+                delay = retry_after_seconds(resp, attempt, base_delay=base_delay)
+            else:
+                resp.raise_for_status()
+                body = bytearray()
+                for chunk in resp.iter_bytes():
+                    body += chunk
+                    if max_bytes is not None and len(body) > max_bytes:
+                        raise ResponseTooLarge(f"overpass: response from {url} exceeded {max_bytes} bytes")
+                return json.loads(bytes(body))
+        time.sleep(delay)
+    raise AssertionError("unreachable: the final attempt always returns or raises")
 
 
 def post(
@@ -86,6 +108,7 @@ def post(
     attempts: int = 4,
     base_delay: float = 2.0,
     endpoints: tuple[str, ...] | None = None,
+    max_bytes: int | None = None,
 ) -> dict[str, Any]:
     """POST an Overpass QL query, failing over across :data:`ENDPOINTS`.
 
@@ -93,7 +116,8 @@ def post(
     failure, a 429, or a 5xx then moves to the next host; a 4xx (a malformed query, a 403) is
     raised straight away, since a mirror would answer it the same way. Raises the last
     ``httpx.HTTPError`` if every host fails, or ``ValueError`` if a 200 body isn't JSON -
-    callers treat both as "source unavailable, skip".
+    callers treat both as "source unavailable, skip". ``max_bytes`` caps the body size
+    (:class:`ResponseTooLarge`, raised straight away like a 4xx).
     """
     if attempts < 1:
         raise ValueError(f"attempts must be >= 1, got {attempts}")
@@ -103,7 +127,7 @@ def post(
     last_error: httpx.HTTPError | None = None
     for index, url in enumerate(hosts):
         try:
-            return _post_one(client, url, query, attempts=attempts, base_delay=base_delay)
+            return _post_one(client, url, query, attempts=attempts, base_delay=base_delay, max_bytes=max_bytes)
         except httpx.HTTPStatusError as error:
             if error.response.status_code != 429 and error.response.status_code < 500:
                 raise

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import urllib.parse
 
 import httpx
 import psycopg
@@ -12,6 +14,7 @@ from foray.cache import (
     backfill_trail_land,
     is_ingested,
     prune_duplicate_cross_source_paths,
+    prune_duplicate_cross_source_roads,
     prune_duplicate_route_paths,
     record_ingest,
     upsert_campsites,
@@ -20,6 +23,7 @@ from foray.cache import (
 )
 from foray.config import CoverageRegion, Home, Ingest, Settings
 from foray.scoring import get_trail, nearest_trail, trail_segments_by_name, trails_near
+from foray.sources import overpass
 from foray.sources.trails import (
     _TRAILS_QUERY_VERSION,
     _network_query,
@@ -1392,21 +1396,21 @@ def test_prune_duplicate_cross_source_paths_deletes_the_real_mule_mountain_pair(
     assert remaining_ids == {"usfs:trail/5031.005121"}
 
 
-def test_prune_duplicate_cross_source_paths_keeps_a_length_mismatched_partial_overlap(
+def test_prune_duplicate_cross_source_paths_deletes_an_osm_way_covering_part_of_a_usfs_trail(
     con: psycopg.Connection,
 ) -> None:
-    # A short OSM spur fully contained within a much longer USFS trail's buffer corridor is a
-    # real, distinct trail - not a duplicate of the whole thing. The length-ratio guard (30%)
-    # must keep both rows.
-    osm_spur = _parse_element(
+    # OSM splits one trail into many ways while a Trail_NFS row is usually the whole trail, so
+    # an OSM way running alongside just the first half of the USFS line is still a duplicate
+    # (comparing against the whole USFS row's length used to keep every such piece).
+    osm_piece = _parse_element(
         {
             "type": "way",
             "id": 999,
-            "tags": {"highway": "path", "name": "Short Spur"},
+            "tags": {"highway": "path", "name": "Mule Mountain Trail #919"},
             "geometry": [{"lat": 47.60, "lon": -122.2997}, {"lat": 47.605, "lon": -122.2947}],
         }
     )
-    assert osm_spur
+    assert osm_piece
     usfs_row = (
         "usfs:trail/5031.005121",
         "MULE MOUNTAIN",
@@ -1420,13 +1424,238 @@ def test_prune_duplicate_cross_source_paths_keeps_a_length_mismatched_partial_ov
         1.34,
         None,
     )
+    upsert_trails(con, [osm_piece, usfs_row])
+
+    deleted = prune_duplicate_cross_source_paths(con, min_lat=47.5, min_lng=-122.4, max_lat=47.8, max_lng=-122.2)
+
+    assert deleted == 1
+    remaining_ids = {row[0] for row in con.execute("SELECT id FROM trails").fetchall()}
+    assert remaining_ids == {"usfs:trail/5031.005121"}
+
+
+def test_prune_duplicate_cross_source_paths_keeps_a_spur_branching_off_a_usfs_trail(
+    con: psycopg.Connection,
+) -> None:
+    # A real spur leaves the USFS trail at a junction and heads away from it - short enough to
+    # sit inside the 150m buffer, but the USFS line crosses its corridor sideways rather than
+    # running along it, so it's a distinct trail and both rows stay.
+    osm_spur = _parse_element(
+        {
+            "type": "way",
+            "id": 998,
+            "tags": {"highway": "path", "name": "Viewpoint Spur"},
+            # Starts on the USFS line (47.60, -122.30 -> 47.60, -122.28, running east) and runs
+            # ~110m due north, perpendicular to it.
+            "geometry": [{"lat": 47.60, "lon": -122.29}, {"lat": 47.601, "lon": -122.29}],
+        }
+    )
+    assert osm_spur
+    usfs_row = (
+        "usfs:trail/1",
+        "RIDGE",
+        "path",
+        "usfs",
+        "https://example.com",
+        47.60,
+        -122.29,
+        json.dumps({"type": "LineString", "coordinates": [[-122.30, 47.60], [-122.28, 47.60]]}),
+        None,
+        1.5,
+        None,
+    )
     upsert_trails(con, [osm_spur, usfs_row])
 
     deleted = prune_duplicate_cross_source_paths(con, min_lat=47.5, min_lng=-122.4, max_lat=47.8, max_lng=-122.2)
 
     assert deleted == 0
     remaining_ids = {row[0] for row in con.execute("SELECT id FROM trails").fetchall()}
-    assert remaining_ids == {"osm:way/999", "usfs:trail/5031.005121"}
+    assert remaining_ids == {"osm:way/998", "usfs:trail/1"}
+
+
+def test_prune_duplicate_cross_source_paths_keeps_a_differently_named_parallel_trail(
+    con: psycopg.Connection,
+) -> None:
+    # Dense MTB networks run distinct named trails side by side inside the 150m tolerance -
+    # two real names with no word in common are two trails, whatever the geometry says.
+    osm_way = _parse_element(
+        {
+            "type": "way",
+            "id": 997,
+            "tags": {"highway": "path", "name": "Marvin's Garden"},
+            # ~30m north of the USFS line, running the same direction for its whole length.
+            "geometry": [{"lat": 47.6003, "lon": -122.30}, {"lat": 47.6003, "lon": -122.29}],
+        }
+    )
+    assert osm_way
+    usfs_row = (
+        "usfs:trail/2",
+        "COD LOWER",
+        "path",
+        "usfs",
+        "https://example.com",
+        47.60,
+        -122.295,
+        json.dumps({"type": "LineString", "coordinates": [[-122.30, 47.60], [-122.29, 47.60]]}),
+        None,
+        0.75,
+        None,
+    )
+    upsert_trails(con, [osm_way, usfs_row])
+
+    deleted = prune_duplicate_cross_source_paths(con, min_lat=47.5, min_lng=-122.4, max_lat=47.8, max_lng=-122.2)
+
+    assert deleted == 0
+
+
+def _mvum_row(ref: str | None, coords: list[list[float]], length_km: float) -> tuple[object, ...]:
+    attrs = {"ref": ref} if ref else {}
+    return (
+        "usfs:road/1",
+        "HUMBOLDT NORTH WEST",
+        "road",
+        "usfs_mvum",
+        "https://example.com",
+        coords[0][1],
+        coords[0][0],
+        json.dumps({"type": "LineString", "coordinates": coords}),
+        None,
+        length_km,
+        json.dumps(attrs),
+    )
+
+
+def test_prune_duplicate_cross_source_roads_deletes_the_osm_twin_of_an_mvum_road(
+    con: psycopg.Connection,
+) -> None:
+    # Same forest road from OSM (highway=track, ref "NF-27N80") and MVUM (ref "27N80"), ~20m
+    # apart - MVUM wins, and the agency prefix doesn't stop the refs matching.
+    osm_road = _parse_element(
+        {
+            "type": "way",
+            "id": 42,
+            "tags": {"highway": "track", "ref": "NF-27N80"},
+            "geometry": [{"lat": 40.2002, "lon": -121.80}, {"lat": 40.2002, "lon": -121.79}],
+        }
+    )
+    assert osm_road
+    upsert_trails(con, [osm_road, _mvum_row("27N80", [[-121.80, 40.20], [-121.79, 40.20]], 0.85)])
+
+    deleted = prune_duplicate_cross_source_roads(con, min_lat=40.0, min_lng=-122.0, max_lat=40.4, max_lng=-121.5)
+
+    assert deleted == 1
+    assert {row[0] for row in con.execute("SELECT id FROM trails").fetchall()} == {"usfs:road/1"}
+
+
+def test_prune_duplicate_cross_source_roads_keeps_a_road_with_a_different_route_number(
+    con: psycopg.Connection,
+) -> None:
+    # Two numbered forest roads running side by side 20m apart are two roads.
+    osm_road = _parse_element(
+        {
+            "type": "way",
+            "id": 43,
+            "tags": {"highway": "track", "ref": "27N07A"},
+            "geometry": [{"lat": 40.2002, "lon": -121.80}, {"lat": 40.2002, "lon": -121.79}],
+        }
+    )
+    assert osm_road
+    upsert_trails(con, [osm_road, _mvum_row("27N80", [[-121.80, 40.20], [-121.79, 40.20]], 0.85)])
+
+    deleted = prune_duplicate_cross_source_roads(con, min_lat=40.0, min_lng=-122.0, max_lat=40.4, max_lng=-121.5)
+
+    assert deleted == 0
+
+
+def test_prune_duplicate_cross_source_roads_never_touches_osm_paths(con: psycopg.Connection) -> None:
+    osm_path = _parse_element(
+        {
+            "type": "way",
+            "id": 44,
+            "tags": {"highway": "path"},
+            "geometry": [{"lat": 40.2002, "lon": -121.80}, {"lat": 40.2002, "lon": -121.79}],
+        }
+    )
+    assert osm_path
+    upsert_trails(con, [osm_path, _mvum_row(None, [[-121.80, 40.20], [-121.79, 40.20]], 0.85)])
+
+    assert prune_duplicate_cross_source_roads(con, min_lat=40.0, min_lng=-122.0, max_lat=40.4, max_lng=-121.5) == 0
+
+
+def _bbox_of(request: httpx.Request) -> tuple[float, float, float, float]:
+    """The (south, west, north, east) of a mocked Overpass trails query."""
+    query = request.content.decode()
+    match = re.search(r"\(([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)\)", urllib.parse.unquote_plus(query))
+    assert match, query
+    south, west, north, east = (float(value) for value in match.groups())
+    return south, west, north, east
+
+
+def _way_in(bbox: tuple[float, float, float, float], way_id: int) -> dict[str, object]:
+    south, west, north, east = bbox
+    mid_lat = (south + north) / 2
+    return {
+        "type": "way",
+        "id": way_id,
+        "tags": {"highway": "path", "name": f"Trail {way_id}"},
+        "geometry": [{"lat": mid_lat, "lon": west + 0.01}, {"lat": mid_lat, "lon": east - 0.01}],
+    }
+
+
+def test_ingest_trails_region_splits_a_tile_whose_response_is_too_large(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A whole 2-degree tile is "too large"; each of its quadrants fits. The region still
+    # finishes, from the four quadrants' rows.
+    monkeypatch.setattr(overpass._throttle, "min_interval", 0.0)
+    calls: list[tuple[float, float, float, float]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bbox = _bbox_of(request)
+        calls.append(bbox)
+        if bbox[2] - bbox[0] > 1.5:
+            return httpx.Response(200, content=b"x" * 2048)
+        return httpx.Response(200, json={"elements": [_way_in(bbox, len(calls))]})
+
+    monkeypatch.setattr("foray.sources.trails._MAX_TILE_BYTES", 1024)
+    region = CoverageRegion(name="Tiny", place_id=900, bbox=(-122.0, 47.0, -120.0, 49.0))
+    count = ingest_trails_region(region, con, client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    assert count == 4
+    assert len(calls) == 5  # the whole tile once, then its four quadrants
+    assert is_ingested(con, f"trails:place:900:q{_TRAILS_QUERY_VERSION}")
+    # The region marker replaces the per-tile resume markers once it's done.
+    assert con.execute("SELECT count(*) FROM ingest_log WHERE key LIKE 'trails:tile:%'").fetchone() == (0,)
+
+
+def test_ingest_trails_region_resumes_from_the_tiles_a_failed_run_finished(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(overpass._throttle, "min_interval", 0.0)
+    monkeypatch.setattr("foray.sources.overpass.time.sleep", lambda _seconds: None)
+    region = CoverageRegion(name="Two Tiles", place_id=901, bbox=(-122.0, 47.0, -118.0, 49.0))
+    first_run: list[tuple[float, float, float, float]] = []
+
+    def failing_east(request: httpx.Request) -> httpx.Response:
+        bbox = _bbox_of(request)
+        first_run.append(bbox)
+        if bbox[1] >= -120.0:
+            return httpx.Response(500)
+        return httpx.Response(200, json={"elements": [_way_in(bbox, 1)]})
+
+    ingest_trails_region(region, con, client=httpx.Client(transport=httpx.MockTransport(failing_east)))
+    assert not is_ingested(con, f"trails:place:901:q{_TRAILS_QUERY_VERSION}")
+
+    second_run: list[tuple[float, float, float, float]] = []
+
+    def healthy(request: httpx.Request) -> httpx.Response:
+        bbox = _bbox_of(request)
+        second_run.append(bbox)
+        return httpx.Response(200, json={"elements": [_way_in(bbox, 2)]})
+
+    ingest_trails_region(region, con, client=httpx.Client(transport=httpx.MockTransport(healthy)))
+
+    assert [bbox[1] for bbox in second_run] == [-120.0]  # only the tile that failed
+    assert is_ingested(con, f"trails:place:901:q{_TRAILS_QUERY_VERSION}")
 
 
 def test_ingest_trails_region_re_pulls_a_region_ingested_under_an_older_query_version(
