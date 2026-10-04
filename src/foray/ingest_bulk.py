@@ -25,7 +25,7 @@ from typing import LiteralString
 import psycopg
 
 from foray.config import Settings
-from foray.sources import camps, inat_bulk, ravg, usfs_mvum, usfs_trails
+from foray.sources import camps, inat_bulk, osm_trails, ravg, usfs_mvum, usfs_trails
 from foray.spaces import (
     list_snapshot_dates,
     new_run_id,
@@ -53,6 +53,7 @@ STAGERS: dict[str, Stager] = {
     "usfs_trails": usfs_trails.stage_usfs_trails,
     "usfs_mvum": usfs_mvum.stage_usfs_mvum,
     "ravg": ravg.stage_ravg,
+    "osm_trails": osm_trails.stage_osm_trails,
 }
 LOADERS: dict[str, Loader] = {
     "ridb": camps.load_ridb,
@@ -60,6 +61,7 @@ LOADERS: dict[str, Loader] = {
     "usfs_trails": usfs_trails.load_usfs_trails,
     "usfs_mvum": usfs_mvum.load_usfs_mvum,
     "ravg": ravg.load_ravg,
+    "osm_trails": osm_trails.load_osm_trails,
 }
 
 
