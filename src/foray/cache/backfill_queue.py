@@ -130,15 +130,16 @@ def dequeue_backfill_batch(con: psycopg.Connection, kind: str, limit: int) -> li
         WITH candidates AS (
             -- FOR UPDATE can't share a CTE with a window function, so the lock+limit
             -- happens here and the row_number() ranking happens in a separate CTE over
-            -- this already-small, already-locked result.
+            -- this already-small, already-locked result. obs_id breaks the tie one
+            -- refresh_backfill_queue INSERT leaves (a single shared enqueued_at).
             SELECT obs_id, priority, enqueued_at FROM backfill_queue
             WHERE kind = %s
-            ORDER BY priority DESC, enqueued_at ASC
+            ORDER BY priority DESC, enqueued_at ASC, obs_id ASC
             LIMIT %s
             FOR UPDATE SKIP LOCKED
         ),
         claimed AS (
-            SELECT obs_id, row_number() OVER (ORDER BY priority DESC, enqueued_at ASC) AS rank
+            SELECT obs_id, row_number() OVER (ORDER BY priority DESC, enqueued_at ASC, obs_id ASC) AS rank
             FROM candidates
         )
         DELETE FROM backfill_queue q USING claimed c
