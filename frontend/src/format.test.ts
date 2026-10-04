@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { escapeHtml, escapeXml, feeLabel } from "./format";
+import { escapeHtml, escapeXml, feeLabel, stopsLabel } from "./format";
 
 describe("escapeHtml", () => {
   it("escapes the five HTML-significant characters", () => {
@@ -39,5 +39,13 @@ describe("feeLabel", () => {
     expect(feeLabel(false, "a long paragraph about fees", 12, 20)).toBe("$12–$20");
     expect(feeLabel(false, null, 15, 15)).toBe("$15");
     expect(feeLabel(false, "x".repeat(60))).toBe("fee varies");
+  });
+});
+
+describe("stopsLabel", () => {
+  it("is singular for one stop and plural otherwise", () => {
+    expect(stopsLabel(1)).toBe("1 stop");
+    expect(stopsLabel(0)).toBe("0 stops");
+    expect(stopsLabel(3)).toBe("3 stops");
   });
 });

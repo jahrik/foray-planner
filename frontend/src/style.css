@@ -1138,6 +1138,10 @@ table.cal .heat {
 .obs-photo {
   font-size: 12px;
 }
+/* No global link colour, so these fell back to the UA's #0000EE - unreadable on the dark panel. */
+.obs-photo a {
+  color: var(--accent);
+}
 .obs-thumb {
   width: 100%;
   max-width: 200px;

@@ -190,7 +190,8 @@ def test_waypoints_pick_farthest_as_destination_when_none_given(con: psycopg.Con
             waypoints=[mid_region, far_region],
         ),
     )
-    assert trip.auto_destination is True
+    # The farthest pick is still the user's own choice, not a ranking-picked destination.
+    assert trip.auto_destination is False
     assert trip.destination_name == far_region
     assert {mid_region, far_region} <= {s.region_id for s in trip.stops}
 

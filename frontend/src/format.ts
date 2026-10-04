@@ -33,3 +33,8 @@ export function feeLabel(
   if (fee) return fee.length > 40 ? "fee varies" : fee;
   return "cost unknown";
 }
+
+/** "1 stop" / "3 stops" - a trip plan's stop count. */
+export function stopsLabel(count: number): string {
+  return `${count} stop${count === 1 ? "" : "s"}`;
+}
