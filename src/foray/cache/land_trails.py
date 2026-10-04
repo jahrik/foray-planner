@@ -325,6 +325,11 @@ def prune_duplicate_route_paths(
     return result.rowcount
 
 
+# Words too generic to say two trail names refer to the same trail ("Ridge Trail" vs "Creek
+# Trail"); prune_duplicate_cross_source_paths' name guard ignores them.
+_GENERIC_TRAIL_WORDS = ("trail", "trails", "the", "and", "loop", "tie", "path", "nrt", "connector", "spur")
+
+
 def prune_duplicate_cross_source_paths(
     con: psycopg.Connection, *, min_lat: float, min_lng: float, max_lat: float, max_lng: float
 ) -> int:
@@ -348,35 +353,120 @@ def prune_duplicate_cross_source_paths(
     (Copilot review, PR #405 first draft) can never match this real case; 150m clears it with
     margin. That's still a targeted tolerance, not an unbounded one - it's paired with two
     checks a same-source match doesn't need, both required to guard against false merges
-    between genuinely distinct, roughly parallel trails: the OSM path's *entire* length must
-    fall within the buffer (``ST_CoveredBy``, not just endpoints), and the two paths'
-    ``length_km`` must be within 30% of each other (a spur or a short cutoff contained in a
-    longer trail's buffer would fail this even if geometrically covered).
+    between genuinely distinct trails: the OSM path's *entire* length must fall within the
+    buffer (``ST_CoveredBy``, not just endpoints), and the stretch of USFS line running
+    alongside it - the part inside a flat-ended 150m buffer of the OSM way - must be within 30%
+    of the OSM way's own length. A spur branching off the USFS trail fails that second check
+    (the USFS line crosses its buffer sideways, not along it, so the alongside stretch is the
+    buffer's width, not the spur's length). And when both rows carry a real name (not the
+    synthetic ``... (OSM)`` fallback) they must share a non-generic word - dense MTB networks
+    (Bend's Phil's complex) run distinct named trails ~100m apart, inside that tolerance.
+
+    The comparison is against that alongside stretch, not the whole USFS row: OSM splits one
+    trail into many ways (at every junction / tag change) while a Trail_NFS row is usually the
+    whole trail, so a first version comparing ``length_km`` to the whole USFS row never matched
+    an OSM way that is only one piece of it - the common case, and most of the duplicates still
+    drawn on the map after #404 shipped.
 
     Scoped per ingest-call bbox, same reasoning as ``prune_duplicate_route_paths`` - a
     table-wide sweep already took prod down once for the same-source case; this only ever runs
     against the handful of USFS rows in one tile.
     """
+    name_guard: LiteralString = """
+        p.name IS NULL OR p.name LIKE '%%(OSM)' OR u.name IS NULL
+        OR EXISTS (
+            SELECT 1 FROM regexp_split_to_table(lower(p.name), '[^a-z]+') AS word
+            WHERE length(word) > 2
+              AND word <> ALL (%s)
+              AND word = ANY (regexp_split_to_array(lower(u.name), '[^a-z]+'))
+        )
+    """
+    return _prune_cross_source(
+        con,
+        bbox=(min_lat, min_lng, max_lat, max_lng),
+        kind="path",
+        usfs_source="usfs",
+        guard_sql=name_guard,
+        guard_params=[list(_GENERIC_TRAIL_WORDS)],
+    )
+
+
+# Strips the agency prefix OSM puts on a forest-road number ("NF-2710", "FR 27N07A") so it
+# compares equal to MVUM's bare route number ("2710", "27N07A").
+def _road_ref_sql(column: LiteralString) -> LiteralString:
+    return "regexp_replace(upper(" + column + "), '^(USFS|NFSR|NF|FR|FS)?[^A-Z0-9]*|[^A-Z0-9]', '', 'g')"
+
+
+def prune_duplicate_cross_source_roads(
+    con: psycopg.Connection, *, min_lat: float, min_lng: float, max_lat: float, max_lng: float
+) -> int:
+    """Delete an OSM forest ``road`` row in this bbox that duplicates a USFS MVUM road - the road
+    sibling of ``prune_duplicate_cross_source_paths``, same geometry test (150m alongside rule)
+    and same direction (MVUM wins: it's the authoritative Forest Service record, and the one
+    carrying the vehicle-legality matrix).
+
+    Measured on prod (northern CA, where both are cached): an OSM forest road sits a median
+    ~18m and a 90th-percentile ~95m from its MVUM twin, so the trail tolerance fits. Names never
+    line up (OSM uses the route number, MVUM a descriptive name - "27N80" vs "HUMBOLDT NORTH
+    WEST"), so the guard compares route numbers instead: when both rows carry a ``ref`` they
+    must match once OSM's agency prefix is stripped. Most OSM forest roads carry no ref and are
+    matched on geometry alone.
+    """
+    ref_guard: LiteralString = (
+        "coalesce(p.attrs::jsonb->>'ref', '') = '' OR coalesce(u.attrs::jsonb->>'ref', '') = '' OR "
+        + _road_ref_sql("p.attrs::jsonb->>'ref'")
+        + " = "
+        + _road_ref_sql("u.attrs::jsonb->>'ref'")
+    )
+    return _prune_cross_source(
+        con,
+        bbox=(min_lat, min_lng, max_lat, max_lng),
+        kind="road",
+        usfs_source="usfs_mvum",
+        guard_sql=ref_guard,
+        guard_params=[],
+    )
+
+
+def _prune_cross_source(
+    con: psycopg.Connection,
+    *,
+    bbox: tuple[float, float, float, float],
+    kind: str,
+    usfs_source: str,
+    guard_sql: LiteralString,
+    guard_params: list[Any],
+) -> int:
+    """Shared body of the two cross-source prunes: delete each OSM ``kind`` row in ``bbox`` fully
+    inside a 150m buffer of a ``usfs_source`` row, whose alongside stretch of that USFS line is
+    within 30% of its own length, and that passes ``guard_sql`` (``p`` = OSM row, ``u`` = USFS)."""
+    min_lat, min_lng, max_lat, max_lng = bbox
     envelope = "ST_MakeEnvelope(%s, %s, %s, %s, 4326)::geography"
     envelope_params = [min_lng, min_lat, max_lng, max_lat]
     result = con.execute(
         f"""
-        WITH area_usfs AS MATERIALIZED (
-            SELECT geom AS usfs_geom, ST_Buffer(geom, 150) AS buf, length_km
+        WITH u AS MATERIALIZED (
+            SELECT name, attrs, geom, ST_Buffer(geom, 150) AS buf
             FROM trails
-            WHERE kind = 'path' AND source = 'usfs' AND geom && {envelope}
+            WHERE kind = %s AND source = %s AND geom && {envelope}
+        ),
+        covered AS (
+            SELECT
+                p.id,
+                ST_Length(p.geom) AS osm_m,
+                ST_Length(ST_Intersection(u.geom, ST_Buffer(p.geom, 150, 'endcap=flat'))) AS alongside_m
+            FROM trails p
+            JOIN u ON ST_CoveredBy(p.geom, u.buf)
+            WHERE p.kind = %s AND p.source = 'osm' AND p.geom && {envelope}
+              AND ({guard_sql})
         )
         DELETE FROM trails p
-        USING area_usfs u
-        WHERE p.kind = 'path'
-          AND p.source = 'osm'
-          AND p.geom && {envelope}
-          AND ST_CoveredBy(p.geom, u.buf)
-          AND p.length_km IS NOT NULL
-          AND u.length_km IS NOT NULL
-          AND abs(p.length_km - u.length_km) <= 0.3 * greatest(p.length_km, u.length_km)
+        USING covered c
+        WHERE p.id = c.id
+          AND c.osm_m > 0
+          AND abs(c.alongside_m - c.osm_m) <= 0.3 * greatest(c.alongside_m, c.osm_m)
         """,
-        [*envelope_params, *envelope_params],
+        [kind, usfs_source, *envelope_params, kind, *envelope_params, *guard_params],
     )
     con.commit()
     if result.rowcount:
