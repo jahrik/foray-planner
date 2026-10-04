@@ -112,9 +112,12 @@ def latest_ingest_at(con: psycopg.Connection, prefix: str) -> dt.datetime | None
 
 
 def is_area_covered(con: psycopg.Connection, prefix: str, lat: float, lng: float, radius_km: float) -> bool:
-    """Check if any previously ingested disk (matching prefix) fully contains the requested disk."""
+    """Check if any previously ingested disk (matching prefix) fully contains the requested disk.
+
+    Only rows with a radius are disks - the trails region ingest's per-tile resume markers share
+    the ``trails:`` prefix and carry a lat/lng (the tile's centre) but no radius."""
     rows = con.execute(
-        "SELECT lat, lng, radius_km FROM ingest_log WHERE key LIKE %s AND lat IS NOT NULL",
+        "SELECT lat, lng, radius_km FROM ingest_log WHERE key LIKE %s AND lat IS NOT NULL AND radius_km IS NOT NULL",
         [f"{prefix}%"],
     ).fetchall()
     for row_lat, row_lng, row_radius in rows:

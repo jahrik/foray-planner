@@ -12,11 +12,13 @@ import pytest
 
 from foray.cache import (
     backfill_trail_land,
+    is_area_covered,
     is_ingested,
     prune_duplicate_cross_source_paths,
     prune_duplicate_cross_source_roads,
     prune_duplicate_route_paths,
     prune_trail_duplicates,
+    prune_trail_duplicates_tiled,
     record_ingest,
     upsert_campsites,
     upsert_public_land,
@@ -1066,6 +1068,39 @@ def test_ingest_trails_upserts_into_cache(con: psycopg.Connection) -> None:
     assert trails[0].kind == "path"
 
 
+def test_ingest_trails_prunes_a_twin_the_home_fetch_just_wrote(con: psycopg.Connection) -> None:
+    # Copilot review, PR #441: the home-disk prune used to run only *before* the fetch, so a
+    # freshly fetched OSM twin of an already-cached USFS row stayed.
+    upsert_trails(con, [_usfs_path("usfs:trail/9", "RIVERSIDE", [[HOME_LNG, HOME_LAT], [HOME_LNG + 0.01, HOME_LAT]])])
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "elements": [
+                    {
+                        "type": "way",
+                        "id": 12,
+                        "tags": {"highway": "path", "name": "Riverside Trail"},
+                        "geometry": [
+                            {"lat": HOME_LAT + 0.0002, "lon": HOME_LNG},
+                            {"lat": HOME_LAT + 0.0002, "lon": HOME_LNG + 0.01},
+                        ],
+                    }
+                ]
+            },
+        )
+
+    cfg = Settings(
+        home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=40.0),
+        h3_resolution=4,
+        ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=4),
+    )
+    ingest_trails(cfg, con, client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    assert {row[0] for row in con.execute("SELECT id FROM trails").fetchall()} == {"usfs:trail/9"}
+
+
 def test_ingest_trails_prunes_duplicates_even_when_the_disk_is_already_covered(con: psycopg.Connection) -> None:
     # Copilot review, PR #396: the home disk's `is_area_covered` marker isn't versioned like
     # `ingest_trails_region`'s, so once recorded it stays "covered" forever and `run_area_ingest`
@@ -1586,6 +1621,119 @@ def test_prune_duplicate_cross_source_roads_never_touches_osm_paths(con: psycopg
     assert prune_duplicate_cross_source_roads(con, min_lat=40.0, min_lng=-122.0, max_lat=40.4, max_lng=-121.5) == 0
 
 
+def _usfs_path(trail_id: str, name: str, coords: list[list[float]]) -> tuple[object, ...]:
+    return (
+        trail_id,
+        name,
+        "path",
+        "usfs",
+        "https://example.com",
+        coords[0][1],
+        coords[0][0],
+        json.dumps({"type": "LineString", "coordinates": coords}),
+        None,
+        1.5,
+        None,
+    )
+
+
+def test_prune_duplicate_cross_source_paths_keeps_an_unnamed_oblique_spur(con: psycopg.Connection) -> None:
+    # Copilot review, PR #441: an unnamed ~100m spur leaving a straight USFS trail at 30 degrees
+    # fits inside the 150m buffer and its alongside stretch passes the length check - but it
+    # starts on the trail and ends ~50m off it, so it's a branch, not a twin.
+    osm_spur = _parse_element(
+        {
+            "type": "way",
+            "id": 996,
+            "tags": {"highway": "path"},
+            # From (47.60, -122.29) on the USFS line, ~87m east and ~50m north.
+            "geometry": [{"lat": 47.60, "lon": -122.29}, {"lat": 47.60045, "lon": -122.28884}],
+        }
+    )
+    assert osm_spur
+    upsert_trails(con, [osm_spur, _usfs_path("usfs:trail/3", "RIDGE", [[-122.30, 47.60], [-122.28, 47.60]])])
+
+    assert prune_duplicate_cross_source_paths(con, min_lat=47.5, min_lng=-122.4, max_lat=47.7, max_lng=-122.2) == 0
+
+
+def test_prune_duplicate_cross_source_paths_treats_the_usfs_fallback_name_as_unnamed(
+    con: psycopg.Connection,
+) -> None:
+    # usfs_trails substitutes "USFS trail" for a missing name; a named OSM twin shares no
+    # non-generic word with that, but it's still the same trail (Copilot review, PR #441).
+    osm_twin = _parse_element(
+        {
+            "type": "way",
+            "id": 995,
+            "tags": {"highway": "path", "name": "Riverside Trail"},
+            "geometry": [{"lat": 47.6002, "lon": -122.30}, {"lat": 47.6002, "lon": -122.29}],
+        }
+    )
+    assert osm_twin
+    upsert_trails(con, [osm_twin, _usfs_path("usfs:trail/4", "USFS trail", [[-122.30, 47.60], [-122.29, 47.60]])])
+
+    assert prune_duplicate_cross_source_paths(con, min_lat=47.5, min_lng=-122.4, max_lat=47.7, max_lng=-122.2) == 1
+
+
+def test_prune_trail_duplicates_moves_trailhead_links_to_the_surviving_row(con: psycopg.Connection) -> None:
+    # Copilot review, PR #441: a trailhead linked to the pruned OSM twin must now link to the
+    # USFS row that replaced it, not to an id that no longer exists.
+    osm_twin = _parse_element(
+        {
+            "type": "way",
+            "id": 994,
+            "tags": {"highway": "path", "name": "Ridge Trail"},
+            "geometry": [{"lat": 47.6002, "lon": -122.30}, {"lat": 47.6002, "lon": -122.29}],
+        }
+    )
+    trailhead = _parse_element(
+        {"type": "node", "id": 7, "lat": 47.6002, "lon": -122.30, "tags": {"highway": "trailhead"}}
+    )
+    assert osm_twin and trailhead
+    trailhead_row = (*trailhead[:8], ["osm:way/994", "osm:way/1234"], *trailhead[9:])
+    upsert_trails(
+        con, [osm_twin, trailhead_row, _usfs_path("usfs:trail/5", "RIDGE", [[-122.30, 47.60], [-122.29, 47.60]])]
+    )
+
+    prune_trail_duplicates(con, min_lat=47.5, min_lng=-122.4, max_lat=47.7, max_lng=-122.2)
+
+    (connects,) = con.execute("SELECT connects FROM trails WHERE id = 'osm:node/7'").fetchone() or (None,)
+    assert connects == ["osm:way/1234", "usfs:trail/5"]
+
+
+def test_prune_trail_duplicates_tiled_reaches_a_twin_far_from_the_usfs_rows_centre(
+    con: psycopg.Connection,
+) -> None:
+    # Copilot review, PR #441: a long USFS line crosses several 2-degree tiles; its OSM twin
+    # near the far end sits outside the tile holding the line's representative centre.
+    # Densified so it follows the parallel - a two-vertex geography line this long is a great
+    # circle that bows kilometres north of it. Its representative centre (first vertex, per
+    # _usfs_path) is in the -124 tile; the twin is in the -120 tile.
+    long_line = [[round(-122.5 + step * 0.05, 2), 47.5] for step in range(61)]
+    osm_twin = _parse_element(
+        {
+            "type": "way",
+            "id": 993,
+            "tags": {"highway": "path"},
+            "geometry": [{"lat": 47.5002, "lon": -119.70}, {"lat": 47.5002, "lon": -119.69}],
+        }
+    )
+    assert osm_twin
+    upsert_trails(con, [osm_twin, _usfs_path("usfs:trail/6", "LONG", long_line)])
+
+    prune_trail_duplicates_tiled(con, "usfs")
+
+    assert {row[0] for row in con.execute("SELECT id FROM trails").fetchall()} == {"usfs:trail/6"}
+
+
+def test_is_area_covered_ignores_trails_tile_resume_markers(con: psycopg.Connection) -> None:
+    # Copilot review, PR #441: per-tile markers share the `trails:` prefix and carry a lat/lng
+    # but no radius - the home-disk coverage check must skip them, not crash on them.
+    record_ingest(con, _tile_key(47.0, -123.0, 49.0, -121.0), 10, lat=48.0, lng=-122.0)
+
+    assert is_area_covered(con, "trails:", 48.0, -122.0, 10.0) is False
+
+
 def _bbox_of(request: httpx.Request) -> tuple[float, float, float, float]:
     """The (south, west, north, east) of a mocked Overpass trails query."""
     query = request.content.decode()
@@ -2079,6 +2227,36 @@ def test_resolve_trail_network_uses_live_topology_when_available(con: psycopg.Co
     boom = httpx.Client(transport=httpx.MockTransport(lambda _r: (_ for _ in ()).throw(AssertionError("live call"))))
     again = resolve_trail_network(con, "osm:node/1", client=boom)
     assert again is not None and again.trail.name == "Real Trail"
+
+
+def test_resolve_trail_network_dedups_the_live_result_it_writes_back(con: psycopg.Connection) -> None:
+    # Copilot review, PR #441: the live Overpass result is raw OSM, so writing it back could
+    # re-add the twin of a USFS row the cache already holds. The write-back is deduped and the
+    # trailhead ends up linked to the USFS row.
+    trailhead = _parse_element({"type": "node", "id": 1, "lat": 47.6, "lon": -122.3, "tags": {"highway": "trailhead"}})
+    assert trailhead is not None
+    upsert_trails(con, [trailhead, _usfs_path("usfs:trail/8", "RIDGE", [[-122.30, 47.60], [-122.29, 47.60]])])
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "elements": [
+                    {
+                        "type": "way",
+                        "id": 11,
+                        "tags": {"highway": "path", "name": "Ridge Trail"},
+                        "geometry": [{"lat": 47.6002, "lon": -122.30}, {"lat": 47.6002, "lon": -122.29}],
+                    }
+                ]
+            },
+        )
+
+    resolve_trail_network(con, "osm:node/1", client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    assert con.execute("SELECT 1 FROM trails WHERE id = 'osm:way/11'").fetchone() is None
+    stored = con.execute("SELECT connects FROM trails WHERE id = 'osm:node/1'").fetchone()
+    assert stored is not None and stored[0] == ["usfs:trail/8"]
 
 
 def test_resolve_trail_network_falls_back_to_nearest_cached_trail(con: psycopg.Connection) -> None:
