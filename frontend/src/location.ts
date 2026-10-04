@@ -18,20 +18,20 @@ async function fetchSuggestions(query: string): Promise<PlaceSuggestion[]> {
 }
 
 /** Wire a place-search input + suggestion list. ``onSelect`` receives either a resolved
- * "lat, lng" string (suggestion picked) or the raw typed text (form submitted directly),
- * leaving what to do with it (persist as home, stash for a trip-planning field, etc.) to the
- * caller. */
+ * "lat, lng" string plus the picked suggestion's display name, or the raw typed text (form
+ * submitted directly), leaving what to do with it (persist as home, stash for a trip-planning
+ * field, etc.) to the caller. */
 export function initPlaceAutocomplete(
   input: HTMLInputElement,
   list: HTMLUListElement,
   form: HTMLFormElement,
-  onSelect: (query: string) => void | Promise<boolean>,
+  onSelect: (query: string, name?: string) => void | Promise<boolean>,
   options: { clearInputOnSelect?: boolean } = {},
 ): void {
   const clearInputOnSelect = options.clearInputOnSelect ?? true;
-  const emit = (query: string): void => {
+  const emit = (query: string, name: string): void => {
     if (clearInputOnSelect) input.value = "";
-    void onSelect(query);
+    void onSelect(query, name);
   };
   initAutocomplete<PlaceSuggestion>({
     input,
@@ -39,7 +39,9 @@ export function initPlaceAutocomplete(
     form,
     fetchSuggestions,
     label: (result) => result.name,
-    onPick: (result) => emit(`${result.lat}, ${result.lng}`),
+    // Pass the suggestion's name along: the server can only name a bare "lat, lng" query
+    // with the coordinate string itself.
+    onPick: (result) => emit(`${result.lat}, ${result.lng}`, result.name),
     // Free-text submit can fail to geocode - unlike a picked suggestion, which is already
     // resolved coordinates. Keep the typed text and flash the field so the user can fix a
     // typo instead of having to remember and retype what they entered.
