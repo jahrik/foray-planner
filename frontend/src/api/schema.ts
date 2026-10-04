@@ -1580,6 +1580,7 @@ export interface operations {
                 region_id: string;
                 species?: string;
                 months?: string | null;
+                weeks?: number | null;
                 offset?: number;
             };
             header?: never;

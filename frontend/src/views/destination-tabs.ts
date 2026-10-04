@@ -25,7 +25,7 @@ import {
   setTrailheadActive,
 } from "../map/pins";
 import { escapeHtml, feeLabel } from "../format";
-import { dist, displayName, errorDetail, monthsParam, MONTHS, setStatus } from "../state";
+import { dist, displayName, errorDetail, MONTHS, setStatus, timeWindowParam } from "../state";
 import { createPinAction, markPinnable, syncPinnedChips } from "./stop-pin";
 
 // "Six Rivers National Forest" -> "Six Rivers NF" for a trail row's public-land suffix. Falls
@@ -130,13 +130,14 @@ function renderObsPhoto(obs: RecentObservation): string {
 export async function loadPhotosInto(regionId: string, container: HTMLElement): Promise<boolean> {
   container.innerHTML = "<p class='hint'>Loading…</p>";
   // Captured once and reused for every "Load more" click in this paging session - re-reading
-  // monthsParam() per click would let a month-filter change mid-session mix pages fetched under
-  // different filters at the same offset.
-  const months = monthsParam();
+  // the filter per click would let a month/sort change mid-session mix pages fetched under
+  // different filters at the same offset. Same trailing-weeks window as the pins under the
+  // "active now" sort (issue #312).
+  const timeWindow = timeWindowParam();
   let page: RecentObservationsPage;
   try {
     page = await getJson("/api/observations/photos", {
-      query: { region_id: regionId, months },
+      query: { region_id: regionId, ...timeWindow },
     });
   } catch (error) {
     container.innerHTML = `<p class="hint">${escapeHtml(errorDetail(error))}</p>`;
@@ -161,7 +162,7 @@ export async function loadPhotosInto(regionId: string, container: HTMLElement): 
       let nextPage: RecentObservationsPage;
       try {
         nextPage = await getJson("/api/observations/photos", {
-          query: { region_id: regionId, months, offset },
+          query: { region_id: regionId, ...timeWindow, offset },
         });
       } catch (error) {
         setStatus(errorDetail(error));

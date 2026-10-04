@@ -237,3 +237,12 @@ export function monthsParam(): string {
   const ordered = [...state.months].sort((left, right) => left - right);
   return ordered.length ? ordered.join(",") : "1,2,3,4,5,6,7,8,9,10,11,12";
 }
+
+/** The time filter for a destination's own observations (precise pins, Photos tab). Under the
+ * "active now" sort the list is /api/alerts' trailing-weeks window, so these use that same
+ * window instead of every year's matching months (issue #312). Plan stops are month-scored, so
+ * the plan view keeps the month filter whatever the list sort was. */
+export function timeWindowParam(): { weeks: number } | { months: string } {
+  const activeNow = state.view === "destinations" && state.sort === "active";
+  return activeNow ? { weeks: state.recentWeeks } : { months: monthsParam() };
+}

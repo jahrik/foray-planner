@@ -113,6 +113,7 @@ def observation_photos(
     response: Response,
     species: str = Query("all"),
     months: str | None = Query(None),
+    weeks: int | None = Query(None, gt=0, le=520),
     offset: int = Query(0, ge=0),
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
@@ -132,6 +133,7 @@ def observation_photos(
                 taxon_ids=parse_species(species, conn, device_id),
                 h3_resolution=cfg.h3_resolution,
                 months=selected_months,
+                weeks=weeks,
                 offset=offset,
             )
     except psycopg.errors.UndefinedTable:
