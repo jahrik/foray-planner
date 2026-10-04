@@ -12,7 +12,7 @@ const LOCATE_TITLE = "Use my current location";
 
 let locator: Locator | null = null;
 
-function showOffer(button: HTMLButtonElement, fix: Fix | null): void {
+function showOffer(button: HTMLButtonElement, fix: Fix | null, saved: boolean): void {
   button.classList.toggle("pending", fix !== null);
   const home = state.home;
   if (!fix || !home) {
@@ -20,14 +20,24 @@ function showOffer(button: HTMLButtonElement, fix: Fix | null): void {
     button.setAttribute("aria-label", LOCATE_TITLE);
     return;
   }
-  const moved = dist(haversineKm(home, fix));
-  // A coarse fix (IP / cell guess) only ever reaches here against a hand-set home - say how rough
-  // it is so "you've moved" doesn't read as fact.
-  const rough = fix.accuracyM > TRUSTED_ACCURACY_M ? ` (rough guess, ${accuracyLabel(fix.accuracyM)})` : "";
-  const label = `Your device puts you ${moved} from ${home.name}${rough} - update location`;
+  let label: string;
+  let status: string;
+  if (saved) {
+    // The fix is already home (the user started interacting while it was being saved) - only
+    // the map view and the results are behind.
+    label = `Location updated to ${home.name} - show results here`;
+    status = `Location updated to ${home.name} - tap 📍 to refresh results`;
+  } else {
+    const moved = dist(haversineKm(home, fix));
+    // A coarse fix (IP / cell guess) only ever reaches here against a hand-set home - say how
+    // rough it is so "you've moved" doesn't read as fact.
+    const rough = fix.accuracyM > TRUSTED_ACCURACY_M ? ` (rough guess, ${accuracyLabel(fix.accuracyM)})` : "";
+    label = `Your device puts you ${moved} from ${home.name}${rough} - update location`;
+    status = `Your device puts you ${moved} from ${home.name}${rough} - tap 📍 to use it`;
+  }
   button.title = label;
   button.setAttribute("aria-label", label);
-  setStatus(`Your device puts you ${moved} from ${home.name}${rough} - tap 📍 to use it`);
+  setStatus(status);
 }
 
 /** Start auto-detecting on load. Returns the session (for main()'s first-paint race), or null
@@ -59,7 +69,7 @@ export function initAutoLocate(): Session | null {
       loadLand();
       loadFire();
     },
-    offer: (fix) => showOffer(button, fix),
+    offer: (fix, _home, saved = false) => showOffer(button, fix, saved),
     status: setStatus,
   }));
   // Any real input means the user is mid-task: from here on a fix that would move them is

@@ -6,7 +6,8 @@ import "@fontsource-variable/ibm-plex-sans";
 import "./tokens.css";
 import "./style.css";
 
-import { getJson, postJson } from "./api/client";
+import { getJson } from "./api/client";
+import { postLocation } from "./location-writes";
 import type { LocationResponse } from "./api/types";
 import { initGenusSelection } from "./genera";
 import { initLayerToggles } from "./ui/layer-toggles";
@@ -255,16 +256,14 @@ function initRadiusPresets(): void {
     .forEach((button) => {
       button.onclick = async () => {
         if (!state.home) return;
+        const fallbackHome = state.home;
         const radius_km = Number(button.dataset.km);
         let response: LocationResponse;
         try {
-          response = await postJson("/api/location", {
-            body: {
-              lat: state.home.lat,
-              lng: state.home.lng,
-              name: state.home.name,
-              radius_km,
-            },
+          // Read home when the write runs, not now - see location-writes.ts.
+          response = await postLocation(() => {
+            const home = state.home ?? fallbackHome;
+            return { lat: home.lat, lng: home.lng, name: home.name, radius_km };
           });
         } catch (error) {
           setStatus(errorDetail(error));

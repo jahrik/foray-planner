@@ -2,6 +2,7 @@ import { deleteJson, openRefreshStream, postJson } from "./api/client";
 import type { LocationResponse } from "./api/types";
 import { cancelAutoLocate } from "./locate-ui";
 import { loadFire, loadLand } from "./map/layers";
+import { postLocation } from "./location-writes";
 import { updateHome } from "./map/map";
 import { setManualHome } from "./prefs";
 import { errorDetail, qs, setStatus } from "./state";
@@ -130,7 +131,7 @@ export async function setLocation(query: string): Promise<boolean> {
   setStatus("Finding location…");
   let response: LocationResponse;
   try {
-    response = await postJson("/api/location", { body: { query } });
+    response = await postLocation({ query });
   } catch (error) {
     setStatus(errorDetail(error) || "location not found");
     return false;
@@ -155,7 +156,7 @@ export async function setLocationLatLng(lat: number, lng: number): Promise<void>
   setStatus("Finding location…");
   let response: LocationResponse;
   try {
-    response = await postJson("/api/location", { body: { lat, lng } });
+    response = await postLocation({ lat, lng });
   } catch (error) {
     setStatus(errorDetail(error) || "location not found");
     return;

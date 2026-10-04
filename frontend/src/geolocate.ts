@@ -16,8 +16,8 @@
 // them (re-centring the map, re-rendering the list over an open Details view): `fixAction` decides
 // whether a fix is applied in full, saved quietly, or only offered via the locate button.
 
-import { postJson } from "./api/client";
 import type { Home } from "./api/types";
+import { postLocation } from "./location-writes";
 
 export interface Fix {
   lat: number;
@@ -96,8 +96,10 @@ export interface LocatorDeps {
   save: (fix: Fix) => Promise<Home>;
   /** Show a saved home: `recenter` re-centres the map and re-runs the open view. */
   show: (home: Home, fix: Fix, recenter: boolean) => void;
-  /** A fix is waiting for the user to accept it (null clears the offer). */
-  offer: (fix: Fix | null, home: Home | null) => void;
+  /** A fix is waiting for the user to accept it (null clears the offer). `saved`: the fix is
+   * already the saved home (the user started interacting while it was being saved), so accepting
+   * only re-centres and refreshes results. */
+  offer: (fix: Fix | null, home: Home | null, saved?: boolean) => void;
   status: (text: string) => void;
   setTimer?: (callback: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -109,6 +111,14 @@ export interface Session {
   /** Resolves on the first fix that was shown with recenter, or false once that can no longer
    * happen (session ended without one, or it was only saved quietly / offered). */
   firstApplied: Promise<boolean>;
+}
+
+interface SaveJob {
+  fix: Fix;
+  recenter: boolean;
+  // The user asked for this fix (locate button / accepted offer) - applied even mid-task.
+  userRequested: boolean;
+  generation: number;
 }
 
 export class Locator {
@@ -123,7 +133,7 @@ export class Locator {
   // Saves are serialized latest-wins: a converging GPS can produce several better readings a
   // second, and each save is a server round-trip with a (throttled) reverse geocode.
   private saving: Promise<void> = Promise.resolve();
-  private queued: { fix: Fix; recenter: boolean; generation: number } | null = null;
+  private queued: SaveJob | null = null;
   private resolveFirst: ((applied: boolean) => void) | null = null;
   private explicit = false;
 
@@ -144,12 +154,17 @@ export class Locator {
     this.gotFix = false;
     this.finished = false;
     this.explicit = explicit;
+    // The click / key that started an explicit session marked the page engaged; reset it so a
+    // GPS refinement after the first (coarse) fix still applies. Any further input re-marks it.
+    if (explicit) this.engaged = false;
     const firstApplied = new Promise<boolean>((resolve) => {
       this.resolveFirst = resolve;
     });
     const geolocation = this.deps.geolocation;
     const onPosition = (position: GeolocationPosition) => {
-      if (generation !== this.generation) return;
+      // `finished`: clearWatch can't recall callbacks already queued, and the coarse
+      // getCurrentPosition can't be cancelled at all - neither may override the settled fix.
+      if (generation !== this.generation || this.finished) return;
       this.receive({
         lat: position.coords.latitude,
         lng: position.coords.longitude,
@@ -189,7 +204,7 @@ export class Locator {
     if (!fix) return false;
     this.pending = null;
     this.deps.offer(null, null);
-    this.enqueueSave(fix, true, this.generation);
+    this.enqueueSave(fix, true, true);
     return true;
   }
 
@@ -204,51 +219,82 @@ export class Locator {
     // An explicit request (the locate button) always applies its first fix - the user asked to
     // be centred on it, however close it is to home. After that, a refinement mustn't re-centre
     // a map the user has since panned.
-    const action: FixAction = this.explicit
+    const userRequested = this.explicit;
+    const action: FixAction = userRequested
       ? "apply"
       : fixAction(this.deps.currentHome(), fix, this.engaged, this.deps.homeIsManual());
     this.explicit = false;
-    if (action === "ignore") {
-      this.settleFirst(false);
-    } else if (action === "offer") {
+    if (action === "offer") {
       this.pending = fix;
       this.deps.offer(fix, this.deps.currentHome());
       this.settleFirst(false);
     } else {
       // A newer, better fix supersedes any older offer (e.g. a GPS fix confirming a hand-set
-      // home withdraws the IP guess offered before it).
-      if (this.pending) {
-        this.pending = null;
-        this.deps.offer(null, null);
-      }
-      this.enqueueSave(fix, action === "apply", this.generation);
+      // home withdraws the IP guess offered before it) - including one it says to ignore.
+      this.withdrawOffer();
+      if (action === "ignore") this.settleFirst(false);
+      else this.enqueueSave(fix, action === "apply", userRequested);
       if (action === "quiet") this.settleFirst(false);
     }
     if (fix.accuracyM <= TARGET_ACCURACY_M) this.finish();
   }
 
-  private enqueueSave(fix: Fix, recenter: boolean, generation: number): void {
+  private withdrawOffer(): void {
+    if (!this.pending) return;
+    this.pending = null;
+    this.deps.offer(null, null);
+  }
+
+  private enqueueSave(fix: Fix, recenter: boolean, userRequested: boolean): void {
     const wasIdle = this.queued === null;
     // Keep a pending recenter even if a quiet refinement replaces it - the user still expects
     // the map to move to the (now more precise) spot.
-    const keepRecenter = this.queued?.recenter ?? false;
-    this.queued = { fix, recenter: recenter || keepRecenter, generation };
+    this.queued = {
+      fix,
+      recenter: recenter || (this.queued?.recenter ?? false),
+      userRequested: userRequested || (this.queued?.userRequested ?? false),
+      generation: this.generation,
+    };
     if (!wasIdle) return;
-    this.saving = this.saving.then(async () => {
-      const job = this.queued;
-      this.queued = null;
-      if (!job || job.generation !== this.generation) return;
-      let home: Home;
-      try {
-        home = await this.deps.save(job.fix);
-      } catch {
-        if (job.recenter) this.settleFirst(false);
-        return; // keep whatever location is already loaded
+    this.saving = this.saving.then(() => this.runSave());
+  }
+
+  private async runSave(): Promise<void> {
+    const job = this.queued;
+    this.queued = null;
+    if (!job || job.generation !== this.generation) return;
+    // Engagement is re-checked when the save actually runs (and again once it lands): the
+    // decision to re-centre was made when the reading arrived, and the user may have started
+    // panning / reading Details since. Not yet persisted -> just offer it.
+    const intrudes = () => job.recenter && !job.userRequested && this.engaged;
+    if (intrudes()) {
+      this.pending = job.fix;
+      this.deps.offer(job.fix, this.deps.currentHome());
+      this.settleFirst(false);
+      return;
+    }
+    let home: Home;
+    try {
+      home = await this.deps.save(job.fix);
+    } catch {
+      if (job.recenter) {
+        this.deps.status("couldn't save your location - tap 📍 to try again");
+        this.settleFirst(false);
       }
-      if (job.generation !== this.generation) return; // a manual location won the race
-      this.deps.show(home, job.fix, job.recenter);
-      if (job.recenter) this.settleFirst(true);
-    });
+      return; // keep whatever location is already loaded
+    }
+    if (job.generation !== this.generation) return; // a manual location won the race
+    if (intrudes()) {
+      // Already saved server-side, so show it - but leave the map and open panel alone and let
+      // one tap re-centre and refresh the results.
+      this.deps.show(home, job.fix, false);
+      this.pending = job.fix;
+      this.deps.offer(job.fix, home, true);
+      this.settleFirst(false);
+      return;
+    }
+    this.deps.show(home, job.fix, job.recenter);
+    if (job.recenter) this.settleFirst(true);
   }
 
   private onError(generation: number, error: GeolocationPositionError): void {
@@ -298,6 +344,6 @@ export class Locator {
 
 /** The default server save: POST the fix; the server reverse-geocodes the place name. */
 export async function saveFix(fix: Fix): Promise<Home> {
-  const response = await postJson("/api/location", { body: { lat: fix.lat, lng: fix.lng } });
+  const response = await postLocation({ lat: fix.lat, lng: fix.lng });
   return response.home;
 }
