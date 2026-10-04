@@ -34,6 +34,7 @@ from foray.sources.trails import (
     _route_member_way_ids,
     _sample,
     _tile_bboxes,
+    _tile_key,
     _trails_query,
     _trails_query_bbox,
     backfill_forage_obs,
@@ -1629,6 +1630,28 @@ def test_ingest_trails_region_splits_a_tile_whose_response_is_too_large(
     assert is_ingested(con, f"trails:place:900:q{_TRAILS_QUERY_VERSION}")
     # The region marker replaces the per-tile resume markers once it's done.
     assert con.execute("SELECT count(*) FROM ingest_log WHERE key LIKE 'trails:tile:%'").fetchone() == (0,)
+
+
+def test_ingest_trails_region_goes_straight_to_quadrants_of_a_partly_split_tile(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A previous run split the tile and finished one quadrant before it was killed - the retry
+    # must not re-download the whole oversized tile just to rediscover it needs splitting.
+    monkeypatch.setattr(overpass._throttle, "min_interval", 0.0)
+    region = CoverageRegion(name="Half Done", place_id=902, bbox=(-122.0, 47.0, -120.0, 49.0))
+    record_ingest(con, _tile_key(47.0, -122.0, 48.0, -121.0), 5)
+    calls: list[tuple[float, float, float, float]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bbox = _bbox_of(request)
+        calls.append(bbox)
+        return httpx.Response(200, json={"elements": [_way_in(bbox, len(calls))]})
+
+    ingest_trails_region(region, con, client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    assert len(calls) == 3  # the three unfinished quadrants, never the whole tile
+    assert all(north - south == 1.0 for south, _west, north, _east in calls)
+    assert is_ingested(con, f"trails:place:902:q{_TRAILS_QUERY_VERSION}")
 
 
 def test_ingest_trails_region_resumes_from_the_tiles_a_failed_run_finished(
