@@ -434,7 +434,13 @@ def track_down(tut: Tutorial) -> None:
     pin.wait_for(timeout=10_000)
     tut.click(pin, pause=1.0)
     tut.click(page.locator("#panel .details-back"), pause=1.2)
-    tut.click(page.locator("#panel .rank").first.locator('[data-act="plan"]'), pause=0.8)
+    # Pinning a camp already adds the spot to the trip ("✓ In route"); clicking + Plan again
+    # would toggle it back out and leave the planner to auto-pick a trip instead.
+    plan_button = page.locator("#panel .rank").first.locator('[data-act="plan"]')
+    if "In route" in plan_button.inner_text():
+        tut.point(plan_button)
+    else:
+        tut.click(plan_button, pause=0.8)
     tut.click(page.locator("#route-bar .route-bar-go"), pause=1.0)
     page.locator("#panel .stop-card").first.wait_for(timeout=60_000)
     time.sleep(2.5)
