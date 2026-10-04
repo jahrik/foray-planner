@@ -16,11 +16,10 @@ from foray import spaces
 from foray.cache import prune_trails_missing_from, upsert_trails
 from foray.config import Settings, Spaces
 from foray.scoring import trails_near
-from foray.sources import usfs_trails
+from foray.sources import trails_snapshot
 from foray.sources.usfs_trails import (
     _ArcGISQueryError,
     _attrs,
-    _geojson_to_wkb,
     _get,
     _iter_pages,
     _parse_feature,
@@ -40,13 +39,10 @@ def _line(lat: float, lng: float, size: float = 0.01) -> dict:
 def _write_trail_snapshot(rows: list[tuple]) -> bytes:
     """Encode `_parse_feature`-shaped tuples (GeoJSON text at index 7) as the Parquet bytes a
     real `stage_usfs_trails` run would upload (WKB bytes for that column instead)."""
-    dict_rows = [
-        dict(zip(usfs_trails._TRAIL_COLUMNS, (*row[:7], _geojson_to_wkb(row[7]), *row[8:]), strict=True))
-        for row in rows
-    ]
+    dict_rows = [trails_snapshot.row_to_record(row) for row in rows]
     buf = pa.BufferOutputStream()
-    with pq.ParquetWriter(buf, usfs_trails._BULK_SNAPSHOT_SCHEMA) as writer:
-        writer.write_table(pa.Table.from_pylist(dict_rows, schema=usfs_trails._BULK_SNAPSHOT_SCHEMA))
+    with pq.ParquetWriter(buf, trails_snapshot.SNAPSHOT_SCHEMA) as writer:
+        writer.write_table(pa.Table.from_pylist(dict_rows, schema=trails_snapshot.SNAPSHOT_SCHEMA))
     return buf.getvalue().to_pybytes()
 
 
@@ -128,7 +124,7 @@ def test_stage_usfs_trails_uploads_deduped_rows_as_parquet(monkeypatch: pytest.M
     def fake_upload_file(cfg: Spaces, key: str, src_path: str, content_type: str) -> None:
         uploaded[key] = Path(src_path).read_bytes()
 
-    monkeypatch.setattr("foray.sources.usfs_trails.spaces.upload_file", fake_upload_file)
+    monkeypatch.setattr("foray.spaces.upload_file", fake_upload_file)
     client = httpx.Client(transport=httpx.MockTransport(handler))
 
     stage_usfs_trails(Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1", client=client)
@@ -161,7 +157,7 @@ def test_stage_usfs_trails_pages_until_transfer_limit_clears(monkeypatch: pytest
 
     uploaded: dict[str, bytes] = {}
     monkeypatch.setattr(
-        "foray.sources.usfs_trails.spaces.upload_file",
+        "foray.spaces.upload_file",
         lambda cfg, key, src_path, content_type: uploaded.__setitem__(key, Path(src_path).read_bytes()),
     )
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -236,7 +232,7 @@ def test_stage_usfs_trails_propagates_a_later_page_failure_without_publishing(
 
     uploaded: dict[str, bytes] = {}
     monkeypatch.setattr(
-        "foray.sources.usfs_trails.spaces.upload_file",
+        "foray.spaces.upload_file",
         lambda cfg, key, src_path, content_type: uploaded.__setitem__(key, Path(src_path).read_bytes()),
     )
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -281,7 +277,7 @@ def test_stage_usfs_trails_refuses_to_publish_a_zero_row_result(monkeypatch: pyt
 
     uploaded: dict[str, bytes] = {}
     monkeypatch.setattr(
-        "foray.sources.usfs_trails.spaces.upload_file",
+        "foray.spaces.upload_file",
         lambda cfg, key, src_path, content_type: uploaded.__setitem__(key, Path(src_path).read_bytes()),
     )
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -306,7 +302,7 @@ def test_load_usfs_trails_upserts_and_prunes_stale_rows(
     def fake_download_file(cfg: Spaces, key: str, dest_path: str) -> None:
         Path(dest_path).write_bytes(payload)
 
-    monkeypatch.setattr("foray.sources.usfs_trails.spaces.download_file", fake_download_file)
+    monkeypatch.setattr("foray.spaces.download_file", fake_download_file)
 
     load_usfs_trails(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
 
@@ -327,7 +323,7 @@ def test_load_usfs_trails_records_ingest_under_the_trails_prefix(
     assert row is not None
     payload = _write_trail_snapshot([row])
     monkeypatch.setattr(
-        "foray.sources.usfs_trails.spaces.download_file",
+        "foray.spaces.download_file",
         lambda cfg, key, dest_path: Path(dest_path).write_bytes(payload),
     )
 

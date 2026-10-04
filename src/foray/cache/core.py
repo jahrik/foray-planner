@@ -846,6 +846,44 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # one ingest call's bbox and run from every trails ingest - cheap enough to be synchronous,
     # and it converges the whole cache via the weekly `refresh --with trails --all` cron
     # (`_TRAILS_QUERY_VERSION` already drives every region to re-ingest) with no migration risk.
+    #
+    # issue #442: tombstones for the trail-dedup prunes (`cache.prune_trail_duplicates`). A pruned
+    # OSM twin is still listed by every later OSM snapshot, so without a record of the prune each
+    # weekly bulk load would re-insert it and the next prune would delete it again. `upsert_trails`
+    # skips a tombstoned id and remaps trailhead `connects` through it. `kept_id` cascades: if the
+    # surviving USFS/route row ever goes away, the tombstone does too and the OSM row returns on
+    # the next load. Created empty - no backfill, no geometry work at deploy time.
+    (
+        53,
+        """
+        CREATE TABLE IF NOT EXISTS trail_duplicates (
+            osm_id  TEXT PRIMARY KEY,
+            kept_id TEXT NOT NULL REFERENCES trails (id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS ix_trail_duplicates_kept ON trail_duplicates (kept_id);
+        """,
+    ),
+    # issue #442: `public_land` cut into small pieces (`ST_Subdivide`) for the trail
+    # land-ownership lookup. A point-in-polygon test against a whole national forest walks tens
+    # of thousands of vertices (~20 ms per trail); against its pieces it's ~0.3 ms, which is
+    # what makes a national OSM load's land tagging minutes instead of a day. Created empty -
+    # the subdivide itself is geometry work and never runs at deploy time (see the #394 note
+    # above); `cache.ensure_land_parts` builds it from a job, and the lookup keeps using whole
+    # polygons until it has (`meta` key `public_land_parts`).
+    (
+        54,
+        """
+        CREATE TABLE IF NOT EXISTS public_land_parts (
+            land_id   TEXT NOT NULL REFERENCES public_land (id) ON DELETE CASCADE,
+            agency    TEXT,
+            unit      TEXT,
+            area_deg2 DOUBLE PRECISION,
+            geom      geometry(Geometry, 4326) NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_public_land_parts_geom ON public_land_parts USING gist (geom);
+        CREATE INDEX IF NOT EXISTS ix_public_land_parts_land ON public_land_parts (land_id);
+        """,
+    ),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]

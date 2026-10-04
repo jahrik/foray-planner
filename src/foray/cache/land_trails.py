@@ -38,6 +38,63 @@ _TRAIL_LAND_JOIN: LiteralString = """
         ORDER BY pl.area_deg2 LIMIT 1
     ) pl ON true
 """
+# The same lookup against `public_land_parts` (migration 54, issue #442): each polygon cut into
+# pieces of at most `_LAND_PART_VERTICES` vertices, so the containment test is cheap. ~0.3 ms per
+# trail vs ~20 ms on whole polygons, identical results on 1,000 sampled trails. `area_deg2` is the
+# whole parcel's, so "smallest owning unit" still means the same thing.
+_TRAIL_LAND_PARTS_JOIN: LiteralString = """
+    LEFT JOIN LATERAL (
+        SELECT lp.agency, lp.unit FROM public_land_parts lp
+        WHERE ST_Intersects(lp.geom, ST_SetSRID(ST_MakePoint(t2.center_lng, t2.center_lat), 4326))
+        ORDER BY lp.area_deg2 LIMIT 1
+    ) pl ON true
+"""
+_LAND_PART_VERTICES = 128
+_LAND_PARTS_META_KEY = "public_land_parts"
+
+
+def _land_parts_ready(con: psycopg.Connection) -> bool:
+    row = con.execute("SELECT value FROM meta WHERE key = %s", [_LAND_PARTS_META_KEY]).fetchone()
+    return row is not None and row[0] == "ready"
+
+
+def ensure_land_parts(con: psycopg.Connection) -> bool:
+    """Build ``public_land_parts`` from every ``public_land`` polygon if it hasn't been built
+    yet. Returns True if it built. One transaction, so the trail land lookup never sees a
+    half-built table - it reads ``meta`` and keeps using whole polygons until this commits.
+    Called by the jobs that tag trails in bulk (the trails bulk loads, ``backfill-trail-land``)
+    and by the land refresh; never from a deploy migration (geometry work)."""
+    if _land_parts_ready(con):
+        return False
+    with con.transaction():
+        con.execute("TRUNCATE public_land_parts")
+        con.execute(
+            """
+            INSERT INTO public_land_parts (land_id, agency, unit, area_deg2, geom)
+            SELECT id, agency, unit, area_deg2, ST_Subdivide(geom::geometry, %s)
+            FROM public_land WHERE geom IS NOT NULL
+            """,
+            [_LAND_PART_VERTICES],
+        )
+        con.execute(
+            "INSERT INTO meta (key, value) VALUES (%s, 'ready') ON CONFLICT (key) DO UPDATE SET value = 'ready'",
+            [_LAND_PARTS_META_KEY],
+        )
+    logger.info("public_land_parts: built from every public_land polygon")
+    return True
+
+
+def _rebuild_land_parts(con: psycopg.Connection, land_ids: Sequence[str]) -> None:
+    """Replace the pieces of just-upserted ``public_land`` rows (deleted rows cascade)."""
+    con.execute("DELETE FROM public_land_parts WHERE land_id = ANY(%s)", [list(land_ids)])
+    con.execute(
+        """
+        INSERT INTO public_land_parts (land_id, agency, unit, area_deg2, geom)
+        SELECT id, agency, unit, area_deg2, ST_Subdivide(geom::geometry, %s)
+        FROM public_land WHERE id = ANY(%s) AND geom IS NOT NULL
+        """,
+        [_LAND_PART_VERTICES, list(land_ids)],
+    )
 
 
 def _assign_trail_land(
@@ -73,19 +130,24 @@ def _assign_trail_land(
     else:
         where = ""
         params = []
-    result = con.execute(
-        f"""
-        UPDATE trails t SET land_agency = land.agency, land_unit = land.unit
-        FROM (
-            SELECT t2.id, pl.agency, pl.unit
-            FROM trails t2
-            {_TRAIL_LAND_JOIN}
-            {where}
-        ) land
-        WHERE land.id = t.id
-        """,
-        params,
-    )
+    land_join = _TRAIL_LAND_PARTS_JOIN if _land_parts_ready(con) else _TRAIL_LAND_JOIN
+    # LLVM JIT compiles this per call and costs more than the lookup itself (measured: 3,000
+    # trails took 7.2 s with JIT on, 1.0 s off) - same fix as `scoring.queries`' land pins.
+    with con.transaction():
+        con.execute("SET LOCAL jit = off")
+        result = con.execute(
+            f"""
+            UPDATE trails t SET land_agency = land.agency, land_unit = land.unit
+            FROM (
+                SELECT t2.id, pl.agency, pl.unit
+                FROM trails t2
+                {land_join}
+                {where}
+            ) land
+            WHERE land.id = t.id
+            """,
+            params,
+        )
     return result.rowcount
 
 
@@ -228,6 +290,8 @@ def upsert_public_land(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]])
     ids = [row[0] for row in rows]
     old_bbox = _public_land_bbox(con, ids) if ids else None
     result = upsert_rows(con, "public_land", columns, rows)
+    if ids and not ensure_land_parts(con) and _land_parts_ready(con):
+        _rebuild_land_parts(con, ids)
     if ids:
         new_bbox = _public_land_bbox(con, ids)
         bbox = _union_bbox(old_bbox, new_bbox)
@@ -235,6 +299,81 @@ def upsert_public_land(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]])
             _assign_trail_land_paged(con, bbox=bbox)
     _invalidate_rank_cache()
     return result
+
+
+def _drop_known_duplicates(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+    """``rows`` minus those a dedup prune already replaced, with each remaining trailhead's
+    ``connects`` pointed at the surviving rows (deduped, sorted)."""
+    lookup = {row[0] for row in rows}
+    for row in rows:
+        lookup.update(row[8] or ())
+    if not lookup:
+        return list(rows)
+    replaced = dict(
+        con.execute("SELECT osm_id, kept_id FROM trail_duplicates WHERE osm_id = ANY(%s)", [list(lookup)]).fetchall()
+    )
+    if not replaced:
+        return list(rows)
+    kept: list[tuple[Any, ...]] = []
+    for row in rows:
+        if row[0] in replaced:
+            continue
+        if row[8]:
+            row = (*row[:8], sorted({replaced.get(linked, linked) for linked in row[8]}), *row[9:])
+        kept.append(row)
+    return kept
+
+
+def upsert_trails_changed(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> list[str]:
+    """:func:`upsert_trails` only the rows that are new or differ from what's cached. Returns
+    the ids written.
+
+    The bulk loaders' diff path (issue #442): a weekly national snapshot is overwhelmingly
+    unchanged rows, and every write costs a land-ownership lookup and a geometry trigger on the
+    1-vCPU database - rewriting all of it every week is what made the MVUM load take ~2.4 h.
+    Compared column by column (and ``trail_geometry.geojson``), which works because every
+    source builds its row tuple deterministically from the same inputs. Tombstoned duplicates
+    are dropped first, so they never count as "new"."""
+    rows = _drop_known_duplicates(con, rows)
+    if not rows:
+        return []
+    con.execute(
+        """
+        CREATE TEMP TABLE IF NOT EXISTS _incoming_trails (
+            id TEXT PRIMARY KEY, name TEXT, kind TEXT, source TEXT, url TEXT,
+            center_lat DOUBLE PRECISION, center_lng DOUBLE PRECISION, geojson TEXT,
+            connects TEXT[], length_km DOUBLE PRECISION, attrs TEXT
+        )
+        """
+    )
+    con.execute("TRUNCATE _incoming_trails")
+    with con.cursor().copy(
+        "COPY _incoming_trails (id, name, kind, source, url, center_lat, center_lng, geojson, connects, "
+        "length_km, attrs) FROM STDIN"
+    ) as copy:
+        for row in {row[0]: row for row in rows}.values():
+            copy.write_row(row)
+    changed_ids = {
+        row[0]
+        for row in con.execute(
+            """
+            SELECT i.id
+            FROM _incoming_trails i
+            LEFT JOIN trails t ON t.id = i.id
+            LEFT JOIN trail_geometry g ON g.id = i.id
+            WHERE t.id IS NULL
+               OR (t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, t.connects, t.length_km, t.attrs)
+                  IS DISTINCT FROM
+                  (i.name, i.kind, i.source, i.url, i.center_lat, i.center_lng, i.connects, i.length_km, i.attrs)
+               OR g.geojson IS DISTINCT FROM i.geojson
+            """
+        ).fetchall()
+    }
+    con.execute("TRUNCATE _incoming_trails")
+    changed = [row for row in rows if row[0] in changed_ids]
+    if changed:
+        upsert_trails(con, changed)
+    return [row[0] for row in changed]
 
 
 def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
@@ -246,6 +385,11 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
     ``geojson`` element per tuple) despite the write fanning out to two tables internally
     (issue #333 PR 2 - the ``trail_geometry`` split, migration 45): callers keep passing a
     single 11-tuple, this just routes ``geojson`` to ``trail_geometry`` instead of `trails`.
+
+    Rows a dedup prune already resolved (a ``trail_duplicates`` tombstone, issue #442) are
+    dropped, and trailhead ``connects`` are remapped onto the surviving rows - see
+    :func:`_drop_known_duplicates`. Every writer (OSM bulk load, home-radius ingest, live
+    trailhead resolution, USFS loads) comes through here, so none of them can re-add a twin.
 
     ``trails`` is upserted *before* ``trail_geometry`` - the latter's ``AFTER`` trigger
     (``foray_trail_geom_from_geometry``) derives ``trails.geom`` from the geojson via an
@@ -263,6 +407,9 @@ def upsert_trails(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> i
         "length_km",
         "attrs",
     )
+    rows = _drop_known_duplicates(con, rows)
+    if not rows:
+        return 0
     trails_rows = [(row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[8], row[9], row[10]) for row in rows]
     geometry_rows = [(row[0], row[7]) for row in rows]
     result = upsert_rows(con, "trails", trails_columns, trails_rows)
@@ -327,22 +474,40 @@ def prune_duplicate_route_paths(
         [*envelope_params, *envelope_params],
     )
     replaced = result.fetchall()
-    _remap_connects(con, replaced)
+    _record_replacements(con, replaced)
     con.commit()
     if replaced:
         _invalidate_rank_cache()
     return len(replaced)
 
 
-def _remap_connects(con: psycopg.Connection, replaced: Sequence[tuple[str, str]]) -> None:
-    """Point trailhead ``connects`` arrays at the row that replaced each pruned duplicate
-    (Copilot review, PR #441): ``resolve_trail_network`` / ``connected_trails`` drop ids that no
-    longer exist, so without this a pruned twin silently truncated a trailhead's network - or,
-    with every linked row gone, forced a live Overpass lookup on the next selection."""
+def _record_replacements(con: psycopg.Connection, replaced: Sequence[tuple[str, str]]) -> None:
+    """Bookkeeping for rows a dedup prune just deleted, as (deleted id, surviving id) pairs.
+
+    - A ``trail_duplicates`` tombstone per pair (issue #442), so the next write of the same
+      source row - every weekly OSM snapshot still lists it - is dropped by ``upsert_trails``
+      instead of re-inserted and pruned all over again.
+    - Trailhead ``connects`` arrays pointing at a deleted id move to its replacement (Copilot
+      review, PR #441): ``resolve_trail_network`` / ``connected_trails`` drop ids that no longer
+      exist, so without this a pruned twin silently truncated a trailhead's network - or, with
+      every linked row gone, forced a live Overpass lookup on the next selection."""
     if not replaced:
         return
     old_ids = [old_id for old_id, _new_id in replaced]
     new_ids = [new_id for _old_id, new_id in replaced]
+    con.execute(
+        """
+        INSERT INTO trail_duplicates (osm_id, kept_id)
+        SELECT old_id, new_id FROM unnest(%s::text[], %s::text[]) AS pair(old_id, new_id)
+        ON CONFLICT (osm_id) DO UPDATE SET kept_id = EXCLUDED.kept_id
+        """,
+        [old_ids, new_ids],
+    )
+    _remap_connects(con, old_ids, new_ids)
+
+
+def _remap_connects(con: psycopg.Connection, old_ids: list[str], new_ids: list[str]) -> None:
+    """Rewrite every trailhead ``connects`` entry in ``old_ids`` to its ``new_ids`` counterpart."""
     con.execute(
         """
         UPDATE trails t
@@ -530,7 +695,7 @@ def _prune_cross_source(
         [kind, usfs_source, *usfs_envelope_params, kind, *envelope_params, *guard_params],
     )
     replaced = result.fetchall()
-    _remap_connects(con, replaced)
+    _record_replacements(con, replaced)
     con.commit()
     if replaced:
         _invalidate_rank_cache()
@@ -558,17 +723,23 @@ def prune_trail_duplicates(
 _PRUNE_TILE_DEG = 2.0
 
 
-def prune_trail_duplicates_tiled(con: psycopg.Connection, source: str) -> int:
+def prune_trail_duplicates_tiled(con: psycopg.Connection, source: str, ids: Sequence[str] | None = None) -> int:
     """Run :func:`prune_trail_duplicates` over every ``_PRUNE_TILE_DEG`` tile a ``source`` row
-    crosses - what a USFS bulk loader calls after loading, since a newly loaded USFS row
-    can duplicate an OSM row cached long before (the OSM ingest's own per-tile pass only runs
-    when that tile is re-pulled, once per query version). Tile by tile, each its own committed
-    statement, never one table-wide sweep - see :func:`prune_duplicate_route_paths` for the
-    prod outage a global geometry sweep caused."""
-    # Every tile each source line's bbox crosses, not just the tile holding its centre - an OSM
-    # twin of a long line's far end lies wholly outside the centre's tile (Copilot review, PR #441).
+    crosses - or, given ``ids``, only the tiles those rows cross (a bulk loader's new/changed
+    rows, issue #442: a routine weekly load shouldn't re-check the whole country). What a bulk
+    loader calls after loading, since a newly loaded row can duplicate one cached long before.
+    Tile by tile, each its own committed statement, never one table-wide sweep - see
+    :func:`prune_duplicate_route_paths` for the prod outage a global geometry sweep caused."""
+    if ids is not None and not ids:
+        return 0
+    id_filter: LiteralString = "AND id = ANY(%s)" if ids is not None else ""
+    params: list[Any] = [_PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, source]
+    if ids is not None:
+        params.append(list(ids))
+    # Every tile each line's bbox crosses, not just the tile holding its centre - an OSM twin of
+    # a long line's far end lies wholly outside the centre's tile (Copilot review, PR #441).
     cells = con.execute(
-        """
+        f"""
         SELECT DISTINCT lat_cell, lng_cell
         FROM trails,
              generate_series(
@@ -577,9 +748,9 @@ def prune_trail_duplicates_tiled(con: psycopg.Connection, source: str) -> int:
              generate_series(
                  floor(ST_XMin(geom::geometry) / %s)::int, floor(ST_XMax(geom::geometry) / %s)::int
              ) AS lng_cell
-        WHERE source = %s AND geom IS NOT NULL
+        WHERE source = %s AND geom IS NOT NULL {id_filter}
         """,
-        [_PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, source],
+        params,
     ).fetchall()
     total = 0
     for lat_cell, lng_cell in cells:
@@ -604,7 +775,11 @@ def prune_trails_missing_from(con: psycopg.Connection, source: str, ids: Sequenc
     """
     if not ids:
         return 0
-    result = con.execute("DELETE FROM trails WHERE source = %s AND id <> ALL(%s)", [source, list(ids)])
+    id_list = list(ids)
+    result = con.execute("DELETE FROM trails WHERE source = %s AND id <> ALL(%s)", [source, id_list])
+    # Tombstones for this source's ids it no longer lists are dead weight (issue #442) - only
+    # the OSM loader passes OSM ids, so the prefix keeps another source from clearing them.
+    con.execute("DELETE FROM trail_duplicates WHERE osm_id LIKE %s AND osm_id <> ALL(%s)", [f"{source}:%", id_list])
     con.commit()
     if result.rowcount:
         _invalidate_rank_cache()

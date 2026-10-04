@@ -67,6 +67,7 @@ from foray.cache.ingest_log import (
 from foray.cache.land_trails import (
     _assign_trail_land,
     backfill_trail_land,
+    ensure_land_parts,
     prune_duplicate_cross_source_paths,
     prune_duplicate_cross_source_roads,
     prune_duplicate_route_paths,
@@ -75,6 +76,7 @@ from foray.cache.land_trails import (
     prune_trails_missing_from,
     upsert_public_land,
     upsert_trails,
+    upsert_trails_changed,
 )
 from foray.cache.observations import (
     delete_observations,
@@ -126,6 +128,7 @@ __all__ = [
     "delete_location",
     "delete_observations",
     "dequeue_backfill_batch",
+    "ensure_land_parts",
     "forget_ingest",
     "genus_taxon_ids",
     "insert_observations_if_missing",
@@ -184,4 +187,5 @@ __all__ = [
     "upsert_region_precip",
     "upsert_rows",
     "upsert_trails",
+    "upsert_trails_changed",
 ]
