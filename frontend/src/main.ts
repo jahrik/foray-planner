@@ -13,7 +13,7 @@ import { initGenusSelection } from "./genera";
 import { initLayerToggles } from "./ui/layer-toggles";
 import { loadFire, loadLand } from "./map/layers";
 import { initLocationAutocomplete, initPlaceAutocomplete } from "./location";
-import { initAutoLocate } from "./locate-ui";
+import { initAutoLocate, trackEngagement } from "./locate-ui";
 import { initMap, map, setMapClickHandler, updateHome } from "./map/map";
 import { runPlan } from "./views/plan";
 import { setLocationLatLng, startRefresh } from "./refresh";
@@ -121,6 +121,7 @@ function initDock(): void {
 }
 
 async function main(): Promise<void> {
+  trackEngagement(); // before the first await - see locate-ui.ts
   const config = await getJson("/api/config");
   state.home = config.home;
   state.regionRadiusKm = config.region_radius_km;
