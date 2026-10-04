@@ -24,11 +24,17 @@ logger = logging.getLogger(__name__)
 # Default page size for every trail<->land relabeling write (below) - bounds a single UPDATE to
 # this many rows regardless of how many trails a land or trail upsert batch could otherwise touch.
 _TRAIL_LAND_BATCH_SIZE = 5000
+# Point-in-polygon on `geometry`, with the `geography` GIST index (`&&`) as the prefilter. The
+# old `ST_DWithin(geography, geography, 0)` spent ~76ms per trail on the huge, many-vertex
+# national-forest polygons (measured locally) - 3,000 freshly ingested forest roads held one
+# UPDATE for ~4 min, which made a full trails re-pull take days; the planar test is ~3.5x
+# faster with identical results on 800 sampled trails (a containment test on a point doesn't
+# need the spheroid).
 _TRAIL_LAND_JOIN: LiteralString = """
     LEFT JOIN LATERAL (
         SELECT pl.agency, pl.unit FROM public_land pl
-        WHERE pl.geom IS NOT NULL
-          AND ST_DWithin(pl.geom, ST_SetSRID(ST_MakePoint(t2.center_lng, t2.center_lat), 4326)::geography, 0)
+        WHERE pl.geom && ST_SetSRID(ST_MakePoint(t2.center_lng, t2.center_lat), 4326)::geography
+          AND ST_Intersects(pl.geom::geometry, ST_SetSRID(ST_MakePoint(t2.center_lng, t2.center_lat), 4326))
         ORDER BY pl.area_deg2 LIMIT 1
     ) pl ON true
 """
