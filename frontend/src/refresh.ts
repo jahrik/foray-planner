@@ -126,12 +126,14 @@ export function cancelRefresh(): void {
   resetRefreshUI();
 }
 
-export async function setLocation(query: string): Promise<boolean> {
+// `name` labels a picked place-search suggestion (whose `query` is its resolved "lat, lng");
+// free text leaves it unset so the server's geocoder names it.
+export async function setLocation(query: string, name?: string): Promise<boolean> {
   cancelAutoLocate(); // a manual choice wins over any GPS fix still converging
   setStatus("Finding location…");
   let response: LocationResponse;
   try {
-    response = await postLocation({ query });
+    response = await postLocation(name ? { query, name: name.slice(0, 200) } : { query });
   } catch (error) {
     setStatus(errorDetail(error) || "location not found");
     return false;
