@@ -45,7 +45,55 @@
   loop_control:
     label: "{{ item.name }}"
 
-# A job removed from jobs.yaml (renamed or retired) leaves its old unit + timer behind -
-# nothing here prunes them yet. Not common enough to automate for this PR; clean up by hand
-# (`systemctl disable --now foray-<old-name>.timer && rm /etc/systemd/system/foray-<old-name>.*`)
-# when a job is renamed/removed.
+# A job removed from jobs.yaml (renamed or retired) would otherwise leave its old unit + timer
+# running - issue #442 retired the Overpass `trails-coverage` crawl for a bulk loader, and a
+# leftover timer would have kept both running. Every `foray-*` unit in /etc/systemd/system is
+# generated from this manifest (nothing else on the droplet uses the prefix), so any
+# `foray-*.timer` the manifest no longer lists is stale: stop it, disable it, remove both files.
+- name: Find installed job timers
+  ansible.builtin.find:
+    paths: /etc/systemd/system
+    patterns: "foray-*.timer"
+  register: foray_installed_timers
+
+- name: Work out which installed jobs the manifest no longer lists
+  ansible.builtin.set_fact:
+    foray_stale_jobs: >-
+      {{ foray_installed_timers.files
+         | map(attribute='path') | map('basename')
+         | map('regex_replace', '^foray-', '') | map('regex_replace', '[.]timer$', '')
+         | difference(foray_jobs | map(attribute='name'))
+         | list }}
+
+# Backstop: a mistake in the expression above reads as "every installed job is stale". A real
+# rename/retirement touches one or two jobs, so refuse anything bigger rather than switching off
+# the whole schedule.
+- name: Refuse to remove more than a few job units in one deploy
+  ansible.builtin.assert:
+    that:
+      - foray_stale_jobs | length <= 3
+    fail_msg: >-
+      {{ foray_stale_jobs | length }} job units look stale ({{ foray_stale_jobs | join(', ') }}) -
+      more than a rename or retirement would leave. Check jobs.yaml and the stale-unit expression.
+
+- name: Stop and disable stale job timers and services
+  ansible.builtin.systemd:
+    name: "foray-{{ item.0 }}.{{ item.1 }}"
+    state: stopped
+    enabled: false
+  loop: "{{ foray_stale_jobs | product(['timer', 'service']) | list }}"
+  loop_control:
+    label: "foray-{{ item.0 }}.{{ item.1 }}"
+
+- name: Remove stale job unit files
+  ansible.builtin.file:
+    path: "/etc/systemd/system/foray-{{ item.0 }}.{{ item.1 }}"
+    state: absent
+  loop: "{{ foray_stale_jobs | product(['timer', 'service']) | list }}"
+  loop_control:
+    label: "foray-{{ item.0 }}.{{ item.1 }}"
+
+- name: Reload systemd after removing stale units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: foray_stale_jobs | length > 0

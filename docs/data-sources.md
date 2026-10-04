@@ -57,10 +57,16 @@ scoring.
 
 ---
 
-## OpenStreetMap / Overpass API
+## OpenStreetMap / Overpass API + Geofabrik extracts
 
 **Role:** Reported dispersed-camping sites, and the trail network (paths, forest roads, named
 hiking routes, trailheads).
+
+**Where the trail network comes from (issue #442):** coverage-wide, from Geofabrik's daily
+per-state `.osm.pbf` extracts through the bulk pipeline (`sources/osm_trails.py`, see "Bulk
+OSM trails" below), not Overpass. Overpass still serves the two places a live query fits: the
+home-radius ingest and live trailhead resolution. A full Overpass pull of the country took days
+against a shared API, timed out, and never picked up OSM edits after the first pull.
 
 - **Client:** httpx (no key required)
 - **Endpoints:** `overpass-api.de` (primary), then public mirrors `overpass.kumi.systems` and
@@ -98,10 +104,32 @@ hiking routes, trailheads).
     `ref`, and the `seasonal` / `access:conditional` / `motor_vehicle:conditional` /
     `foot:conditional` keys that flag a snow gate or winter closure - surfaced as a "seasonal"
     hint, never parsed into an open/closed decision).
-  - **Re-ingest:** the per-region one-shot marker is `trails:place:{id}:q{_TRAILS_QUERY_VERSION}`.
-    Widening the Overpass query bumps that constant, so the weekly `refresh --with trails --all`
-    cron re-pulls every region automatically (superseded markers pruned on success) - no manual
-    step. `foray trails --all --force` is a manual re-pull without a bump (OSM data drift).
+  - **Manual Overpass region pull:** `foray trails --region NAME` / `--all` still works
+    (one-shot per region per `_TRAILS_QUERY_VERSION`, byte-capped tiles with resume markers),
+    but nothing schedules it any more - the bulk source below is the coverage-wide path.
+  - **Bulk OSM trails (`sources/osm_trails.py`, issue #442):** the stager (GitHub Actions)
+    downloads each covered state's Geofabrik extract (md5-checked), reads it with pyosmium -
+    a relations-only pass for `route=hiking` membership, then one node+way pass with node
+    locations cached and libosmium's `KeyFilter("highway", "barrier")` dropping everything
+    else before Python sees it - and turns it into the Overpass-shaped element list
+    `trails._parse_trails` already takes, so every row is built exactly as the Overpass path
+    builds it (checked: 99.5% of southwest Oregon's rows byte-identical to the Overpass
+    rows; the rest were real OSM edits and tile-edge gates/links the state-wide pass gets
+    right). Hiking routes are assembled across states. Oregon: 162k rows, ~50 s of
+    processing, 1.65 GB peak memory. The loader is the shared `trails_snapshot.load_snapshot`
+    diff load, below.
+  - **Diff load + dedup bookkeeping (all three trail sources):** `cache.upsert_trails_changed`
+    writes only new or changed rows (a reload of an unchanged Oregon snapshot writes zero rows
+    in 11 s); `prune_trails_missing_from` deletes rows a snapshot no longer lists, skipped when
+    the snapshot holds under half the cached rows (truncation guard);
+    `prune_trail_duplicates_tiled` dedups only the tiles changed rows cross. Each pruned OSM
+    twin leaves a `trail_duplicates` tombstone (migration 53) that `upsert_trails` honours, so
+    the next snapshot listing the twin doesn't re-insert it - and trailhead `connects` are
+    remapped through it.
+  - **Land-ownership tagging:** `trails.land_agency`/`land_unit` are looked up in
+    `public_land_parts` (migration 54, `ST_Subdivide` pieces of `public_land`, built by
+    `cache.ensure_land_parts` from a job, never at deploy): ~0.3 ms per trail versus ~20 ms
+    against whole national-forest polygons, identical results on 1,000 sampled trails.
   - **Road ranking:** `trails_near(sort="relevance")` re-weights `kind='road'` rows so
     target-genus obs-density along the line dominates (length is log-damped), and a road gated
     to motor vehicles but open on foot (`Trail.walk_in`) gets a bonus - walk-in ground is less
@@ -427,7 +455,7 @@ checking the issue's own text first - see AGENTS.md's Conventions section.
   source uses the same read/write path instead of each hand-rolling its own tempfile/gzip
   dance. A geometry column is WKB bytes, not GeoJSON text (compact, and PostGIS reads it
   natively) - a loader converts it back to the GeoJSON text a table's `ST_GeomFromGeoJSON`
-  insert trigger expects (`usfs_trails._wkb_to_geojson`) rather than that format change reaching
+  insert trigger expects (`trails_snapshot.wkb_to_geojson`) rather than that format change reaching
   the trigger itself. Retention is one snapshot per source, not history -
   `foray.spaces.prune_other_snapshots` deletes every other object under `bulk/{source}/` right
   after a new run publishes, to keep the monthly Spaces bill from growing unbounded.

@@ -107,10 +107,20 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   numbered road from cache; a live per-selection query is the fallback and its result is written
   back. Also derived at parse: `length_km` and `attrs` (highway/surface/tracktype/access/
   motor_vehicle/foot/ref/...). Geometry cached as GeoJSON *text* + `geom` GIST + a representative
-  center. The per-region one-shot marker is keyed `trails:place:{id}:q{_TRAILS_QUERY_VERSION}` -
-  bump that constant when the Overpass query changes and the weekly `refresh --with trails --all`
-  cron re-pulls every region on its own (superseded markers pruned on success). `--force` is a
-  manual re-pull without a version bump (OSM drift / debugging one region).
+  center. Coverage-wide data now comes from the bulk source (`osm_trails.py`, below), which
+  builds its rows through this same `_parse_trails`, so a change to the parse/attrs logic
+  reaches every cached row on the next weekly snapshot (the diff load rewrites what changed).
+  The Overpass region pull (`foray trails --region/--all`, one-shot per
+  `_TRAILS_QUERY_VERSION`) is manual-only.
+- `src/foray/sources/osm_trails.py` - the coverage-wide OSM trail network as a bulk source
+  (issue #442): Geofabrik per-state `.osm.pbf` extracts read with pyosmium in the stager
+  (GitHub Actions), converted to Overpass-shaped elements so `trails._parse_trails` builds the
+  rows, hiking routes assembled across states. Replaced the scheduled Overpass crawl.
+  `src/foray/sources/trails_snapshot.py` is the snapshot format + *diff* loader shared by it,
+  `usfs_trails` and `usfs_mvum`: only new/changed rows are written
+  (`cache.upsert_trails_changed`), and a pruned OSM twin's `trail_duplicates` tombstone keeps
+  the next snapshot from re-inserting it. Trail land tags come from `public_land_parts`
+  (subdivided `public_land`, `cache.ensure_land_parts`).
 - `src/foray/sources/fire.py` - wildfire perimeters + burn scars from NIFC / MTBS ArcGIS
   (httpx, no key, issue #227), cloned from `land.py`. One table `fire_perimeters`, split by
   `source_key` into two refresh lanes: `wfigs_active` (fast, **replace semantics** -
