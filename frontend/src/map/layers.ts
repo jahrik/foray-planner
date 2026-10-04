@@ -259,14 +259,19 @@ export function selectTrailhead(trail: Trail): Promise<void> {
 // focused. Pins go into the cluster group (map.ts's preciseCluster) instead of straight onto the
 // map - a dense area folds into a count badge instead of dumping hundreds of overlapping dots.
 // Guarded so a slower, superseded request (a month-filtered fetch still in flight when the sort
-// flips to "active now", or a previous focus) can't paint its pins over the current one.
+// flips to "active now", or a previous focus) can't paint its pins over the current one. The run
+// guard only notices a newer load; clearMarkers() can also drop the focus (null) with no new load
+// yet (mid-/api/alerts fetch, entering Plan), so the focus object itself must still be current -
+// setFocused() always assigns a fresh one, so identity is enough.
 const preciseGuard = createRunGuard();
 export async function loadPreciseObservations(): Promise<void> {
-  const isCurrent = preciseGuard.begin();
+  const isLatest = preciseGuard.begin();
   clearPrecise();
   renderLegend();
-  if (!state.focused) return;
-  const { lat, lng } = state.focused;
+  const focused = state.focused;
+  if (!focused) return;
+  const isCurrent = (): boolean => isLatest() && state.focused === focused;
+  const { lat, lng } = focused;
   let observations: PreciseObservation[];
   try {
     observations = await getJson("/api/observations/precise", {
