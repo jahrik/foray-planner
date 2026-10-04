@@ -918,6 +918,11 @@ def _ingest_tile(
     key = _tile_key(south, west, north, east)
     if is_ingested(database, key):
         return 0, True
+    quadrants = _quadrants(south, west, north, east)
+    if any(is_ingested(database, _tile_key(*quadrant)) for quadrant in quadrants):
+        # A previous run already had to split this tile and finished some of it - go straight
+        # to the quadrants instead of re-downloading the whole (too large) tile to find out.
+        return _ingest_quadrants(database, key, tile, quadrants, client=client, label=label)
     try:
         rows = fetch_trails_bbox(
             min_lat=south,
@@ -931,15 +936,7 @@ def _ingest_tile(
     except SOURCE_ERRORS as error:
         if _is_splittable_failure(error) and (north - south) / 2 >= _MIN_TILE_DEG:
             logger.info("trails: %s tile %s too large for one query (%s) - splitting", label, key, error)
-            total = 0
-            all_ok = True
-            for quadrant in _quadrants(south, west, north, east):
-                count, ok = _ingest_tile(database, quadrant, client=client, label=label)
-                total += count
-                all_ok = all_ok and ok
-            if all_ok:
-                record_ingest(database, key, total, lat=(south + north) / 2, lng=(west + east) / 2)
-            return total, all_ok
+            return _ingest_quadrants(database, key, tile, quadrants, client=client, label=label)
         logger.warning("trails: %s tile %s failed (%s) - will retry next run", label, key, error)
         return 0, False
     upsert_trails(database, rows)
@@ -949,6 +946,28 @@ def _ingest_tile(
     prune_trail_duplicates(database, min_lat=south, min_lng=west, max_lat=north, max_lng=east)
     record_ingest(database, key, upserted, lat=(south + north) / 2, lng=(west + east) / 2)
     return upserted, True
+
+
+def _ingest_quadrants(
+    database: psycopg.Connection,
+    key: str,
+    tile: tuple[float, float, float, float],
+    quadrants: list[tuple[float, float, float, float]],
+    *,
+    client: httpx.Client | None,
+    label: str,
+) -> tuple[int, bool]:
+    """Ingest a split tile's quadrants; mark the parent done once all four are."""
+    south, west, north, east = tile
+    total = 0
+    all_ok = True
+    for quadrant in quadrants:
+        count, ok = _ingest_tile(database, quadrant, client=client, label=label)
+        total += count
+        all_ok = all_ok and ok
+    if all_ok:
+        record_ingest(database, key, total, lat=(south + north) / 2, lng=(west + east) / 2)
+    return total, all_ok
 
 
 def ingest_trails_region(
