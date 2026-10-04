@@ -115,6 +115,8 @@ export interface Session {
 
 interface SaveJob {
   fix: Fix;
+  // Arrival order of the reading (see Locator.fixSeq) - decides which of two fixes is newer.
+  seq: number;
   recenter: boolean;
   // The user asked for this fix (locate button / accepted offer) - applied even mid-task.
   userRequested: boolean;
@@ -125,6 +127,13 @@ export class Locator {
   private engaged = false;
   private best: Fix | null = null;
   private pending: Fix | null = null;
+  // Set when `pending` is a fix that's already the saved home (see runSave) - accepting it then
+  // only re-centres and refreshes, it doesn't POST again.
+  private pendingSavedHome: Home | null = null;
+  private pendingSeq = 0;
+  // Increments per accepted reading; jobs and offers carry it so a late-landing older save never
+  // replaces a newer pending fix.
+  private fixSeq = 0;
   private watchId: number | null = null;
   private timer: unknown = null;
   private generation = 0;
@@ -193,8 +202,7 @@ export class Locator {
     this.generation += 1;
     this.stop();
     this.queued = null;
-    this.pending = null;
-    this.deps.offer(null, null);
+    this.withdrawOffer();
     this.settleFirst(false);
   }
 
@@ -202,9 +210,11 @@ export class Locator {
   acceptPending(): boolean {
     const fix = this.pending;
     if (!fix) return false;
-    this.pending = null;
-    this.deps.offer(null, null);
-    this.enqueueSave(fix, true, true);
+    const savedHome = this.pendingSavedHome;
+    const seq = this.pendingSeq;
+    this.withdrawOffer();
+    if (savedHome) this.deps.show(savedHome, fix, true);
+    else this.enqueueSave(fix, seq, true, true);
     return true;
   }
 
@@ -216,6 +226,8 @@ export class Locator {
     if (!isBetterFix(this.best, fix)) return;
     this.best = fix;
     this.gotFix = true;
+    this.fixSeq += 1;
+    const seq = this.fixSeq;
     // An explicit request (the locate button) always applies its first fix - the user asked to
     // be centred on it, however close it is to home. After that, a refinement mustn't re-centre
     // a map the user has since panned.
@@ -225,15 +237,14 @@ export class Locator {
       : fixAction(this.deps.currentHome(), fix, this.engaged, this.deps.homeIsManual());
     this.explicit = false;
     if (action === "offer") {
-      this.pending = fix;
-      this.deps.offer(fix, this.deps.currentHome());
+      this.offerFix(fix, seq);
       this.settleFirst(false);
     } else {
       // A newer, better fix supersedes any older offer (e.g. a GPS fix confirming a hand-set
       // home withdraws the IP guess offered before it) - including one it says to ignore.
       this.withdrawOffer();
       if (action === "ignore") this.settleFirst(false);
-      else this.enqueueSave(fix, action === "apply", userRequested);
+      else this.enqueueSave(fix, seq, action === "apply", userRequested);
       if (action === "quiet") this.settleFirst(false);
     }
     if (fix.accuracyM <= TARGET_ACCURACY_M) this.finish();
@@ -242,15 +253,24 @@ export class Locator {
   private withdrawOffer(): void {
     if (!this.pending) return;
     this.pending = null;
+    this.pendingSavedHome = null;
     this.deps.offer(null, null);
   }
 
-  private enqueueSave(fix: Fix, recenter: boolean, userRequested: boolean): void {
+  private offerFix(fix: Fix, seq: number, savedHome: Home | null = null): void {
+    this.pending = fix;
+    this.pendingSeq = seq;
+    this.pendingSavedHome = savedHome;
+    this.deps.offer(fix, savedHome ?? this.deps.currentHome(), savedHome !== null);
+  }
+
+  private enqueueSave(fix: Fix, seq: number, recenter: boolean, userRequested: boolean): void {
     const wasIdle = this.queued === null;
     // Keep a pending recenter even if a quiet refinement replaces it - the user still expects
     // the map to move to the (now more precise) spot.
     this.queued = {
       fix,
+      seq,
       recenter: recenter || (this.queued?.recenter ?? false),
       userRequested: userRequested || (this.queued?.userRequested ?? false),
       generation: this.generation,
@@ -267,9 +287,10 @@ export class Locator {
     // decision to re-centre was made when the reading arrived, and the user may have started
     // panning / reading Details since. Not yet persisted -> just offer it.
     const intrudes = () => job.recenter && !job.userRequested && this.engaged;
+    // Never replace a pending offer of a newer reading with this older one.
+    const offerable = () => !this.pending || job.seq > this.pendingSeq;
     if (intrudes()) {
-      this.pending = job.fix;
-      this.deps.offer(job.fix, this.deps.currentHome());
+      if (offerable()) this.offerFix(job.fix, job.seq);
       this.settleFirst(false);
       return;
     }
@@ -288,8 +309,7 @@ export class Locator {
       // Already saved server-side, so show it - but leave the map and open panel alone and let
       // one tap re-centre and refresh the results.
       this.deps.show(home, job.fix, false);
-      this.pending = job.fix;
-      this.deps.offer(job.fix, home, true);
+      if (offerable()) this.offerFix(job.fix, job.seq, home);
       this.settleFirst(false);
       return;
     }

@@ -195,6 +195,7 @@ describe("Locator", () => {
     expect(deps.offer).toHaveBeenLastCalledWith(
       expect.objectContaining({ lat: TACOMA.lat }),
       expect.anything(),
+      false,
     );
     expect(locator.acceptPending()).toBe(true);
     await flush();
@@ -214,6 +215,7 @@ describe("Locator", () => {
     expect(deps.offer).toHaveBeenLastCalledWith(
       expect.objectContaining({ accuracyM: 25_000 }),
       expect.anything(),
+      false,
     );
     expect(locator.active).toBe(true);
     // A real GPS fix at the hand-set spot is trusted: saved quietly, and the stale offer withdrawn.
@@ -339,7 +341,11 @@ describe("Locator", () => {
     await flush();
     expect(deps.save).toHaveBeenCalledTimes(1);
     expect(show).toHaveBeenCalledTimes(1);
-    expect(deps.offer).toHaveBeenLastCalledWith(expect.objectContaining({ lat: 47.0 }), expect.anything());
+    expect(deps.offer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lat: 47.0 }),
+      expect.anything(),
+      false,
+    );
   });
 
   it("shows a fix saved while the user engaged without re-centring, and offers the refresh", async () => {
@@ -358,6 +364,37 @@ describe("Locator", () => {
       expect.objectContaining({ name: "Tacoma" }),
       true,
     );
+    // Accepting only re-centres and refreshes - the fix is already saved, no second POST.
     expect(locator.acceptPending()).toBe(true);
+    expect(deps.save).toHaveBeenCalledTimes(1);
+    expect(show).toHaveBeenLastCalledWith(
+      expect.objectContaining({ name: "Tacoma" }),
+      expect.anything(),
+      true,
+    );
+  });
+
+  it("keeps a newer pending fix when an older in-flight save lands", async () => {
+    const { geolocation, deps, locator, show } = setup();
+    let release: (home: Home) => void = () => undefined;
+    deps.save = vi.fn(() => new Promise<Home>((resolve) => (release = resolve)));
+    locator.start();
+    geolocation.coarse?.success(position({ ...TACOMA, accuracyM: 1500 })); // auto-apply, in flight
+    await flush();
+    locator.markEngaged();
+    const olympia = { lat: 47.0379, lng: -122.9007, accuracyM: 20 };
+    geolocation.watch?.success(position(olympia)); // newer, better, far -> offered
+    release({ name: "Tacoma", ...TACOMA, radius_km: 150 });
+    await flush();
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ name: "Tacoma" }), expect.anything(), false);
+    expect(deps.offer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lat: olympia.lat }),
+      expect.anything(),
+      false,
+    );
+    // Accepting saves (and applies) the newer fix, not the older saved one.
+    expect(locator.acceptPending()).toBe(true);
+    await flush();
+    expect(deps.save).toHaveBeenLastCalledWith(expect.objectContaining({ lat: olympia.lat }));
   });
 });

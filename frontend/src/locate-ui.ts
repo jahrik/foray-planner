@@ -11,6 +11,26 @@ import { refreshCurrentView } from "./views/view-run";
 const LOCATE_TITLE = "Use my current location";
 
 let locator: Locator | null = null;
+let engagedEarly = false;
+
+/** Start noticing user input - call before main()'s first await. The page is visible (and the
+ * search box usable) while /api/config loads, so input during startup must count too, or a late
+ * fix could still re-centre under someone who's already typing. Any real input means the user is
+ * mid-task: from then on a fix that would move them is offered, not applied. Capture phase so a
+ * handler that stops propagation can't hide it. */
+export function trackEngagement(): void {
+  for (const type of ["pointerdown", "keydown", "wheel"] as const) {
+    document.addEventListener(
+      type,
+      (event) => {
+        if (!event.isTrusted) return;
+        engagedEarly = true;
+        locator?.markEngaged();
+      },
+      { capture: true, passive: true },
+    );
+  }
+}
 
 function showOffer(button: HTMLButtonElement, fix: Fix | null, saved: boolean): void {
   button.classList.toggle("pending", fix !== null);
@@ -72,17 +92,7 @@ export function initAutoLocate(): Session | null {
     offer: (fix, _home, saved = false) => showOffer(button, fix, saved),
     status: setStatus,
   }));
-  // Any real input means the user is mid-task: from here on a fix that would move them is
-  // offered, not applied. Capture phase so a handler that stops propagation can't hide it.
-  for (const type of ["pointerdown", "keydown", "wheel"] as const) {
-    document.addEventListener(
-      type,
-      (event) => {
-        if (event.isTrusted) active.markEngaged();
-      },
-      { capture: true, passive: true },
-    );
-  }
+  if (engagedEarly) active.markEngaged();
   button.onclick = () => {
     if (active.acceptPending()) return;
     setStatus("Finding your location…");
