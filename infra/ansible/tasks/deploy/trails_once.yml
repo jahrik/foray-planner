@@ -1,10 +1,9 @@
 ---
-# Manual/opt-in only - not part of foray:deploy. The weekly foray-layers-land cron job
-# (`layers-land` in jobs.yaml, `refresh --with camps,land,trails --all`) already re-pulls every
-# coverage region and self-heals the issue #394 route/path duplicates via
-# `cache.prune_duplicate_route_paths` on each pass - but at a 168h interval, a droplet with a
-# lot of pre-#396 rows converges slowly. This runs just the trails target, once, across all
-# coverage regions, to converge sooner instead of waiting on the cron's normal pace.
+# Manual/opt-in only - not part of foray:deploy. The nightly foray-trails-coverage job
+# (`trails-coverage` in jobs.yaml, `trails --all`) already re-pulls every coverage region after a
+# _TRAILS_QUERY_VERSION bump and self-heals duplicate rows via the per-tile prunes, resuming
+# from per-tile markers between nights. This runs the same command once, now, to converge sooner
+# than the 02:00-05:00 window allows.
 - name: Check for the deploy-rendered env file
   ansible.builtin.stat:
     path: /opt/foray-planner/foray.env
@@ -32,4 +31,4 @@
     detach: false
     cleanup: true
     env_file: /opt/foray-planner/foray.env
-    command: "foray refresh --with trails --all"
+    command: "foray trails --all"

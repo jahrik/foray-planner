@@ -111,9 +111,9 @@ backfill-geom-once: (_playbook "backfill-geom-once")
 [group('deploy-once')]
 resync-once: (_playbook "resync-once")
 
-# Manual/opt-in only - the weekly foray-layers-land cron already re-pulls every coverage region
-# and self-heals issue #394's duplicate route/path rows on each pass; this just runs the trails
-# target once, now, across all coverage regions instead of waiting on the cron's 168h pace.
-[doc('Speed up issue #394 dedup convergence: run trails refresh across all coverage now')]
+# Manual/opt-in only - the nightly foray-trails-coverage job already re-pulls every coverage
+# region after a query-version bump (resuming per tile) and self-heals duplicate rows on each
+# pass; this just runs it once, now, instead of waiting for the night window.
+[doc('Run the trails coverage ingest across all regions now instead of waiting for the night job')]
 [group('deploy-once')]
 trails-once: (_playbook "trails-once")
