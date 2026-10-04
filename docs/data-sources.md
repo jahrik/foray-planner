@@ -296,11 +296,15 @@ vector base lets us style forest roads / trails / highways distinctly, declutter
   its ~15% luminance band (water was barely off the background, forest near-black, roads a hair
   above the land) - navy water, real dark greens, a legible road hierarchy and labels. `light`
   is left as the stock theme.
-- **Road styling:** `frontend/src/map/basemap-roads.ts` splits the base theme's single dim
-  `roads_other` layer, using the OSM `highway=` value Protomaps keeps in `kind_detail`, into a
-  cased ochre "forest roads" layer (`highway=track`) and a cased green "trails" layer
-  (footway/path/bridleway/steps/cycleway), each with its own line-following label. Protomaps'
-  tiles carry no track/path geometry below ~z13, so these are a zoom-in feature.
+- **Road styling:** trails and forest roads have exactly one source on the map - our own
+  `trails` vector tiles (`frontend/src/map/basemap-trails.ts`: a cased ochre forest-road layer
+  and a cased green trail layer, solid at regional zoom and dashed from z12, with labels).
+  `frontend/src/map/basemap-roads.ts` drops the base theme's own copies of those ways
+  (`roads_other`'s `highway=track` / path / footway / bridleway / steps / cycleway, keyed off
+  the `kind_detail` Protomaps keeps), which used to be restyled and drawn alongside: every
+  forest road showed twice from z12 (MVUM + OSM, 10-100 m apart) and the map switched sources
+  as you zoomed. OSM footways/cycleways/steps - excluded from our ingest as mostly urban
+  sidewalks - are no longer drawn.
 - **Glyphs + sprites:** from `https://protomaps.github.io/basemaps-assets` (a few MB of
   font/icon data, not the tiles). Self-hosting these alongside the archive is a later step.
 - **CSP:** `_content_security_policy(basemap_url)` in `api/security.py` adds `worker-src 'self'
@@ -492,7 +496,12 @@ checking the issue's own text first - see AGENTS.md's Conventions section.
     reusing the OSM-derived `motor_vehicle`/`access` vocab `scoring.queries._walk_in` already
     reads, so that function needs no source-specific branch. `attrs.tracktype` inverts
     `OperationalMaintLevel` (1 primitive -> 5 paved) the same way `usfs_trails` inverts
-    `TRAIL_CLASS`. OSM/USFS dedup happens at read time, not ingest: `trails_near`/`nearest_trail`
+    `TRAIL_CLASS`. OSM/USFS dedup happens twice. At read time, `trails_near`/`nearest_trail`
     drop an OSM `path`/`road` row whenever a `source LIKE 'usfs%'` row of the same `kind` sits
-    within 15 m (`scoring.queries._USFS_DEDUP_FILTER`) - the USFS layer is authoritative
-    (access matrix, official class/name) where OSM is a crowdsourced guess.
+    within 15 m (`scoring.queries._USFS_DEDUP_FILTER`). In the table (which is what the map's
+    tiles draw), every trails ingest tile deletes the OSM twin of a USFS row:
+    `cache.prune_duplicate_cross_source_paths` (Trail_NFS) and `..._roads` (MVUM) - the OSM way
+    must lie inside a 150 m buffer of the USFS line, the stretch of USFS line alongside it must
+    be within 30% of its length (so a spur off the trail survives), and real names must share a
+    word (paths) or route numbers must match (roads). The USFS layer is authoritative (access
+    matrix, official class/name) where OSM is a crowdsourced guess.

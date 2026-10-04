@@ -3,7 +3,7 @@ import type { Map as MaplibreMap } from "maplibre-gl";
 
 import { FIRE_LAYER_IDS, firePopupSpec, type FireProps } from "./basemap-fire";
 import { LAND_LAYER_IDS, landPopupSpec, type LandProps } from "./basemap-land";
-import { TRAILS_LAYER_ID, trailPopupSpec, type TrailTileProps } from "./basemap-trails";
+import { TRAILS_LINE_LAYER_IDS, trailPopupSpec, type TrailTileProps } from "./basemap-trails";
 import { getBasemapModule, map } from "./map";
 import { buildPopup } from "./popup";
 import { pickRoadFeature, roadLineLayerIds, roadPopupSpec, type RoadProps } from "./road-inspect";
@@ -38,8 +38,9 @@ function hitBox(gl: MaplibreMap, latlng: L.LatLng): [[number, number], [number, 
 // (issue #336 PR 2), but that's the destination card's Trails-tab gesture (layers.ts's
 // `selectTrailhead`); a plain map click should show what was clicked, not act on it.
 function tryInspectTrailAt(gl: MaplibreMap, latlng: L.LatLng): boolean {
-  if (!gl.getLayer(TRAILS_LAYER_ID)) return false;
-  const [hit] = gl.queryRenderedFeatures(hitBox(gl, latlng), { layers: [TRAILS_LAYER_ID] });
+  const layers = TRAILS_LINE_LAYER_IDS.filter((id) => gl.getLayer(id));
+  if (layers.length === 0) return false;
+  const [hit] = gl.queryRenderedFeatures(hitBox(gl, latlng), { layers });
   if (!hit) return false;
   L.popup()
     .setLatLng(latlng)

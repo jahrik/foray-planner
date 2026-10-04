@@ -95,7 +95,11 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   mostly urban sidewalks), forest / logging roads (`highway=track`, and `highway=service` +
   `service=forestry` -> `kind='road'` - a primary foraging surface, kept separately queryable),
   named hiking routes (`route=hiking` relations -> `kind='route'`, member ways stitched), and
-  trailheads (`highway=trailhead` nodes -> `kind='trailhead'`, Point). The route clause needs
+  trailheads (`highway=trailhead` nodes -> `kind='trailhead'`, Point). Region ingests fetch 2°
+  tiles with a streamed byte cap (`_MAX_TILE_BYTES`); an oversized or timed-out tile splits into
+  quadrants, and each finished tile keeps a `trails:tile:q{V}:...` resume marker so a killed run
+  picks up where it stopped (the uncapped version OOM-killed the 2 GB droplet on road-dense
+  states). The route clause needs
   its **own** `out geom;` - inside a union `out geom` drops relation members. At ingest each
   trailhead is snapped (<=35 m) onto the payload's trail polylines and the matched ids (expanded to
   every segment sharing a `_group_key` - `name`, or `ref`+`operator` for an unnamed forest road)
@@ -257,7 +261,9 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
     rank numeral, next-7 = ring, 11+ = dim moss dot), `selectSize`/`deselectSize`, `clear*()`,
     and the opt-in aerial overlay (`setAerialEnabled` / `showSatelliteOverlay`). The base layer
     is a Protomaps PMTiles vector map rendered by MapLibre GL (`src/map/basemap.ts`, with the
-    `basemap-theme.ts` contrast pass and `basemap-roads.ts` forest-road/trail styling on top;
+    `basemap-theme.ts` contrast pass and `basemap-roads.ts` dropping the base theme's own
+    track/path ways on top - `basemap-trails.ts`'s tile layer is the single source for trails
+    and forest roads at every zoom;
     code-split, see docs/data-sources.md), real light/dark cartography that swaps on theme
     change; no raster fallback - the server must send a `basemap_url` (`FORAY_BASEMAP_URL`) or
     the map has overlays but no base. `/api/config` also carries a `terrain_url` (Terrarium DEM
