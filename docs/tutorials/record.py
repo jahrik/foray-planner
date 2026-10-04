@@ -181,6 +181,16 @@ class Tutorial:
         time.sleep(0.8)
 
 
+def wait_for_home(page: Page, name: str) -> None:
+    """Block until the header names the new home. The ranked list re-renders asynchronously
+    after a location change, so the old location's cards still match `.rank` meanwhile."""
+    page.wait_for_function(
+        "(name) => (document.getElementById('home-name')?.textContent || '').includes(name)",
+        arg=name,
+        timeout=60_000,
+    )
+
+
 def wait_for_results(page: Page) -> None:
     page.locator("#panel .rank").first.wait_for(timeout=60_000)
     time.sleep(2.5)  # let the map settle + markers paint
@@ -192,6 +202,7 @@ def set_home(tut: Tutorial, query: str) -> None:
     suggestion = page.locator("#loc-suggestions li").first
     suggestion.wait_for(timeout=15_000)
     tut.click(suggestion, pause=1.0)
+    wait_for_home(page, query.split(",")[0])
     wait_for_results(page)
 
 
@@ -229,7 +240,8 @@ def getting_started(tut: Tutorial) -> None:
     card = page.locator("#panel .rank").first
     tut.point(card.locator(".why"))
     tut.caption(
-        "Each card leads with <b>why</b> it ranks: what's fruiting, how many records, recent rain.",
+        "Each card leads with <b>why</b> it ranks: what's in season and how many records, "
+        "plus rain and access when known.",
         shot="card",
         hold=3.2,
     )
@@ -727,6 +739,7 @@ def set_home_quietly(page: Page) -> None:
             continue  # the geocoder can be slow / rate-limited; retype to re-query
     else:
         box.press("Enter")  # free-text submit: the server geocodes it instead
+    wait_for_home(page, "Bend")
     wait_for_results(page)
 
 

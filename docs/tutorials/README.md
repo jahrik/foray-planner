@@ -47,8 +47,9 @@ remove one with its ✕. Your picks are remembered on this device.
 ![Filtering to chanterelles](img/getting-started-04-genera.png)
 
 **5. Read a destination card.** Each card leads with a plain-language line explaining why it
-ranks: which genus is active, whether it's at peak, building, or past peak, how many records
-fall in your months, recent rain, and distance to the nearest trailhead. Below that are the
+ranks: the top genus, where it is in its season (at peak, building, past peak), and how many
+records fall in your months. When they apply, it adds recent rain, a nearby active fire or burn
+scar, and a trailhead within about 3 mi (with a free camp, if one is close). Below that are the
 score bar, species count, recent sightings, elevation and rainfall, then the top genera.
 
 ![A destination card](img/getting-started-05-card.png)
@@ -79,8 +80,9 @@ the actual iNaturalist finds behind the ranking.
 **1. Leave the defaults.** With **All genera** and **Sort: Best overall**, the #1 card has the
 strongest overall score for your chosen months. The score blends how much of each genus's
 season falls in those months, how many records and how many genera, how recent they are, and
-adjustments for active fire and trail/camp access. The card's first line says why: what's
-peaking there, how many records, recent rain, and the nearest trailhead.
+adjustments for active fire and trail/camp access. The card's first line says why: the top
+genus, where it is in its season and its record count, plus recent rain, fire and a close
+trailhead when those apply.
 
 ![The top-ranked destination](img/best-spot-01-ranked.png)
 
