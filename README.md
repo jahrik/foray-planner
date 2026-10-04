@@ -8,6 +8,11 @@ A trip-planning tool for mushroom hunters. Point it at where you are or want to 
 and it tells you which areas near you are most likely to be fruiting this month
 and points you to the closest hiking trail, campsite, BLM & FS land near that area.
 
+![Foray Planner finding the best spot near Bend, Oregon, then showing the iNaturalist finds behind it](docs/tutorials/best-spot.gif)
+
+*See it in action. Step-by-step guides, including tracking down a specific mushroom from
+trail to campsite: [How to use Foray Planner](docs/tutorials/README.md).*
+
 > **No identification or edibility claims are made here.** This is a trip-planning
 > and mapping tool only. Every species links to its
 > [iNaturalist](https://www.inaturalist.org) page for that kind of information.
