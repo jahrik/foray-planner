@@ -4,12 +4,14 @@
 planning: where your target mushrooms are being found right now, which trails and free camps
 are closest to them, and how to string several spots into a road trip.
 
-Four short walkthroughs, each with an animated overview and step-by-step screenshots:
+Six short walkthroughs, each with an animated overview and step-by-step screenshots:
 
 1. [Getting started](#1-getting-started) - set your location, pick months and genera, read the results
-2. [Destination details](#2-destination-details) - map layers, calendar, photos, trails, campgrounds, public land
-3. [Plan a road trip](#3-plan-a-road-trip) - shortlist spots, pin a campground, export the route
-4. [On your phone](#4-on-your-phone) - the same flows on mobile
+2. [Find the best spot right now](#2-find-the-best-spot-right-now) - no target in mind: where is the most fruiting, and the finds behind it
+3. [Track down a target mushroom](#3-track-down-a-target-mushroom) - from "I want chanterelles" to the trail, the camp, and directions
+4. [Destination details](#4-destination-details) - map layers, calendar, photos, trails, campgrounds, public land
+5. [Plan a road trip](#5-plan-a-road-trip) - shortlist spots, pin a campground, export the route
+6. [On your phone](#6-on-your-phone) - the same flows on mobile
 
 > Foray Planner is a planning and mapping tool. It makes no identification, edibility, or
 > safety claims, and it doesn't assert that camping is allowed anywhere: it shows land
@@ -67,7 +69,100 @@ between *Best overall*, *Active now* (what's been seen in the last few weeks), a
 
 ---
 
-## 2. Destination details
+## 2. Find the best spot right now
+
+No particular target? This finds where the most is fruiting near you, then shows you the actual
+iNaturalist finds behind the ranking.
+
+![Best spot walkthrough](best-spot.gif)
+
+**1. Leave the defaults.** With **All genera** and **Sort: Best overall**, the #1 card is the
+destination with the strongest fruiting activity in your chosen months. Its first line says
+why: what's peaking there, how many records, recent rain, and the nearest trailhead.
+
+![The top-ranked destination](img/best-spot-01-ranked.png)
+
+**2. Read the chips.** Each chip is a genus found there, with the share of its season that
+falls in your months and the number of records. Click a chip to open that genus on
+iNaturalist (photos, range and lookalikes).
+
+![Genus chips on a card](img/best-spot-02-chips.png)
+
+**3. Select it to see the finds.** Click the card. Pink pins appear on the map: research-grade
+observations with a verified (not obscured) location, inside that destination.
+
+![Pink observation pins](img/best-spot-03-pins.png)
+
+**4. Hover a numbered pin.** Nearby finds are grouped into a pin showing how many there are.
+Hover it (tap on a phone) to list them, newest first; each name links to the observation.
+
+![A cluster's list of finds](img/best-spot-04-cluster-list.png)
+
+**5. Open a single find.** Click a numbered pin to zoom in until finds separate, then click
+one. The popup shows what it is, when it was found, a link to the full record on
+**iNaturalist ↗**, and **Directions** to that exact spot in your maps app.
+
+![A single find's popup](img/best-spot-05-find-popup.png)
+
+**6. See what's active this week.** Switch **Sort** to **Active now** to rank by what's been
+seen in the last few weeks. Each chip shows how many and the latest date ("⚠ fuzzy" means
+the observer obscured the location), and opens that exact observation.
+
+![The Active now sort](img/best-spot-06-active-now.png)
+
+![Recent-sighting chips](img/best-spot-07-live-chip.png)
+
+---
+
+## 3. Track down a target mushroom
+
+Know what you're after? This goes all the way from picking a genus to standing on the trail
+where it's being found, with a place to sleep nearby. The example hunts chanterelles
+(*Cantharellus*).
+
+![Track down walkthrough](track-down.gif)
+
+**1. Pick your target.** Open **Genera** and search for it. The whole ranking, the map and
+the trail lists now count only that genus.
+
+![Ranking for chanterelles only](img/track-down-01-target.png)
+
+**2. Check the season.** Open the top spot's **Details**. **Calendar** shows which months it
+has been found there, so you know if you're early, on time, or late.
+
+![The season calendar](img/track-down-02-season.png)
+
+**3. See the finds.** Back on the list, select the spot. The pink pins are now chanterelle
+finds only. Hover a numbered pin for the list, and zoom in to open single finds, each with
+**Directions** to the spot.
+
+![Chanterelle finds on the map](img/track-down-03-pins.png)
+
+![The list of finds in a cluster](img/track-down-04-cluster-list.png)
+
+![One find, with Directions](img/track-down-05-find-popup.png)
+
+**4. Pick the trail.** In **Details → Trails**, trails are ranked with your target in mind:
+the ones with the most finds of that genus within 500 m come first ("N nearby"). Click one to
+draw it on the map, through the finds.
+
+![Trails ranked by nearby finds](img/track-down-06-trails.png)
+
+![The selected trail on the map](img/track-down-07-trail-drawn.png)
+
+**5. Find a camp.** **Campgrounds** lists free sites first, then the nearest. Select one and
+click **📍 Use … as trip stop** so the route drives to that camp.
+
+![Choosing a campground](img/track-down-08-camp.png)
+
+**6. Go.** Click **+ Plan** on the spot, then **Plan a route**. **Open in Google Maps** gives
+turn-by-turn directions to your camp (or **⬇ GPX** for any other maps app).
+
+![The route, ready to open in Google Maps](img/track-down-09-go.png)
+
+---
+
+## 4. Destination details
 
 ![Destination details walkthrough](region-details.gif)
 
@@ -115,7 +210,7 @@ results** returns to the ranked list.
 
 ---
 
-## 3. Plan a road trip
+## 5. Plan a road trip
 
 ![Road trip walkthrough](plan-a-trip.gif)
 
@@ -152,7 +247,7 @@ raw plan, and **Open in Google Maps** opens turn-by-turn directions through ever
 
 ---
 
-## 4. On your phone
+## 6. On your phone
 
 ![Mobile walkthrough](mobile.gif)
 
@@ -188,7 +283,7 @@ Everything on this page is generated by [`record.py`](record.py), which drives a
 through each walkthrough against the live site. When the UI changes, re-record with:
 
 ```bash
-just tutorials                 # all four
+just tutorials                 # all six
 just tutorials plan-a-trip     # just one
 ```
 
