@@ -98,9 +98,9 @@ class Tutorial:
                 self.on_start()
         time.sleep(0.4)
         if shot:
-            name = f"{self.slug}-{len(self.steps) + 1:02d}-{shot}.jpg"
+            name = f"{self.slug}-{len(self.steps) + 1:02d}-{shot}.png"
             # The cursor dot helps the GIF but would cover text in a still.
-            self.page.screenshot(path=IMG_DIR / name, type="jpeg", quality=80, style="#tut-cursor { display: none; }")
+            self.page.screenshot(path=IMG_DIR / name, type="png", style="#tut-cursor { display: none; }")
             self.steps.append((name, html))
         time.sleep(hold)
 
@@ -332,7 +332,7 @@ class Screencast:
         self.stopped_at = time.time()
         self.session.send("Page.stopScreencast")
 
-    def to_gif(self, target: Path, *, width: int) -> None:
+    def to_gif(self, target: Path) -> None:
         concat = self.frame_dir / "frames.txt"
         lines = []
         for index, (stamp, path) in enumerate(self.frames):
@@ -341,8 +341,9 @@ class Screencast:
         lines.append(f"file '{self.frames[-1][1].name}'")
         concat.write_text("\n".join(lines) + "\n")
         filters = (
-            f"fps=10,scale={min(width, 960)}:-1:flags=lanczos,mpdecimate=hi=1:lo=1:frac=1,split[a][b];"
-            "[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle"
+            # Native resolution (no downscale keeps UI text crisp), 15 fps, full 256-colour palette.
+            "fps=15,mpdecimate=hi=1:lo=1:frac=1,split[a][b];"
+            "[a]palettegen=max_colors=256:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle"
         )
         command = ["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-i", str(concat)]
         subprocess.run([*command, "-vf", filters, "-fps_mode", "vfr", str(target)], check=True)
@@ -370,7 +371,7 @@ def record(browser: Browser, url: str, slug: str) -> Tutorial:
         run(tut)
         cast.stop()
         context.close()
-        cast.to_gif(OUT_DIR / f"{slug}.gif", width=viewport["width"])
+        cast.to_gif(OUT_DIR / f"{slug}.gif")
     return tut
 
 
@@ -397,7 +398,7 @@ def main() -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=not args.headed, args=["--use-gl=angle"])
         for slug in slugs:
-            for stale in IMG_DIR.glob(f"{slug}-*.jpg"):
+            for stale in IMG_DIR.glob(f"{slug}-*.*"):
                 stale.unlink()
             tut = record(browser, args.url, slug)
             print(f"{slug}: {len(tut.steps)} screenshots, {OUT_DIR / (slug + '.gif')}")
