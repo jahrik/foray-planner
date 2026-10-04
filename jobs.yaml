@@ -37,8 +37,19 @@ jobs:
   # path). dispersed stays its own job (below) since it goes through a different CLI command
   # (`foray dispersed --all`), not `refresh --with dispersed --all`.
   - name: layers-land
-    command: refresh --with camps,land,trails --all
+    command: refresh --with camps,land --all
     interval_hours: 168
+    window: night
+    writer: true
+
+  # Trails split out of layers-land: sharing one weekly run meant a land/camps failure (the
+  # 2026-09-27 OOM) skipped trails for the week, and a deploy restarting the timer inside the
+  # Sunday window (no Persistent= on night jobs) skipped it again. Daily is cheap: each region
+  # is one-shot per _TRAILS_QUERY_VERSION and every finished tile keeps its own resume marker,
+  # so a run with nothing left to do is 50 marker lookups, and an interrupted one resumes.
+  - name: trails-coverage
+    command: trails --all
+    interval_hours: 24
     window: night
     writer: true
 

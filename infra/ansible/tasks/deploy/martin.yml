@@ -23,6 +23,13 @@
     state: started
     restart_policy: unless-stopped
     command: ["--config", "/config.yaml"]
+    # The image's own healthcheck probes `localhost`, which resolves to ::1 first while martin
+    # only listens on IPv4 - so docker marked a perfectly healthy tile server "unhealthy".
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:3000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     # user/password are percent-encoded (urlencode) - a managed-PG credential can contain
     # URI-reserved characters (@ # / ? :) that would otherwise get parsed as part of the
     # host/path instead of the credential itself, unlike the app's separate PGUSER/PGPASSWORD
