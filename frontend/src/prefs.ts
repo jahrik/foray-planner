@@ -11,6 +11,7 @@ const STORAGE_KEYS = {
   textSize: "foray-text-size",
   units: "foray-units",
   months: "foray-months",
+  manualHome: "foray-manual-home",
 } as const;
 
 type Theme = "dark" | "light";
@@ -56,4 +57,20 @@ export function getMonths(): number[] | null {
 
 export function setMonths(months: Iterable<number>): void {
   localStorage.setItem(STORAGE_KEYS.months, [...months].sort((left, right) => left - right).join(","));
+}
+
+// The point the user last set by hand (search / map click), as "lat,lng" - geolocate.ts won't let
+// a coarse device fix (an IP / cell-tower guess) silently replace it. Cleared when a device fix
+// is applied. Compared against the server's saved home, so a home changed on another tab or by a
+// device fix since then reads as not-manual.
+export function getManualHome(): { lat: number; lng: number } | null {
+  const stored = localStorage.getItem(STORAGE_KEYS.manualHome);
+  if (!stored) return null;
+  const [lat, lng] = stored.split(",").map(Number);
+  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat: lat as number, lng: lng as number } : null;
+}
+
+export function setManualHome(point: { lat: number; lng: number } | null): void {
+  if (point) localStorage.setItem(STORAGE_KEYS.manualHome, `${point.lat},${point.lng}`);
+  else localStorage.removeItem(STORAGE_KEYS.manualHome);
 }

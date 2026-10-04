@@ -276,7 +276,9 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
     high-accuracy (GPS) `watchPosition` run side by side, keeping the best reading until it's
     within 25 m or 60 s pass. A fix within 1 km of home is saved quietly (no re-centre /
     re-run); a farther one is applied only if the user hasn't interacted yet, otherwise offered
-    on the search bar's 📍 button. A manual search / map click cancels the session.
+    on the search bar's 📍 button. A manual search / map click cancels the session and marks the
+    home hand-set (`prefs.ts` `foray-manual-home`): a coarse fix (>1 km uncertainty - a desktop's
+    IP-based guess can be 100 km+ off) never replaces a hand-set home, it is only offered.
     `src/locate-ui.ts` wires it to the page; the location line shows the fix's `±accuracy`.
 
   Vitest covers the pure helpers + the DOM builders (`*.test.ts` beside the source); `npm test`

@@ -1,7 +1,8 @@
-import { type Fix, haversineKm, Locator, saveFix, type Session } from "./geolocate";
+import { type Fix, haversineKm, Locator, saveFix, type Session, TRUSTED_ACCURACY_M } from "./geolocate";
 import { loadFire, loadLand } from "./map/layers";
 import { updateHome } from "./map/map";
-import { dist, qs, setStatus, state } from "./state";
+import { getManualHome, setManualHome } from "./prefs";
+import { accuracyLabel, dist, qs, setStatus, state } from "./state";
 import { refreshCurrentView } from "./views/view-run";
 
 // Wires geolocate.ts's Locator to the page: the search bar's 📍 "Use my location" button, the
@@ -20,10 +21,13 @@ function showOffer(button: HTMLButtonElement, fix: Fix | null): void {
     return;
   }
   const moved = dist(haversineKm(home, fix));
-  const label = `You're ${moved} from ${home.name} - update location`;
+  // A coarse fix (IP / cell guess) only ever reaches here against a hand-set home - say how rough
+  // it is so "you've moved" doesn't read as fact.
+  const rough = fix.accuracyM > TRUSTED_ACCURACY_M ? ` (rough guess, ${accuracyLabel(fix.accuracyM)})` : "";
+  const label = `Your device puts you ${moved} from ${home.name}${rough} - update location`;
   button.title = label;
   button.setAttribute("aria-label", label);
-  setStatus(`You're now ${moved} from ${home.name} - tap 📍 to update your location`);
+  setStatus(`Your device puts you ${moved} from ${home.name}${rough} - tap 📍 to use it`);
 }
 
 /** Start auto-detecting on load. Returns the session (for main()'s first-paint race), or null
@@ -37,8 +41,18 @@ export function initAutoLocate(): Session | null {
   const active = (locator = new Locator({
     geolocation: navigator.geolocation,
     currentHome: () => state.home,
+    homeIsManual: () => {
+      const manual = getManualHome();
+      return (
+        manual !== null &&
+        state.home !== null &&
+        manual.lat === state.home.lat &&
+        manual.lng === state.home.lng
+      );
+    },
     save: saveFix,
     show: (home, fix, recenter) => {
+      setManualHome(null); // the device fix is home now
       updateHome(home, { recenter, accuracyM: fix.accuracyM });
       if (!recenter) return;
       refreshCurrentView(); // before loadLand() - see refresh.ts setLocation

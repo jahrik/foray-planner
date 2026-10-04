@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   getLargeText,
+  getManualHome,
   getMonths,
   getTheme,
   getUnits,
   setLargeText,
+  setManualHome,
   setMonths,
   setTheme,
   setUnits,
@@ -59,5 +61,18 @@ describe("prefs", () => {
   it("drops out-of-range or non-numeric stored month values", () => {
     localStorage.setItem("foray-months", "0,5,13,foo,11");
     expect(getMonths()).toEqual([5, 11]);
+  });
+
+  it("round-trips the hand-set home and clears it", () => {
+    expect(getManualHome()).toBeNull();
+    setManualHome({ lat: 43.38680413485359, lng: -124.20318603515626 });
+    expect(getManualHome()).toEqual({ lat: 43.38680413485359, lng: -124.20318603515626 });
+    setManualHome(null);
+    expect(getManualHome()).toBeNull();
+  });
+
+  it("treats a garbled hand-set home as unset", () => {
+    localStorage.setItem("foray-manual-home", "nope");
+    expect(getManualHome()).toBeNull();
   });
 });
