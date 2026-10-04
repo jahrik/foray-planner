@@ -67,6 +67,9 @@ dependencies = [
     # than the client's default global registry (those tables' state only exists in Postgres,
     # not process memory).
     "prometheus-client>=0.21,<1.0",
+    # osm_trails.py (issue #442): reads Geofabrik .osm.pbf extracts in the bulk stager - the
+    # libosmium bindings, with node-location indexing to build way geometry.
+    "osmium>=4.0,<5.0",
 ]
 
 [project.scripts]
