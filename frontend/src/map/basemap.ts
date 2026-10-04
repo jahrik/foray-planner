@@ -33,7 +33,7 @@ import { fireLayers, FIRE_LAYER_IDS, fireSource } from "./basemap-fire";
 import { landFilter, landLayers, LAND_LAYER_IDS, landSource } from "./basemap-land";
 import { applyForayRoadStyle } from "./basemap-roads";
 import { roadsAndLabelsOnly, satelliteImageryLayer, satelliteSource } from "./basemap-satellite";
-import { trailsLayer, trailsSource } from "./basemap-trails";
+import { trailsLayers, trailsSource } from "./basemap-trails";
 import {
   applyTerrainLayers,
   CONTOUR_LAYER_IDS,
@@ -147,7 +147,7 @@ function buildStyle(urls: TileUrls, theme: "dark" | "light"): StyleSpecification
   }
   if (urls.trailsUrl) {
     Object.assign(sources, trailsSource(urls.trailsUrl));
-    layers = [...layers, trailsLayer(theme)];
+    layers = [...layers, ...trailsLayers(theme)];
   }
 
   return {

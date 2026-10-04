@@ -45,13 +45,15 @@ function byId(layers: LayerSpecification[], id: string): LayerSpecification | un
 }
 
 describe("applyForayRoadStyle", () => {
-  it("replaces roads_other with distinct forest-road and trail layers", () => {
+  it("drops the base theme's forest-road and trail lines, keeping only the misc ways", () => {
     const out = applyForayRoadStyle(baseLayers(), "dark");
 
     expect(byId(out, "roads_other")).toBeUndefined();
-    expect(byId(out, "roads_foray_track")).toBeDefined();
-    expect(byId(out, "roads_foray_path")).toBeDefined();
-    expect(byId(out, "roads_foray_other")).toBeDefined();
+    const misc = byId(out, "roads_foray_other") as { filter: unknown };
+    expect(misc).toBeDefined();
+    expect(JSON.stringify(misc.filter)).toContain('["!=",["get","kind_detail"],"track"]');
+    // The trails tile layer (basemap-trails.ts) is the only source for these now.
+    expect(out.some((layer) => /roads_foray_(track|path)/.test(layer.id))).toBe(false);
   });
 
   it("keeps unrelated layers and their order", () => {
@@ -59,41 +61,18 @@ describe("applyForayRoadStyle", () => {
     const ids = out.map((layer) => layer.id);
 
     expect(ids[0]).toBe("earth");
-    expect(ids.indexOf("roads_foray_track")).toBeLessThan(ids.indexOf("roads_minor"));
+    expect(ids.indexOf("roads_foray_other")).toBeLessThan(ids.indexOf("roads_minor"));
     expect(ids).toContain("roads_labels_minor");
   });
 
-  it("colours the classes per theme", () => {
-    const dark = applyForayRoadStyle(baseLayers(), "dark");
-    const light = applyForayRoadStyle(baseLayers(), "light");
-
-    const trackPaint = (layers: LayerSpecification[]) =>
-      (byId(layers, "roads_foray_track") as { paint: Record<string, unknown> }).paint["line-color"];
-
-    expect(trackPaint(dark)).toBe("#e0a458");
-    expect(trackPaint(light)).toBe("#b06a1e");
-    expect(trackPaint(dark)).not.toBe(trackPaint(light));
-  });
-
-  it("draws each class on a contrasting casing under the line", () => {
+  it("narrows the base minor-road label filter so it no longer labels trails or tracks", () => {
     const out = applyForayRoadStyle(baseLayers(), "dark");
-    const ids = out.map((layer) => layer.id);
-
-    expect(ids.indexOf("roads_foray_track_casing")).toBeLessThan(ids.indexOf("roads_foray_track"));
-    expect(ids.indexOf("roads_foray_path_casing")).toBeLessThan(ids.indexOf("roads_foray_path"));
-  });
-
-  it("narrows the base minor-road label filter and adds class labels after it", () => {
-    const out = applyForayRoadStyle(baseLayers(), "dark");
-    const ids = out.map((layer) => layer.id);
 
     expect((byId(out, "roads_labels_minor") as { filter: unknown }).filter).toEqual([
       "==",
       ["get", "kind"],
       "minor_road",
     ]);
-    expect(ids.indexOf("roads_foray_track_labels")).toBeGreaterThan(ids.indexOf("roads_labels_minor"));
-    expect(ids.indexOf("roads_foray_path_labels")).toBeGreaterThan(ids.indexOf("roads_labels_minor"));
   });
 
   it("does not mutate the input array or its layers", () => {
@@ -121,17 +100,9 @@ describe("applyForayRoadStyle", () => {
     expect(errors).toEqual([]);
   });
 
-  it("still adds the foray layers when the base anchors are missing", () => {
+  it("still adds the misc layer when the base anchor is missing", () => {
     const out = applyForayRoadStyle([{ id: "earth", type: "background" }] as LayerSpecification[], "dark");
-    const ids = out.map((layer) => layer.id);
 
-    expect(ids).toEqual(
-      expect.arrayContaining([
-        "roads_foray_track",
-        "roads_foray_path",
-        "roads_foray_track_labels",
-        "roads_foray_path_labels",
-      ]),
-    );
+    expect(out.map((layer) => layer.id)).toEqual(["earth", "roads_foray_other"]);
   });
 });

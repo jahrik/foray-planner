@@ -1,29 +1,35 @@
 // Our own trails vector tiles (issue #336 PR 1), proxied same-origin from the martin tile
-// server (api/routes/tiles.py). Protomaps' base tiles carry no track/path geometry below ~z13
-// (basemap-roads.ts), so below that zoom this is the only trail/forest-road geometry on the
-// map at all - and even above z13 it carries the national USFS/OSM coverage the base tiles
-// don't (issue #335).
+// server (api/routes/tiles.py) - the single source for trails and forest roads on the map at
+// every zoom: OSM paths/forest roads plus the USFS Trail_NFS and MVUM records, deduped
+// server-side (`cache.prune_duplicate_cross_source_*`). basemap-roads.ts drops the Protomaps
+// base theme's own copies of those ways, which used to be drawn alongside this layer from z12 -
+// every road twice, and a colour switch between zoom levels.
 //
-// First PR stood up the source + a plain line layer so the plumbing was provably working end to
-// end. `promoteId` (PR 2) lets a click on this layer read its properties keyed by the trail's
-// own id (road-inspect.ts), the same id `/api/trails/network` takes - no more falling back to a
-// live `GET /api/trails` name lookup (the old #325 fallback) since our own tile already carries
-// the real name/kind/land_agency/forage_obs at every zoom.
+// `promoteId` (PR 2) lets a click on these layers read its properties keyed by the trail's own
+// id, the same id `/api/trails/network` takes - our own tile already carries the real
+// name/kind/land_agency/forage_obs at every zoom.
 
-import type { LayerSpecification, SourceSpecification } from "@maplibre/maplibre-gl-style-spec";
+import type {
+  ExpressionSpecification,
+  LayerSpecification,
+  SourceSpecification,
+} from "@maplibre/maplibre-gl-style-spec";
 
+import { CASING_DELTA, PALETTE, PATH_STOPS, TRACK_STOPS, widthExpr } from "./basemap-roads";
 import { directionsLink } from "./directions";
 import type { PopupSpec } from "./popup";
 
 export const TRAILS_SOURCE_ID = "foray-trails";
-export const TRAILS_LAYER_ID = "foray_trails";
+// The two clickable line layers (map inspect hit-tests these); casings and labels echo them.
+const ROAD_LAYER_ID = "foray_trails_road";
+const PATH_LAYER_ID = "foray_trails_path";
+export const TRAILS_LINE_LAYER_IDS: readonly string[] = [ROAD_LAYER_ID, PATH_LAYER_ID];
 // martin names the vector tile's source-layer after the published table (infra/martin-config.yaml).
 const TRAILS_SOURCE_LAYER = "trails";
 
 /** The tile properties a `foray_trails` feature carries (martin-config.yaml's `trails` table
- * properties) - read straight off a click hit (map.ts's click-to-select, road-inspect.ts's
- * neighbour for Protomaps roads). `kind` is "path" | "route" ("trailhead" rows are filtered out
- * of this layer, see `trailsLayer` below - they're Points, with no click-to-select story yet). */
+ * properties) - read straight off a click hit (inspect.ts). `kind` is "path" | "route" | "road"
+ * ("trailhead" rows are Points, not drawn by `trailsLayers` below). */
 export interface TrailTileProps {
   id?: string;
   name?: string;
@@ -34,13 +40,6 @@ export interface TrailTileProps {
   land_unit?: string | null;
   forage_obs?: number | null;
 }
-
-// Same path green as basemap-roads.ts's PALETTE, so this reads as one continuous trail network
-// rather than two differently-colored layers stitched at z13.
-const LINE_COLOR: Record<"dark" | "light", string> = {
-  dark: "#8fd06f",
-  light: "#3f7a2c",
-};
 
 /** The trails MVT source, proxied same-origin (see api/routes/tiles.py). `promoteId` maps the
  * MVT's numeric feature id to the `id` property (trails.id is text, e.g. "osm:way/42" - martin's
@@ -59,26 +58,104 @@ export function trailsSource(tilesUrl: string): Record<string, SourceSpecificati
   } as Record<string, SourceSpecification>;
 }
 
-/** `kind` is "path" | "route" | "trailhead" (trails.py) - trailhead rows are Points, not lines;
- * skipped here since there's no click-to-select or icon for them yet (PR 2). */
-export function trailsLayer(theme: "dark" | "light"): LayerSpecification {
+// Forest roads (`kind='road'` - OSM highway=track / service=forestry, and USFS MVUM) vs. walk-in
+// trails (`path` / `route` - OSM and USFS Trail_NFS). Trailheads are Points, not drawn here.
+const ROAD_FILTER: ExpressionSpecification = ["==", ["get", "kind"], "road"];
+const PATH_FILTER: ExpressionSpecification = ["in", ["get", "kind"], ["literal", ["path", "route"]]];
+
+// Solid at regional zoom (dashes on a sub-pixel line just read as noise), dashed once a road
+// or trail is wide enough to carry the pattern - the paper-map convention for unpaved ways.
+function dashes(dash: [number, number]): ExpressionSpecification {
+  return ["step", ["zoom"], ["literal", [1, 0]], 12, ["literal", dash]] as ExpressionSpecification;
+}
+
+function line(
+  id: string,
+  filter: ExpressionSpecification,
+  color: string,
+  stops: ReadonlyArray<readonly [number, number]>,
+  dash: [number, number],
+): LayerSpecification {
   return {
-    id: TRAILS_LAYER_ID,
+    id,
     type: "line",
     source: TRAILS_SOURCE_ID,
     "source-layer": TRAILS_SOURCE_LAYER,
-    filter: ["!=", ["get", "kind"], "trailhead"],
+    filter,
+    layout: { "line-cap": "round", "line-join": "round" },
     paint: {
-      "line-color": LINE_COLOR[theme],
-      "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.5, 14, 1.5],
-      "line-opacity": 0.8,
+      "line-color": color,
+      "line-width": widthExpr(stops),
+      "line-dasharray": dashes(dash),
+      "line-opacity": ["interpolate", ["linear"], ["zoom"], 8, 0.8, 12, 1],
     },
   } as LayerSpecification;
+}
+
+// The under-line that gives a class its edge over forest fill, water or a paved road beside it.
+// Only from z12 - at regional zoom a casing just muddies a hairline.
+function casing(
+  id: string,
+  filter: ExpressionSpecification,
+  color: string,
+  stops: ReadonlyArray<readonly [number, number]>,
+): LayerSpecification {
+  return {
+    id,
+    type: "line",
+    source: TRAILS_SOURCE_ID,
+    "source-layer": TRAILS_SOURCE_LAYER,
+    minzoom: 12,
+    filter,
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": color, "line-width": widthExpr(stops, CASING_DELTA) },
+  } as LayerSpecification;
+}
+
+// A line-placed label. Unnamed OSM ways carry a synthetic "Trail (OSM)" / "Forest road (OSM)"
+// name (trails.py) that says nothing on the map, so those stay unlabelled.
+function label(
+  id: string,
+  filter: ExpressionSpecification,
+  minzoom: number,
+  color: string,
+  halo: string,
+): LayerSpecification {
+  return {
+    id,
+    type: "symbol",
+    source: TRAILS_SOURCE_ID,
+    "source-layer": TRAILS_SOURCE_LAYER,
+    minzoom,
+    filter: ["all", filter, ["has", "name"], ["!", ["in", "(OSM)", ["get", "name"]]]],
+    layout: {
+      "symbol-placement": "line",
+      "text-font": ["Noto Sans Regular"],
+      "text-field": ["get", "name"],
+      "text-size": 11,
+    },
+    paint: { "text-color": color, "text-halo-color": halo, "text-halo-width": 1.25 },
+  } as LayerSpecification;
+}
+
+/** The trail + forest-road layers, bottom to top: casings, lines, labels. The single source for
+ * both classes at every zoom - basemap-roads.ts drops the base theme's own copies. */
+export function trailsLayers(theme: "dark" | "light"): LayerSpecification[] {
+  const palette = PALETTE[theme];
+  return [
+    casing("foray_trails_road_casing", ROAD_FILTER, palette.trackCasing, TRACK_STOPS),
+    line(ROAD_LAYER_ID, ROAD_FILTER, palette.track, TRACK_STOPS, [3, 1.3]),
+    casing("foray_trails_path_casing", PATH_FILTER, palette.pathCasing, PATH_STOPS),
+    line(PATH_LAYER_ID, PATH_FILTER, palette.path, PATH_STOPS, [1.6, 1.4]),
+    label("foray_trails_road_labels", ROAD_FILTER, 13, palette.trackLabel, palette.labelHalo),
+    label("foray_trails_path_labels", PATH_FILTER, 14, palette.pathLabel, palette.labelHalo),
+  ];
 }
 
 const KIND_LABEL: Record<string, string> = {
   path: "Trail",
   route: "Route",
+  road: "Forest road",
 };
 
 /** Popup contents straight off the tile - name/kind/length/land unit the martin-config.yaml

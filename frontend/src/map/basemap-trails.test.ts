@@ -5,7 +5,14 @@ import {
 } from "@maplibre/maplibre-gl-style-spec";
 import { describe, expect, it } from "vitest";
 
-import { TRAILS_SOURCE_ID, trailPopupSpec, trailsLayer, trailsSource } from "./basemap-trails";
+import { PALETTE } from "./basemap-roads";
+import {
+  TRAILS_LINE_LAYER_IDS,
+  TRAILS_SOURCE_ID,
+  trailPopupSpec,
+  trailsLayers,
+  trailsSource,
+} from "./basemap-trails";
 
 describe("trailsSource", () => {
   it("builds a vector source pointed at the given tiles URL", () => {
@@ -19,33 +26,62 @@ describe("trailsSource", () => {
   });
 });
 
-describe("trailsLayer", () => {
-  it("reads from the trails source-layer and excludes trailhead points", () => {
-    const layer = trailsLayer("dark") as {
-      type: string;
-      source: string;
-      "source-layer": string;
+describe("trailsLayers", () => {
+  type Line = {
+    id: string;
+    type: string;
+    source: string;
+    "source-layer": string;
+    filter: unknown;
+    paint: Record<string, unknown>;
+  };
+  const byId = (theme: "dark" | "light", id: string) =>
+    trailsLayers(theme).find((layer) => layer.id === id) as unknown as Line;
+
+  it("draws forest roads and trails as their own clickable layers off the trails source", () => {
+    const ids = trailsLayers("dark").map((layer) => layer.id);
+    expect(ids).toEqual(expect.arrayContaining([...TRAILS_LINE_LAYER_IDS]));
+    for (const id of TRAILS_LINE_LAYER_IDS) {
+      const layer = byId("dark", id);
+      expect(layer.type).toBe("line");
+      expect(layer.source).toBe(TRAILS_SOURCE_ID);
+      expect(layer["source-layer"]).toBe("trails");
+    }
+    expect(byId("dark", "foray_trails_road").filter).toEqual(["==", ["get", "kind"], "road"]);
+    expect(byId("dark", "foray_trails_path").filter).toEqual([
+      "in",
+      ["get", "kind"],
+      ["literal", ["path", "route"]],
+    ]);
+  });
+
+  it.each(["dark", "light"] as const)("colours roads ochre and trails green at every zoom (%s)", (theme) => {
+    expect(byId(theme, "foray_trails_road").paint["line-color"]).toBe(PALETTE[theme].track);
+    expect(byId(theme, "foray_trails_path").paint["line-color"]).toBe(PALETTE[theme].path);
+  });
+
+  it("draws each class's casing under its line, and labels on top", () => {
+    const ids = trailsLayers("dark").map((layer) => layer.id);
+    expect(ids.indexOf("foray_trails_road_casing")).toBeLessThan(ids.indexOf("foray_trails_road"));
+    expect(ids.indexOf("foray_trails_path_casing")).toBeLessThan(ids.indexOf("foray_trails_path"));
+    expect(ids.indexOf("foray_trails_road_labels")).toBeGreaterThan(ids.indexOf("foray_trails_path"));
+  });
+
+  it("leaves the synthetic '(OSM)' fallback names unlabelled", () => {
+    const labels = trailsLayers("dark").find(
+      (layer) => layer.id === "foray_trails_path_labels",
+    ) as unknown as {
       filter: unknown;
     };
-
-    expect(layer.type).toBe("line");
-    expect(layer.source).toBe(TRAILS_SOURCE_ID);
-    expect(layer["source-layer"]).toBe("trails");
-    expect(layer.filter).toEqual(["!=", ["get", "kind"], "trailhead"]);
+    expect(JSON.stringify(labels.filter)).toContain("(OSM)");
   });
 
-  it("colours the line differently per theme", () => {
-    const dark = trailsLayer("dark").paint as Record<string, unknown>;
-    const light = trailsLayer("light").paint as Record<string, unknown>;
-    expect(dark["line-color"]).not.toBe(light["line-color"]);
-  });
-
-  it.each(["dark", "light"] as const)("produces a spec-valid style layer (%s)", (theme) => {
+  it.each(["dark", "light"] as const)("produces a spec-valid style (%s)", (theme) => {
     const style: StyleSpecification = {
       version: 8,
       glyphs: "https://example.com/fonts/{fontstack}/{range}.pbf",
       sources: trailsSource("https://example.com/tiles/{z}/{x}/{y}.pbf"),
-      layers: [trailsLayer(theme)],
+      layers: trailsLayers(theme),
     };
     const errors = validateStyleMin(style).filter(
       (error) => error.severity !== "warning" && !/glyphs/.test(error.message),
@@ -64,6 +100,11 @@ describe("trailPopupSpec", () => {
   it("labels a route distinctly from a plain path", () => {
     const spec = trailPopupSpec({ name: "Pacific Crest Trail", kind: "route", length_km: 12 });
     expect(spec.lines?.[0]).toBe("Route · 12.0 km");
+  });
+
+  it("labels a forest road distinctly from a trail", () => {
+    const spec = trailPopupSpec({ name: "FR 1506016", kind: "road", length_km: 0.1 });
+    expect(spec.lines?.[0]).toBe("Forest road · 0.1 km");
   });
 
   it("omits the length when the tile doesn't carry one", () => {
