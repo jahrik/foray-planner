@@ -173,6 +173,7 @@ Run `just check` before pushing (lint + type-check + tests). See the
 
 ## Docs
 
+- [How to use Foray Planner](docs/tutorials/README.md) - illustrated walkthroughs: getting started, destination details, planning a road trip, mobile
 - [Development guide](docs/development.md) - setup, config, CLI, architecture, scoring formula, adding species, testing
 - [Data sources](docs/data-sources.md) - iNaturalist, RIDB, OSM/Overpass, ArcGIS BLM/USFS, Nominatim - licenses, rate limits, what's off-limits
 - [Deployment](docs/deployment.md) - Docker, Digital Ocean + Ansible + Cloudflare setup, scheduler, refresh patterns

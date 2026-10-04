@@ -65,6 +65,14 @@ check-api-schema:
     cd frontend && npm run gen:api
     git diff --exit-code frontend/src/api/schema.ts
 
+# Re-record the how-to GIFs + screenshots in docs/tutorials/ against the live site (needs
+# ffmpeg). `just tutorials plan-a-trip` re-records one; `--url http://localhost:8000/` targets dev.
+[doc('Record the user tutorial GIFs and screenshots')]
+[group('dev')]
+tutorials *args:
+    uv run --with playwright==1.63.0 playwright install chromium
+    uv run docs/tutorials/record.py {{ args }}
+
 # One-off diagnostic query against local dev data, e.g. `just psql "SELECT count(*) FROM observations"`.
 # No local psql client needed - runs inside the postgres container.
 [doc('Run a one-off SQL query inside the postgres container')]
