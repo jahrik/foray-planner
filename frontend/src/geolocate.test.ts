@@ -276,4 +276,88 @@ describe("Locator", () => {
     expect(await session.firstApplied).toBe(false);
     expect(WATCH_MAX_MS).toBeGreaterThanOrEqual(30_000);
   });
+
+  it("ignores readings that land after the session settled (queued watch / uncancellable coarse)", async () => {
+    const { geolocation, deps, locator } = setup();
+    locator.start();
+    geolocation.watch?.success(position({ ...TACOMA, accuracyM: 10 })); // hits the target -> finished
+    await flush();
+    geolocation.coarse?.success(position({ lat: 46.0, lng: -121.0, accuracyM: 3000 })); // far + late
+    await flush();
+    expect(deps.save).toHaveBeenCalledTimes(1);
+  });
+
+  it("an explicit session resets engagement so its GPS refinement still applies", async () => {
+    const { geolocation, locator, show } = setup();
+    locator.markEngaged(); // the click on the locate button
+    locator.start({ explicit: true });
+    geolocation.coarse?.success(position({ ...TACOMA, accuracyM: 20_000 }));
+    await flush();
+    geolocation.watch?.success(position({ lat: 47.4, lng: -122.3, accuracyM: 15 })); // ~16 km off, much tighter
+    await flush();
+    expect(show).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ accuracyM: 15 }),
+      true,
+    );
+  });
+
+  it("withdraws an older offer when a newer fix resolves to ignore", async () => {
+    const coos = { name: "Coos Bay", lat: 43.3868, lng: -124.2032, radius_km: 150 };
+    const { geolocation, deps, locator } = setup(coos, true);
+    locator.start();
+    geolocation.coarse?.success(position({ lat: 43.9419, lng: -122.8472, accuracyM: 25_000 })); // offered
+    geolocation.watch?.success(position({ lat: 43.45, lng: -124.2, accuracyM: 9_000 })); // covers home
+    await flush();
+    expect(deps.offer).toHaveBeenLastCalledWith(null, null);
+    expect(locator.acceptPending()).toBe(false);
+    expect(deps.save).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed save of a fix the user asked for", async () => {
+    const { geolocation, deps, locator } = setup();
+    deps.save = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    const session = locator.start({ explicit: true });
+    geolocation.coarse?.success(position({ ...TACOMA, accuracyM: 50 }));
+    expect(await session.firstApplied).toBe(false);
+    expect(deps.status).toHaveBeenCalledWith(expect.stringContaining("couldn't save your location"));
+  });
+
+  it("turns a queued re-centre into an offer, unsaved, if the user engages before it runs", async () => {
+    const { geolocation, deps, locator, show } = setup();
+    let release: (home: Home) => void = () => undefined;
+    deps.save = vi.fn(() => new Promise<Home>((resolve) => (release = resolve)));
+    locator.start();
+    geolocation.coarse?.success(position({ ...TACOMA, accuracyM: 1500 })); // apply #1, in flight
+    await flush();
+    geolocation.watch?.success(position({ lat: 47.0, lng: -122.9, accuracyM: 30 })); // apply #2, queued
+    locator.markEngaged();
+    release({ name: "Tacoma", ...TACOMA, radius_km: 150 });
+    await flush();
+    await flush();
+    expect(deps.save).toHaveBeenCalledTimes(1);
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(deps.offer).toHaveBeenLastCalledWith(expect.objectContaining({ lat: 47.0 }), expect.anything());
+  });
+
+  it("shows a fix saved while the user engaged without re-centring, and offers the refresh", async () => {
+    const { geolocation, deps, locator, show } = setup();
+    let release: (home: Home) => void = () => undefined;
+    deps.save = vi.fn(() => new Promise<Home>((resolve) => (release = resolve)));
+    const session = locator.start();
+    geolocation.coarse?.success(position({ ...TACOMA, accuracyM: 1500 }));
+    await flush();
+    locator.markEngaged();
+    release({ name: "Tacoma", ...TACOMA, radius_km: 150 });
+    expect(await session.firstApplied).toBe(false);
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ name: "Tacoma" }), expect.anything(), false);
+    expect(deps.offer).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ name: "Tacoma" }),
+      true,
+    );
+    expect(locator.acceptPending()).toBe(true);
+  });
 });
