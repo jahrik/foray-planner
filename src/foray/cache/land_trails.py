@@ -311,7 +311,7 @@ def prune_duplicate_route_paths(
     result = con.execute(
         f"""
         WITH area_routes AS MATERIALIZED (
-            SELECT geom AS route_geom, ST_Buffer(geom, 5) AS buf
+            SELECT id AS route_id, geom AS route_geom, ST_Buffer(geom, 5) AS buf
             FROM trails
             WHERE kind = 'route' AND source = 'osm' AND geom && {envelope}
         )
@@ -322,13 +322,40 @@ def prune_duplicate_route_paths(
           AND p.geom && {envelope}
           AND ST_DWithin(p.geom, r.route_geom, 5)
           AND ST_CoveredBy(p.geom, r.buf)
+        RETURNING p.id, r.route_id
         """,
         [*envelope_params, *envelope_params],
     )
+    replaced = result.fetchall()
+    _remap_connects(con, replaced)
     con.commit()
-    if result.rowcount:
+    if replaced:
         _invalidate_rank_cache()
-    return result.rowcount
+    return len(replaced)
+
+
+def _remap_connects(con: psycopg.Connection, replaced: Sequence[tuple[str, str]]) -> None:
+    """Point trailhead ``connects`` arrays at the row that replaced each pruned duplicate
+    (Copilot review, PR #441): ``resolve_trail_network`` / ``connected_trails`` drop ids that no
+    longer exist, so without this a pruned twin silently truncated a trailhead's network - or,
+    with every linked row gone, forced a live Overpass lookup on the next selection."""
+    if not replaced:
+        return
+    old_ids = [old_id for old_id, _new_id in replaced]
+    new_ids = [new_id for _old_id, new_id in replaced]
+    con.execute(
+        """
+        UPDATE trails t
+        SET connects = ARRAY(
+            SELECT DISTINCT coalesce(swap.new_id, linked.id)
+            FROM unnest(t.connects) AS linked(id)
+            LEFT JOIN unnest(%s::text[], %s::text[]) AS swap(old_id, new_id) ON swap.old_id = linked.id
+            ORDER BY 1
+        )
+        WHERE t.connects && %s::text[]
+        """,
+        [old_ids, new_ids, old_ids],
+    )
 
 
 # Words too generic to say two trail names refer to the same trail ("Ridge Trail" vs "Creek
@@ -365,8 +392,9 @@ def prune_duplicate_cross_source_paths(
     of the OSM way's own length. A spur branching off the USFS trail fails that second check
     (the USFS line crosses its buffer sideways, not along it, so the alongside stretch is the
     buffer's width, not the spur's length). And when both rows carry a real name (not the
-    synthetic ``... (OSM)`` fallback) they must share a non-generic word - dense MTB networks
-    (Bend's Phil's complex) run distinct named trails ~100m apart, inside that tolerance.
+    synthetic ``... (OSM)`` / ``USFS trail`` fallbacks) they must share a non-generic word -
+    dense MTB networks (Bend's Phil's complex) run distinct named trails ~100m apart, inside
+    that tolerance.
 
     The comparison is against that alongside stretch, not the whole USFS row: OSM splits one
     trail into many ways (at every junction / tag change) while a Trail_NFS row is usually the
@@ -379,7 +407,7 @@ def prune_duplicate_cross_source_paths(
     against the handful of USFS rows in one tile.
     """
     name_guard: LiteralString = """
-        p.name IS NULL OR p.name LIKE '%%(OSM)' OR u.name IS NULL
+        p.name IS NULL OR p.name LIKE '%%(OSM)' OR u.name IS NULL OR u.name = 'USFS trail'
         OR EXISTS (
             SELECT 1 FROM regexp_split_to_table(lower(p.name), '[^a-z]+') AS word
             WHERE length(word) > 2
@@ -434,6 +462,10 @@ def prune_duplicate_cross_source_roads(
     )
 
 
+# ~1 km - comfortably past the 150m match tolerance at any latitude in coverage.
+_CROSS_SOURCE_PAD_DEG = 0.01
+
+
 def _prune_cross_source(
     con: psycopg.Connection,
     *,
@@ -445,39 +477,64 @@ def _prune_cross_source(
 ) -> int:
     """Shared body of the two cross-source prunes: delete each OSM ``kind`` row in ``bbox`` fully
     inside a 150m buffer of a ``usfs_source`` row, whose alongside stretch of that USFS line is
-    within 30% of its own length, and that passes ``guard_sql`` (``p`` = OSM row, ``u`` = USFS)."""
+    within 30% of its own length, that runs *along* it rather than away from it, and that passes
+    ``guard_sql`` (``p`` = OSM row, ``u`` = USFS). Trailhead links to a deleted row move to the
+    USFS row that replaced it.
+
+    "Along": the OSM way's two ends sit at nearly the same distance from the USFS line (they
+    may differ by at most a quarter of its length). A spur leaving the trail obliquely starts on
+    it and ends away from it - Copilot review, PR #441: an unnamed 100m spur at 30 degrees fits
+    inside the buffer and its alongside stretch (~115m) passes the length check, but its ends
+    are ~0m and ~50m off the line. A real twin keeps a roughly steady offset. A
+    MultiLineString's start/end point is NULL, which fails the check - kept, never guessed."""
     min_lat, min_lng, max_lat, max_lng = bbox
     envelope = "ST_MakeEnvelope(%s, %s, %s, %s, 4326)::geography"
     envelope_params = [min_lng, min_lat, max_lng, max_lat]
+    # USFS candidates come from a slightly wider box than the OSM rows judged: a twin can lie just
+    # across the edge (an adjacent ingest tile, or beside a due-east line with a zero-height bbox).
+    pad = _CROSS_SOURCE_PAD_DEG
+    usfs_envelope_params = [min_lng - pad, min_lat - pad, max_lng + pad, max_lat + pad]
     result = con.execute(
         f"""
         WITH u AS MATERIALIZED (
-            SELECT name, attrs, geom, ST_Buffer(geom, 150) AS buf
+            SELECT id AS usfs_id, name, attrs, geom, ST_Buffer(geom, 150) AS buf
             FROM trails
             WHERE kind = %s AND source = %s AND geom && {envelope}
         ),
         covered AS (
             SELECT
                 p.id,
+                u.usfs_id,
                 ST_Length(p.geom) AS osm_m,
-                ST_Length(ST_Intersection(u.geom, ST_Buffer(p.geom, 150, 'endcap=flat'))) AS alongside_m
+                ST_Length(ST_Intersection(u.geom, ST_Buffer(p.geom, 150, 'endcap=flat'))) AS alongside_m,
+                ST_Distance(ST_StartPoint(p.geom::geometry)::geography, u.geom) AS start_off_m,
+                ST_Distance(ST_EndPoint(p.geom::geometry)::geography, u.geom) AS end_off_m
             FROM trails p
             JOIN u ON ST_CoveredBy(p.geom, u.buf)
             WHERE p.kind = %s AND p.source = 'osm' AND p.geom && {envelope}
               AND ({guard_sql})
+        ),
+        matched AS (
+            SELECT DISTINCT ON (id) id, usfs_id
+            FROM covered
+            WHERE osm_m > 0
+              AND abs(alongside_m - osm_m) <= 0.3 * greatest(alongside_m, osm_m)
+              AND abs(end_off_m - start_off_m) <= 0.25 * osm_m
+            ORDER BY id, abs(alongside_m - osm_m)
         )
         DELETE FROM trails p
-        USING covered c
-        WHERE p.id = c.id
-          AND c.osm_m > 0
-          AND abs(c.alongside_m - c.osm_m) <= 0.3 * greatest(c.alongside_m, c.osm_m)
+        USING matched m
+        WHERE p.id = m.id
+        RETURNING p.id, m.usfs_id
         """,
-        [kind, usfs_source, *envelope_params, kind, *envelope_params, *guard_params],
+        [kind, usfs_source, *usfs_envelope_params, kind, *envelope_params, *guard_params],
     )
+    replaced = result.fetchall()
+    _remap_connects(con, replaced)
     con.commit()
-    if result.rowcount:
+    if replaced:
         _invalidate_rank_cache()
-    return result.rowcount
+    return len(replaced)
 
 
 def prune_trail_duplicates(
@@ -502,15 +559,27 @@ _PRUNE_TILE_DEG = 2.0
 
 
 def prune_trail_duplicates_tiled(con: psycopg.Connection, source: str) -> int:
-    """Run :func:`prune_trail_duplicates` over every ``_PRUNE_TILE_DEG`` tile holding a
-    ``source`` row - what a USFS bulk loader calls after loading, since a newly loaded USFS row
+    """Run :func:`prune_trail_duplicates` over every ``_PRUNE_TILE_DEG`` tile a ``source`` row
+    crosses - what a USFS bulk loader calls after loading, since a newly loaded USFS row
     can duplicate an OSM row cached long before (the OSM ingest's own per-tile pass only runs
     when that tile is re-pulled, once per query version). Tile by tile, each its own committed
     statement, never one table-wide sweep - see :func:`prune_duplicate_route_paths` for the
     prod outage a global geometry sweep caused."""
+    # Every tile each source line's bbox crosses, not just the tile holding its centre - an OSM
+    # twin of a long line's far end lies wholly outside the centre's tile (Copilot review, PR #441).
     cells = con.execute(
-        "SELECT DISTINCT floor(center_lat / %s), floor(center_lng / %s) FROM trails WHERE source = %s",
-        [_PRUNE_TILE_DEG, _PRUNE_TILE_DEG, source],
+        """
+        SELECT DISTINCT lat_cell, lng_cell
+        FROM trails,
+             generate_series(
+                 floor(ST_YMin(geom::geometry) / %s)::int, floor(ST_YMax(geom::geometry) / %s)::int
+             ) AS lat_cell,
+             generate_series(
+                 floor(ST_XMin(geom::geometry) / %s)::int, floor(ST_XMax(geom::geometry) / %s)::int
+             ) AS lng_cell
+        WHERE source = %s AND geom IS NOT NULL
+        """,
+        [_PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, source],
     ).fetchall()
     total = 0
     for lat_cell, lng_cell in cells:

@@ -638,11 +638,18 @@ def ingest_trails(
     # other place this could run - never fires again. `ingest_trails` rides the frequent
     # `foray-ingest` cron (`refresh.run_home_refresh`), not just the weekly regional sweep, so
     # this still converges promptly even though the fetch/upsert itself may be skipped.
+    bbox = bbox_around(cfg.home.lat, cfg.home.lng, cfg.home.radius_km)
+    bounds = {"min_lat": bbox.min_lat, "min_lng": bbox.min_lng, "max_lat": bbox.max_lat, "max_lng": bbox.max_lng}
     with connection(con) as db:
-        bbox = bbox_around(cfg.home.lat, cfg.home.lng, cfg.home.radius_km)
-        prune_trail_duplicates(
-            db, min_lat=bbox.min_lat, min_lng=bbox.min_lng, max_lat=bbox.max_lat, max_lng=bbox.max_lng
-        )
+        prune_trail_duplicates(db, **bounds)
+
+    def upsert_then_prune(db: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
+        # The fresh rows can include the OSM twin of a USFS row already cached, so the prune runs
+        # after the write too, not only before it (Copilot review, PR #441).
+        count = upsert_trails(db, rows)
+        prune_trail_duplicates(db, **bounds)
+        return count
+
     return run_area_ingest(
         cfg,
         con,
@@ -650,7 +657,7 @@ def ingest_trails(
         label="trails",
         noun="Trails",
         fetch=lambda **kw: fetch_trails(client=client, **kw),
-        upsert=upsert_trails,
+        upsert=upsert_then_prune,
         progress_cb=progress_cb,
     )
 
@@ -817,6 +824,22 @@ def resolve_trail_network(
     return scoring.TrailPath(trail=nearest, authoritative=False)
 
 
+def _rows_bbox(rows: Sequence[tuple[Any, ...]]) -> tuple[float, float, float, float]:
+    """(south, west, north, east) around every vertex of these trails rows' GeoJSON."""
+    lats: list[float] = []
+    lngs: list[float] = []
+    for row in rows:
+        stack: list[Any] = [json.loads(row[7])["coordinates"]]
+        while stack:
+            item = stack.pop()
+            if item and isinstance(item[0], (int, float)):
+                lngs.append(float(item[0]))
+                lats.append(float(item[1]))
+            else:
+                stack.extend(item)
+    return min(lats), min(lngs), max(lats), max(lngs)
+
+
 def _persist_resolved_link(
     con: psycopg.Connection, trailhead: scoring.Trail, node_id: int, trail_rows: Sequence[tuple[Any, ...]]
 ) -> None:
@@ -833,6 +856,11 @@ def _persist_resolved_link(
         if row is not None:
             upsert_trails(con, [row])
         con.commit()
+        # The live result is raw OSM - it can re-add the twin of a USFS row the cache already
+        # pruned (Copilot review, PR #441). Dedup its footprint; the prune also moves this
+        # trailhead's `connects` onto whichever row survives.
+        south, west, north, east = _rows_bbox(trail_rows)
+        prune_trail_duplicates(con, min_lat=south, min_lng=west, max_lat=north, max_lng=east)
         logger.info("trails: cached resolved link for %s -> %d trail(s)", trailhead.id, len(connects))
     except psycopg.Error as error:
         logger.warning("trails: could not persist resolved link for %s (%s)", trailhead.id, error)
