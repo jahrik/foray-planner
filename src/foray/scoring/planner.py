@@ -96,6 +96,9 @@ def plan_route(
         )
         destination_lat, destination_lng = grid_cell_center(farthest)
         destination_name = farthest
+        # The user picked it (it's one of their waypoints), so it isn't "auto-picked" - that
+        # label (the plan summary, the GPX waypoint name) is for a ranking-chosen destination.
+        auto = False
     elif auto:
         picks = rank_destinations(
             con,

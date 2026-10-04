@@ -2,7 +2,7 @@ import L from "leaflet";
 
 import { getJson } from "../api/client";
 import type { Stop, TripPlan } from "../api/types";
-import { escapeXml, feeLabel } from "../format";
+import { escapeXml, feeLabel, stopsLabel } from "../format";
 import {
   directionsLink,
   GOOGLE_MAPS_WAYPOINT_CAP,
@@ -187,7 +187,7 @@ function renderPlan(trip: TripPlan): void {
   panel.innerHTML = `
     <div class="plan-header">
       <div class="plan-summary">
-        <strong class="num">${trip.n_stops} stops</strong> · <span class="num">${dist(trip.total_drive_km)} total</span> · ${monthNames}${skippedNote}${autoNote}
+        <strong class="num">${stopsLabel(trip.n_stops)}</strong> · <span class="num">${dist(trip.total_drive_km)} total</span> · ${monthNames}${skippedNote}${autoNote}
       </div>
       <div class="plan-export">
         <button id="export-gpx" class="primary">⬇ GPX</button>
@@ -203,7 +203,7 @@ function renderPlan(trip: TripPlan): void {
   qs<HTMLButtonElement>("#export-json").onclick = () => exportJson(trip);
   qs<HTMLButtonElement>("#export-gmaps").onclick = () => openGoogleMapsRoute(trip);
 
-  setStatus(`${trip.n_stops} stops · ${dist(trip.total_drive_km)}`);
+  setStatus(`${stopsLabel(trip.n_stops)} · ${dist(trip.total_drive_km)}`);
 }
 
 /** Build a per-stop card using DOM methods so user-controlled text is never injected as HTML. */
@@ -383,7 +383,7 @@ function exportGpx(trip: TripPlan): void {
 <gpx version="1.1" creator="Foray Planner" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata>
     <name>${escapeXml(`Foray Trip ${monthNames}`)}</name>
-    <desc>${escapeXml(`${trip.n_stops} stops, ${dist(trip.total_drive_km)}`)}</desc>
+    <desc>${escapeXml(`${stopsLabel(trip.n_stops)}, ${dist(trip.total_drive_km)}`)}</desc>
   </metadata>
 ${wpts}
 </gpx>`;
