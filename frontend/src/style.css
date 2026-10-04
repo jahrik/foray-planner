@@ -124,6 +124,29 @@ table.cal,
   background: var(--border);
   color: var(--ink);
 }
+/* 📍 "Use my location" (locate-ui.ts). `.pending` = a fresh device fix says the user has moved
+   since they started interacting - one tap applies it. */
+.locate-me {
+  font-size: 15px;
+}
+.locate-me.pending {
+  background: var(--accent);
+  animation: locate-pending 1.6s ease-in-out infinite;
+}
+@keyframes locate-pending {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px var(--border);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .locate-me.pending {
+    animation: none;
+  }
+}
 .loc-current {
   align-self: flex-start;
   max-width: 100%;

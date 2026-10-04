@@ -11,7 +11,7 @@ import { clearSatelliteOverlay, resetSelection } from "./destinations";
 import { inspectRoadAt } from "./inspect";
 import { buildClusterList } from "./cluster-popup";
 import { circleStyle } from "./markers";
-import { dist, onScopeChange, qs, state } from "../state";
+import { accuracyLabel, dist, onScopeChange, qs, state } from "../state";
 
 // Marker palette. Destination + recency markers now read their colour from tokens.css at
 // runtime (markerPalette below) so they track the active theme and stay on the spore-print
@@ -330,16 +330,35 @@ export function setMapClickHandler(handler: (lat: number, lng: number) => void):
   onMapClick = handler;
 }
 
-export function updateHome(home: Home): void {
+/** Show `home` on the location line + map. `recenter: false` moves the home marker without
+ * re-centring the view (a background GPS refinement shouldn't undo the user's pan/zoom).
+ * `accuracyM` is the device-fix uncertainty; left undefined, it's kept when the coordinates are
+ * unchanged (a radius change) and cleared otherwise (a searched / clicked location). */
+export function updateHome(
+  home: Home,
+  options: { recenter?: boolean; accuracyM?: number | null } = {},
+): void {
+  const { recenter = true } = options;
+  const moved = !state.home || state.home.lat !== home.lat || state.home.lng !== home.lng;
+  if (options.accuracyM !== undefined) state.homeAccuracyM = options.accuracyM;
+  else if (moved) state.homeAccuracyM = null;
   state.home = home;
-  qs("#home-name").textContent = home.name;
-  qs("#home-coords").textContent = `${home.lat.toFixed(3)}, ${home.lng.toFixed(3)}`;
-  qs("#home-radius").textContent = dist(home.radius_km);
+  renderHomeLine();
   if (homeMarker) {
     homeMarker.setLatLng([home.lat, home.lng]).bindPopup("Location: " + home.name);
-    map.setView([home.lat, home.lng], 8);
+    if (recenter) map.setView([home.lat, home.lng], 8);
   }
   onScopeChange();
+}
+
+/** The search bar's "name (lat, lng ±acc) · radius" line - also re-run on a units change. */
+export function renderHomeLine(): void {
+  const home = state.home;
+  if (!home) return;
+  qs("#home-name").textContent = home.name;
+  const accuracy = state.homeAccuracyM === null ? "" : ` ${accuracyLabel(state.homeAccuracyM)}`;
+  qs("#home-coords").textContent = `${home.lat.toFixed(4)}, ${home.lng.toFixed(4)}${accuracy}`;
+  qs("#home-radius").textContent = dist(home.radius_km);
 }
 
 export function clearMarkers(): void {

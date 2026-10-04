@@ -272,6 +272,12 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
     no raw `fetch` (place-search autocomplete is `GET /api/location/search`, proxied server-side,
     issue #145).
   - `src/refresh.ts` (SSE refresh + set-location), `src/main.ts` (DOM wiring/orchestration).
+  - `src/geolocate.ts` - device location (`Locator`): a fast coarse `getCurrentPosition` and a
+    high-accuracy (GPS) `watchPosition` run side by side, keeping the best reading until it's
+    within 25 m or 60 s pass. A fix within 1 km of home is saved quietly (no re-centre /
+    re-run); a farther one is applied only if the user hasn't interacted yet, otherwise offered
+    on the search bar's 📍 button. A manual search / map click cancels the session.
+    `src/locate-ui.ts` wires it to the page; the location line shows the fix's `±accuracy`.
 
   Vitest covers the pure helpers + the DOM builders (`*.test.ts` beside the source); `npm test`
   runs in `just frontend`. `GET /api/coverage` exists on the backend but has no frontend consumer
