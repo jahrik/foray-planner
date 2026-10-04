@@ -214,6 +214,7 @@ def dispersed_cmd(ctx: click.Context, all_coverage: bool) -> None:
 
 @cli.command("trails")
 @click.option("--all", "all_coverage", is_flag=True, help="Ingest trails for every configured coverage region.")
+@click.option("--region", "region_name", default=None, help="Ingest trails for one named coverage region.")
 @click.option(
     "--force",
     is_flag=True,
@@ -221,17 +222,27 @@ def dispersed_cmd(ctx: click.Context, all_coverage: bool) -> None:
     "(for OSM data drift or debugging - a query change re-pulls on its own via _TRAILS_QUERY_VERSION).",
 )
 @click.pass_context
-def trails_cmd(ctx: click.Context, all_coverage: bool, force: bool) -> None:
-    """Ingest OSM trails (paths, forest roads, hiking routes, trailheads) near home, or --all."""
+def trails_cmd(ctx: click.Context, all_coverage: bool, region_name: str | None, force: bool) -> None:
+    """Ingest OSM trails (paths, forest roads, hiking routes, trailheads) near home, --region, or --all."""
     cfg = ctx.obj["cfg"]
+    if all_coverage and region_name:
+        raise click.UsageError("Use only one of --region, --all.")
     if all_coverage and not cfg.coverage:
         raise click.UsageError("No coverage regions configured (set FORAY_COVERAGE).")
-    if force and not all_coverage:
-        raise click.UsageError("--force only applies to --all (it re-pulls versioned coverage-region markers).")
+    if force and not (all_coverage or region_name):
+        raise click.UsageError(
+            "--force only applies to --all/--region (it re-pulls versioned coverage-region markers)."
+        )
+    regions = cfg.coverage
+    if region_name:
+        regions = [region for region in cfg.coverage if region.name.lower() == region_name.lower()]
+        if not regions:
+            available = ", ".join(region.name for region in cfg.coverage) or "(none configured)"
+            raise click.UsageError(f"Unknown region {region_name!r}. Available: {available}")
     con = connect()
     try:
-        if all_coverage:
-            for region in cfg.coverage:
+        if all_coverage or region_name:
+            for region in regions:
                 click.echo(f"Ingesting trails for {region.name}…")
                 count = ingest_trails_region(region, con, force=force)
                 click.echo(f"  cached {count} trails")

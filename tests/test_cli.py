@@ -109,6 +109,13 @@ def test_trails_force_requires_all(env_config, calls) -> None:
     assert calls == []
 
 
+def test_trails_unknown_region_errors(env_config, calls) -> None:
+    result = CliRunner().invoke(cli, ["trails", "--region", "Atlantis"])
+    assert result.exit_code != 0
+    assert "Unknown region 'Atlantis'" in result.output
+    assert calls == []
+
+
 class _CloseTrackingConnection:
     """Proxies to a real connection but only records close() calls rather than actually
     closing it - the wrapped connection is the shared session-scoped test fixture, which

@@ -55,6 +55,7 @@ from foray.cache import (
     forget_ingest,
     is_ingested,
     prune_duplicate_cross_source_paths,
+    prune_duplicate_cross_source_roads,
     prune_duplicate_route_paths,
     record_ingest,
     upsert_trails,
@@ -77,6 +78,15 @@ _MAX_POINTS_PER_LINE = 60
 # single response's size regardless of how big or trail-dense the region is; each tile's rows
 # are upserted and discarded before the next tile starts; see ``ingest_trails_region``.
 _TILE_DEG = 2.0
+# ...but tiling by area alone wasn't enough once forest roads joined the query (v2): a 2-degree
+# tile of Sierra or Cascades logging roads still parsed to >1 GB and the 2 GB prod droplet's OOM
+# killer took the ingest, over and over, so no road-dense state ever finished. Each tile's
+# response is now capped at this many bytes (``overpass.post(max_bytes=...)``, checked while
+# streaming, before parsing); a tile over the cap - or one Overpass times out on - is split into
+# quadrants and retried, down to ``_MIN_TILE_DEG``. ~24 MB of Overpass JSON parses to a few
+# hundred MB of Python objects, leaving room for the app container beside it.
+_MAX_TILE_BYTES = 24 * 1024 * 1024
+_MIN_TILE_DEG = 0.125
 
 # Bump when the Overpass query in `_way_selectors` / `_trails_query_bbox` changes what it pulls,
 # or when `_ATTR_TAGS` changes what `_attrs` keeps off an unchanged payload. `ingest_trails_region`
@@ -96,7 +106,10 @@ _TILE_DEG = 2.0
 #       this bump, `ingest_trails_region`'s `is_ingested` check would skip the fetch/upsert/
 #       prune loop entirely for any region already at the current version (Copilot review, PR
 #       #405) - same reasoning #394 already relied on for its own prune
-_TRAILS_QUERY_VERSION = 6
+#   7 - no query change - re-pull so the reworked cross-source path prune and the new
+#       `prune_duplicate_cross_source_roads` (OSM road vs MVUM) run everywhere, now that the
+#       byte-capped, resumable tile loop can actually finish a road-dense state
+_TRAILS_QUERY_VERSION = 7
 
 # Way classes we ingest, by the ``kind`` they become. Trails are foot/horse ways; roads are the
 # old logging / forest-service roads foragers actually walk and drive (issue: forest roads are a
@@ -632,8 +645,12 @@ def ingest_trails(
         prune_duplicate_route_paths(
             db, min_lat=bbox.min_lat, min_lng=bbox.min_lng, max_lat=bbox.max_lat, max_lng=bbox.max_lng
         )
-        # issue #404: same self-heal, for an OSM `path` that duplicates a USFS bulk-loaded one.
+        # issue #404: same self-heal, for an OSM `path` / forest road that duplicates a USFS
+        # bulk-loaded one (Trail_NFS / MVUM).
         prune_duplicate_cross_source_paths(
+            db, min_lat=bbox.min_lat, min_lng=bbox.min_lng, max_lat=bbox.max_lat, max_lng=bbox.max_lng
+        )
+        prune_duplicate_cross_source_roads(
             db, min_lat=bbox.min_lat, min_lng=bbox.min_lng, max_lat=bbox.max_lat, max_lng=bbox.max_lng
         )
     return run_area_ingest(
@@ -842,6 +859,7 @@ def fetch_trails_bbox(
     client: httpx.Client | None = None,
     progress_cb: Callable[[str, float], None] | None = None,
     raise_on_error: bool = False,
+    max_bytes: int | None = None,
 ) -> list[tuple[Any, ...]]:
     """Fetch OSM paths, hiking routes, and trailheads within a bbox (state-sized) as trails rows.
 
@@ -856,7 +874,9 @@ def fetch_trails_bbox(
     try:
         if progress_cb:
             progress_cb("Fetching trails…", 50.0)
-        payload = overpass.post(client, _trails_query_bbox(min_lat, min_lng, max_lat, max_lng, timeout_s=timeout_s))
+        payload = overpass.post(
+            client, _trails_query_bbox(min_lat, min_lng, max_lat, max_lng, timeout_s=timeout_s), max_bytes=max_bytes
+        )
         rows = _parse_trails(payload)
         return rows
     except SOURCE_ERRORS as error:
@@ -867,6 +887,84 @@ def fetch_trails_bbox(
     finally:
         if owns:
             client.close()
+
+
+def _tile_key(south: float, west: float, north: float, east: float) -> str:
+    """Per-tile resume marker for ``ingest_trails_region`` - versioned like the region marker."""
+    return f"trails:tile:q{_TRAILS_QUERY_VERSION}:{south:.4f},{west:.4f},{north:.4f},{east:.4f}"
+
+
+def _quadrants(south: float, west: float, north: float, east: float) -> list[tuple[float, float, float, float]]:
+    mid_lat = (south + north) / 2
+    mid_lng = (west + east) / 2
+    return [
+        (south, west, mid_lat, mid_lng),
+        (south, mid_lng, mid_lat, east),
+        (mid_lat, west, north, mid_lng),
+        (mid_lat, mid_lng, north, east),
+    ]
+
+
+def _is_splittable_failure(error: Exception) -> bool:
+    """A failure a smaller query would likely fix: the response was too big, or Overpass ran
+    out of time computing it (504, or a read timeout waiting on it)."""
+    if isinstance(error, (overpass.ResponseTooLarge, httpx.ReadTimeout)):
+        return True
+    return isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 504
+
+
+def _ingest_tile(
+    database: psycopg.Connection,
+    tile: tuple[float, float, float, float],
+    *,
+    client: httpx.Client | None,
+    label: str,
+) -> tuple[int, bool]:
+    """Fetch + upsert + prune one tile, splitting it into quadrants when its response is too big
+    or too slow for Overpass. Returns (rows upserted, whether every piece succeeded). A tile already
+    marked done at this query version (a previous, killed or partly failed run) is skipped, so a
+    re-run resumes where the last one stopped instead of starting the region over."""
+    south, west, north, east = tile
+    key = _tile_key(south, west, north, east)
+    if is_ingested(database, key):
+        return 0, True
+    try:
+        rows = fetch_trails_bbox(
+            min_lat=south,
+            min_lng=west,
+            max_lat=north,
+            max_lng=east,
+            client=client,
+            raise_on_error=True,
+            max_bytes=_MAX_TILE_BYTES,
+        )
+    except SOURCE_ERRORS as error:
+        if _is_splittable_failure(error) and (north - south) / 2 >= _MIN_TILE_DEG:
+            logger.info("trails: %s tile %s too large for one query (%s) - splitting", label, key, error)
+            total = 0
+            all_ok = True
+            for quadrant in _quadrants(south, west, north, east):
+                count, ok = _ingest_tile(database, quadrant, client=client, label=label)
+                total += count
+                all_ok = all_ok and ok
+            if all_ok:
+                record_ingest(database, key, total, lat=(south + north) / 2, lng=(west + east) / 2)
+            return total, all_ok
+        logger.warning("trails: %s tile %s failed (%s) - will retry next run", label, key, error)
+        return 0, False
+    upsert_trails(database, rows)
+    upserted = len(rows)
+    del rows
+    bounds = {"min_lat": south, "min_lng": west, "max_lat": north, "max_lng": east}
+    # Self-heals any route-member `path` rows this tile cached before the issue #394 fix - see
+    # `prune_duplicate_route_paths`'s docstring for why this is scoped per tile, not table-wide.
+    prune_duplicate_route_paths(database, **bounds)
+    # issue #404: same self-heal, for an OSM `path` / forest road that duplicates a USFS
+    # bulk-loaded one (Trail_NFS / MVUM).
+    prune_duplicate_cross_source_paths(database, **bounds)
+    prune_duplicate_cross_source_roads(database, **bounds)
+    record_ingest(database, key, upserted, lat=(south + north) / 2, lng=(west + east) / 2)
+    return upserted, True
 
 
 def ingest_trails_region(
@@ -881,83 +979,66 @@ def ingest_trails_region(
 
     Unlike land ownership, Overpass can't handle a whole-US query in one request, so full US
     coverage means looping this per region - see ``cli.py``'s ``refresh --with trails --all``.
-    Within a region, the bbox is further tiled (see ``_tile_bboxes``) and each tile's rows are
-    upserted immediately rather than accumulated - a trail-dense state's full response can be
-    large enough to OOM a small droplet before it's even parsed. The returned/logged count is
-    rows upserted, not distinct trails - a route spanning a tile boundary gets upserted (and
-    counted) once per tile it touches, though it's the same row each time (id is the primary
-    key).
+    Within a region, the bbox is further tiled (see ``_tile_bboxes``), each tile's response is
+    byte-capped and split into quadrants when it's too big (``_ingest_tile``), and each tile's
+    rows are upserted immediately rather than accumulated, so peak memory is bounded by
+    ``_MAX_TILE_BYTES`` however dense the region is. The returned/logged count is rows
+    upserted, not distinct trails - a route spanning a tile boundary gets upserted (and counted)
+    once per tile it touches, though it's the same row each time (id is the primary key).
 
     One-shot per region: the ``ingest_log`` marker is ``trails:place:{place_id}:q{version}``
     where ``version`` is ``_TRAILS_QUERY_VERSION``. Widening the Overpass query bumps that
     constant, so every region's marker stops matching and the next ``refresh --with trails
-    --all`` cron re-pulls it - no manual step. ``force`` additionally re-pulls without a version
-    bump (OSM data drift, debugging one region); superseded-version markers are pruned on a
-    successful run.
+    --all`` cron re-pulls it - no manual step. Each finished tile also gets its own marker, so a
+    run that's killed or hits a failing tile picks up from there next time. ``force``
+    additionally re-pulls without a version bump (OSM data drift, debugging one region);
+    superseded-version markers are pruned on a successful run.
     """
     if region.bbox is None:
         raise ValueError(f"{region.name} has no bbox configured for trails ingest")
     key = f"trails:place:{region.place_id}:q{_TRAILS_QUERY_VERSION}"
+    west, south, east, north = region.bbox
+    tile_markers_in_region = (
+        "DELETE FROM ingest_log WHERE key LIKE 'trails:tile:%%' AND lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s"
+    )
     with connection(con) as database:
-        if force and forget_ingest(database, key):
-            logger.info("trails: --force cleared the ingest marker for %s, re-fetching", region.name)
+        if force:
+            if forget_ingest(database, key):
+                logger.info("trails: --force cleared the ingest marker for %s, re-fetching", region.name)
+            database.execute(tile_markers_in_region, [south, north, west, east])
         if not force and is_ingested(database, key):
             logger.info("trails: %s already ingested at query v%d, skipping", region.name, _TRAILS_QUERY_VERSION)
             if progress_cb:
                 progress_cb(f"Trails already cached for {region.name}, skipping…", 100.0)
             return 0
-        west, south, east, north = region.bbox
         tiles = _tile_bboxes(south, west, north, east)
         logger.info("trails: fetching OSM trail network for %s (%d tiles)…", region.name, len(tiles))
         total = 0
         had_failures = False
-        for index, (tile_south, tile_west, tile_north, tile_east) in enumerate(tiles, start=1):
+        for index, tile in enumerate(tiles, start=1):
             if progress_cb:
                 progress_cb(f"Fetching trails for {region.name} ({index}/{len(tiles)})…", (index / len(tiles)) * 100.0)
-            try:
-                rows = fetch_trails_bbox(
-                    min_lat=tile_south,
-                    min_lng=tile_west,
-                    max_lat=tile_north,
-                    max_lng=tile_east,
-                    client=client,
-                    raise_on_error=True,
-                )
-            except SOURCE_ERRORS as error:
-                logger.warning(
-                    "trails: tile %d/%d for %s failed (%s) - region won't be marked ingested, will retry next run",
-                    index,
-                    len(tiles),
-                    region.name,
-                    error,
-                )
-                had_failures = True
-                continue
-            upsert_trails(database, rows)
-            # Self-heals any route-member `path` rows this tile cached before the issue #394 fix
-            # - see `prune_duplicate_route_paths`'s docstring for why this is scoped per tile,
-            # not table-wide.
-            prune_duplicate_route_paths(
-                database, min_lat=tile_south, min_lng=tile_west, max_lat=tile_north, max_lng=tile_east
-            )
-            # issue #404: same self-heal, for an OSM `path` that duplicates a USFS bulk-loaded one.
-            prune_duplicate_cross_source_paths(
-                database, min_lat=tile_south, min_lng=tile_west, max_lat=tile_north, max_lng=tile_east
-            )
-            total += len(rows)
-        # Only mark the region done if every tile succeeded - a partial failure still leaves
-        # its successful tiles' rows cached (upserted above), but a future run needs to retry
-        # the whole region rather than believing it's fully covered.
+            count, ok = _ingest_tile(database, tile, client=client, label=region.name)
+            total += count
+            had_failures = had_failures or not ok
+        # Only mark the region done if every tile succeeded - finished tiles keep their own
+        # markers, so the retry only re-fetches the ones that failed.
         if had_failures:
-            logger.warning("trails: %s only partially ingested (%d rows) - not recording as done", region.name, total)
+            logger.warning("trails: %s only partially ingested - not recording as done", region.name)
         else:
             record_ingest(database, key, total)
             # Drop this region's markers from older query versions (and the pre-versioning
-            # `trails:place:{id}` key) so ingest_log doesn't accrete a stale row per bump.
+            # `trails:place:{id}` key), plus its now-redundant per-tile markers, so ingest_log
+            # doesn't accrete stale rows.
             database.execute(
                 "DELETE FROM ingest_log WHERE (key LIKE %s OR key = %s) AND key <> %s",
                 [f"trails:place:{region.place_id}:q%", f"trails:place:{region.place_id}", key],
             )
+            database.execute(
+                "DELETE FROM ingest_log WHERE key LIKE 'trails:tile:%%' AND key NOT LIKE %s",
+                [f"trails:tile:q{_TRAILS_QUERY_VERSION}:%"],
+            )
+            database.execute(tile_markers_in_region, [south, north, west, east])
         logger.info("trails: cached %d trails in %s", total, region.name)
         return total
 

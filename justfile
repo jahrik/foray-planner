@@ -170,6 +170,12 @@ refresh-precip: db
 fire: db
     docker compose run --rm app foray fire
 
+# Ingest OSM trails + forest roads: `just trails --region Oregon`, `just trails --all`
+[doc('Ingest OSM trails/forest roads (pass --region NAME or --all)')]
+[group('data')]
+trails *args: db
+    docker compose run --rm app foray trails {{ args }}
+
 # Re-checks cached observations under genera whose cache count has drifted from iNat's live
 # count (see ingest.revalidate) - purges/reassigns rows misidentified into a homonymous
 # non-fungal genus (e.g. fungal Olla vs. the ladybug genus Olla). Meant to run on a recurring
