@@ -249,7 +249,11 @@ export function selectTrailhead(trail: Trail): Promise<void> {
 // small enough that unlike other layers, it needs no opt-in. No-op (just clears) when nothing's
 // focused. Pins go into the cluster group (map.ts's preciseCluster) instead of straight onto the
 // map - a dense area folds into a count badge instead of dumping hundreds of overlapping dots.
+// Guarded so a slower, superseded request (a month-filtered fetch still in flight when the sort
+// flips to "active now", or a previous focus) can't paint its pins over the current one.
+const preciseGuard = createRunGuard();
 export async function loadPreciseObservations(): Promise<void> {
+  const isCurrent = preciseGuard.begin();
   clearPrecise();
   renderLegend();
   if (!state.focused) return;
@@ -265,9 +269,10 @@ export async function loadPreciseObservations(): Promise<void> {
       query: { ...timeWindow, lat, lng, radius_km: regionRadiusKm() },
     });
   } catch (error) {
-    setStatus(errorDetail(error));
+    if (isCurrent()) setStatus(errorDetail(error));
     return;
   }
+  if (!isCurrent()) return;
   const spore = markerPalette().spore;
   observations.forEach((obs) => {
     const marker = L.circleMarker(
