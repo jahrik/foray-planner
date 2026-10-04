@@ -7,7 +7,7 @@ are closest to them, and how to string several spots into a road trip.
 Six short walkthroughs, each with an animated overview and step-by-step screenshots:
 
 1. [Getting started](#1-getting-started) - set your location, pick months and genera, read the results
-2. [Find the best spot right now](#2-find-the-best-spot-right-now) - no target in mind: where is the most fruiting, and the finds behind it
+2. [Find the best spot right now](#2-find-the-best-spot-right-now) - no target in mind: the top-scoring spot, and the finds behind it
 3. [Track down a target mushroom](#3-track-down-a-target-mushroom) - from "I want chanterelles" to the trail, the camp, and directions
 4. [Destination details](#4-destination-details) - map layers, calendar, photos, trails, campgrounds, public land
 5. [Plan a road trip](#5-plan-a-road-trip) - shortlist spots, pin a campground, export the route
@@ -71,14 +71,16 @@ between *Best overall*, *Active now* (what's been seen in the last few weeks), a
 
 ## 2. Find the best spot right now
 
-No particular target? This finds where the most is fruiting near you, then shows you the actual
-iNaturalist finds behind the ranking.
+No particular target? This finds the top-scoring spot near you for your months, then shows you
+the actual iNaturalist finds behind the ranking.
 
 ![Best spot walkthrough](best-spot.gif)
 
-**1. Leave the defaults.** With **All genera** and **Sort: Best overall**, the #1 card is the
-destination with the strongest fruiting activity in your chosen months. Its first line says
-why: what's peaking there, how many records, recent rain, and the nearest trailhead.
+**1. Leave the defaults.** With **All genera** and **Sort: Best overall**, the #1 card has the
+strongest overall score for your chosen months. The score blends how much of each genus's
+season falls in those months, how many records and how many genera, how recent they are, and
+adjustments for active fire and trail/camp access. The card's first line says why: what's
+peaking there, how many records, recent rain, and the nearest trailhead.
 
 ![The top-ranked destination](img/best-spot-01-ranked.png)
 
@@ -142,9 +144,10 @@ finds only. Hover a numbered pin for the list, and zoom in to open single finds,
 
 ![One find, with Directions](img/track-down-05-find-popup.png)
 
-**4. Pick the trail.** In **Details → Trails**, trails are ranked with your target in mind:
-the ones with the most finds of that genus within 500 m come first ("N nearby"). Click one to
-draw it on the map, through the finds.
+**4. Pick the trail.** **Details → Trails** is sorted by relevance: named routes and long
+trails rank high, and trails with more finds of your target genus within 500 m get a boost.
+(The "N nearby" figure on each row counts fungi records of any kind within 500 m.) Click one
+to draw it on the map, through the finds.
 
 ![Trails ranked by nearby finds](img/track-down-06-trails.png)
 
@@ -155,8 +158,10 @@ click **📍 Use … as trip stop** so the route drives to that camp.
 
 ![Choosing a campground](img/track-down-08-camp.png)
 
-**6. Go.** Click **+ Plan** on the spot, then **Plan a route**. **Open in Google Maps** gives
-turn-by-turn directions to your camp (or **⬇ GPX** for any other maps app).
+**6. Go.** Pinning the camp already added the spot to your trip (its card now shows
+**✓ In route**), so just click **Plan a route**. Don't click **+ Plan** again; that would take
+it back out. **Open in Google Maps** gives turn-by-turn directions to your camp (or **⬇ GPX**
+for any other maps app).
 
 ![The route, ready to open in Google Maps](img/track-down-09-go.png)
 
@@ -188,8 +193,8 @@ observer's credit and a link to each record.
 ![The Photos tab](img/region-details-04-photos.png)
 
 **5. Trails.** Hiking paths, forest roads and trailheads, sorted by relevance: named routes
-and trails with the most nearby finds come first. "192 nearby" counts target-genus records
-within 500 m of the trail.
+and long trails rank high, and with a target genus selected, trails with more of its finds
+nearby get a boost. "192 nearby" counts fungi records of any kind within 500 m of the trail.
 
 ![The Trails tab](img/region-details-05-trails.png)
 

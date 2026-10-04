@@ -341,7 +341,7 @@ def best_spot(tut: Tutorial) -> None:
     card = page.locator("#panel .rank").first
     tut.point(card.locator(".why"))
     tut.caption(
-        "With <b>All genera</b> and <b>Best overall</b>, #1 is where the most is fruiting this month.",
+        "With <b>All genera</b> and <b>Best overall</b>, #1 has the strongest score for this month.",
         shot="ranked",
         hold=3.2,
     )
@@ -413,7 +413,7 @@ def track_down(tut: Tutorial) -> None:
     time.sleep(1.0)
     tut.point(chip)
     tut.caption(
-        "<b>4. Pick a trail.</b> Trails with the most chanterelle finds close by are listed first.",
+        "<b>4. Pick a trail.</b> Trails with chanterelle finds close by get a boost in the ranking.",
         shot="trails",
         hold=3.2,
     )
