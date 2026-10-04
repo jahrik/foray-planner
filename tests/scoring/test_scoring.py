@@ -521,6 +521,28 @@ def test_precise_observations_respects_radius_and_months(con: psycopg.Connection
     assert [r["id"] for r in results] == [9101]
 
 
+def test_precise_observations_weeks_uses_trailing_window_not_months(con: psycopg.Connection) -> None:
+    # Issue #312: the "active now" sort passes `weeks`, which replaces the every-year month
+    # filter with the same trailing window `alerts` uses - an old same-month find drops out and a
+    # recent find outside the selected months stays in.
+    home_lat, home_lng = APR_LAT, APR_LNG
+    near_lat, near_lng = home_lat + 0.01, home_lng + 0.01
+    recent = dt.date.today() - dt.timedelta(days=7)
+    stale = dt.date.today() - dt.timedelta(weeks=60)
+    with con.cursor() as cur:
+        for obs_id, observed_on in ((9201, recent), (9202, stale)):
+            cur.execute(
+                "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+                " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, false)",
+                (obs_id, MOREL, near_lat, near_lng, observed_on, observed_on.month, "research"),
+            )
+    other_month = 1 if recent.month != 1 else 2
+    results = precise_observations(
+        con, taxon_ids=[MOREL], lat=home_lat, lng=home_lng, radius_km=50, months=[other_month], weeks=4
+    )
+    assert [r["id"] for r in results] == [9201]
+
+
 def test_haversine_known_distance() -> None:
     # Seattle -> Portland is ~233 km.
     distance = haversine_km(47.6062, -122.3321, 45.5152, -122.6784)

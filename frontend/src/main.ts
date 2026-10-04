@@ -128,6 +128,7 @@ async function main(): Promise<void> {
   state.trailsTilesUrl = config.trails_tiles_url ?? "";
   state.landTilesUrl = config.land_tiles_url ?? "";
   state.fireTilesUrl = config.fire_tiles_url ?? "";
+  state.recentWeeks = config.recent_weeks;
   initTheme();
   initUnits();
   initTextSize();
