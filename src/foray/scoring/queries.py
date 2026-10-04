@@ -921,6 +921,15 @@ def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[i
     return calendar
 
 
+def _time_window(months: list[int], weeks: int | None) -> tuple[str, list[Any]]:
+    """The observation time filter shared by the per-destination reads: month-of-year across
+    every year by default, or - with ``weeks`` - the trailing window ``alerts`` uses, so the
+    "active now" sort's pins and photos match its list (issue #312)."""
+    if weeks is None:
+        return f"o.month IN ({sql_in(months)})", list(months)
+    return "o.observed_on >= %s", [dt.date.today() - dt.timedelta(weeks=weeks)]
+
+
 def recent_observations(
     con: psycopg.Connection,
     *,
@@ -928,6 +937,7 @@ def recent_observations(
     taxon_ids: list[int],
     h3_resolution: int,
     months: list[int],
+    weeks: int | None = None,
     limit: int = 12,
     offset: int = 0,
 ) -> tuple[list[dict[str, Any]], bool]:
@@ -938,7 +948,9 @@ def recent_observations(
     returning the ``(observations, has_more)`` pair. ``id`` is a tie-breaker in the ORDER BY since
     ``observed_on`` alone isn't unique - without it, LIMIT/OFFSET paging can skip or repeat rows
     whenever two observations share a date and land on opposite sides of a page boundary.
+    ``weeks`` swaps the month filter for the trailing window (see ``_time_window``).
     """
+    time_filter, time_params = _time_window(months, weeks)
     binned = BINNED.format(resolution=h3_resolution)
     rows = con.execute(
         cast(
@@ -946,12 +958,12 @@ def recent_observations(
             f"""
             SELECT o.id, o.taxon_id, o.observed_on, o.place_guess, o.uri, o.obscured
             FROM ({binned}) o
-            WHERE o.region_id = %s AND {taxon_filter(taxon_ids, "o.taxon_id")} AND o.month IN ({sql_in(months)})
+            WHERE o.region_id = %s AND {taxon_filter(taxon_ids, "o.taxon_id")} AND {time_filter}
             ORDER BY o.observed_on DESC, o.id DESC
             LIMIT %s OFFSET %s
             """,
         ),
-        [region_id, *taxon_ids, *months, limit + 1, offset],
+        [region_id, *taxon_ids, *time_params, limit + 1, offset],
     ).fetchall()
     has_more = len(rows) > limit
     rows = rows[:limit]
@@ -1101,14 +1113,11 @@ def precise_observations(
     version's 3000-row cap existed to bound a fetch that could span the entire map at once; a
     single destination's own footprint can't realistically produce that.
 
-    ``weeks`` swaps the month-of-year filter (every year) for the trailing-``weeks`` window
-    ``alerts`` uses, so the pins match the "active now" list instead of burying its few recent
-    finds under every historical one (issue #312).
+    ``weeks`` swaps the month filter for the trailing window (see ``_time_window``), so the pins
+    match the "active now" list instead of burying its few recent finds under every historical
+    one (issue #312).
     """
-    if weeks is None:
-        time_filter, time_params = f"o.month IN ({sql_in(months)})", list(months)
-    else:
-        time_filter, time_params = "o.observed_on >= %s", [dt.date.today() - dt.timedelta(weeks=weeks)]
+    time_filter, time_params = _time_window(months, weeks)
     rows = con.execute(
         cast(
             LiteralString,

@@ -345,6 +345,27 @@ def test_observation_photos_filters_by_month(client: TestClient, monkeypatch: py
     assert response.json() == {"observations": [], "has_more": False}
 
 
+def test_observation_photos_weeks_window(
+    client: TestClient, con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Issue #312: under the "active now" sort the Photos tab passes `weeks`, which replaces the
+    # month filter - the fixture's 2022 Morels drop out, a find from last week stays in.
+    monkeypatch.setattr("foray.api.inat.photos_for_observations", lambda ids: {})
+    recent = dt.date.today() - dt.timedelta(days=7)
+    with con.cursor() as cur:
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, positional_accuracy) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (9101, MOREL, HOME_LAT, HOME_LNG, recent, recent.month, "research", 10),
+        )
+    region_id = client.get("/api/destinations", params={"months": "4"}).json()[0]["region_id"]
+    response = client.get(
+        "/api/observations/photos", params={"region_id": region_id, "species": str(MOREL), "weeks": 4}
+    )
+    assert response.status_code == 200
+    assert [obs["id"] for obs in response.json()["observations"]] == [9101]
+
+
 def test_observation_photos_bad_region_returns_empty(client: TestClient) -> None:
     response = client.get("/api/observations/photos", params={"region_id": "999_999"})
     assert response.status_code == 200
