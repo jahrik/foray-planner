@@ -45,3 +45,6 @@ redesign-*.png
 
 # Local vector-basemap test extracts - never commit (see docs/data-sources.md)
 frontend/public/*.pmtiles
+
+# `just tutorials --instagram` output: Reels/carousel files for posting, regenerated on demand
+docs/tutorials/instagram/

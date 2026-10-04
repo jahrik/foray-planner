@@ -28,19 +28,46 @@ from pathlib import Path
 
 # playwright comes from the inline script metadata above, not the project venv `just lint` checks.
 from playwright.sync_api import (  # ty: ignore[unresolved-import]
-    Browser,
     Locator,
     Page,
+    Playwright,
     sync_playwright,
 )
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # ty: ignore[unresolved-import]
 
 OUT_DIR = Path(__file__).resolve().parent
 IMG_DIR = OUT_DIR / "img"
+# `--instagram` output (gitignored - regenerated, and meant for posting, not the repo).
+INSTAGRAM_DIR = OUT_DIR / "instagram"
 DEFAULT_URL = "https://forayplanner.com/"
+INSTAGRAM_DEFAULT = ["best-spot", "track-down", "mobile"]
 
-DESKTOP = {"width": 1280, "height": 760}
-MOBILE = {"width": 390, "height": 760}
+
+@dataclass(frozen=True)
+class Profile:
+    """Viewport in CSS px, device scale factor, and whether to emulate a phone."""
+
+    viewport: dict[str, int]
+    scale: float
+    mobile: bool
+
+
+DESKTOP = Profile({"width": 1280, "height": 760}, 1, mobile=False)
+# 2x so the phone walkthrough stays sharp when shown larger.
+MOBILE = Profile({"width": 390, "height": 760}, 2, mobile=True)
+# Instagram Reels are 1080x1920 (9:16). The desktop layout needs > 780 CSS px, so 810x1440 at
+# 4/3; the phone layout at 405x720 x 8/3. Both land on exactly 1080x1920 device pixels.
+INSTAGRAM_DESKTOP = Profile({"width": 810, "height": 1440}, 1080 / 810, mobile=False)
+INSTAGRAM_MOBILE = Profile({"width": 405, "height": 720}, 1080 / 405, mobile=True)
+# Feed carousel stills are 1080x1350 (4:5): the same widths, shorter.
+CAROUSEL_VIEWPORTS = {False: {"width": 810, "height": 1012}, True: {"width": 405, "height": 506}}
+# (instagram, phone walkthrough) -> profile
+PROFILES = {
+    (False, False): DESKTOP,
+    (False, True): MOBILE,
+    (True, False): INSTAGRAM_DESKTOP,
+    (True, True): INSTAGRAM_MOBILE,
+}
 
 # Injected once per page: a caption bar pinned to the bottom and a cursor dot that follows
 # the (synthetic) mouse - headless Chromium draws no pointer of its own.
@@ -87,8 +114,13 @@ OVERLAY_JS = """
 class Tutorial:
     page: Page
     slug: str
-    mobile: bool = False
+    img_dir: Path = IMG_DIR
     on_start: Callable[[], None] | None = None
+    # Instagram mode: also save each step at this (4:5) viewport into carousel_dir, pausing the
+    # recording (`cast`) around the resize so it never shows in the Reel.
+    carousel_viewport: dict[str, int] | None = None
+    carousel_dir: Path | None = None
+    cast: Screencast | None = None
     started: bool = False
     steps: list[tuple[str, str]] = field(default_factory=list)
 
@@ -108,9 +140,26 @@ class Tutorial:
         if shot:
             name = f"{self.slug}-{len(self.steps) + 1:02d}-{shot}.png"
             # The cursor dot helps the GIF but would cover text in a still.
-            self.page.screenshot(path=IMG_DIR / name, type="png", style="#tut-cursor { display: none; }")
+            self.page.screenshot(path=self.img_dir / name, type="png", style="#tut-cursor { display: none; }")
             self.steps.append((name, html))
+            self._carousel_still(name)
         time.sleep(hold)
+
+    def _carousel_still(self, name: str) -> None:
+        viewport, carousel_dir = self.carousel_viewport, self.carousel_dir
+        if viewport is None or carousel_dir is None:
+            return
+        if self.cast:
+            self.cast.paused = True
+        original = self.page.viewport_size
+        self.page.set_viewport_size({"width": viewport["width"], "height": viewport["height"]})
+        time.sleep(0.8)  # Leaflet re-fits the map on resize
+        self.page.screenshot(path=carousel_dir / name, type="png", style="#tut-cursor { display: none; }")
+        if original:
+            self.page.set_viewport_size(original)
+        time.sleep(0.8)
+        if self.cast:
+            self.cast.paused = False
 
     def point(self, target: Locator) -> None:
         """Glide the visible cursor onto `target` (tap targets on mobile just jump)."""
@@ -226,7 +275,8 @@ def visible_cluster(page: Page) -> Locator | None:
     badges = page.locator(".precise-cluster-icon")
     for index in range(badges.count()):
         box = badges.nth(index).bounding_box()
-        if box and (panel is None or box["x"] > panel["x"] + panel["width"] + 20) and 180 < box["y"] < 560:
+        height = (page.viewport_size or {"height": 760})["height"]
+        if box and (panel is None or box["x"] > panel["x"] + panel["width"] + 20) and 180 < box["y"] < height - 200:
             return badges.nth(index)
     return None
 
@@ -519,27 +569,51 @@ class Screencast:
     still stretches (caption holds) nearly free.
     """
 
-    def __init__(self, page: Page, frame_dir: Path) -> None:
+    def __init__(self, page: Page, frame_dir: Path, profile: Profile) -> None:
         self.frame_dir = frame_dir
+        self.profile = profile
+        self.frame_size = (
+            round(profile.viewport["width"] * profile.scale),
+            round(profile.viewport["height"] * profile.scale),
+        )
         self.frames: list[tuple[float, Path]] = []
+        # While set, frames are acked but dropped: the last kept frame holds over the gap.
+        self.paused = False
         self.session = page.context.new_cdp_session(page)
         self.session.on("Page.screencastFrame", self._on_frame)
         self.stopped_at = 0.0
 
     def _on_frame(self, event: dict) -> None:
+        data = base64.b64decode(event["data"])
+        # PNG IHDR: width/height are the big-endian uint32s at bytes 16-24. A frame rendered
+        # mid-resize (carousel still) can land after unpausing; anything off-size is dropped.
+        size = (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big"))
+        if self.paused or size != self.frame_size:
+            self.session.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
+            return
         path = self.frame_dir / f"{len(self.frames):05d}.png"
-        path.write_bytes(base64.b64decode(event["data"]))
+        path.write_bytes(data)
         self.frames.append((event["metadata"]["timestamp"], path))
         self.session.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
 
     def start(self) -> None:
-        self.session.send("Page.startScreencast", {"format": "png", "everyNthFrame": 1})
+        # Frames only come at device resolution when the browser itself runs at that scale
+        # (--force-device-scale-factor, see record()); max* just has to not cap them.
+        self.session.send(
+            "Page.startScreencast",
+            {
+                "format": "png",
+                "everyNthFrame": 1,
+                "maxWidth": self.frame_size[0],
+                "maxHeight": self.frame_size[1],
+            },
+        )
 
     def stop(self) -> None:
         self.stopped_at = time.time()
         self.session.send("Page.stopScreencast")
 
-    def to_gif(self, target: Path) -> None:
+    def _concat_list(self) -> Path:
         concat = self.frame_dir / "frames.txt"
         lines = []
         for index, (stamp, path) in enumerate(self.frames):
@@ -547,6 +621,17 @@ class Screencast:
             lines += [f"file '{path.name}'", f"duration {max(following - stamp, 0.01):.3f}"]
         lines.append(f"file '{self.frames[-1][1].name}'")
         concat.write_text("\n".join(lines) + "\n")
+        return concat
+
+    def to_mp4(self, target: Path) -> None:
+        """H.264 1080x1920 at 30 fps, the shape and codec Instagram Reels expect."""
+        command = ["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-i", str(self._concat_list())]
+        encode = ["-vf", "fps=30,scale=1080:1920:flags=lanczos,format=yuv420p", "-c:v", "libx264"]
+        encode += ["-preset", "slow", "-crf", "18", "-profile:v", "high", "-movflags", "+faststart", "-an"]
+        subprocess.run([*command, *encode, str(target)], check=True)
+
+    def to_gif(self, target: Path) -> None:
+        concat = self._concat_list()
         filters = (
             # Native resolution (no downscale keeps UI text crisp), 15 fps, full 256-colour palette.
             "fps=15,mpdecimate=hi=1:lo=1:frac=1,split[a][b];"
@@ -556,15 +641,25 @@ class Screencast:
         subprocess.run([*command, "-vf", filters, "-fps_mode", "vfr", str(target)], check=True)
 
 
-def record(browser: Browser, url: str, slug: str) -> Tutorial:
+def record(playwright: Playwright, url: str, slug: str, *, headed: bool, instagram: bool) -> Tutorial:
     run, is_mobile = TUTORIALS[slug]
-    viewport = MOBILE if is_mobile else DESKTOP
+    profile = PROFILES[instagram, is_mobile]
+    out_dir = INSTAGRAM_DIR if instagram else OUT_DIR
+    img_dir = INSTAGRAM_DIR / "stills" if instagram else IMG_DIR
+    img_dir.mkdir(parents=True, exist_ok=True)
+    for stale in img_dir.glob(f"{slug}-*.*"):
+        stale.unlink()
+    # One browser per tutorial: the scale flag is browser-wide, and without it the screencast
+    # hands back CSS-pixel frames however high the context's device_scale_factor is.
+    browser = playwright.chromium.launch(
+        headless=not headed,
+        args=["--use-gl=angle", f"--force-device-scale-factor={profile.scale}"],
+    )
     context = browser.new_context(
-        viewport=viewport,
-        # The phone-width tutorial records at 2x so its frames stay sharp when shown larger.
-        device_scale_factor=2 if is_mobile else 1,
-        is_mobile=is_mobile,
-        has_touch=is_mobile,
+        viewport=profile.viewport,
+        device_scale_factor=profile.scale,
+        is_mobile=profile.mobile,
+        has_touch=profile.mobile,
         color_scheme="dark",
         service_workers="block",
     )
@@ -574,8 +669,12 @@ def record(browser: Browser, url: str, slug: str) -> Tutorial:
     if slug != "getting-started":
         set_home_quietly(page)
     with tempfile.TemporaryDirectory() as frame_dir:
-        cast = Screencast(page, Path(frame_dir))
-        tut = Tutorial(page=page, slug=slug, on_start=cast.start)
+        cast = Screencast(page, Path(frame_dir), profile)
+        tut = Tutorial(page=page, slug=slug, img_dir=img_dir, on_start=cast.start, cast=cast)
+        if instagram:
+            tut.carousel_viewport = CAROUSEL_VIEWPORTS[is_mobile]
+            tut.carousel_dir = INSTAGRAM_DIR / "carousel-raw"
+            tut.carousel_dir.mkdir(parents=True, exist_ok=True)
         try:
             run(tut)
         except Exception:
@@ -585,8 +684,28 @@ def record(browser: Browser, url: str, slug: str) -> Tutorial:
             raise
         cast.stop()
         context.close()
-        cast.to_gif(OUT_DIR / f"{slug}.gif")
+        browser.close()
+        if instagram:
+            cast.to_mp4(out_dir / f"{slug}.mp4")
+            to_carousel(tut)
+        else:
+            cast.to_gif(out_dir / f"{slug}.gif")
     return tut
+
+
+def to_carousel(tut: Tutorial) -> None:
+    """Each step's 4:5 still as a 1080x1350 JPEG, ready for a feed carousel post."""
+    carousel = INSTAGRAM_DIR / "carousel"
+    carousel.mkdir(parents=True, exist_ok=True)
+    for stale in carousel.glob(f"{tut.slug}-*.*"):
+        stale.unlink()
+    assert tut.carousel_dir is not None
+    for name, _caption in tut.steps:
+        source = tut.carousel_dir / name
+        target = carousel / Path(name).with_suffix(".jpg").name
+        command = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(source), "-vf", "scale=1080:1350:flags=lanczos"]
+        subprocess.run([*command, "-q:v", "2", str(target)], check=True)
+        source.unlink()
 
 
 def set_home_quietly(page: Page) -> None:
@@ -610,22 +729,27 @@ def main() -> None:
     parser.add_argument("slugs", nargs="*", help=f"tutorials to record (default: all of {', '.join(TUTORIALS)})")
     parser.add_argument("--url", default=DEFAULT_URL)
     parser.add_argument("--headed", action="store_true")
+    parser.add_argument(
+        "--instagram",
+        action="store_true",
+        help=f"record 1080x1920 MP4 Reels + 4:5 carousel stills into {INSTAGRAM_DIR.name}/ "
+        f"(default tutorials: {', '.join(INSTAGRAM_DEFAULT)})",
+    )
     args = parser.parse_args()
     if shutil.which("ffmpeg") is None:
         raise SystemExit("ffmpeg is required")
-    IMG_DIR.mkdir(exist_ok=True)
-    slugs = args.slugs or list(TUTORIALS)
+    slugs = args.slugs or (INSTAGRAM_DEFAULT if args.instagram else list(TUTORIALS))
     unknown = sorted(set(slugs) - set(TUTORIALS))
     if unknown:
         parser.error(f"unknown tutorial(s): {', '.join(unknown)}")
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=not args.headed, args=["--use-gl=angle"])
         for slug in slugs:
-            for stale in IMG_DIR.glob(f"{slug}-*.*"):
-                stale.unlink()
-            tut = record(browser, args.url, slug)
-            print(f"{slug}: {len(tut.steps)} screenshots, {OUT_DIR / (slug + '.gif')}")
-        browser.close()
+            tut = record(playwright, args.url, slug, headed=args.headed, instagram=args.instagram)
+            output = INSTAGRAM_DIR / f"{slug}.mp4" if args.instagram else OUT_DIR / f"{slug}.gif"
+            print(f"{slug}: {len(tut.steps)} screenshots, {output}")
+    raw = INSTAGRAM_DIR / "carousel-raw"
+    if raw.is_dir() and not any(raw.iterdir()):
+        raw.rmdir()
 
 
 if __name__ == "__main__":

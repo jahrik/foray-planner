@@ -288,3 +288,31 @@ just tutorials plan-a-trip     # just one
 ```
 
 It needs `ffmpeg`. Captions are part of the script, so edit them there.
+
+### Instagram versions
+
+`--instagram` re-records walkthroughs as ready-to-post Instagram media in
+`docs/tutorials/instagram/` (gitignored, since it's regenerated on demand and meant for
+posting, not the repo):
+
+```bash
+just tutorials --instagram              # best-spot, track-down, mobile
+just tutorials --instagram plan-a-trip  # any other walkthrough
+```
+
+| Output | Use it for |
+|---|---|
+| `<name>.mp4` | **Reels**: 1080x1920 (9:16), H.264, 30 fps, silent. Add music or a voiceover in the Instagram app. |
+| `carousel/<name>-NN-*.jpg` | **Feed carousel**: one 1080x1350 (4:5) still per step, in order. |
+| `stills/<name>-NN-*.png` | **Stories**: the same steps at 1080x1920. |
+
+Desktop walkthroughs are recorded in the desktop layout on a tall 810x1440 window; `mobile`
+uses the real phone layout. Both are rendered at exactly 1080x1920 device pixels, not upscaled.
+
+Before posting publicly:
+
+- **Map attribution.** The basemap is OpenStreetMap data via Protomaps. The in-map credit is
+  tiny at phone size, so put "Map data © OpenStreetMap contributors" in the post caption.
+- **iNaturalist photos and records.** Photos show their photographer's credit and are often
+  licensed CC BY-NC (non-commercial). Fine for a non-commercial post with the credit visible;
+  if the account promotes anything commercial, use a walkthrough without the Photos step.
