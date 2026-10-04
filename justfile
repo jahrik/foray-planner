@@ -66,7 +66,8 @@ check-api-schema:
     git diff --exit-code frontend/src/api/schema.ts
 
 # Re-record the how-to GIFs + screenshots in docs/tutorials/ against the live site (needs
-# ffmpeg). `just tutorials plan-a-trip` re-records one; `--url http://localhost:8000/` targets dev.
+# ffmpeg). `just tutorials plan-a-trip` re-records one; `--url http://localhost:8000/` targets dev;
+# `--instagram` writes 9:16 Reels + 4:5 carousel stills to docs/tutorials/instagram/ instead.
 [doc('Record the user tutorial GIFs and screenshots')]
 [group('dev')]
 tutorials *args:
