@@ -9,6 +9,7 @@ import {
   Locator,
   type LocatorDeps,
   QUIET_MOVE_KM,
+  TRUSTED_ACCURACY_M,
   WATCH_MAX_MS,
 } from "./geolocate";
 
@@ -57,6 +58,26 @@ describe("fixAction", () => {
   it("only offers a far fix once the user is mid-task", () => {
     expect(fixAction(SEATTLE, far, true)).toBe("offer");
   });
+  describe("against a hand-set home", () => {
+    const COOS_BAY = { lat: 43.3868, lng: -124.2032 };
+    const eugeneGuess: Fix = { lat: 43.9419, lng: -122.8472, accuracyM: 25_000 }; // IP-based, ~125 km off
+    it("only offers a coarse guess that doesn't cover it, even before interaction", () => {
+      expect(eugeneGuess.accuracyM).toBeGreaterThan(TRUSTED_ACCURACY_M);
+      expect(fixAction(COOS_BAY, eugeneGuess, false, true)).toBe("offer");
+    });
+    it("ignores a coarse guess whose uncertainty already covers it", () => {
+      expect(
+        fixAction(COOS_BAY, { ...COOS_BAY, lat: COOS_BAY.lat + 0.05, accuracyM: 25_000 }, false, true),
+      ).toBe("ignore");
+    });
+    it("still lets a trusted (GPS / Wi-Fi) fix replace it", () => {
+      expect(fixAction(COOS_BAY, { ...TACOMA, accuracyM: 30 }, false, true)).toBe("apply");
+      expect(fixAction(COOS_BAY, { ...COOS_BAY, accuracyM: 10 }, false, true)).toBe("quiet");
+    });
+    it("treats the same coarse guess normally when home wasn't set by hand", () => {
+      expect(fixAction(COOS_BAY, eugeneGuess, false, false)).toBe("apply");
+    });
+  });
   it("applies when there's no home yet", () => {
     expect(fixAction(null, far, false)).toBe("apply");
   });
@@ -104,7 +125,7 @@ function deniedError(): GeolocationPositionError {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function setup(home: Home = { name: "Seattle", ...SEATTLE, radius_km: 150 }) {
+function setup(home: Home = { name: "Seattle", ...SEATTLE, radius_km: 150 }, manual = false) {
   const geolocation = new FakeGeolocation();
   let currentHome: Home | null = home;
   const timers: (() => void)[] = [];
@@ -114,6 +135,7 @@ function setup(home: Home = { name: "Seattle", ...SEATTLE, radius_km: 150 }) {
   const deps: LocatorDeps = {
     geolocation: geolocation as unknown as Geolocation,
     currentHome: () => currentHome,
+    homeIsManual: () => manual,
     save: vi.fn(async (fix: Fix) => ({
       name: `${fix.lat},${fix.lng}`,
       lat: fix.lat,
@@ -177,6 +199,28 @@ describe("Locator", () => {
     expect(locator.acceptPending()).toBe(true);
     await flush();
     expect(show).toHaveBeenCalledWith(expect.objectContaining({ lat: TACOMA.lat }), expect.anything(), true);
+    expect(locator.acceptPending()).toBe(false);
+  });
+
+  it("doesn't let an IP-grade guess on load overwrite a hand-set home, but keeps waiting for GPS", async () => {
+    const { geolocation, deps, locator, show } = setup(
+      { name: "Coos Bay", lat: 43.3868, lng: -124.2032, radius_km: 150 },
+      true,
+    );
+    const session = locator.start();
+    geolocation.coarse?.success(position({ lat: 43.9419, lng: -122.8472, accuracyM: 25_000 }));
+    expect(await session.firstApplied).toBe(false);
+    expect(deps.save).not.toHaveBeenCalled();
+    expect(deps.offer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ accuracyM: 25_000 }),
+      expect.anything(),
+    );
+    expect(locator.active).toBe(true);
+    // A real GPS fix at the hand-set spot is trusted: saved quietly, and the stale offer withdrawn.
+    geolocation.watch?.success(position({ lat: 43.3869, lng: -124.2031, accuracyM: 8 }));
+    await flush();
+    expect(show).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accuracyM: 8 }), false);
+    expect(deps.offer).toHaveBeenLastCalledWith(null, null);
     expect(locator.acceptPending()).toBe(false);
   });
 

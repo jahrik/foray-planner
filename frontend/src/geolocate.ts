@@ -36,6 +36,9 @@ export const COARSE_TIMEOUT_MS = 8_000;
 // re-running the open view: destinations are ~26 km H3 cells and distances display rounded to
 // whole km/mi, so a smaller move can't visibly change the result.
 export const QUIET_MOVE_KM = 1;
+// A fix looser than this (an IP / cell-tower guess - a desktop without GPS or a Wi-Fi location
+// service can be 100 km+ off) never replaces a home the user set by hand; it is only offered.
+export const TRUSTED_ACCURACY_M = 1_000;
 // A replacement reading must shrink the uncertainty by at least this factor to count as better.
 const ACCURACY_IMPROVEMENT = 0.75;
 
@@ -60,15 +63,25 @@ export function isBetterFix(best: Fix | null, next: Fix): boolean {
 }
 
 /** What to do with an accepted fix:
+ * - `ignore`: a coarse fix whose uncertainty already covers a hand-set home - nothing to say;
  * - `quiet`: within QUIET_MOVE_KM of the current home - save it and update the location line,
  *   but leave the map view and the open panel alone;
  * - `apply`: the user hasn't touched anything yet (or asked for this fix) - save it, re-centre,
  *   and re-run the open view;
  * - `offer`: the user is mid-task and the fix is a real move - don't save it yet, light up the
  *   locate button so one tap applies it. */
-export type FixAction = "quiet" | "apply" | "offer";
+export type FixAction = "ignore" | "quiet" | "apply" | "offer";
 
-export function fixAction(home: { lat: number; lng: number } | null, fix: Fix, engaged: boolean): FixAction {
+export function fixAction(
+  home: { lat: number; lng: number } | null,
+  fix: Fix,
+  engaged: boolean,
+  homeIsManual = false,
+): FixAction {
+  if (homeIsManual && fix.accuracyM > TRUSTED_ACCURACY_M) {
+    // A hand-set home is more precise than any coarse guess - never overwrite it, at most offer.
+    return home && haversineKm(home, fix) * 1000 <= fix.accuracyM ? "ignore" : "offer";
+  }
   if (home && haversineKm(home, fix) <= QUIET_MOVE_KM) return "quiet";
   return engaged ? "offer" : "apply";
 }
@@ -77,6 +90,8 @@ export interface LocatorDeps {
   geolocation: Geolocation;
   /** The current home, read fresh at decision time. */
   currentHome: () => Home | null;
+  /** Whether the current home was set by hand (search / map click) rather than a device fix. */
+  homeIsManual: () => boolean;
   /** Persist a fix as this device's home (server reverse-geocodes the name). */
   save: (fix: Fix) => Promise<Home>;
   /** Show a saved home: `recenter` re-centres the map and re-runs the open view. */
@@ -189,15 +204,20 @@ export class Locator {
     // An explicit request (the locate button) always applies its first fix - the user asked to
     // be centred on it, however close it is to home. After that, a refinement mustn't re-centre
     // a map the user has since panned.
-    const action: FixAction = this.explicit ? "apply" : fixAction(this.deps.currentHome(), fix, this.engaged);
+    const action: FixAction = this.explicit
+      ? "apply"
+      : fixAction(this.deps.currentHome(), fix, this.engaged, this.deps.homeIsManual());
     this.explicit = false;
-    if (action === "offer") {
+    if (action === "ignore") {
+      this.settleFirst(false);
+    } else if (action === "offer") {
       this.pending = fix;
       this.deps.offer(fix, this.deps.currentHome());
       this.settleFirst(false);
     } else {
-      // A newer fix supersedes an older offer - unless it is itself just a refinement of home.
-      if (action === "apply") {
+      // A newer, better fix supersedes any older offer (e.g. a GPS fix confirming a hand-set
+      // home withdraws the IP guess offered before it).
+      if (this.pending) {
         this.pending = null;
         this.deps.offer(null, null);
       }

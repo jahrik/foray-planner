@@ -3,6 +3,7 @@ import type { LocationResponse } from "./api/types";
 import { cancelAutoLocate } from "./locate-ui";
 import { loadFire, loadLand } from "./map/layers";
 import { updateHome } from "./map/map";
+import { setManualHome } from "./prefs";
 import { errorDetail, qs, setStatus } from "./state";
 import { refreshCurrentView } from "./views/view-run";
 
@@ -134,6 +135,7 @@ export async function setLocation(query: string): Promise<boolean> {
     setStatus(errorDetail(error) || "location not found");
     return false;
   }
+  setManualHome(response.home); // a coarse device fix mustn't overwrite this later
   updateHome(response.home);
   // refreshCurrentView() -> a view runner -> clearMarkers(), which also clears the land layer.
   // Run it before loadLand() so the land fetch isn't wiped out a tick later (matters on the
@@ -158,6 +160,7 @@ export async function setLocationLatLng(lat: number, lng: number): Promise<void>
     setStatus(errorDetail(error) || "location not found");
     return;
   }
+  setManualHome(response.home); // a coarse device fix mustn't overwrite this later
   updateHome(response.home);
   refreshCurrentView(); // before loadLand() - see setLocation
   loadLand();
