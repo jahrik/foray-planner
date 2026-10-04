@@ -27,7 +27,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # playwright comes from the inline script metadata above, not the project venv `just lint` checks.
-from playwright.sync_api import Browser, Locator, Page, sync_playwright  # ty: ignore[unresolved-import]
+from playwright.sync_api import (  # ty: ignore[unresolved-import]
+    Browser,
+    Locator,
+    Page,
+    sync_playwright,
+)
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # ty: ignore[unresolved-import]
 
 OUT_DIR = Path(__file__).resolve().parent
 IMG_DIR = OUT_DIR / "img"
@@ -44,12 +50,14 @@ OVERLAY_JS = """
   const style = document.createElement('style');
   style.textContent = `
     #tut-caption { position: fixed; left: 16px; right: 16px; bottom: 34px; margin: 0 auto;
-      width: fit-content; z-index: 2147483647; max-width: 760px; padding: 10px 18px; border-radius: 10px;
-      background: rgba(20, 16, 12, .92); color: #f6efe6; font: 600 17px/1.35 system-ui, sans-serif;
+      width: fit-content; z-index: 2147483647; max-width: 1200px; padding: 14px 28px; border-radius: 14px;
+      background: rgba(20, 16, 12, .92); color: #f6efe6; font: 700 42px/1.2 system-ui, sans-serif;
       box-shadow: 0 6px 24px rgba(0,0,0,.45); text-align: center; pointer-events: none;
       transition: opacity .2s; }
     #tut-caption[data-empty] { opacity: 0; }
-    @media (max-width: 500px) { #tut-caption { font-size: 15px; bottom: 74px; padding: 8px 12px; } }
+    /* Sized for the GIF being viewed shrunk to phone width: a 1280px desktop frame shows at
+       ~360px on a phone, so desktop captions need to be ~3.5x what reads at full size. */
+    @media (max-width: 500px) { #tut-caption { font-size: 21px; bottom: 74px; padding: 10px 14px; } }
     #tut-caption b { color: #f0a46a; }
     #tut-cursor { position: fixed; z-index: 2147483647; width: 22px; height: 22px; margin: -11px 0 0 -11px;
       border-radius: 50%; background: rgba(255, 196, 120, .55); border: 2px solid #fff;
@@ -190,6 +198,204 @@ def getting_started(tut: Tutorial) -> None:
     tut.caption("That's the basics. Next: open a destination's <b>Details</b>.", hold=2.5)
 
 
+# Screen position of one single (unclustered) precise-observation pin inside the map viewport,
+# or None. They're bare Leaflet SVG circles with no class of their own, so match on the
+# --spore fill markerPalette() gives them and their small radius.
+FIND_PIN_JS = """
+() => {
+  const spore = getComputedStyle(document.documentElement).getPropertyValue('--spore').trim().toLowerCase();
+  const map = document.getElementById('map').getBoundingClientRect();
+  const panel = document.getElementById('dock')?.getBoundingClientRect();
+  for (const path of document.querySelectorAll('#map path.leaflet-interactive')) {
+    if ((path.getAttribute('fill') || '').toLowerCase() !== spore) continue;
+    const box = path.getBoundingClientRect();
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    if (box.width > 16 || x < map.left + 40 || x > map.right - 80) continue;
+    if (y < map.top + 180 || y > map.bottom - 140) continue;
+    if (panel && x < panel.right + 20) continue;
+    return { x, y };
+  }
+  return null;
+}
+"""
+
+
+def visible_cluster(page: Page) -> Locator | None:
+    """The first precise-observation cluster badge clear of the results panel, or None."""
+    panel = page.locator("#dock").bounding_box()
+    badges = page.locator(".precise-cluster-icon")
+    for index in range(badges.count()):
+        box = badges.nth(index).bounding_box()
+        if box and (panel is None or box["x"] > panel["x"] + panel["width"] + 20) and 180 < box["y"] < 560:
+            return badges.nth(index)
+    return None
+
+
+def show_finds(tut: Tutorial, *, what: str) -> None:
+    """From a selected destination: pins -> hover a cluster's list -> zoom -> one find's popup.
+
+    `what` names the finds in the captions ("finds", "chanterelle finds").
+    """
+    page = tut.page
+    page.locator(".precise-cluster-icon").first.wait_for(timeout=30_000)
+    time.sleep(2.0)
+    tut.caption(
+        f"<b>Pink pins</b> are research-grade {what} with a verified location.",
+        shot="pins",
+        hold=3,
+    )
+
+    cluster = visible_cluster(page)
+    if cluster is None:
+        raise RuntimeError("no precise-observation cluster on screen to demonstrate")
+    tut.point(cluster)
+    page.locator(".cluster-popup").wait_for(timeout=10_000)
+    time.sleep(0.8)
+    tut.caption(
+        "A numbered pin groups nearby finds. <b>Hover</b> it to list them, newest first.",
+        shot="cluster-list",
+        hold=3.2,
+    )
+
+    tut.caption("<b>Click</b> a numbered pin to zoom in until single finds separate out.", hold=1.4)
+    # Clicking a badge zooms into it; repeat until single pins separate out.
+    pin = page.evaluate(FIND_PIN_JS)
+    for _ in range(4):
+        if pin:
+            break
+        cluster = visible_cluster(page)
+        if cluster is None:
+            break
+        tut.click(cluster, pause=2.2)
+        pin = page.evaluate(FIND_PIN_JS)
+    if not pin:
+        raise RuntimeError("no single precise-observation pin on screen to demonstrate")
+    page.mouse.move(pin["x"], pin["y"], steps=18)
+    time.sleep(0.3)
+    page.mouse.click(pin["x"], pin["y"])
+    page.locator(".leaflet-popup-content").first.wait_for(timeout=10_000)
+    time.sleep(0.8)
+    tut.caption(
+        "Click a single find for its date, the full record on <b>iNaturalist ↗</b>, and "
+        "<b>Directions</b> straight to the spot.",
+        shot="find-popup",
+        hold=3.6,
+    )
+    page.keyboard.press("Escape")
+    time.sleep(0.5)
+
+
+def best_spot(tut: Tutorial) -> None:
+    page = tut.page
+    tut.caption("No particular target? Find the <b>best spot right now</b> for anything fruiting.", hold=2.6)
+    card = page.locator("#panel .rank").first
+    tut.point(card.locator(".why"))
+    tut.caption(
+        "With <b>All genera</b> and <b>Best overall</b>, #1 is where the most is fruiting this month.",
+        shot="ranked",
+        hold=3.2,
+    )
+    tut.point(card.locator(".chips"))
+    tut.caption(
+        "Its chips show what's there: genus, share of the season in your months, record count.",
+        shot="chips",
+        hold=3.2,
+    )
+    tut.click(card.locator("h3"), pause=1.0)
+    show_finds(tut, what="finds")
+
+    chip = card.locator(".chips .chip").first
+    tut.point(chip)
+    tut.caption("Each genus chip opens its iNaturalist page: photos, range and lookalikes.", hold=2.8)
+
+    sort = page.locator("#pills .pill-wrap").nth(0).locator(".pill")
+    tut.click(sort)
+    tut.click(page.locator("#pills .pill-popover button").filter(has_text="Active now").first)
+    wait_for_results(page)
+    tut.caption(
+        "Sort by <b>Active now</b> for what's been seen in the last few weeks, with counts and dates.",
+        shot="active-now",
+        hold=3,
+    )
+    live = page.locator("#panel .rank").first.locator("a.chip.live").first
+    if live.count():
+        tut.point(live)
+    tut.caption("Each of those chips opens that exact observation on iNaturalist.", shot="live-chip", hold=3)
+
+
+def track_down(tut: Tutorial) -> None:
+    page = tut.page
+    tut.caption(
+        "Got a target? Track it down from <b>where</b> to <b>which trail</b> to <b>where to sleep</b>.", hold=2.8
+    )
+    genera = page.locator("#pills .pill-wrap").nth(3).locator(".pill")
+    tut.click(genera)
+    tut.type_slowly(page.locator("#genus"), "Cantharellus")
+    suggestion = page.locator("#genus-suggestions li").first
+    suggestion.wait_for(timeout=15_000)
+    tut.click(suggestion, pause=1.0)
+    page.keyboard.press("Escape")
+    wait_for_results(page)
+    card = page.locator("#panel .rank").first
+    tut.point(card.locator(".why"))
+    tut.caption(
+        "<b>1. Pick your target</b> under Genera. The list now ranks spots for chanterelles only.",
+        shot="target",
+        hold=3.2,
+    )
+
+    tut.click(card.locator('[data-act="details"]'), pause=1.5)
+    tut.caption(
+        "<b>2. Check the season.</b> Calendar shows which months chanterelles turn up here.",
+        shot="season",
+        hold=3.2,
+    )
+    tut.click(page.locator("#panel .details-back"), pause=1.2)
+
+    tut.click(page.locator("#panel .rank").first.locator("h3"), pause=1.0)
+    tut.caption("<b>3. See the finds.</b> Select the spot; the pins are chanterelles only.", hold=2)
+    show_finds(tut, what="chanterelle finds")
+
+    tut.click(page.locator("#panel .rank").first.locator('[data-act="details"]'), pause=1.5)
+    tut.click(page.locator('#panel [data-tab="trails"]'), pause=1.0)
+    chip = page.locator('#panel [data-tab-content="trails"] .chip').first
+    chip.wait_for(timeout=30_000)
+    time.sleep(1.0)
+    tut.point(chip)
+    tut.caption(
+        "<b>4. Pick a trail.</b> Trails with the most chanterelle finds close by are listed first.",
+        shot="trails",
+        hold=3.2,
+    )
+    tut.click(chip, pause=2.5)
+    tut.caption("Select it to draw the trail on the map, right through the finds.", shot="trail-drawn", hold=3)
+
+    tut.click(page.locator('#panel [data-tab="camps"]'), pause=1.0)
+    camp = page.locator('#panel [data-tab-content="camps"] .chip').first
+    camp.wait_for(timeout=30_000)
+    time.sleep(1.0)
+    tut.click(camp, pause=1.5)
+    tut.caption(
+        "<b>5. Find a camp.</b> Free sites are listed first, then the nearest.",
+        shot="camp",
+        hold=3,
+    )
+    pin = page.locator("#panel .pin-action:visible").first
+    pin.wait_for(timeout=10_000)
+    tut.click(pin, pause=1.0)
+    tut.click(page.locator("#panel .details-back"), pause=1.2)
+    tut.click(page.locator("#panel .rank").first.locator('[data-act="plan"]'), pause=0.8)
+    tut.click(page.locator("#route-bar .route-bar-go"), pause=1.0)
+    page.locator("#panel .stop-card").first.wait_for(timeout=60_000)
+    time.sleep(2.5)
+    tut.point(page.locator("#export-gmaps"))
+    tut.caption(
+        "<b>6. Go.</b> Plan the trip to that camp and open it in <b>Google Maps</b>, or export GPX.",
+        shot="go",
+        hold=3.4,
+    )
+
+
 def region_details(tut: Tutorial) -> None:
     page = tut.page
     layers = page.locator("#pills .pill-wrap").nth(4).locator(".pill")
@@ -297,6 +503,8 @@ def mobile(tut: Tutorial) -> None:
 
 TUTORIALS: dict[str, tuple[Callable[[Tutorial], None], bool]] = {
     "getting-started": (getting_started, False),
+    "best-spot": (best_spot, False),
+    "track-down": (track_down, False),
     "region-details": (region_details, False),
     "plan-a-trip": (plan_a_trip, False),
     "mobile": (mobile, True),
@@ -353,7 +561,8 @@ def record(browser: Browser, url: str, slug: str) -> Tutorial:
     viewport = MOBILE if is_mobile else DESKTOP
     context = browser.new_context(
         viewport=viewport,
-        device_scale_factor=1,
+        # The phone-width tutorial records at 2x so its frames stay sharp when shown larger.
+        device_scale_factor=2 if is_mobile else 1,
         is_mobile=is_mobile,
         has_touch=is_mobile,
         color_scheme="dark",
@@ -367,7 +576,13 @@ def record(browser: Browser, url: str, slug: str) -> Tutorial:
     with tempfile.TemporaryDirectory() as frame_dir:
         cast = Screencast(page, Path(frame_dir))
         tut = Tutorial(page=page, slug=slug, on_start=cast.start)
-        run(tut)
+        try:
+            run(tut)
+        except Exception:
+            failed = Path(tempfile.gettempdir()) / f"tutorial-{slug}-failed.png"
+            page.screenshot(path=failed)
+            print(f"{slug}: failed - page at the time of failure saved to {failed}")
+            raise
         cast.stop()
         context.close()
         cast.to_gif(OUT_DIR / f"{slug}.gif")
@@ -376,8 +591,17 @@ def record(browser: Browser, url: str, slug: str) -> Tutorial:
 
 def set_home_quietly(page: Page) -> None:
     """Point a non-intro tutorial at the same home the intro sets, before recording starts."""
-    page.locator("#loc").fill("Bend, Oregon")
-    page.locator("#loc-suggestions li").first.click(timeout=15_000)
+    box = page.locator("#loc")
+    for _ in range(3):
+        box.fill("")
+        box.press_sequentially("Bend, Oregon", delay=30)
+        try:
+            page.locator("#loc-suggestions li").first.click(timeout=15_000)
+            break
+        except PlaywrightTimeoutError:
+            continue  # the geocoder can be slow / rate-limited; retype to re-query
+    else:
+        box.press("Enter")  # free-text submit: the server geocodes it instead
     wait_for_results(page)
 
 
