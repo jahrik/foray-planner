@@ -474,6 +474,48 @@ def _prune_cross_source(
     return result.rowcount
 
 
+def prune_trail_duplicates(
+    con: psycopg.Connection, *, min_lat: float, min_lng: float, max_lat: float, max_lng: float
+) -> int:
+    """The one dedup pass for ``trails`` in a bbox: OSM path rows that repeat an OSM route's own
+    member ways (#394), and OSM paths / forest roads that repeat a USFS Trail_NFS / MVUM record
+    (#404, #440). The table is the single place duplicates are resolved - the map's vector tiles
+    and every ``/api/trails`` read draw straight from it (there used to be a separate 15m
+    read-time filter in ``scoring.queries`` too, with its own tolerance, so a list and the map
+    could disagree). Called after every write that can introduce a duplicate: each OSM trails
+    ingest tile, and each USFS bulk load (:func:`prune_trail_duplicates_tiled`)."""
+    bounds = {"min_lat": min_lat, "min_lng": min_lng, "max_lat": max_lat, "max_lng": max_lng}
+    return (
+        prune_duplicate_route_paths(con, **bounds)
+        + prune_duplicate_cross_source_paths(con, **bounds)
+        + prune_duplicate_cross_source_roads(con, **bounds)
+    )
+
+
+_PRUNE_TILE_DEG = 2.0
+
+
+def prune_trail_duplicates_tiled(con: psycopg.Connection, source: str) -> int:
+    """Run :func:`prune_trail_duplicates` over every ``_PRUNE_TILE_DEG`` tile holding a
+    ``source`` row - what a USFS bulk loader calls after loading, since a newly loaded USFS row
+    can duplicate an OSM row cached long before (the OSM ingest's own per-tile pass only runs
+    when that tile is re-pulled, once per query version). Tile by tile, each its own committed
+    statement, never one table-wide sweep - see :func:`prune_duplicate_route_paths` for the
+    prod outage a global geometry sweep caused."""
+    cells = con.execute(
+        "SELECT DISTINCT floor(center_lat / %s), floor(center_lng / %s) FROM trails WHERE source = %s",
+        [_PRUNE_TILE_DEG, _PRUNE_TILE_DEG, source],
+    ).fetchall()
+    total = 0
+    for lat_cell, lng_cell in cells:
+        south, west = lat_cell * _PRUNE_TILE_DEG, lng_cell * _PRUNE_TILE_DEG
+        total += prune_trail_duplicates(
+            con, min_lat=south, min_lng=west, max_lat=south + _PRUNE_TILE_DEG, max_lng=west + _PRUNE_TILE_DEG
+        )
+    logger.info("trails: pruned %d duplicate rows across %d tiles holding %s rows", total, len(cells), source)
+    return total
+
+
 def prune_trails_missing_from(con: psycopg.Connection, source: str, ids: Sequence[str]) -> int:
     """Delete ``source`` trails whose id isn't in ``ids``. Returns rows deleted.
 

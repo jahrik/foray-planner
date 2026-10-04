@@ -54,9 +54,7 @@ from foray.cache import (
     connection,
     forget_ingest,
     is_ingested,
-    prune_duplicate_cross_source_paths,
-    prune_duplicate_cross_source_roads,
-    prune_duplicate_route_paths,
+    prune_trail_duplicates,
     record_ingest,
     upsert_trails,
 )
@@ -642,15 +640,7 @@ def ingest_trails(
     # this still converges promptly even though the fetch/upsert itself may be skipped.
     with connection(con) as db:
         bbox = bbox_around(cfg.home.lat, cfg.home.lng, cfg.home.radius_km)
-        prune_duplicate_route_paths(
-            db, min_lat=bbox.min_lat, min_lng=bbox.min_lng, max_lat=bbox.max_lat, max_lng=bbox.max_lng
-        )
-        # issue #404: same self-heal, for an OSM `path` / forest road that duplicates a USFS
-        # bulk-loaded one (Trail_NFS / MVUM).
-        prune_duplicate_cross_source_paths(
-            db, min_lat=bbox.min_lat, min_lng=bbox.min_lng, max_lat=bbox.max_lat, max_lng=bbox.max_lng
-        )
-        prune_duplicate_cross_source_roads(
+        prune_trail_duplicates(
             db, min_lat=bbox.min_lat, min_lng=bbox.min_lng, max_lat=bbox.max_lat, max_lng=bbox.max_lng
         )
     return run_area_ingest(
@@ -955,14 +945,8 @@ def _ingest_tile(
     upsert_trails(database, rows)
     upserted = len(rows)
     del rows
-    bounds = {"min_lat": south, "min_lng": west, "max_lat": north, "max_lng": east}
-    # Self-heals any route-member `path` rows this tile cached before the issue #394 fix - see
-    # `prune_duplicate_route_paths`'s docstring for why this is scoped per tile, not table-wide.
-    prune_duplicate_route_paths(database, **bounds)
-    # issue #404: same self-heal, for an OSM `path` / forest road that duplicates a USFS
-    # bulk-loaded one (Trail_NFS / MVUM).
-    prune_duplicate_cross_source_paths(database, **bounds)
-    prune_duplicate_cross_source_roads(database, **bounds)
+    # Scoped to this tile, not table-wide - see `prune_duplicate_route_paths`'s docstring.
+    prune_trail_duplicates(database, min_lat=south, min_lng=west, max_lat=north, max_lng=east)
     record_ingest(database, key, upserted, lat=(south + north) / 2, lng=(west + east) / 2)
     return upserted, True
 

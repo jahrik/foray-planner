@@ -366,6 +366,9 @@ def load_usfs_trails(con: psycopg.Connection, cfg: Settings, snapshot_date: date
             upsert_trails(con, chunk)
             total += len(chunk)
     pruned = cache.prune_trails_missing_from(con, "usfs", ids)
+    # A newly loaded USFS row can duplicate an OSM row cached long before - the OSM ingest's own
+    # per-tile dedup only re-runs when that tile is re-pulled.
+    cache.prune_trail_duplicates_tiled(con, "usfs")
     # Namespaced under "trails:" (not "usfs_trails:") so /healthz/data's freshness reporting
     # (which reads every `trails:`-prefixed ingest_log key) picks this load up, same as
     # camps.load_ridb's `camps:ridb:bulk:{date}` marker for the campgrounds layer.

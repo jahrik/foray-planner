@@ -20,9 +20,9 @@ respectively, kept distinct for exactly that reason (see ``cache.prune_trails_mi
 
 Rows land in ``trails`` with ``kind='road'`` (never ``'path'`` - this layer is roads only), so
 ``trails_near``/``nearest_trail`` pick them up unchanged alongside OSM's own ``kind='road'`` rows.
-Dedup between a USFS road and its OSM twin (two rows for the same physical road) happens at read
-time in ``scoring.queries`` - prefer ``source`` starting with ``usfs`` within a few meters - not
-here at ingest, matching Trail_NFS's own deferred-to-read-time approach.
+Dedup between a USFS road and its OSM twin (two rows for the same physical road) happens in the
+table, after each load and each OSM trails ingest tile (``cache.prune_trail_duplicates``) - the
+OSM row is deleted, MVUM is authoritative.
 """
 
 from __future__ import annotations
@@ -369,6 +369,9 @@ def load_usfs_mvum(con: psycopg.Connection, cfg: Settings, snapshot_date: date, 
             upsert_trails(con, chunk)
             total += len(chunk)
     pruned = cache.prune_trails_missing_from(con, "usfs_mvum", ids)
+    # A newly loaded USFS row can duplicate an OSM row cached long before - the OSM ingest's own
+    # per-tile dedup only re-runs when that tile is re-pulled.
+    cache.prune_trail_duplicates_tiled(con, "usfs_mvum")
     # Namespaced under "trails:" (not "usfs_mvum:") so /healthz/data's freshness reporting (which
     # reads every `trails:`-prefixed ingest_log key) picks this load up, same as
     # usfs_trails.load_usfs_trails's own `trails:usfs:bulk:{date}` marker.
