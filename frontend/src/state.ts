@@ -40,6 +40,9 @@ interface MapState {
 /** What the user is asking about: location, months, and (server-supplied) grid resolution. */
 interface ScopeState {
   home: Home | null;
+  // Reported uncertainty (metres) of the device fix `home` came from (geolocate.ts), or null when
+  // home was searched / clicked / the saved default - shown as "±N" on the location line.
+  homeAccuracyM: number | null;
   months: Set<number>;
   regionRadiusKm: number;
   // URL of the Protomaps PMTiles vector basemap, from /api/config. Empty -> the map has no
@@ -77,6 +80,7 @@ export const state: State = {
   view: "destinations",
   sort: "best",
   home: null,
+  homeAccuracyM: null,
   markers: [],
   campMarkers: [],
   trailheadMarkers: [],
@@ -112,6 +116,16 @@ const M_TO_FT = 3.28084;
 export function elevationLabel(metres: number): string {
   if (state.units === "mi") return `${Math.round(metres * M_TO_FT).toLocaleString()} ft`;
   return `${Math.round(metres).toLocaleString()} m`;
+}
+
+/** Device-fix uncertainty for the location line ("±12 m", "±1.4 km", "±40 ft", "±2.1 mi"), in
+ * the same unit system as distances. Input is metres (the Geolocation API's unit). */
+export function accuracyLabel(metres: number): string {
+  if (state.units === "mi") {
+    const feet = metres * M_TO_FT;
+    return feet < 1000 ? `±${Math.round(feet)} ft` : `±${((metres / 1000) * KM_TO_MI).toFixed(1)} mi`;
+  }
+  return metres < 1000 ? `±${Math.round(metres)} m` : `±${(metres / 1000).toFixed(1)} km`;
 }
 
 const MM_TO_IN = 0.0393701;

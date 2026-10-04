@@ -1,5 +1,6 @@
 import { deleteJson, openRefreshStream, postJson } from "./api/client";
 import type { LocationResponse } from "./api/types";
+import { cancelAutoLocate } from "./locate-ui";
 import { loadFire, loadLand } from "./map/layers";
 import { updateHome } from "./map/map";
 import { errorDetail, qs, setStatus } from "./state";
@@ -124,6 +125,7 @@ export function cancelRefresh(): void {
 }
 
 export async function setLocation(query: string): Promise<boolean> {
+  cancelAutoLocate(); // a manual choice wins over any GPS fix still converging
   setStatus("Finding location…");
   let response: LocationResponse;
   try {
@@ -147,6 +149,7 @@ export async function setLocation(query: string): Promise<boolean> {
 // clicked on, instead of showing raw lat/lng - falls back to the coordinate string there if the
 // reverse lookup fails.
 export async function setLocationLatLng(lat: number, lng: number): Promise<void> {
+  cancelAutoLocate();
   setStatus("Finding location…");
   let response: LocationResponse;
   try {

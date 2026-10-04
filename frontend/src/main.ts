@@ -7,11 +7,12 @@ import "./tokens.css";
 import "./style.css";
 
 import { getJson, postJson } from "./api/client";
-import type { Home, LocationResponse } from "./api/types";
+import type { LocationResponse } from "./api/types";
 import { initGenusSelection } from "./genera";
 import { initLayerToggles } from "./ui/layer-toggles";
 import { loadFire, loadLand } from "./map/layers";
 import { initLocationAutocomplete, initPlaceAutocomplete } from "./location";
+import { initAutoLocate } from "./locate-ui";
 import { initMap, map, setMapClickHandler, updateHome } from "./map/map";
 import { runPlan } from "./views/plan";
 import { setLocationLatLng, startRefresh } from "./refresh";
@@ -195,21 +196,15 @@ async function main(): Promise<void> {
   // into each pill's popover, so every module that wires those controls has run first.
   initPills();
 
-  // Kick geolocation off immediately, but don't let it block the initial paint. If a home
-  // (already-granted permission, no browser prompt) resolves within the head-start window, the
-  // side effects below run *before* the race settles, so the very first plot already reflects
-  // the real location - no visible re-plot. If it's slower, we fall through and paint with the
-  // saved/default home now; the .then() below still fires whenever the fix eventually lands.
+  // Kick geolocation off immediately, but don't let it block the initial paint. If a fix
+  // (already-granted permission, no browser prompt) is applied within the head-start window, the
+  // very first plot already reflects the real location - no visible re-plot. If it's slower, we
+  // paint with the saved/default home now; geolocate.ts decides what a later fix may do (see
+  // locate-ui.ts).
+  const geoSession = initAutoLocate();
   let geoApplied = false;
-  const geoPromise = geolocateHome().then((home) => {
-    if (home) {
-      geoApplied = true;
-      updateHome(home);
-      refreshCurrentView(); // before loadLand() - see refresh.ts setLocation
-      loadLand();
-      loadFire();
-    }
-    return home;
+  const geoPromise = (geoSession?.firstApplied ?? Promise.resolve(false)).then((applied) => {
+    geoApplied = applied;
   });
 
   // If a refresh is already running (e.g. page reload mid-fetch), reflect it. Only one that
@@ -234,45 +229,10 @@ function sleep(ms: number): Promise<void> {
 
 // How long the first paint waits on geolocation before giving up and plotting the stale/saved
 // home instead. Long enough that an already-granted permission (no browser prompt, typically a
-// few hundred ms) resolves in time and the very first plot is the accurate one; short enough
-// that a slow fix (first-time permission prompt, weak GPS) doesn't stall the initial paint.
+// few hundred ms for the coarse network fix) resolves in time and the very first plot is the
+// accurate one; short enough that a slow fix (first-time permission prompt, cold GPS) doesn't
+// stall the initial paint.
 const GEOLOCATION_HEAD_START_MS = 600;
-
-// Auto-detect location on load so users without a fixed home base (e.g. living in a van) get
-// a current fix each time they open the app, without needing to remember to set it manually.
-// maximumAge: 0 forces a fresh GPS fix rather than whatever cached position the OS/browser last
-// resolved - the earlier bug here was a stale cached fix silently masquerading as current. The
-// search box (initLocationAutocomplete) and map click stay available as manual overrides.
-// Denial/error surfaces a status message instead of failing silently, since a stale location is
-// otherwise easy to miss.
-//
-// Resolves to the updated Home once geolocation succeeds, or null if it's unsupported, denied,
-// or fails - never rejects. Applying the result (updateHome/loadLand/refreshCurrentView) is left
-// to the caller; main() races this against GEOLOCATION_HEAD_START_MS so a fast resolution can
-// feed the very first plot instead of forcing a second, visibly different-looking one right after it.
-function geolocateHome(): Promise<Home | null> {
-  if (!("geolocation" in navigator)) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude: lat, longitude: lng } = position.coords;
-        // Reverse geocoding happens server-side now (issue #145) - no direct browser->Nominatim
-        // call, no client-side 200-char guard to duplicate.
-        try {
-          const response = await postJson("/api/location", { body: { lat, lng } });
-          resolve(response.home);
-        } catch {
-          resolve(null); // keep whatever location is already loaded
-        }
-      },
-      (error) => {
-        setStatus(`couldn't detect location (${error.message}) - set it manually via search or map click`);
-        resolve(null);
-      },
-      { timeout: 8000, maximumAge: 0 },
-    );
-  });
-}
 
 // The Destinations sort control (issue #301) - a pill popover of Best overall / Active now /
 // Nearest. Client-side reorder of the fetched payload, so it repaints from cache with no

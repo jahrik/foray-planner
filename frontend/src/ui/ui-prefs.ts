@@ -2,9 +2,9 @@
 // Each reads its stored value through prefs.ts, applies it to the DOM / app state, and writes
 // the new value back on click. Split out of main.ts (issue #242 Part 2d).
 
-import { currentTheme, setTiles, updateHome } from "../map/map";
+import { currentTheme, renderHomeLine, setTiles } from "../map/map";
 import { getLargeText, setLargeText, setTheme, setUnits } from "../prefs";
-import { qs, state, type Units } from "../state";
+import { onScopeChange, qs, state, type Units } from "../state";
 import { rerenderCurrentView } from "../views/view-run";
 
 export function initTheme(): void {
@@ -52,14 +52,15 @@ export function initUnits(): void {
     toggle.textContent = units;
     toggle.title = units === "mi" ? "Switch to kilometers" : "Switch to miles";
     toggle.setAttribute("aria-pressed", String(units === "mi"));
-    if (state.home) updateHome(state.home);
+    renderHomeLine(); // repaint the location line's radius / ±accuracy, without re-centring the map
+    onScopeChange(); // the Radius pill label is unit-formatted too
   };
   apply(state.units);
   toggle.onclick = () => {
     const next: Units = state.units === "mi" ? "km" : "mi";
     setUnits(next);
     apply(next);
-    // updateHome() (in apply) only repaints the search-bar readout. The destination / alert /
+    // apply() only repaints the search-bar readout. The destination / alert /
     // plan cards already on screen were rendered in the old unit and stay stale until the next
     // scope change - repaint the open view from its cached payload so every distance / elevation
     // / rainfall flips now, without the toggle depending on a network round-trip (#301 F2).
