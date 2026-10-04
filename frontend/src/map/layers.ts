@@ -254,10 +254,15 @@ export async function loadPreciseObservations(): Promise<void> {
   renderLegend();
   if (!state.focused) return;
   const { lat, lng } = state.focused;
+  // Under the "active now" sort the list is the trailing-weeks /api/alerts window, so the pins
+  // use that same window instead of every year's matching months (issue #312). Plan stops are
+  // month-scored, so the plan view keeps the month filter whatever the list sort was.
+  const activeNow = state.view === "destinations" && state.sort === "active";
+  const timeWindow = activeNow ? { weeks: state.recentWeeks } : { months: monthsParam() };
   let observations: PreciseObservation[];
   try {
     observations = await getJson("/api/observations/precise", {
-      query: { months: monthsParam(), lat, lng, radius_km: regionRadiusKm() },
+      query: { ...timeWindow, lat, lng, radius_km: regionRadiusKm() },
     });
   } catch (error) {
     setStatus(errorDetail(error));

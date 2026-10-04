@@ -57,6 +57,9 @@ interface ScopeState {
   trailsTilesUrl: string;
   landTilesUrl: string;
   fireTilesUrl: string;
+  // The trailing "active now" window (/api/config's recent_weeks) - the precise-pin layer
+  // scopes to it under the "active" sort so it matches the /api/alerts list (issue #312).
+  recentWeeks: number;
 }
 
 /** How results are shown: which view, sort order, unit system, and the last plan payload. */
@@ -91,6 +94,7 @@ export const state: State = {
   trailsTilesUrl: "", // overwritten from /api/config; empty means no trails vector source
   landTilesUrl: "", // overwritten from /api/config; empty means no land vector source
   fireTilesUrl: "", // overwritten from /api/config; empty means no fire vector source
+  recentWeeks: 4, // overwritten from /api/config; matches the backend's ingest.recent_weeks default
   units: getUnits(),
 };
 

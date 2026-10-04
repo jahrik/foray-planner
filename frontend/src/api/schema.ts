@@ -271,7 +271,8 @@ export interface paths {
          * Observations Precise
          * @description Precise observations near an explicit lat/lng (a focused destination), falling back to
          *     home + its search radius when omitted - same `lat`/`lng`/`radius_km` override pattern as
-         *     `/api/camps` and `/api/trails`.
+         *     `/api/camps` and `/api/trails`. `weeks` replaces the month filter with the trailing window
+         *     `/api/alerts` uses, for the "active now" sort (issue #312).
          */
         get: operations["observations_precise_api_observations_precise_get"];
         put?: never;
@@ -1645,6 +1646,7 @@ export interface operations {
             query?: {
                 species?: string;
                 months?: string | null;
+                weeks?: number | null;
                 lat?: number | null;
                 lng?: number | null;
                 radius_km?: number | null;

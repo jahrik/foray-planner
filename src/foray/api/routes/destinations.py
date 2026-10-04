@@ -188,6 +188,7 @@ def observations_precise(
     response: Response,
     species: str = Query("all"),
     months: str | None = Query(None),
+    weeks: int | None = Query(None, gt=0, le=520),
     lat: float | None = Query(None),
     lng: float | None = Query(None),
     radius_km: float | None = Query(None),
@@ -196,7 +197,8 @@ def observations_precise(
 ) -> list[PreciseObservation]:
     """Precise observations near an explicit lat/lng (a focused destination), falling back to
     home + its search radius when omitted - same `lat`/`lng`/`radius_km` override pattern as
-    `/api/camps` and `/api/trails`."""
+    `/api/camps` and `/api/trails`. `weeks` replaces the month filter with the trailing window
+    `/api/alerts` uses, for the "active now" sort (issue #312)."""
     require_idle(state)
     if (lat is None) != (lng is None):
         raise HTTPException(400, "provide both `lat` and `lng`, or neither")
@@ -216,6 +218,7 @@ def observations_precise(
                 lng=center_lng,
                 radius_km=radius_km or home.radius_km,
                 months=selected_months,
+                weeks=weeks,
             )
     except psycopg.errors.UndefinedTable:
         return []

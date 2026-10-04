@@ -1084,6 +1084,7 @@ def precise_observations(
     lng: float,
     radius_km: float,
     months: list[int],
+    weeks: int | None = None,
 ) -> list[dict[str, Any]]:
     """Individually-plottable observations within ``radius_km`` of ``lat``/``lng`` whose cached
     coordinate is known-precise (``obscured = false``, i.e. live-verified against iNat, not a
@@ -1099,7 +1100,15 @@ def precise_observations(
     ``trails_near``/``land_near`` precedent (those have never had one) - the old radius-wide
     version's 3000-row cap existed to bound a fetch that could span the entire map at once; a
     single destination's own footprint can't realistically produce that.
+
+    ``weeks`` swaps the month-of-year filter (every year) for the trailing-``weeks`` window
+    ``alerts`` uses, so the pins match the "active now" list instead of burying its few recent
+    finds under every historical one (issue #312).
     """
+    if weeks is None:
+        time_filter, time_params = f"o.month IN ({sql_in(months)})", list(months)
+    else:
+        time_filter, time_params = "o.observed_on >= %s", [dt.date.today() - dt.timedelta(weeks=weeks)]
     rows = con.execute(
         cast(
             LiteralString,
@@ -1109,11 +1118,11 @@ def precise_observations(
             FROM observations o, pt
             WHERE o.quality_grade = 'research' AND o.obscured = FALSE
               AND o.geom IS NOT NULL AND ST_DWithin(o.geom, pt.g, %s)
-              AND {taxon_filter(taxon_ids)} AND o.month IN ({sql_in(months)})
+              AND {taxon_filter(taxon_ids)} AND {time_filter}
             ORDER BY o.observed_on DESC
             """,
         ),
-        [lng, lat, radius_km * 1000.0, *taxon_ids, *months],
+        [lng, lat, radius_km * 1000.0, *taxon_ids, *time_params],
     ).fetchall()
     genera = genus_name_map(con, {row[1] for row in rows})
 

@@ -442,6 +442,29 @@ def test_precise_observations_by_latlng_empty(client: TestClient) -> None:
     assert response.json() == []
 
 
+def test_precise_observations_weeks_window(client: TestClient, con: psycopg.Connection) -> None:
+    recent = dt.date.today() - dt.timedelta(days=3)
+    with con.cursor() as cur:
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, false)",
+            (9004, MOREL, HOME_LAT, HOME_LNG, recent, recent.month, "research"),
+        )
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
+            " quality_grade, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, false)",
+            (9005, MOREL, HOME_LAT, HOME_LNG, dt.date(2022, recent.month, 1), recent.month, "research"),
+        )
+    response = client.get("/api/observations/precise", params={"species": str(MOREL), "weeks": 4})
+    assert response.status_code == 200
+    assert [obs["id"] for obs in response.json()] == [9004]
+
+
+def test_precise_observations_rejects_nonpositive_weeks(client: TestClient) -> None:
+    response = client.get("/api/observations/precise", params={"weeks": 0})
+    assert response.status_code == 422
+
+
 def test_precise_observations_requires_lat_lng_together(client: TestClient) -> None:
     response = client.get("/api/observations/precise", params={"lat": HOME_LAT})
     assert response.status_code == 400
