@@ -111,9 +111,8 @@ backfill-geom-once: (_playbook "backfill-geom-once")
 [group('deploy-once')]
 resync-once: (_playbook "resync-once")
 
-# Manual/opt-in only - the nightly foray-trails-coverage job already re-pulls every coverage
-# region after a query-version bump (resuming per tile) and self-heals duplicate rows on each
-# pass; this just runs it once, now, instead of waiting for the night window.
-[doc('Run the trails coverage ingest across all regions now instead of waiting for the night job')]
+# Manual/opt-in only - the nightly ingest-bulk-osm-trails job loads each new OSM snapshot on its
+# own; this starts that job now (detached) instead of waiting for the night window.
+[doc('Load the newest staged OSM trails snapshot now instead of waiting for the night job')]
 [group('deploy-once')]
 trails-once: (_playbook "trails-once")

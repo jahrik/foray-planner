@@ -42,17 +42,6 @@ jobs:
     window: night
     writer: true
 
-  # Trails split out of layers-land: sharing one weekly run meant a land/camps failure (the
-  # 2026-09-27 OOM) skipped trails for the week, and a deploy restarting the timer inside the
-  # Sunday window (no Persistent= on night jobs) skipped it again. Daily is cheap: each region
-  # is one-shot per _TRAILS_QUERY_VERSION and every finished tile keeps its own resume marker,
-  # so a run with nothing left to do is 50 marker lookups, and an interrupted one resumes.
-  - name: trails-coverage
-    command: trails --all
-    interval_hours: 24
-    window: night
-    writer: true
-
   - name: dispersed-coverage
     command: dispersed --all
     interval_hours: 168
@@ -158,6 +147,17 @@ jobs:
   # trails.py can only guess at via barrier nodes and access/motor_vehicle tags.
   - name: ingest-bulk-usfs-mvum
     command: ingest-bulk usfs_mvum
+    interval_hours: 24
+    window: night
+    writer: true
+
+  # OSM trails + forest roads (issue #442) - Geofabrik's per-state extracts, staged weekly by
+  # .github/workflows/bulk-load.yml, diff-loaded here (only new/changed rows are written, and
+  # only rows OSM no longer lists are deleted). Replaced the coverage-wide Overpass crawl
+  # (`trails --all`, the old `trails-coverage` / `layers-land` trails step): a full pull took days
+  # against a shared API and never picked up later OSM edits.
+  - name: ingest-bulk-osm-trails
+    command: ingest-bulk osm_trails
     interval_hours: 24
     window: night
     writer: true

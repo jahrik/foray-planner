@@ -145,10 +145,11 @@ uv run foray openapi             # dump OpenAPI schema (feeds npm run gen:api)
 
 `ingest --countries` is what the daily cron runs: one `ingest_region` call per configured
 country (place_id-based, no tiling) instead of looping every state - simpler and avoids any
-double-counting near state borders. `refresh --with land,trails --all` is what the weekly
+double-counting near state borders. `refresh --with camps,land --all` is what the weekly
 layers cron runs: land in one whole-coverage envelope query (ArcGIS's own pagination handles
-the volume), trails looped per coverage region since Overpass can't take a query that large in
-one request.
+the volume). Coverage-wide trails come from the OSM bulk snapshot (`ingest-bulk osm_trails`,
+issue #442); `trails --all` (looped per coverage region, since Overpass can't take a query that
+large) is a manual tool now.
 
 `refresh` (no `--all`) is for manual/ad-hoc use against the home radius: it runs ingest + camps
 + land + dispersed + trails + phenology in sequence. `plan` reads the already-cached data and
