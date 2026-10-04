@@ -962,7 +962,7 @@ def recent_observations(
             f"""
             SELECT o.id, o.taxon_id, o.observed_on, o.place_guess, o.uri, o.obscured
             FROM ({binned}) o
-            WHERE o.region_id = %s AND {taxon_filter(taxon_ids, "(o.taxon_id + 0)")} AND {time_filter}
+            WHERE o.region_id = %s AND {taxon_filter(taxon_ids, "o.taxon_id")} AND {time_filter}
             ORDER BY o.observed_on DESC, o.id DESC
             LIMIT %s OFFSET %s
             """,
