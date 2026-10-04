@@ -36,13 +36,10 @@ from typing import Any
 
 import httpx
 import psycopg
-import pyarrow as pa
-import shapely
 
-from foray import cache, spaces
-from foray.cache import record_ingest, upsert_trails
 from foray.config import Settings
 from foray.geo import haversine_km
+from foray.sources import trails_snapshot
 from foray.sources.http import USER_AGENT
 
 logger = logging.getLogger(__name__)
@@ -56,7 +53,6 @@ _WHERE = "symbol IN ('1','2','3','4','11','12')"
 _PAGE_SIZE = 1000
 _SIMPLIFY_DEG = 0.0001
 _MAX_POINTS_PER_LINE = 60
-_CHUNK_SIZE = 5000
 
 # `OBJECTID`, not `RTE_CN` - a Copilot review catch: `RTE_CN` is a route-level identifier shared
 # by every segment of a route (checked live - a 2000-row sample had 89 route numbers spread
@@ -80,46 +76,6 @@ _FIELDS = (
     "atv",
     "motorcycle",
 )
-
-_BULK_SNAPSHOT_FILENAME = "trails.parquet"
-# Same layout as `usfs_trails._TRAIL_COLUMNS`/`_BULK_SNAPSHOT_SCHEMA` - see that module's comment
-# for why `geometry_wkb` (not GeoJSON text) is the on-disk column.
-_TRAIL_COLUMNS = (
-    "id",
-    "name",
-    "kind",
-    "source",
-    "url",
-    "center_lat",
-    "center_lng",
-    "geometry_wkb",
-    "connects",
-    "length_km",
-    "attrs",
-)
-_BULK_SNAPSHOT_SCHEMA = pa.schema(
-    [
-        ("id", pa.string()),
-        ("name", pa.string()),
-        ("kind", pa.string()),
-        ("source", pa.string()),
-        ("url", pa.string()),
-        ("center_lat", pa.float64()),
-        ("center_lng", pa.float64()),
-        ("geometry_wkb", pa.binary()),
-        ("connects", pa.string()),
-        ("length_km", pa.float64()),
-        ("attrs", pa.string()),
-    ]
-)
-
-
-def _geojson_to_wkb(geojson_text: str) -> bytes:
-    return shapely.to_wkb(shapely.from_geojson(geojson_text))
-
-
-def _wkb_to_geojson(wkb_bytes: bytes) -> str:
-    return shapely.to_geojson(shapely.from_wkb(bytes(wkb_bytes)), indent=None)
 
 
 def _get(props: dict[str, Any], field: str) -> Any:
@@ -331,49 +287,13 @@ def stage_usfs_mvum(cfg: Settings, snapshot_date: date, run_id: str, *, client: 
             client.close()
     if not by_id:
         raise RuntimeError("usfs_mvum: stage fetched zero rows - refusing to publish an empty snapshot")
-    dict_rows = (
-        dict(zip(_TRAIL_COLUMNS, (*row[:7], _geojson_to_wkb(row[7]), *row[8:]), strict=True)) for row in by_id.values()
-    )
-    count = spaces.write_snapshot_parquet(
-        cfg.spaces, "usfs_mvum", snapshot_date, run_id, _BULK_SNAPSHOT_FILENAME, dict_rows, _BULK_SNAPSHOT_SCHEMA
-    )
+    count = trails_snapshot.write_snapshot(cfg, "usfs_mvum", snapshot_date, run_id, by_id.values())
     logger.info("usfs_mvum: staged %d MVUM roads", count)
 
 
 def load_usfs_mvum(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_id: str) -> None:
     """Loader: load the newest staged MVUM snapshot into `trails` and prune any `usfs_mvum` row
     the export no longer lists - the export is authoritative and complete, like Trail_NFS's."""
-    total = 0
-    ids: list[str] = []
-    for batch in spaces.read_snapshot_parquet(
-        cfg.spaces, "usfs_mvum", snapshot_date, run_id, _BULK_SNAPSHOT_FILENAME, batch_size=_CHUNK_SIZE
-    ):
-        chunk = [
-            (
-                rec["id"],
-                rec["name"],
-                rec["kind"],
-                rec["source"],
-                rec["url"],
-                rec["center_lat"],
-                rec["center_lng"],
-                _wkb_to_geojson(rec["geometry_wkb"]),
-                rec["connects"],
-                rec["length_km"],
-                rec["attrs"],
-            )
-            for rec in batch
-        ]
-        ids.extend(row[0] for row in chunk)
-        if chunk:
-            upsert_trails(con, chunk)
-            total += len(chunk)
-    pruned = cache.prune_trails_missing_from(con, "usfs_mvum", ids)
-    # A newly loaded USFS row can duplicate an OSM row cached long before - the OSM ingest's own
-    # per-tile dedup only re-runs when that tile is re-pulled.
-    cache.prune_trail_duplicates_tiled(con, "usfs_mvum")
-    # Namespaced under "trails:" (not "usfs_mvum:") so /healthz/data's freshness reporting (which
-    # reads every `trails:`-prefixed ingest_log key) picks this load up, same as
-    # usfs_trails.load_usfs_trails's own `trails:usfs:bulk:{date}` marker.
-    record_ingest(con, f"trails:usfs_mvum:bulk:{snapshot_date.isoformat()}", total)
-    logger.info("usfs_mvum: loaded %d MVUM roads from the bulk snapshot (pruned %d stale)", total, pruned)
+    trails_snapshot.load_snapshot(
+        con, cfg, bulk_source="usfs_mvum", trails_source="usfs_mvum", snapshot_date=snapshot_date, run_id=run_id
+    )

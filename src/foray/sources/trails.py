@@ -44,7 +44,7 @@ import math
 from collections import Counter, defaultdict
 from collections.abc import Callable, Sequence
 from itertools import pairwise
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 import psycopg
@@ -89,8 +89,10 @@ _MIN_TILE_DEG = 0.125
 # Bump when the Overpass query in `_way_selectors` / `_trails_query_bbox` changes what it pulls,
 # or when `_ATTR_TAGS` changes what `_attrs` keeps off an unchanged payload. `ingest_trails_region`
 # keys its one-shot `ingest_log` marker on this, so a region ingested under an older version no
-# longer matches and the weekly `refresh --with trails --all` cron re-pulls it automatically -
-# no manual re-ingest, same idea as `cache._MIGRATIONS`.
+# longer matches and the next `trails --region/--all` re-pulls it. Coverage-wide data comes from
+# the bulk source (`osm_trails`, issue #442), which parses through this module and is re-staged
+# weekly, so it needs no version bump - and a selector change here must be mirrored in
+# `osm_trails._wanted_way`.
 #   1 - highway=path + trailheads + route=hiking relations
 #   2 - adds highway=track / service=forestry (kind='road') and highway=bridleway
 #   3 - adds barrier=gate/bollard/... nodes, matched onto road ways as a synthetic barrier attr
@@ -118,7 +120,14 @@ _ROAD_HIGHWAYS = ("track",)
 _ROAD_HIGHWAY_SET = frozenset(_ROAD_HIGHWAYS)
 
 
-def _is_road(tags: dict[str, Any]) -> bool:
+class _TagLookup(Protocol):
+    """Anything tags can be read from by key - an Overpass element's ``tags`` dict, or a
+    pyosmium ``TagList`` (the OSM bulk stager, which tests millions of ways without copying)."""
+
+    def get(self, key: str, /) -> Any: ...
+
+
+def _is_road(tags: _TagLookup) -> bool:
     """A forest / logging road (``highway=track``, or ``highway=service`` + ``service=forestry``)
     rather than a foot/horse trail - cached as ``kind='road'`` so it stays separately queryable
     from trails without a second table."""
@@ -232,13 +241,17 @@ def _trails_query_bbox(min_lat: float, min_lng: float, max_lat: float, max_lng: 
     )
 
 
-def _line_coords(geometry: Sequence[dict[str, Any]]) -> list[tuple[float, float]]:
-    """(lat, lng) vertices of an Overpass `geometry` array, dropping malformed nodes."""
-    return [
-        (float(node["lat"]), float(node["lon"]))
-        for node in geometry
-        if node.get("lat") is not None and node.get("lon") is not None
-    ]
+def _line_coords(geometry: Sequence[Any]) -> list[tuple[float, float]]:
+    """(lat, lng) vertices of a way's geometry, dropping malformed nodes. Takes Overpass's
+    ``{"lat": .., "lon": ..}`` dicts, or plain ``(lat, lng)`` tuples - what the OSM bulk stager
+    (``osm_trails``) builds, since a dict per vertex across a whole state is several GB."""
+    coords: list[tuple[float, float]] = []
+    for node in geometry:
+        if isinstance(node, tuple):
+            coords.append(node)
+        elif node.get("lat") is not None and node.get("lon") is not None:
+            coords.append((float(node["lat"]), float(node["lon"])))
+    return coords
 
 
 def _sample(coords: Sequence[tuple[float, float]], count: int) -> list[tuple[float, float]]:

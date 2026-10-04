@@ -1,0 +1,168 @@
+"""The bulk-snapshot format and loader shared by every ``trails`` source (issue #442).
+
+USFS Trail_NFS (``usfs_trails``), USFS MVUM roads (``usfs_mvum``) and the OSM trail network
+(``osm_trails``) all stage the same 11-column trails row to a Parquet file and load it the same
+way, so the schema, the WKB round-trip and the loader live here once instead of in each module.
+
+The loader is a *diff* load: ``cache.upsert_trails_changed`` writes only rows that are new or
+differ from what's cached, ``cache.prune_trails_missing_from`` deletes only rows the source no
+longer lists, and ``cache.prune_trail_duplicates_tiled`` dedups the tiles that changed. A weekly
+national snapshot is overwhelmingly unchanged, so a routine load is a small write rather than a
+rewrite of every row (the full-rewrite MVUM load took ~2.4 h on the 1-vCPU database).
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Iterable, Iterator
+from datetime import date
+from typing import Any
+
+import psycopg
+import pyarrow as pa
+import shapely
+
+from foray import cache, spaces
+from foray.cache import record_ingest
+from foray.config import Settings
+
+logger = logging.getLogger(__name__)
+
+SNAPSHOT_FILENAME = "trails.parquet"
+_CHUNK_SIZE = 5000
+
+# Same order as the trails row tuple (``cache.upsert_trails``), except ``geometry_wkb`` (WKB
+# bytes) replaces the tuple's ``geojson`` text - issue #359's geometry-encoding decision,
+# compact and PostGIS-native. The ``trail_geometry`` insert trigger still wants GeoJSON text,
+# so loading converts back (``record_to_row``).
+TRAIL_COLUMNS = (
+    "id",
+    "name",
+    "kind",
+    "source",
+    "url",
+    "center_lat",
+    "center_lng",
+    "geometry_wkb",
+    "connects",
+    "length_km",
+    "attrs",
+)
+SNAPSHOT_SCHEMA = pa.schema(
+    [
+        ("id", pa.string()),
+        ("name", pa.string()),
+        ("kind", pa.string()),
+        ("source", pa.string()),
+        ("url", pa.string()),
+        ("center_lat", pa.float64()),
+        ("center_lng", pa.float64()),
+        ("geometry_wkb", pa.binary()),
+        ("connects", pa.list_(pa.string())),
+        ("length_km", pa.float64()),
+        ("attrs", pa.string()),
+    ]
+)
+
+
+def geojson_to_wkb(geojson_text: str) -> bytes:
+    return shapely.to_wkb(shapely.from_geojson(geojson_text))
+
+
+def wkb_to_geojson(wkb_bytes: bytes) -> str:
+    return shapely.to_geojson(shapely.from_wkb(bytes(wkb_bytes)), indent=None)
+
+
+def row_to_record(row: tuple[Any, ...]) -> dict[str, Any]:
+    """A trails row tuple -> one Parquet record (GeoJSON text -> WKB)."""
+    return dict(zip(TRAIL_COLUMNS, (*row[:7], geojson_to_wkb(row[7]), *row[8:]), strict=True))
+
+
+def record_to_row(record: dict[str, Any]) -> tuple[Any, ...]:
+    """One Parquet record -> a trails row tuple (WKB -> GeoJSON text)."""
+    connects = record["connects"]
+    return (
+        record["id"],
+        record["name"],
+        record["kind"],
+        record["source"],
+        record["url"],
+        record["center_lat"],
+        record["center_lng"],
+        wkb_to_geojson(record["geometry_wkb"]),
+        list(connects) if connects else None,
+        record["length_km"],
+        record["attrs"],
+    )
+
+
+def write_snapshot(
+    cfg: Settings, bulk_source: str, snapshot_date: date, run_id: str, rows: Iterable[tuple[Any, ...]]
+) -> int:
+    """Stream trails row tuples into this run's Parquet snapshot. Returns rows written."""
+    return spaces.write_snapshot_parquet(
+        cfg.spaces,
+        bulk_source,
+        snapshot_date,
+        run_id,
+        SNAPSHOT_FILENAME,
+        (row_to_record(row) for row in rows),
+        SNAPSHOT_SCHEMA,
+    )
+
+
+def _read_rows(cfg: Settings, bulk_source: str, snapshot_date: date, run_id: str) -> Iterator[list[tuple[Any, ...]]]:
+    for batch in spaces.read_snapshot_parquet(
+        cfg.spaces, bulk_source, snapshot_date, run_id, SNAPSHOT_FILENAME, batch_size=_CHUNK_SIZE
+    ):
+        yield [record_to_row(record) for record in batch]
+
+
+def load_snapshot(
+    con: psycopg.Connection,
+    cfg: Settings,
+    *,
+    bulk_source: str,
+    trails_source: str,
+    snapshot_date: date,
+    run_id: str,
+    min_keep_ratio: float = 0.5,
+) -> None:
+    """Diff-load one staged snapshot into ``trails`` (rows with ``source = trails_source``).
+
+    Deletes rows the snapshot no longer lists only when the snapshot holds at least
+    ``min_keep_ratio`` of the rows already cached for that source: a snapshot that suddenly
+    lost half a national dataset is far more likely truncated than real, and pruning on it
+    would wipe good data. The new rows are still written either way."""
+    # Fast land-ownership tagging for every row this load writes (built once, then kept current).
+    cache.ensure_land_parts(con)
+    existing = con.execute("SELECT count(*) FROM trails WHERE source = %s", [trails_source]).fetchone()
+    existing_count = existing[0] if existing else 0
+    listed: list[str] = []
+    written: list[str] = []
+    for chunk in _read_rows(cfg, bulk_source, snapshot_date, run_id):
+        listed.extend(row[0] for row in chunk)
+        written.extend(cache.upsert_trails_changed(con, chunk))
+        con.commit()
+    pruned = 0
+    if existing_count and len(listed) < min_keep_ratio * existing_count:
+        logger.error(
+            "%s: snapshot lists %d rows but %d are cached - not pruning (truncated snapshot?)",
+            bulk_source,
+            len(listed),
+            existing_count,
+        )
+    else:
+        pruned = cache.prune_trails_missing_from(con, trails_source, listed)
+    # A new or changed row can duplicate one cached long before - dedup the tiles those rows
+    # cross (bounded per tile, never one table-wide sweep).
+    cache.prune_trail_duplicates_tiled(con, trails_source, written)
+    # Namespaced under "trails:" so /healthz/data's trails freshness picks this load up.
+    record_ingest(con, f"trails:{trails_source}:bulk:{snapshot_date.isoformat()}", len(written))
+    logger.info(
+        "%s: snapshot of %d rows - wrote %d new/changed, pruned %d no longer listed",
+        bulk_source,
+        len(listed),
+        len(written),
+        pruned,
+    )

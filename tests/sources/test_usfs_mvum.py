@@ -16,11 +16,10 @@ from foray import spaces
 from foray.cache import prune_trails_missing_from, upsert_trails
 from foray.config import Settings, Spaces
 from foray.scoring import trails_near
-from foray.sources import usfs_mvum
+from foray.sources import trails_snapshot
 from foray.sources.usfs_mvum import (
     _ArcGISQueryError,
     _attrs,
-    _geojson_to_wkb,
     _get,
     _iter_pages,
     _motor_vehicle,
@@ -39,12 +38,10 @@ def _line(lat: float, lng: float, size: float = 0.01) -> dict:
 
 
 def _write_snapshot(rows: list[tuple]) -> bytes:
-    dict_rows = [
-        dict(zip(usfs_mvum._TRAIL_COLUMNS, (*row[:7], _geojson_to_wkb(row[7]), *row[8:]), strict=True)) for row in rows
-    ]
+    dict_rows = [trails_snapshot.row_to_record(row) for row in rows]
     buf = pa.BufferOutputStream()
-    with pq.ParquetWriter(buf, usfs_mvum._BULK_SNAPSHOT_SCHEMA) as writer:
-        writer.write_table(pa.Table.from_pylist(dict_rows, schema=usfs_mvum._BULK_SNAPSHOT_SCHEMA))
+    with pq.ParquetWriter(buf, trails_snapshot.SNAPSHOT_SCHEMA) as writer:
+        writer.write_table(pa.Table.from_pylist(dict_rows, schema=trails_snapshot.SNAPSHOT_SCHEMA))
     return buf.getvalue().to_pybytes()
 
 
@@ -183,7 +180,7 @@ def test_stage_usfs_mvum_uploads_deduped_rows_as_parquet(monkeypatch: pytest.Mon
 
     uploaded: dict[str, bytes] = {}
     monkeypatch.setattr(
-        "foray.sources.usfs_mvum.spaces.upload_file",
+        "foray.spaces.upload_file",
         lambda cfg, key, src_path, content_type: uploaded.__setitem__(key, Path(src_path).read_bytes()),
     )
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -212,7 +209,7 @@ def test_stage_usfs_mvum_refuses_to_publish_a_zero_row_result(monkeypatch: pytes
 
     uploaded: dict[str, bytes] = {}
     monkeypatch.setattr(
-        "foray.sources.usfs_mvum.spaces.upload_file",
+        "foray.spaces.upload_file",
         lambda cfg, key, src_path, content_type: uploaded.__setitem__(key, Path(src_path).read_bytes()),
     )
     client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -232,7 +229,7 @@ def test_load_usfs_mvum_upserts_and_prunes_stale_rows(con: psycopg.Connection, m
     assert fresh is not None
     payload = _write_snapshot([fresh])
     monkeypatch.setattr(
-        "foray.sources.usfs_mvum.spaces.download_file",
+        "foray.spaces.download_file",
         lambda cfg, key, dest_path: Path(dest_path).write_bytes(payload),
     )
 
@@ -270,7 +267,7 @@ def test_load_usfs_mvum_removes_an_osm_twin_cached_before_the_load(
     assert mvum is not None
     payload = _write_snapshot([mvum])
     monkeypatch.setattr(
-        "foray.sources.usfs_mvum.spaces.download_file",
+        "foray.spaces.download_file",
         lambda cfg, key, dest_path: Path(dest_path).write_bytes(payload),
     )
 
@@ -292,7 +289,7 @@ def test_load_usfs_mvum_does_not_prune_usfs_trail_nfs_rows(
 
     payload = _write_snapshot([])
     monkeypatch.setattr(
-        "foray.sources.usfs_mvum.spaces.download_file",
+        "foray.spaces.download_file",
         lambda cfg, key, dest_path: Path(dest_path).write_bytes(payload),
     )
     load_usfs_mvum(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
@@ -308,7 +305,7 @@ def test_load_usfs_mvum_records_ingest_under_the_trails_prefix(
     assert row is not None
     payload = _write_snapshot([row])
     monkeypatch.setattr(
-        "foray.sources.usfs_mvum.spaces.download_file",
+        "foray.spaces.download_file",
         lambda cfg, key, dest_path: Path(dest_path).write_bytes(payload),
     )
 
