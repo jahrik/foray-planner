@@ -496,12 +496,13 @@ checking the issue's own text first - see AGENTS.md's Conventions section.
     reusing the OSM-derived `motor_vehicle`/`access` vocab `scoring.queries._walk_in` already
     reads, so that function needs no source-specific branch. `attrs.tracktype` inverts
     `OperationalMaintLevel` (1 primitive -> 5 paved) the same way `usfs_trails` inverts
-    `TRAIL_CLASS`. OSM/USFS dedup happens twice. At read time, `trails_near`/`nearest_trail`
-    drop an OSM `path`/`road` row whenever a `source LIKE 'usfs%'` row of the same `kind` sits
-    within 15 m (`scoring.queries._USFS_DEDUP_FILTER`). In the table (which is what the map's
-    tiles draw), every trails ingest tile deletes the OSM twin of a USFS row:
-    `cache.prune_duplicate_cross_source_paths` (Trail_NFS) and `..._roads` (MVUM) - the OSM way
-    must lie inside a 150 m buffer of the USFS line, the stretch of USFS line alongside it must
-    be within 30% of its length (so a spur off the trail survives), and real names must share a
-    word (paths) or route numbers must match (roads). The USFS layer is authoritative (access
+    `TRAIL_CLASS`. OSM/USFS dedup happens in one place, the table (which the map's tiles and
+    every `/api/trails` read draw from): `cache.prune_trail_duplicates` deletes the OSM twin of
+    a USFS row - `prune_duplicate_cross_source_paths` (Trail_NFS) and `..._roads` (MVUM) - after
+    every OSM trails ingest tile and, tile by tile, after each USFS bulk load. The OSM way must
+    lie inside a 150 m buffer of the USFS line, the stretch of USFS line alongside it must be
+    within 30% of its length (so a spur off the trail survives), and real names must share a
+    word (paths) or route numbers must match (roads). (A 15 m read-time filter in
+    `scoring.queries` used to do this too, with its own tolerance, so lists and the map could
+    disagree - removed in #440.) The USFS layer is authoritative (access
     matrix, official class/name) where OSM is a crowdsourced guess.

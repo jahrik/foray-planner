@@ -16,6 +16,7 @@ from foray.cache import (
     prune_duplicate_cross_source_paths,
     prune_duplicate_cross_source_roads,
     prune_duplicate_route_paths,
+    prune_trail_duplicates,
     record_ingest,
     upsert_campsites,
     upsert_public_land,
@@ -762,7 +763,7 @@ def test_trails_near_dedupes_an_osm_road_against_its_usfs_mvum_twin(con: psycopg
             "type": "way",
             "id": 1,
             "tags": {"highway": "track", "name": "FR 300 (OSM guess)"},
-            # ~5m from the USFS row below - well inside the dedup radius.
+            # ~5m from the USFS row below - well inside the dedup tolerance.
             "geometry": [{"lat": 47.6000, "lon": -122.3000}, {"lat": 47.6010, "lon": -122.3000}],
         }
     )
@@ -780,18 +781,20 @@ def test_trails_near_dedupes_an_osm_road_against_its_usfs_mvum_twin(con: psycopg
             "type": "way",
             "id": 2,
             "tags": {"highway": "track", "name": "Unrelated Road"},
-            # Far enough away (~2 km) that it must not be caught by the dedup radius.
+            # Far enough away (~2 km) that it must not be caught by the dedup.
             "geometry": [{"lat": 47.62, "lon": -122.32}, {"lat": 47.625, "lon": -122.32}],
         }
     )
     assert osm_twin is not None and mvum_row is not None and distinct_road is not None
     upsert_trails(con, [osm_twin, mvum_row, distinct_road])
+    # What every write path runs (OSM ingest tile, USFS bulk load) - the table is the one dedup.
+    prune_trail_duplicates(con, min_lat=47.5, min_lng=-122.4, max_lat=47.7, max_lng=-122.2)
 
     roads = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=10.0, kind="road")
     by_name = {t.name: t for t in roads}
     assert "FR 300 (OSM guess)" not in by_name  # the OSM twin is dropped
     assert by_name["FR 300"].source == "usfs_mvum"
-    assert by_name["Unrelated Road"].source == "osm"  # untouched - outside the dedup radius
+    assert by_name["Unrelated Road"].source == "osm"  # untouched - not a twin
 
 
 def test_nearest_trail_dedupes_an_osm_road_against_its_usfs_mvum_twin(con: psycopg.Connection) -> None:
@@ -816,6 +819,7 @@ def test_nearest_trail_dedupes_an_osm_road_against_its_usfs_mvum_twin(con: psyco
     )
     assert osm_twin is not None and mvum_row is not None
     upsert_trails(con, [osm_twin, mvum_row])
+    prune_trail_duplicates(con, min_lat=47.5, min_lng=-122.4, max_lat=47.7, max_lng=-122.2)
 
     nearest = nearest_trail(con, lat=47.6005, lng=-122.3000, max_km=1.0)
     assert nearest is not None

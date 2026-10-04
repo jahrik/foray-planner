@@ -246,6 +246,39 @@ def test_load_usfs_mvum_upserts_and_prunes_stale_rows(con: psycopg.Connection, m
     assert rows[0].source == "usfs_mvum"
 
 
+def test_load_usfs_mvum_removes_an_osm_twin_cached_before_the_load(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The OSM forest road was cached long before MVUM listed it - its region's OSM ingest won't
+    # re-run (one-shot per query version), so the load itself has to resolve the duplicate.
+    geometry = _line(HOME_LAT, HOME_LNG)
+    osm_twin = (
+        "osm:way/77",
+        "Forest road (OSM)",
+        "road",
+        "osm",
+        "https://www.openstreetmap.org/way/77",
+        HOME_LAT,
+        HOME_LNG,
+        json.dumps(geometry),
+        None,
+        1.1,
+        None,
+    )
+    upsert_trails(con, [osm_twin])
+    mvum = _parse_feature({"properties": {"OBJECTID": "9"}, "geometry": geometry})
+    assert mvum is not None
+    payload = _write_snapshot([mvum])
+    monkeypatch.setattr(
+        "foray.sources.usfs_mvum.spaces.download_file",
+        lambda cfg, key, dest_path: Path(dest_path).write_bytes(payload),
+    )
+
+    load_usfs_mvum(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
+
+    assert {row[0] for row in con.execute("SELECT id FROM trails").fetchall()} == {"usfs:road/9"}
+
+
 def test_load_usfs_mvum_does_not_prune_usfs_trail_nfs_rows(
     con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
