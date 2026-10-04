@@ -801,8 +801,9 @@ def plan_cmd(
         if trip.auto_destination
         else f"{trip.destination_lat:.4f}, {trip.destination_lng:.4f}"
     )
+    stops_label = f"{trip.n_stops} stop{'' if trip.n_stops == 1 else 's'}"
     click.echo(
-        f"Trip from {cfg.home.name} to {dest_label} - months {selected}, {trip.n_stops} stops, "
+        f"Trip from {cfg.home.name} to {dest_label} - months {selected}, {stops_label}, "
         f"{trip.total_drive_km:.0f} km total drive:"
     )
     for stop in trip.stops:

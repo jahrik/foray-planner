@@ -90,12 +90,18 @@ describe("stop points", () => {
 });
 
 describe("routeEnd", () => {
-  it("ends at the last stop when the server ran the trip to that picked region", () => {
+  it("ends at the last stop when the server ran the trip to the farthest hand-picked region", () => {
+    // A hand-picked farthest stop isn't "auto-picked" (auto_destination false) but still ends the trip.
     const trip = makeTrip([makeStop("a"), makeStop("b", { pin: PIN })], {
-      auto_destination: true,
+      auto_destination: false,
       destination_name: "b",
     });
     expect(routeEnd(trip)).toEqual({ point: { lat: 45.5, lng: -121.5 }, lastStopIsDestination: true });
+  });
+
+  it("ends at the last stop when a ranking-picked destination is that stop", () => {
+    const trip = makeTrip([makeStop("a"), makeStop("b")], { auto_destination: true, destination_name: "b" });
+    expect(routeEnd(trip).lastStopIsDestination).toBe(true);
   });
 
   it("keeps a typed destination as its own end point", () => {

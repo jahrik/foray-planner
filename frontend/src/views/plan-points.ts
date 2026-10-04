@@ -20,11 +20,14 @@ export function legPoint(stop: Stop): RoutePoint {
 }
 
 /** Where the trip ends. With picked spots and no typed destination, the server runs the trip to
- * the farthest pick - that region is also the last stop, so it's the destination rather than a
- * second, duplicate point after it (which Google Maps would show as an extra leg). */
+ * the farthest pick (and a ranking-picked trip to its chosen region) - that region is also the
+ * last stop, so it's the destination rather than a second, duplicate point after it (which
+ * Google Maps would show as an extra leg). Keyed on the region id alone, not `auto_destination`:
+ * a hand-picked farthest stop isn't "auto-picked" but still ends the trip. A typed destination's
+ * name is a place name, never an H3 region id, so it can't match. */
 export function routeEnd(trip: TripPlan): { point: RoutePoint; lastStopIsDestination: boolean } {
   const last = trip.stops.at(-1);
-  if (last && trip.auto_destination && trip.destination_name === last.region_id) {
+  if (last && trip.destination_name === last.region_id) {
     return { point: stopPoint(last), lastStopIsDestination: true };
   }
   return { point: { lat: trip.destination_lat, lng: trip.destination_lng }, lastStopIsDestination: false };
