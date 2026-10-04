@@ -342,6 +342,10 @@ def trails_near(
         lead_select = "lead.lead_len, lead.has_route"
     # Foraging-relevance term: count target-genus observations hugging the trail line. Only for a
     # relevance sort with a genus filter - "all genera" would just count every fungus everywhere.
+    # `(o.taxon_id + 0)` keeps the planner off the taxon btree: left indexable, it BitmapAnds the
+    # handful of obs near each trail with *every* obs of the genus (18k for Cantharellus), once
+    # per candidate trail - ~1.7 ms x up to 500 trails, which pushed /api/trails past the
+    # request statement_timeout on prod. The geom index alone is selective enough here.
     if sort == "relevance" and taxon_ids:
         obs_join: LiteralString = cast(
             LiteralString,
@@ -349,7 +353,7 @@ def trails_near(
         LEFT JOIN LATERAL (
             SELECT count(*) AS n FROM observations o
             WHERE o.geom IS NOT NULL AND ST_DWithin(o.geom, t.geom, {_OBS_RELEVANCE_RADIUS_M})
-              AND o.quality_grade = 'research' AND {taxon_filter(taxon_ids, "o.taxon_id")}
+              AND o.quality_grade = 'research' AND {taxon_filter(taxon_ids, "(o.taxon_id + 0)")}
         ) obs ON true""",
         )
         obs_select: LiteralString = "obs.n"
@@ -958,7 +962,7 @@ def recent_observations(
             f"""
             SELECT o.id, o.taxon_id, o.observed_on, o.place_guess, o.uri, o.obscured
             FROM ({binned}) o
-            WHERE o.region_id = %s AND {taxon_filter(taxon_ids, "o.taxon_id")} AND {time_filter}
+            WHERE o.region_id = %s AND {taxon_filter(taxon_ids, "(o.taxon_id + 0)")} AND {time_filter}
             ORDER BY o.observed_on DESC, o.id DESC
             LIMIT %s OFFSET %s
             """,
