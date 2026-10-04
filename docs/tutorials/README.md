@@ -51,8 +51,10 @@ score bar, species count, recent sightings, elevation and rainfall, then the top
 
 ![A destination card](img/getting-started-05-card.png)
 
-**6. Select a destination.** Click a card to fly the map there. Numbered pink markers are
-precise (verified-location) observations; click one for the iNaturalist record.
+**6. Select a destination.** Click a card to fly the map there. Small pink dots are precise
+(verified-location) observations; click one for its iNaturalist record. A pink circle with a
+number groups that many nearby observations: hover or tap it to list them, or zoom in to split
+it apart. The top three destinations carry their rank number on the map.
 
 ![A selected destination on the map](img/getting-started-06-selected.png)
 
@@ -97,7 +99,7 @@ within 500 m of the trail.
 ![The Trails tab](img/region-details-05-trails.png)
 
 **6. Campgrounds.** Developed campgrounds (Recreation.gov) and reported campsites
-(OpenStreetMap), closest first. "free" is shown only when the source explicitly says no fee.
+(OpenStreetMap), free sites first, then nearest. "free" is shown only when the source explicitly says no fee.
 
 ![The Campgrounds tab](img/region-details-06-camps.png)
 

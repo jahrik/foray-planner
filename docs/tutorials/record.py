@@ -210,7 +210,7 @@ def region_details(tut: Tutorial) -> None:
     for tab, text, shot in (
         ("photos", "<b>Photos</b>: recent research-grade iNaturalist finds from this spot.", "photos"),
         ("trails", "<b>Trails</b>: hiking paths, forest roads and trailheads nearby.", "trails"),
-        ("camps", "<b>Campgrounds</b>: developed and free sites, closest first.", "camps"),
+        ("camps", "<b>Campgrounds</b>: free sites first, then nearest.", "camps"),
         ("land", "<b>Public land</b>: who manages the ground nearby.", "land"),
     ):
         tut.click(page.locator(f'#panel [data-tab="{tab}"]'), pause=1.0)
@@ -222,10 +222,12 @@ def region_details(tut: Tutorial) -> None:
         tut.caption(text, shot=shot, hold=2.8)
 
     tut.click(page.locator('#panel [data-tab="trails"]'), pause=1.5)
+    # Required, like the Photos wait: the guide embeds this step's screenshot, so sparse data
+    # should fail the run loudly rather than leave README.md pointing at a missing image.
     chip = page.locator('#panel [data-tab-content="trails"] .chip').first
-    if chip.count():
-        tut.click(chip, pause=2.5)
-        tut.caption("Click a trail to draw it on the map, with the finds along it.", shot="trail-selected", hold=3)
+    chip.wait_for(timeout=30_000)
+    tut.click(chip, pause=2.5)
+    tut.caption("Click a trail to draw it on the map, with the finds along it.", shot="trail-selected", hold=3)
     tut.click(page.locator("#panel .details-back"), pause=1.5)
     tut.caption("<b>← Back</b> returns to the ranked list.", hold=2)
 
@@ -240,18 +242,15 @@ def plan_a_trip(tut: Tutorial) -> None:
 
     tut.click(cards.nth(0).locator('[data-act="details"]'), pause=1.5)
     tut.click(page.locator('#panel [data-tab="camps"]'), pause=2.0)
+    # Required (see the trail step in region_details): the guide embeds the pin screenshot.
     chip = page.locator('#panel [data-tab-content="camps"] .chip').first
-    pinned = False
-    if chip.count():
-        tut.click(chip, pause=1.2)
-        pin = page.locator("#panel .pin-action:visible").first
-        if pin.count():
-            tut.caption("Optional: pick a campground and make it that stop's exact point.", hold=2)
-            tut.click(pin, pause=1.0)
-            tut.caption("📍 Pinned. The route will drive to this campground.", shot="pin", hold=2.4)
-            pinned = True
-    if not pinned:
-        tut.caption("Details lists the campgrounds near each stop.", hold=2)
+    chip.wait_for(timeout=30_000)
+    tut.click(chip, pause=1.2)
+    pin = page.locator("#panel .pin-action:visible").first
+    pin.wait_for(timeout=10_000)
+    tut.caption("Optional: pick a campground and make it that stop's exact point.", hold=2)
+    tut.click(pin, pause=1.0)
+    tut.caption("📍 Pinned. The route will drive to this campground.", shot="pin", hold=2.4)
     tut.click(page.locator("#panel .details-back"), pause=1.5)
 
     tut.click(page.locator("#route-bar .route-bar-go"), pause=1.0)
