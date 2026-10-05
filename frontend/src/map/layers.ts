@@ -15,6 +15,7 @@ import { buildPopup } from "./popup";
 import { regionRadiusKm, setFocused } from "./destinations";
 import {
   addPreciseMarker,
+  commitPreciseMarkers,
   CAMP_FREE,
   CAMP_OSM,
   CAMP_PAID,
@@ -296,6 +297,7 @@ export async function loadPreciseObservations(): Promise<void> {
     marker.on("add", () => marker.getElement()?.setAttribute("aria-label", observationLabel(obs)));
     addPreciseMarker(marker, obs, () => precisePopup(obs));
   });
+  commitPreciseMarkers();
 }
 
 // name/observed_on come from an external API (buildPopup sets them via textContent); the link is
