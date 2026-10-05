@@ -42,6 +42,7 @@ OUT_DIR = Path(__file__).resolve().parent
 IMG_DIR = OUT_DIR / "img"
 # `--instagram` output (gitignored - regenerated, and meant for posting, not the repo).
 INSTAGRAM_DIR = OUT_DIR / "instagram"
+CREDITS_DIR = INSTAGRAM_DIR / "credits"
 DEFAULT_URL = "https://forayplanner.com/"
 INSTAGRAM_DEFAULT = ["getting-started", "best-spot", "track-down", "mobile"]
 # The home every tutorial searches for, as the origin of any Google Maps page a tutorial opens
@@ -99,6 +100,9 @@ OVERLAY_JS = """
       border-radius: 50%; background: rgba(255, 196, 120, .55); border: 2px solid #fff;
       box-shadow: 0 0 0 2px rgba(0,0,0,.35); pointer-events: none; transition: transform .12s; }
     #tut-cursor.down { transform: scale(.7); background: rgba(255, 140, 60, .85); }
+    /* A scripted drag (the phone sheet, the map) must never select the text it passes over. */
+    body, body * { -webkit-user-select: none !important; user-select: none !important; }
+    input, textarea { -webkit-user-select: text !important; user-select: text !important; }
   `;
   document.head.appendChild(style);
   const caption = document.createElement('div');
@@ -118,6 +122,26 @@ OVERLAY_JS = """
 }
 """
 
+
+# A full-screen credits card for the end of a Reel: `lines` is the list of credit lines.
+CREDITS_CARD_JS = """
+(lines) => {
+  const card = document.createElement('div');
+  card.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#14100c;color:#f6efe6;' +
+    'display:flex;flex-direction:column;justify-content:center;gap:12px;padding:32px 24px;' +
+    'font:500 15px/1.35 system-ui,sans-serif;';
+  const title = document.createElement('div');
+  title.textContent = 'Credits';
+  title.style.cssText = 'font:700 26px system-ui,sans-serif;color:#f0a46a;margin-bottom:8px;';
+  card.append(title);
+  for (const line of lines) {
+    const row = document.createElement('div');
+    row.textContent = line;
+    card.append(row);
+  }
+  document.body.append(card);
+}
+"""
 
 # True when a page is a bot-check interstitial instead of the content (see Tutorial.follow_link).
 BOT_CHECK_JS = """
@@ -140,6 +164,10 @@ class Tutorial:
     # Phone walkthrough: taps just land on their target. A gliding pointer would also read as a
     # mouse leaving the open popup, and the hover controller would close it.
     touch: bool = False
+    # Credits gathered while recording, for the end card and credits file: photo attributions
+    # seen in popups, and whether a Google Maps page was shown.
+    photo_credits: list[str] = field(default_factory=list)
+    showed_google_maps: bool = False
     started: bool = False
     steps: list[tuple[str, str]] = field(default_factory=list)
 
@@ -155,6 +183,7 @@ class Tutorial:
             self.started = True
             if self.on_start:
                 self.on_start()
+        self._collect_credits()
         time.sleep(0.4)
         if shot:
             name = f"{self.slug}-{len(self.steps) + 1:02d}-{shot}.png"
@@ -167,6 +196,32 @@ class Tutorial:
         # between the caption and the next move.
         if shot:
             self._carousel_still(f"{self.slug}-{len(self.steps):02d}-{shot}.png")
+
+    def _collect_credits(self) -> None:
+        """Remember each photo credit currently on screen (a find popup's photo caption)."""
+        seen = self.page.evaluate(
+            "() => [...document.querySelectorAll('.popup-thumb figcaption')].map((el) => el.textContent.trim())"
+        )
+        self.photo_credits.extend(text for text in seen if text and text not in self.photo_credits)
+
+    def end_card(self) -> None:
+        """Finish a Reel on a credits card, and write the complete list to instagram/credits/."""
+        fixed = [
+            "Map data: © OpenStreetMap contributors, © Protomaps",
+            "Observations and photos: iNaturalist",
+        ]
+        data = ["Elevation and weather: © Open-Meteo", "Terrain: © Tilezen / Mapzen, USGS, NASA"]
+        if self.showed_google_maps:
+            data.append("Directions: Google Maps")
+        shown = self.photo_credits[:4]
+        card = [*fixed, *(f"Photo: {text}" for text in shown)]
+        if len(self.photo_credits) > len(shown):
+            card.append(f"and {len(self.photo_credits) - len(shown)} more (see the caption)")
+        self.page.evaluate(CREDITS_CARD_JS, [*card, *data])
+        time.sleep(6)
+        CREDITS_DIR.mkdir(parents=True, exist_ok=True)
+        everything = [*fixed, *(f"Photo: {text}" for text in self.photo_credits), *data]
+        (CREDITS_DIR / f"{self.slug}.txt").write_text("\n".join(everything) + "\n")
 
     def _carousel_still(self, name: str) -> None:
         viewport, carousel_dir = self.carousel_viewport, self.carousel_dir
@@ -245,6 +300,8 @@ class Tutorial:
             if self.cast:
                 self.cast.resume()
             return
+        if "google." in external.url:
+            self.showed_google_maps = True
         if self.cast:
             self.cast.resume()
             self.cast.switch_to(external)
@@ -1284,6 +1341,8 @@ def record(playwright: Playwright, url: str, slug: str, *, headed: bool, instagr
             page.screenshot(path=failed)
             print(f"{slug}: failed - page at the time of failure saved to {failed}")
             raise
+        if instagram:
+            tut.end_card()
         cast.stop()
         context.close()
         browser.close()
