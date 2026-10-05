@@ -276,10 +276,12 @@ def test_a_source_never_loaded_to_completion_is_deduped_in_full(
     con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Copilot review, PR #444: a first load that died before the pending marker existed left
-    # its rows cached with no marker. Until a load completes, every tile is deduped.
+    # its rows cached with no marker. Until a load completes, every tile is deduped. The rule
+    # is current, so "never completed" is what triggers the full pass here.
     twin = trails_snapshot.record_to_row(trails_snapshot.row_to_record(_row("osm:way/11")))
     route = ("osm:relation/20", twin[1], "route", *twin[3:])
     upsert_trails(con, [twin, route])
+    _mark_dedup_rule_current(con)
     _serve_snapshot(monkeypatch, [twin, route])
 
     osm_trails.load_osm_trails(con, Settings(spaces=_SPACES_CFG), date(2026, 10, 4), "run1")

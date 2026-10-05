@@ -641,8 +641,8 @@ def prune_duplicate_cross_source_paths(
     (Bend's Phil's complex) run distinct named trails ~100m apart, inside that tolerance. "Match"
     is fuzzy: the two sources spell one trail differently (APPALOOSA / "Apaloosa Trail #13.2",
     TIDDLYWINKS / "Tiddly Winks (Upper)", BLACKROCK / "Black Rock"), so the names are normalised
-    and compared by pg_trgm word similarity (``_NAME_SIMILARITY``) rather than requiring a
-    shared word, and an OSM name that is only a trail number ("3591", "T6000-780") counts as
+    and compared by pg_trgm word similarity (``_NAME_SIMILARITY``) as well as by a shared
+    non-generic word, and an OSM name that is only a trail number ("3591", "T6000-780") counts as
     unnamed - USFS rows carry no trail number to compare it with.
 
     The comparison is against that alongside stretch, not the whole USFS row: OSM splits one
@@ -658,6 +658,12 @@ def prune_duplicate_cross_source_paths(
     name_guard: LiteralString = (
         "p.name IS NULL OR p.name LIKE '%%(OSM)' OR u.name IS NULL OR u.name = 'USFS trail' "
         "OR p.name ~ '^[A-Za-z]{0,2}[ #.-]*[0-9][0-9 #.-]*$' "
+        # A shared non-generic word still matches on its own (Copilot review, PR #446): word
+        # similarity scores a whole name against the other, so "Ridge Creek" / "Ridge Lake"
+        # can fall under the threshold despite the word they share.
+        "OR EXISTS (SELECT 1 FROM regexp_split_to_table(lower(p.name), '[^a-z]+') AS word "
+        "WHERE length(word) > 2 AND word <> ALL (%s) "
+        "AND word = ANY (regexp_split_to_array(lower(u.name), '[^a-z]+'))) "
         "OR EXISTS (SELECT 1 FROM (SELECT "
         + _normalised_name("p.name")
         + " AS osm_name, "
@@ -671,7 +677,7 @@ def prune_duplicate_cross_source_paths(
         kind="path",
         usfs_source="usfs",
         guard_sql=name_guard,
-        guard_params=[_GENERIC_WORDS_REGEX, _GENERIC_WORDS_REGEX, _NAME_SIMILARITY],
+        guard_params=[list(_GENERIC_TRAIL_WORDS), _GENERIC_WORDS_REGEX, _GENERIC_WORDS_REGEX, _NAME_SIMILARITY],
     )
 
 

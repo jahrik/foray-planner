@@ -1561,6 +1561,8 @@ def test_prune_duplicate_cross_source_paths_keeps_a_differently_named_parallel_t
         # An OSM name that's only the trail number carries no name to compare.
         ("3591", "WALDO MEADOWS", 1),
         ("T6000-780", "NFST-6000780", 1),
+        # A shared word still matches where whole-name similarity is low (0.33 here).
+        ("Ridge Creek Cutoff", "RIDGE LAKE OVERLOOK", 1),
         # Genuinely different trails side by side stay.
         ("Upper Pinedrops", "WHOOPS", 0),
         ("Windy Lakes", "SUMMIT LAKE", 0),
