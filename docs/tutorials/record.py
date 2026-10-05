@@ -43,7 +43,7 @@ IMG_DIR = OUT_DIR / "img"
 # `--instagram` output (gitignored - regenerated, and meant for posting, not the repo).
 INSTAGRAM_DIR = OUT_DIR / "instagram"
 DEFAULT_URL = "https://forayplanner.com/"
-INSTAGRAM_DEFAULT = ["best-spot", "track-down", "mobile"]
+INSTAGRAM_DEFAULT = ["getting-started", "best-spot", "track-down", "mobile"]
 # The home every tutorial searches for, as the origin of any Google Maps page a tutorial opens
 # (Tutorial.follow_link). A find's Directions link carries no origin - it routes from wherever the
 # user is - so Maps would start at "Your location" from the recording machine's IP and publish it
@@ -176,11 +176,11 @@ class Tutorial:
             self.cast.paused = True
         original = self.page.viewport_size
         self.page.set_viewport_size({"width": viewport["width"], "height": viewport["height"]})
-        time.sleep(0.8)  # Leaflet re-fits the map on resize
+        time.sleep(0.45)  # Leaflet re-fits the map on resize
         self.page.screenshot(path=carousel_dir / name, type="png", style="#tut-cursor { display: none; }")
         if original:
             self.page.set_viewport_size(original)
-        time.sleep(0.8)
+        time.sleep(0.45)
         if self.cast:
             self.cast.paused = False
 
@@ -984,12 +984,86 @@ TUTORIALS: dict[str, tuple[Callable[[Tutorial], None], bool]] = {
 }
 
 
+def getting_started_phone(tut: Tutorial) -> None:
+    """The intro Reel, in the phone layout: search a home, months, genera, a card, radius, sort."""
+    page = tut.page
+    tut.caption(
+        "Foray Planner ranks where target fungi are being found <b>right now</b>, near you.",
+        shot="overview",
+        hold=3,
+    )
+    tut.caption("Start by searching for <b>where you are</b> (or where you're headed).")
+    set_home(tut, "Bend, Oregon")
+    drag_sheet(tut, 300)
+    tut.caption("The list re-ranks around your new home, best destination first.", shot="home-set")
+
+    months = page.locator("#pills .pill-wrap").nth(2).locator(".pill")
+    tut.click(months)
+    tut.caption("<b>Months</b>: pick when you'll be out. It defaults to this month.", shot="months")
+    page.keyboard.press("Escape")
+    time.sleep(0.5)
+
+    genera = page.locator("#pills .pill-wrap").nth(3).locator(".pill")
+    tut.click(genera)
+    tut.caption("<b>Genera</b>: narrow the ranking to the mushrooms you're after.")
+    tut.type_slowly(page.locator("#genus"), "Cantharellus")
+    suggestion = page.locator("#genus-suggestions li").first
+    suggestion.wait_for(timeout=15_000)
+    tut.click(suggestion, pause=1.0)
+    tut.caption("Chanterelles added. Add as many genera as you like.", shot="genera")
+    page.keyboard.press("Escape")
+    wait_for_results(page)
+
+    drag_sheet(tut, 300)
+    card = page.locator("#panel .rank").first
+    tut.caption(
+        "Each card leads with <b>why</b> it ranks: what's in season and how many records, "
+        "plus rain and access when known.",
+        shot="card",
+        hold=3.2,
+    )
+    tut.click(card.locator("h3"), pause=1.5)
+    tut.caption("Tap a card to fly the map to that destination.", shot="selected", hold=2.6)
+
+    radius = page.locator("#pills .pill-wrap").nth(1).locator(".pill")
+    tut.click(radius)
+    tut.caption("<b>Radius</b> sets how far from home to search.", shot="radius")
+    page.keyboard.press("Escape")
+    sort = page.locator("#pills .pill-wrap").nth(0).locator(".pill")
+    tut.click(sort)
+    tut.caption("<b>Sort</b> by best overall, what's active now, or nearest.", shot="sort")
+    page.keyboard.press("Escape")
+    tut.caption("That's the basics. Next: find the <b>best spot</b> and track down a target.", hold=2.5)
+
+
 # Reels are watched on a phone, so `--instagram` swaps these desktop walkthroughs for their
 # phone-layout retellings (same slugs, same story, tap instead of hover).
 PHONE_REELS: dict[str, Callable[[Tutorial], None]] = {
+    "getting-started": getting_started_phone,
     "best-spot": best_spot_phone,
     "track-down": track_down_phone,
 }
+
+
+def png_size(data: bytes) -> tuple[int, int]:
+    """PNG IHDR: width/height are the big-endian uint32s at bytes 16-24."""
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def jpeg_size(data: bytes) -> tuple[int, int]:
+    """Width/height from a JPEG's start-of-frame marker, or (0, 0) if there isn't one."""
+    index = 2
+    while index + 9 < len(data):
+        if data[index] != 0xFF:
+            index += 1
+            continue
+        marker = data[index + 1]
+        if marker in range(0xC0, 0xD0) and marker not in (0xC4, 0xC8, 0xCC):
+            return int.from_bytes(data[index + 7 : index + 9], "big"), int.from_bytes(
+                data[index + 5 : index + 7], "big"
+            )
+        index += 2 + int.from_bytes(data[index + 2 : index + 4], "big")
+    return 0, 0
 
 
 class Screencast:
@@ -1000,9 +1074,12 @@ class Screencast:
     still stretches (caption holds) nearly free.
     """
 
-    def __init__(self, page: Page, frame_dir: Path, profile: Profile) -> None:
+    def __init__(self, page: Page, frame_dir: Path, profile: Profile, *, jpeg: bool = False) -> None:
         self.frame_dir = frame_dir
         self.profile = profile
+        # Reels: JPEG frames. At 1080x1920 a PNG takes Chrome long enough to encode that motion
+        # drops to a few frames a second; a high-quality JPEG is several times faster.
+        self.jpeg = jpeg
         self.frame_size = (
             round(profile.viewport["width"] * profile.scale),
             round(profile.viewport["height"] * profile.scale),
@@ -1021,13 +1098,13 @@ class Screencast:
 
     def _on_frame(self, session: CDPSession, event: dict) -> None:
         data = base64.b64decode(event["data"])
-        # PNG IHDR: width/height are the big-endian uint32s at bytes 16-24. A frame rendered
-        # mid-resize (carousel still) can land after unpausing; anything off-size is dropped.
-        size = (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big"))
+        # A frame rendered mid-resize (carousel still) can land after unpausing; anything
+        # off-size is dropped.
+        size = jpeg_size(data) if self.jpeg else png_size(data)
         if self.paused or size != self.frame_size:
             session.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
             return
-        path = self.frame_dir / f"{len(self.frames):05d}.png"
+        path = self.frame_dir / f"{len(self.frames):05d}.{'jpg' if self.jpeg else 'png'}"
         path.write_bytes(data)
         self.frames.append((event["metadata"]["timestamp"], path))
         session.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
@@ -1049,7 +1126,8 @@ class Screencast:
         self.session.send(
             "Page.startScreencast",
             {
-                "format": "png",
+                "format": "jpeg" if self.jpeg else "png",
+                **({"quality": 92} if self.jpeg else {}),
                 "everyNthFrame": 1,
                 "maxWidth": self.frame_size[0],
                 "maxHeight": self.frame_size[1],
@@ -1121,7 +1199,7 @@ def record(playwright: Playwright, url: str, slug: str, *, headed: bool, instagr
     if slug != "getting-started":
         set_home_quietly(page)
     with tempfile.TemporaryDirectory() as frame_dir:
-        cast = Screencast(page, Path(frame_dir), profile)
+        cast = Screencast(page, Path(frame_dir), profile, jpeg=instagram)
         tut = Tutorial(page=page, slug=slug, img_dir=img_dir, on_start=cast.start, cast=cast, touch=profile.mobile)
         if instagram:
             tut.carousel_viewport = CAROUSEL_VIEWPORTS[is_mobile]
