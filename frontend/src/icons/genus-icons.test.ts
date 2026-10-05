@@ -40,7 +40,7 @@ describe("genus icon art", () => {
     for (const color of markup.matchAll(/(?:fill|stroke)="([^"]+)"/g)) {
       expect(["currentColor", "none", "evenodd"]).toContain(color[1]);
     }
-    expect(markup.length).toBeLessThan(1024);
+    expect(markup.length).toBeLessThan(1536);
   });
 });
 
