@@ -1,3 +1,4 @@
+import { genusIconElement, genusIconHtml } from "./icons/genus-icons";
 import { deleteJson, getJson, postJson } from "./api/client";
 import type { GenusResult } from "./api/types";
 import { initAutocomplete } from "./ui/autocomplete";
@@ -26,7 +27,7 @@ function renderChips(): void {
     .map(
       (genus) => `
       <span class="chip removable" data-taxon-id="${genus.taxon_id}">
-        ${escapeHtml(displayName(genus))}
+        ${genusIconHtml(genus.icon)}${escapeHtml(displayName(genus))}
         <button type="button" aria-label="Remove ${escapeHtml(genus.name)}">×</button>
       </span>`,
     )
@@ -84,6 +85,7 @@ export async function initGenusSelection(onSelectionChange: () => void): Promise
     form: qs<HTMLFormElement>("#genusform"),
     fetchSuggestions,
     label: (genus) => displayName(genus),
+    decorate: (genus) => genusIconElement(genus.icon),
     filter: (genus) => !selectedIds().has(genus.taxon_id),
     onPick: (genus) => void selectGenus(genus),
   });

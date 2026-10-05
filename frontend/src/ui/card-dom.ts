@@ -5,6 +5,7 @@
 // (issue #301) - a scannable summary card; the per-region detail tabs live in the Details view
 // (views/details.ts) now, not nested inside every card.
 
+import { genusIconHtml } from "../icons/genus-icons";
 import { escapeHtml } from "../format";
 import { displayName, inatUrl } from "../state";
 
@@ -44,6 +45,8 @@ export interface ChipData {
   common_name?: string | null;
   label?: string;
   title?: string;
+  /** Genus icon key (issue #449); drawn before the name when present. */
+  icon?: string;
 }
 
 // name/common_name/label ultimately come from iNaturalist (user-editable), so escape before
@@ -51,7 +54,7 @@ export interface ChipData {
 export const speciesChip = (hit: ChipData, extraClass?: string): string =>
   `<a class="chip${extraClass ? " " + extraClass : ""}" href="${inatUrl(hit.taxon_id)}"
       target="_blank" rel="noopener"${hit.title ? ` title="${escapeHtml(hit.title)}"` : ""}
-   >${escapeHtml(displayName(hit))}${hit.label ? " · " + escapeHtml(hit.label) : ""}</a>`;
+   >${hit.icon ? genusIconHtml(hit.icon) : ""}${escapeHtml(displayName(hit))}${hit.label ? " · " + escapeHtml(hit.label) : ""}</a>`;
 
 // The one result-card shape, rendered by both the Destinations rank list and the "Active now"
 // now (alerts) list. A scannable summary only - rank + title, the plain-language line, a meta row,

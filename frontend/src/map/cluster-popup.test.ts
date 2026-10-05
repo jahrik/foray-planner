@@ -24,6 +24,13 @@ describe("buildClusterList", () => {
     expect(buildClusterList([obs(), obs({ id: 2 })]).querySelector("b")?.textContent).toBe("2 observations");
   });
 
+  it("puts the genus icon before each row's name", () => {
+    const link = buildClusterList([obs({ icon: "morchella" })]).querySelector("li a")!;
+    expect(link.firstElementChild?.className).toBe("genus-icon");
+    expect(link.querySelector("svg")).not.toBeNull();
+    expect(link.textContent).toBe("Morchella");
+  });
+
   it("lists newest first with undated observations last", () => {
     const root = buildClusterList([
       obs({ id: 1, name: "Old", observed_on: "2024-04-01" }),

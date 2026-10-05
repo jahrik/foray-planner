@@ -1,3 +1,4 @@
+import { genusIconHtml } from "../icons/genus-icons";
 import L from "leaflet";
 
 import { getJson } from "../api/client";
@@ -91,7 +92,10 @@ export async function loadCalendarInto(regionId: string, container: HTMLElement)
     const fraction = bucket.total / peak;
     const background = `rgba(${HEAT_RGB},${fraction.toFixed(2)})`;
     const speciesText = Object.entries(bucket.species)
-      .map(([name, count]) => `${escapeHtml(name)}: ${count}`)
+      .map(
+        ([name, count]) =>
+          `<span class="cal-genus">${genusIconHtml(bucket.icons?.[name])}${escapeHtml(name)}: ${count}</span>`,
+      )
       .join(", ");
     rows += `<tr><td>${MONTHS[month - 1]}</td>
       <td class="heat" style="background:${background}">${bucket.total || ""}</td>
