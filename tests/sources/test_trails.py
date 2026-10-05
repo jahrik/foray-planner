@@ -1547,6 +1547,58 @@ def test_prune_duplicate_cross_source_paths_keeps_a_differently_named_parallel_t
     assert deleted == 0
 
 
+@pytest.mark.parametrize(
+    ("osm_name", "usfs_name", "expected"),
+    [
+        # Real pairs from around Bend: one trail, spelled two ways (issue #442).
+        ("Apaloosa Trail #13.2", "APPALOOSA", 1),
+        ("Tiddly Winks (Upper)", "TIDDLYWINKS", 1),
+        ("Black Rock #3935", "BLACKROCK", 1),
+        ("Tyler's Traverse", "TYLERS'S", 1),
+        ("Cloverpatch Trail", "CLOVER PATCH", 1),
+        ("Duodenum", "DUODENEM", 1),
+        ("Gold Hill Trail", "GOLDHILL - QUENTIN SEGMENT", 1),
+        # An OSM name that's only the trail number carries no name to compare.
+        ("3591", "WALDO MEADOWS", 1),
+        ("T6000-780", "NFST-6000780", 1),
+        # Genuinely different trails side by side stay.
+        ("Upper Pinedrops", "WHOOPS", 0),
+        ("Windy Lakes", "SUMMIT LAKE", 0),
+        ("Entrada Loop", "RIVER LOOP", 0),
+    ],
+)
+def test_prune_duplicate_cross_source_paths_matches_names_fuzzily(
+    con: psycopg.Connection, osm_name: str, usfs_name: str, expected: int
+) -> None:
+    osm_way = _parse_element(
+        {
+            "type": "way",
+            "id": 996,
+            "tags": {"highway": "path", "name": osm_name},
+            "geometry": [{"lat": 47.6003, "lon": -122.30}, {"lat": 47.6003, "lon": -122.29}],
+        }
+    )
+    assert osm_way
+    usfs_row = (
+        "usfs:trail/3",
+        usfs_name,
+        "path",
+        "usfs",
+        "https://example.com",
+        47.60,
+        -122.295,
+        json.dumps({"type": "LineString", "coordinates": [[-122.30, 47.60], [-122.29, 47.60]]}),
+        None,
+        0.75,
+        None,
+    )
+    upsert_trails(con, [osm_way, usfs_row])
+
+    deleted = prune_duplicate_cross_source_paths(con, min_lat=47.5, min_lng=-122.4, max_lat=47.8, max_lng=-122.2)
+
+    assert deleted == expected
+
+
 def _mvum_row(ref: str | None, coords: list[list[float]], length_km: float) -> tuple[object, ...]:
     attrs = {"ref": ref} if ref else {}
     return (

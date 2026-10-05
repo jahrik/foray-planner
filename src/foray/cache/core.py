@@ -887,6 +887,11 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         CREATE INDEX IF NOT EXISTS ix_public_land_parts_land ON public_land_parts (land_id);
         """,
     ),
+    # issue #442: pg_trgm for the cross-source trail dedup's fuzzy name match
+    # (`cache.prune_duplicate_cross_source_paths`) - OSM and USFS spell the same trail differently
+    # (APPALOOSA / "Apaloosa Trail"). A contrib extension DO's managed Postgres offers; creating it
+    # builds no index and touches no rows.
+    (55, "CREATE EXTENSION IF NOT EXISTS pg_trgm"),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]
