@@ -284,7 +284,10 @@ export async function loadPreciseObservations(): Promise<void> {
   if (!isCurrent()) return;
   observations.forEach((obs) => {
     // Popup opening (hover, tap, keyboard) is wired once on the cluster group - map.ts wirePrecisePopup.
-    const marker = L.marker([obs.lat, obs.lng], { icon: precisePinIcon(), bubblingMouseEvents: false });
+    const marker = L.marker([obs.lat, obs.lng], {
+      icon: precisePinIcon(obs.icon),
+      bubblingMouseEvents: false,
+    });
     // An accessible name for the focusable pin, set on every add since the cluster group
     // re-creates the element when the pin leaves and re-enters a cluster. Not `title`: its native
     // tooltip would sit on top of the hover popup.

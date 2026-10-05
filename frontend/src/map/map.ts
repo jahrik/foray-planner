@@ -10,6 +10,9 @@ import { clearLayer, clearLayerList } from "./layer-lifecycle";
 import { clearSatelliteOverlay, resetSelection } from "./destinations";
 import { inspectRoadAt } from "./inspect";
 import { buildClusterList } from "./cluster-popup";
+import { type ClusterVote, voteGenus } from "./cluster-vote";
+import { genusIconSvg } from "../icons/genus-icons";
+import { escapeHtml } from "../format";
 import { createHoverPopup, type HoverPopup } from "./hover-popup";
 import { circleStyle } from "./markers";
 import { accuracyLabel, dist, onScopeChange, qs, state } from "../state";
@@ -189,6 +192,9 @@ async function applyVectorBasemap(theme: "dark" | "light"): Promise<void> {
 // clear, so it always mirrors what's on the map. Trails have no toggle, but a walk-in (gated)
 // forest road drawn from the Trails tab gets a legend entry while its distinct teal line is
 // shown (issue A4b, state.selectedTrailWalkIn).
+// Sentinel for the legend's precise-observation entry, drawn as a mini genus pin, not a colour.
+const PRECISE_SWATCH = "precise-pin";
+
 export function renderLegend(): void {
   const el = qs("#legend");
   const camps = (document.getElementById("show-camps") as HTMLInputElement | null)?.checked;
@@ -203,7 +209,7 @@ export function renderLegend(): void {
     [palette.flush, "Seen in the last few weeks"],
     [palette.moss, "Other region in range"],
     [palette.purple, "Selected"],
-    [palette.spore, "Precise observation (verified location)"],
+    [PRECISE_SWATCH, "Precise observation: icon shows its genus or shape"],
   ];
   if (camps) {
     entries.push([CAMP_FREE, "Free campground"], [CAMP_PAID, "Paid / unknown campground"]);
@@ -222,34 +228,62 @@ export function renderLegend(): void {
     entries.push([FORAGE_RAMP[idx] ?? FORAGE_RAMP[2], `Selected trail: ${FORAGE_TIER_LABELS[idx] ?? ""}`]);
   }
   el.innerHTML = entries
-    .map(([color, label]) => `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`)
+    .map(([color, label]) =>
+      color === PRECISE_SWATCH
+        ? `<span class="legend-item"><i class="legend-pin" aria-hidden="true">${genusIconSvg("gilled")}</i>${label}</span>`
+        : `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`,
+    )
     .join("");
 }
 
-// Cluster badge styling: an ochre spore-print disc (same --spore hue as an individual pin) with a dark
-// ring and the count in the middle - readable on both the dark and light basemap, and visually
-// reads as "more precise pins" rather than borrowing the plugin's default blue/yellow/orange
-// severity gradient, which has no meaning here.
+// Cluster badge (issue #449): the icon of the cluster's most common genus (cluster-vote.ts) on the
+// ochre --spore disc with an ink ring, and the pin count in a corner chip (style.css
+// .precise-cluster-badge). Child clusters re-vote as they split on zoom. The vote is cached per
+// cluster and only redone when its child count changes, since iconCreateFunction runs for every
+// cluster on every re-cluster and a destination can hold 2,000+ pins.
+const clusterVotes = new WeakMap<L.MarkerCluster, { childCount: number; vote: ClusterVote | null }>();
+// Pins per genus across everything loaded: the vote's tie-break (rebuilt by addPreciseMarker /
+// clearPrecise).
+const loadedGenusCounts = new Map<number, number>();
+
+function clusterVote(cluster: L.MarkerCluster): ClusterVote | null {
+  const childCount = cluster.getChildCount();
+  const cached = clusterVotes.get(cluster);
+  if (cached && cached.childCount === childCount) return cached.vote;
+  const vote = voteGenus(clusterObservations(cluster), loadedGenusCounts);
+  clusterVotes.set(cluster, { childCount, vote });
+  return vote;
+}
+
 function preciseClusterIcon(cluster: L.MarkerCluster): L.DivIcon {
   const count = cluster.getChildCount();
-  const size = count < 10 ? 30 : count < 100 ? 36 : 42;
+  const size = count < 10 ? 32 : count < 100 ? 38 : 44;
+  const vote = clusterVote(cluster);
+  const label = vote ? `${count} observations, most ${vote.name}` : `${count} observations`;
   return L.divIcon({
-    html: `<div style="
-      width:${size}px;height:${size}px;line-height:${size}px;
-      background:${markerPalette().spore};border:2px solid ${HOME_RING};border-radius:50%;
-      text-align:center;font-weight:600;color:${HOME_RING};
-    ">${count}</div>`,
+    html: `<div class="precise-cluster-badge" style="width:${size}px;height:${size}px" aria-label="${escapeHtml(label)}">${genusIconSvg(vote?.icon)}<b>${count}</b></div>`,
     className: "precise-cluster-icon",
     iconSize: L.point(size, size),
   });
 }
 
-// A single precise pin (issue #447): a 13 px --spore dot with a 2 px ink ring (style.css
-// .precise-pin-icon), centred in a 24 px transparent hit box so the hover popup is easy to
-// trigger. Still well under the destination markers and the 30 px cluster badges. A divIcon
-// rather than a circleMarker so the pin is a focusable element for the keyboard path.
-export function precisePinIcon(): L.DivIcon {
-  return L.divIcon({ className: "precise-pin-icon", html: "<span></span>", iconSize: L.point(24, 24) });
+// A single precise pin (issues #447, #449): the genus icon in ink on a 22 px --spore disc with an
+// ink ring (style.css .precise-pin-icon), centred in a 24 px hit box so the hover popup is easy
+// to trigger. A divIcon rather than a circleMarker so the pin is a focusable element for the
+// keyboard path. One DivIcon per icon key, shared by every pin of that genus or shape.
+const pinIcons = new Map<string, L.DivIcon>();
+
+export function precisePinIcon(icon: PreciseObservation["icon"]): L.DivIcon {
+  let pin = pinIcons.get(icon);
+  if (!pin) {
+    pin = L.divIcon({
+      className: "precise-pin-icon",
+      html: `<span>${genusIconSvg(icon)}</span>`,
+      iconSize: L.point(24, 24),
+    });
+    pinIcons.set(icon, pin);
+  }
+  return pin;
 }
 
 // The attribution lists four providers (OSM + iNaturalist + Open-Meteo + Esri) and rendered as a
@@ -387,6 +421,7 @@ export function clearMarkers(): void {
 export function clearPrecise(): void {
   closePrecisePopup();
   preciseCluster.clearLayers();
+  loadedGenusCounts.clear();
 }
 
 // Adds a precise-observation pin into the cluster group (see preciseCluster above) instead of
@@ -398,6 +433,7 @@ export function addPreciseMarker(
   content: () => HTMLElement,
 ): void {
   preciseObservations.set(marker, { obs, content });
+  loadedGenusCounts.set(obs.taxon_id, (loadedGenusCounts.get(obs.taxon_id) ?? 0) + 1);
   preciseCluster.addLayer(marker);
 }
 
