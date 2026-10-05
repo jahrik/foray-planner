@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -194,7 +195,10 @@ class Tutorial:
 
     def click(self, target: Locator, *, pause: float = 0.6) -> None:
         self.point(target)
-        target.click()
+        if self.touch:
+            target.tap()  # a real touch: no mouse hover or mouseout to close a hover-managed popup
+        else:
+            target.click()
         time.sleep(pause)
 
     def follow_link(self, link: Locator, html: str, *, hold: float = 3.4) -> None:
@@ -244,7 +248,7 @@ class Tutorial:
 
 
 # Last pointer position per page, so glide() can interpolate from where the pointer actually is.
-POINTER: dict[int, tuple[float, float]] = {}
+POINTER: weakref.WeakKeyDictionary[Page, tuple[float, float]] = weakref.WeakKeyDictionary()
 
 
 def glide(page: Page, x: float, y: float, *, steps: int = 18, delay: float = 0.016) -> None:
@@ -253,13 +257,13 @@ def glide(page: Page, x: float, y: float, *, steps: int = 18, delay: float = 0.0
     A bare `mouse.move(..., steps=n)` fires every hop back to back, so the screencast, which only
     catches repaints, sees a handful of frames and a cursor or drag looks like it jumps.
     """
-    start_x, start_y = POINTER.get(id(page), (x, y))
+    start_x, start_y = POINTER.get(page, (x, y))
     for step in range(1, steps + 1):
         progress = step / steps
         eased = progress * progress * (3 - 2 * progress)
         page.mouse.move(start_x + (x - start_x) * eased, start_y + (y - start_y) * eased)
         time.sleep(delay)
-    POINTER[id(page)] = (x, y)
+    POINTER[page] = (x, y)
 
 
 def wait_for_home(page: Page, name: str) -> None:

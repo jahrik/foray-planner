@@ -484,24 +484,27 @@ function preciseMarkerFor(group: L.MarkerClusterGroup, element: Element): L.Mark
 }
 
 function wirePrecisePopup(group: L.MarkerClusterGroup, hover: boolean): void {
-  const popupView = createHoverPopup(
-    map,
-    L.popup({
-      className: "cluster-popup",
-      closeButton: !hover,
-      autoPan: !hover,
-      // Touch: pan the map so the card clears the floating search bar and filter pills (about
-      // 190 px tall on a phone) instead of opening underneath them.
-      autoPanPaddingTopLeft: L.point(10, 190),
-      maxWidth: 320,
-      offset: L.point(0, -12),
-    }),
-  );
+  const popup = L.popup({
+    className: "cluster-popup",
+    closeButton: !hover,
+    autoPan: !hover,
+    maxWidth: 320,
+    offset: L.point(0, -12),
+  });
+  const popupView = createHoverPopup(map, popup);
   precisePopup = popupView;
+  // Touch on a phone layout (the same query as sheet.ts): pan the map so the card clears the
+  // floating search bar and filter pills (about 190 px tall) instead of opening underneath them.
+  const clearControls = (): void => {
+    popup.options.autoPanPaddingTopLeft = window.matchMedia?.("(max-width: 780px)").matches
+      ? L.point(10, 190)
+      : L.point(5, 5);
+  };
   const openCluster = (cluster: L.MarkerCluster): void => {
     const observations = clusterObservations(cluster);
     if (!observations.length) return;
     const options = hover ? {} : { onZoom: () => cluster.zoomToBounds({ padding: [20, 20] }) };
+    clearControls();
     popupView.open({
       latLng: cluster.getLatLng(),
       anchor: (cluster as unknown as L.Marker).getElement() ?? null,
@@ -511,6 +514,7 @@ function wirePrecisePopup(group: L.MarkerClusterGroup, hover: boolean): void {
   const openPin = (marker: L.Marker): void => {
     const entry = preciseObservations.get(marker);
     if (!entry) return;
+    clearControls();
     popupView.open({
       latLng: marker.getLatLng(),
       anchor: marker.getElement() ?? null,

@@ -42,8 +42,9 @@ export function thumbnailSlot(obsId: number): HTMLElement {
   const slot = document.createElement("div");
   slot.className = "popup-thumb-slot is-pending";
   void fetchThumbnail(obsId).then((thumbnail) => {
-    slot.classList.remove("is-pending");
+    // Append before un-pending so the slot never matches :empty:not(.is-pending) mid-swap.
     if (thumbnail) slot.append(thumbnailFigure(thumbnail));
+    slot.classList.remove("is-pending");
   });
   return slot;
 }
