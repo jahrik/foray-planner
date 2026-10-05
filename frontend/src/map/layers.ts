@@ -311,6 +311,7 @@ function precisePopup(obs: PreciseObservation): HTMLElement {
     link: { href: observationUrl(obs.id), text: "iNaturalist ↗" },
     directions: directionsLink(obs.lat, obs.lng, name),
   });
+  popup.classList.add("precise-popup");
   popup.prepend(genusIconElement(obs.icon), thumbnailSlot(obs.id));
   return popup;
 }
