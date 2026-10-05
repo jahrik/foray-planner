@@ -1,13 +1,14 @@
 # How to use Foray Planner
 
 [Foray Planner](https://forayplanner.com/) turns iNaturalist fungi observations into trip
-planning: where your target mushrooms are being found right now, which trails and free camps
-are closest to them, and how to string several spots into a road trip.
+planning: where your target mushrooms have been observed in past seasons, for the months you
+pick, which trails and free camps are closest to them, and how to string several spots into a
+road trip.
 
 Six short walkthroughs, each with an animated overview and step-by-step screenshots:
 
 1. [Getting started](#1-getting-started) - set your location, pick months and genera, read the results
-2. [Find the best spot right now](#2-find-the-best-spot-right-now) - no target in mind: the top-scoring spot, and the finds behind it
+2. [Find the best spot for your months](#2-find-the-best-spot-for-your-months) - no target in mind: the top-scoring spot, and the finds behind it
 3. [Track down a target mushroom](#3-track-down-a-target-mushroom) - from "I want chanterelles" to the trail, the camp, and directions
 4. [Destination details](#4-destination-details) - map layers, calendar, photos, trails, campgrounds, public land
 5. [Plan a road trip](#5-plan-a-road-trip) - shortlist spots, pin a campground, export the route
@@ -70,7 +71,7 @@ between *Best overall*, *Active now* (what's been seen in the last few weeks), a
 
 ---
 
-## 2. Find the best spot right now
+## 2. Find the best spot for your months
 
 No particular target? This finds the top-scoring spot near you for your months, then shows you
 the actual iNaturalist finds behind the ranking.
