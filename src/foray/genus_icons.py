@@ -10,6 +10,13 @@ what shape of thing was found, nothing about what it is (AGENTS.md "Not in scope
 follow the common field-guide shape of each taxon, so an odd member of a family (a gilled
 bolete, a coral in a tooth family) needs a genus override rather than a new rule.
 
+The tables are hand-written, then cross-checked against the FungalTraits genus table (Põlme et
+al. 2020, Fungal Diversity 105:1-16, doi:10.1007/s13225-020-00466-2), whose fruitbody / hymenium
+types they were corrected toward where the two disagreed (2026-10-05). FungalTraits is a check,
+not a source: none of its data ships here. Some deliberate differences remain where its
+structural categories don't match the field look: chanterelles stay ``vase`` (its "agaricoid,
+gills"), bird's nests stay ``cup`` (its "gasteroid"), tar spots stay ``rust`` (its "apothecium").
+
 ``foray genera-refresh`` stores each genus's class / order / family on ``fungi_genera``
 (``catalog_rows``); reads resolve the icon from them with ``genus_icon``, so a change to these
 tables applies on the next deploy without a refresh. The API sends the key and the client draws
@@ -188,6 +195,9 @@ FAMILY_GROUPS: dict[str, IconGroup] = {
     "Nidulariaceae": "cup",
     "Fistulinaceae": "bracket",
     "Schizophyllaceae": "bracket",
+    "Cyphellaceae": "crust",
+    "Radulomycetaceae": "crust",
+    "Cyphellopsidaceae": "crust",
     # Boletales
     "Paxillaceae": "gilled",
     "Hygrophoropsidaceae": "gilled",
@@ -200,8 +210,17 @@ FAMILY_GROUPS: dict[str, IconGroup] = {
     "Diplocystidaceae": "earthstar",
     "Serpulaceae": "crust",
     "Coniophoraceae": "crust",
-    # Polyporales
+    # Polyporales: the corticioid (flat, resupinate) families, and the gilled Panaceae
     "Sparassidaceae": "coral",
+    "Irpicaceae": "crust",
+    "Meruliaceae": "crust",
+    "Phanerochaetaceae": "crust",
+    "Steccherinaceae": "crust",
+    "Panaceae": "gilled",
+    # Hymenochaetales: corticioid families, and the small gilled Rickenellaceae
+    "Schizoporaceae": "crust",
+    "Hyphodontiaceae": "crust",
+    "Rickenellaceae": "gilled",
     # Russulales
     "Hericiaceae": "tooth",
     "Auriscalpiaceae": "tooth",
@@ -227,6 +246,10 @@ FAMILY_GROUPS: dict[str, IconGroup] = {
     # Hypocreales: the club-shaped insect and truffle parasites
     "Cordycipitaceae": "coral",
     "Ophiocordycipitaceae": "coral",
+    # Helotiales: powdery mildews coat leaves, nothing cup-like
+    "Erysiphaceae": "rust",
+    # Rhytismatales: earth tongues / spoons, not tar spots
+    "Cudoniaceae": "coral",
     # Lichens
     "Cladoniaceae": "shrubby-lichen",
     "Sphaerophoraceae": "shrubby-lichen",
@@ -240,12 +263,46 @@ GENUS_GROUPS: dict[str, IconGroup] = {
     "Calvatia": "puffball",
     "Calbovista": "puffball",
     "Mycenastrum": "puffball",
+    "Thaxterogaster": "puffball",
+    # Gilled genera in the corticioid Cyphellaceae
+    "Baeospora": "gilled",
+    "Caulorhiza": "gilled",
+    "Macrotyphula": "coral",
+    "Favolaschia": "bracket",
+    "Filoboletus": "bolete",
+    # Basidiolichens: a leafy thallus, not a mushroom
+    "Cora": "leafy-lichen",
+    "Dictyonema": "leafy-lichen",
+    "Corella": "leafy-lichen",
     # Boletales
     "Paxillus": "gilled",
     "Hygrophoropsis": "gilled",
     "Scleroderma": "puffball",
-    # Polyporales
+    "Phylloporus": "gilled",
+    "Phylloporopsis": "gilled",
+    "Erythrophylloporus": "gilled",
+    "Austropaxillus": "gilled",
+    # Polyporales / Gloeophyllales: gilled polypores, and flat ones in bracket families
     "Sparassis": "coral",
+    "Lentinus": "gilled",
+    "Neolentinus": "gilled",
+    "Heliocybe": "gilled",
+    "Antrodia": "crust",
+    # ...and true polypores inside the corticioid families above
+    "Bjerkandera": "bracket",
+    "Merulius": "bracket",
+    "Climacodon": "bracket",
+    "Gloeoporus": "bracket",
+    "Trametopsis": "bracket",
+    "Hapalopilus": "bracket",
+    "Aurantiporus": "bracket",
+    "Nigroporus": "bracket",
+    "Cymatoderma": "bracket",
+    # Hymenochaetales
+    "Hydnoporia": "crust",
+    "Basidioradulum": "crust",
+    "Alloclavaria": "coral",
+    "Cotylidia": "vase",
     # Russulales
     "Artomyces": "coral",
     "Lentinellus": "gilled",
@@ -263,6 +320,9 @@ GENUS_GROUPS: dict[str, IconGroup] = {
     # Ascomycetes
     "Xylaria": "coral",
     "Elaphomyces": "puffball",
+    "Bulgaria": "cup",
+    # Dacrymycetales: upright clubs rather than jelly blobs
+    "Calocera": "coral",
     # Atractiellales
     "Phleogena": "puffball",
     # Shrubby lichens in leafy families
