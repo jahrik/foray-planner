@@ -569,8 +569,39 @@ def _remap_connects(con: psycopg.Connection, old_ids: list[str], new_ids: list[s
 
 
 # Words too generic to say two trail names refer to the same trail ("Ridge Trail" vs "Creek
-# Trail"); prune_duplicate_cross_source_paths' name guard ignores them.
-_GENERIC_TRAIL_WORDS = ("trail", "trails", "the", "and", "loop", "tie", "path", "nrt", "connector", "spur")
+# Trail") - dropped before prune_duplicate_cross_source_paths compares names. "upper"/"lower"
+# split one named trail into OSM segments ("Tiddly Winks (Upper)") that USFS records whole.
+_GENERIC_TRAIL_WORDS = (
+    "trail",
+    "trails",
+    "the",
+    "and",
+    "loop",
+    "tie",
+    "path",
+    "nrt",
+    "connector",
+    "spur",
+    "upper",
+    "lower",
+)
+_GENERIC_WORDS_REGEX = r"\m(" + "|".join(_GENERIC_TRAIL_WORDS) + r")\M"
+# Two trail names count as the same trail at or above this pg_trgm word similarity (of the
+# normalised names, either way round). Measured on the 54 geometry-matched OSM/USFS pairs around
+# Bend that the old shared-word rule rejected: spelling/spacing variants of one name scored
+# 0.58-0.89 (Apaloosa/APPALOOSA, Tiddly Winks/TIDDLYWINKS, Tyler's/TYLERS'S, Black Rock/
+# BLACKROCK), genuinely different trails 0.33 and below (Upper Pinedrops/WHOOPS).
+_NAME_SIMILARITY = 0.5
+
+
+def _normalised_name(column: LiteralString) -> LiteralString:
+    """SQL for a trail name lowercased, apostrophes dropped, non-letters -> space, generic words
+    removed (one ``%s`` parameter: ``_GENERIC_WORDS_REGEX``)."""
+    return (
+        "trim(regexp_replace(regexp_replace(regexp_replace(lower("
+        + column
+        + "), '''', '', 'g'), '[^a-z]+', ' ', 'g'), %s, ' ', 'g'))"
+    )
 
 
 def prune_duplicate_cross_source_paths(
@@ -602,9 +633,13 @@ def prune_duplicate_cross_source_paths(
     of the OSM way's own length. A spur branching off the USFS trail fails that second check
     (the USFS line crosses its buffer sideways, not along it, so the alongside stretch is the
     buffer's width, not the spur's length). And when both rows carry a real name (not the
-    synthetic ``... (OSM)`` / ``USFS trail`` fallbacks) they must share a non-generic word -
-    dense MTB networks (Bend's Phil's complex) run distinct named trails ~100m apart, inside
-    that tolerance.
+    synthetic ``... (OSM)`` / ``USFS trail`` fallbacks) the names must match - dense MTB networks
+    (Bend's Phil's complex) run distinct named trails ~100m apart, inside that tolerance. "Match"
+    is fuzzy: the two sources spell one trail differently (APPALOOSA / "Apaloosa Trail #13.2",
+    TIDDLYWINKS / "Tiddly Winks (Upper)", BLACKROCK / "Black Rock"), so the names are normalised
+    and compared by pg_trgm word similarity (``_NAME_SIMILARITY``) rather than requiring a
+    shared word, and an OSM name that is only a trail number ("3591", "T6000-780") counts as
+    unnamed - USFS rows carry no trail number to compare it with.
 
     The comparison is against that alongside stretch, not the whole USFS row: OSM splits one
     trail into many ways (at every junction / tag change) while a Trail_NFS row is usually the
@@ -616,22 +651,23 @@ def prune_duplicate_cross_source_paths(
     table-wide sweep already took prod down once for the same-source case; this only ever runs
     against the handful of USFS rows in one tile.
     """
-    name_guard: LiteralString = """
-        p.name IS NULL OR p.name LIKE '%%(OSM)' OR u.name IS NULL OR u.name = 'USFS trail'
-        OR EXISTS (
-            SELECT 1 FROM regexp_split_to_table(lower(p.name), '[^a-z]+') AS word
-            WHERE length(word) > 2
-              AND word <> ALL (%s)
-              AND word = ANY (regexp_split_to_array(lower(u.name), '[^a-z]+'))
-        )
-    """
+    name_guard: LiteralString = (
+        "p.name IS NULL OR p.name LIKE '%%(OSM)' OR u.name IS NULL OR u.name = 'USFS trail' "
+        "OR p.name ~ '^[A-Za-z]{0,2}[ #.-]*[0-9][0-9 #.-]*$' "
+        "OR EXISTS (SELECT 1 FROM (SELECT "
+        + _normalised_name("p.name")
+        + " AS osm_name, "
+        + _normalised_name("u.name")
+        + " AS usfs_name) names WHERE osm_name <> '' AND usfs_name <> '' "
+        "AND greatest(word_similarity(osm_name, usfs_name), word_similarity(usfs_name, osm_name)) >= %s)"
+    )
     return _prune_cross_source(
         con,
         bbox=(min_lat, min_lng, max_lat, max_lng),
         kind="path",
         usfs_source="usfs",
         guard_sql=name_guard,
-        guard_params=[list(_GENERIC_TRAIL_WORDS)],
+        guard_params=[_GENERIC_WORDS_REGEX, _GENERIC_WORDS_REGEX, _NAME_SIMILARITY],
     )
 
 
