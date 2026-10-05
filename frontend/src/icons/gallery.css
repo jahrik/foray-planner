@@ -110,3 +110,25 @@ body {
   width: 16px;
   height: 16px;
 }
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.reference {
+  flex: 1;
+  font-size: 10px;
+  color: #5c574c;
+}
+.reference img {
+  display: block;
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+.reference small {
+  display: block;
+  margin-top: 2px;
+  line-height: 1.2;
+}
