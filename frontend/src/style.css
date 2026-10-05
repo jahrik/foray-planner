@@ -852,31 +852,73 @@ a.chip:hover {
   transform: scale(1.25);
   transform-origin: 50% 92%;
 }
-/* A single precise-observation pin (map.ts precisePinIcon): the 24px icon box is the hover/tap
-   target, the dot inside it is what shows. Reads --spore live, so a theme toggle recolours the
-   pins already on the map. */
+/* A single precise-observation pin (map.ts precisePinIcon, issue #449): the 24px icon box is the
+   hover/tap target; inside it a 22px --spore disc with an ink ring carries the genus icon in ink.
+   Reads --spore live, so a theme toggle recolours the pins already on the map. */
 .precise-pin-icon {
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .precise-pin-icon span {
-  width: 13px;
-  height: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
   box-sizing: border-box;
   border-radius: 50%;
   background: var(--spore);
   border: 2px solid #0c0d09; /* map.ts HOME_RING */
   box-shadow: 0 0 0 1px rgb(255 255 255 / 0.55);
+  color: #0c0d09;
+}
+.precise-pin-icon svg {
+  width: 15px;
+  height: 15px;
 }
 .precise-pin-icon:hover span,
 .precise-pin-icon:focus-visible span {
-  transform: scale(1.25);
+  transform: scale(1.2);
 }
 .precise-pin-icon:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
   border-radius: 50%;
+}
+/* Cluster badge (map.ts preciseClusterIcon): the cluster's most common genus icon on the same
+   disc, with the pin count in an ink corner chip. */
+.precise-cluster-badge {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--spore);
+  border: 2px solid #0c0d09;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.55);
+  color: #0c0d09;
+}
+.precise-cluster-badge svg {
+  width: 64%;
+  height: 64%;
+}
+.precise-cluster-badge b {
+  position: absolute;
+  top: -6px;
+  right: -9px;
+  min-width: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: #0c0d09;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.55);
 }
 /* Precise-observation popup (map.ts wirePrecisePopup / hover-popup.ts / cluster-popup.ts): hover
    on desktop, tap on touch. Scrolls inside the popup rather than growing past the map. */
@@ -1209,6 +1251,22 @@ table.cal .heat {
   border-radius: 50%;
   margin-right: 5px;
   flex-shrink: 0;
+}
+/* The precise-observation legend entry: a mini genus pin rather than a colour dot. */
+.map-legend i.legend-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  background: var(--spore);
+  border: 1.5px solid #0c0d09;
+  color: #0c0d09;
+}
+.map-legend i.legend-pin svg {
+  width: 10px;
+  height: 10px;
 }
 
 @media (max-width: 780px) {
