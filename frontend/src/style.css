@@ -1723,14 +1723,19 @@ table.cal .heat {
 }
 .popup-thumb img {
   display: block;
-  width: 120px;
-  height: 120px;
+  width: 100%;
+  aspect-ratio: 1;
   object-fit: cover;
   border-radius: 6px;
 }
 .popup-thumb figcaption {
-  max-width: 180px;
   font-size: 10px;
   opacity: 0.7;
   line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+/* Fixed width up front: the photo loads after the popup is sized, so it must not be able to outgrow it. */
+.precise-popup {
+  width: 160px;
 }
