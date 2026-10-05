@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any, LiteralString, cast
 
 import psycopg
@@ -766,51 +766,70 @@ def prune_trail_duplicates(
 
 
 _PRUNE_TILE_DEG = 2.0
-_PRUNE_ID_BATCH = 50_000
 
 
-def prune_trail_duplicates_tiled(con: psycopg.Connection, source: str, ids: Sequence[str] | None = None) -> int:
+def create_id_table(con: psycopg.Connection, table: LiteralString) -> None:
+    """Create (or empty) a session temp table of trail ids - how a bulk load keeps its listed /
+    written id sets in Postgres instead of Python (issue #442: millions of ids held in Python
+    plus one array parameter that size were most of what filled the 2 GB droplet). Temp tables
+    are never read by parallel workers, so the joins against them can't hit /dev/shm either."""
+    con.execute("CREATE TEMP TABLE IF NOT EXISTS " + table + " (id TEXT NOT NULL)")
+    con.execute("TRUNCATE " + table)
+
+
+def append_ids(con: psycopg.Connection, table: LiteralString, ids: Iterable[str]) -> None:
+    """COPY ``ids`` into a :func:`create_id_table` table."""
+    with con.cursor().copy("COPY " + table + " (id) FROM STDIN") as copy:
+        for trail_id in ids:
+            copy.write_row((trail_id,))
+
+
+def _id_table_from(con: psycopg.Connection, ids: Iterable[str]) -> LiteralString:
+    table: LiteralString = "_trail_id_arg"
+    create_id_table(con, table)
+    append_ids(con, table, ids)
+    con.execute("ANALYZE " + table)
+    return table
+
+
+def prune_trail_duplicates_tiled(
+    con: psycopg.Connection,
+    source: str,
+    ids: Sequence[str] | None = None,
+    *,
+    id_table: LiteralString | None = None,
+) -> int:
     """Run :func:`prune_trail_duplicates` over every ``_PRUNE_TILE_DEG`` tile a ``source`` row
-    crosses - or, given ``ids``, only the tiles those rows cross (a bulk loader's new/changed
-    rows, issue #442: a routine weekly load shouldn't re-check the whole country). What a bulk
-    loader calls after loading, since a newly loaded row can duplicate one cached long before.
-    Tile by tile, each its own committed statement, never one table-wide sweep - see
-    :func:`prune_duplicate_route_paths` for the prod outage a global geometry sweep caused."""
-    if ids is not None and not ids:
-        return 0
-    id_filter: LiteralString = "AND id = ANY(%s)" if ids is not None else ""
-    # Ids go in batches: a national first load writes millions, and one array that size made
-    # Postgres hash it in shared memory and fail on a 64 MB /dev/shm (dev's container).
-    id_batches: list[list[str]] | list[None] = (
-        [list(ids[start : start + _PRUNE_ID_BATCH]) for start in range(0, len(ids), _PRUNE_ID_BATCH)]
-        if ids is not None
-        else [None]
-    )
-    cells: set[tuple[int, int]] = set()
-    for id_batch in id_batches:
-        params: list[Any] = [_PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, source]
-        if id_batch is not None:
-            params.append(id_batch)
-        # Every tile each line's bbox crosses, not just the tile holding its centre - an OSM twin
-        # of a long line's far end lies wholly outside the centre's tile (Copilot review, PR #441).
-        cells.update(
-            con.execute(
-                f"""
-                SELECT DISTINCT lat_cell, lng_cell
-                FROM trails,
-                     generate_series(
-                         floor(ST_YMin(geom::geometry) / %s)::int, floor(ST_YMax(geom::geometry) / %s)::int
-                     ) AS lat_cell,
-                     generate_series(
-                         floor(ST_XMin(geom::geometry) / %s)::int, floor(ST_XMax(geom::geometry) / %s)::int
-                     ) AS lng_cell
-                WHERE source = %s AND geom IS NOT NULL {id_filter}
-                """,
-                params,
-            ).fetchall()
-        )
+    crosses - or, given ``ids`` (or an ``id_table`` of them, :func:`create_id_table`), only the
+    tiles those rows cross (a bulk loader's new/changed rows, issue #442: a routine weekly load
+    shouldn't re-check the whole country). What a bulk loader calls after loading, since a newly
+    loaded row can duplicate one cached long before. Tile by tile, each its own committed
+    statement, never one table-wide sweep - see :func:`prune_duplicate_route_paths` for the prod
+    outage a global geometry sweep caused."""
+    if ids is not None:
+        if not ids:
+            return 0
+        id_table = _id_table_from(con, ids)
+    id_filter: LiteralString = "AND id IN (SELECT id FROM " + id_table + ")" if id_table is not None else ""
+    # Every tile each line's bbox crosses, not just the tile holding its centre - an OSM twin of
+    # a long line's far end lies wholly outside the centre's tile (Copilot review, PR #441).
+    cells = con.execute(
+        f"""
+        SELECT DISTINCT lat_cell, lng_cell
+        FROM trails,
+             generate_series(
+                 floor(ST_YMin(geom::geometry) / %s)::int, floor(ST_YMax(geom::geometry) / %s)::int
+             ) AS lat_cell,
+             generate_series(
+                 floor(ST_XMin(geom::geometry) / %s)::int, floor(ST_XMax(geom::geometry) / %s)::int
+             ) AS lng_cell
+        WHERE source = %s AND geom IS NOT NULL {id_filter}
+        ORDER BY lat_cell, lng_cell
+        """,
+        [_PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, source],
+    ).fetchall()
     total = 0
-    for lat_cell, lng_cell in sorted(cells):
+    for lat_cell, lng_cell in cells:
         south, west = lat_cell * _PRUNE_TILE_DEG, lng_cell * _PRUNE_TILE_DEG
         total += prune_trail_duplicates(
             con, min_lat=south, min_lng=west, max_lat=south + _PRUNE_TILE_DEG, max_lng=west + _PRUNE_TILE_DEG
@@ -832,11 +851,29 @@ def prune_trails_missing_from(con: psycopg.Connection, source: str, ids: Sequenc
     """
     if not ids:
         return 0
-    id_list = list(ids)
-    result = con.execute("DELETE FROM trails WHERE source = %s AND id <> ALL(%s)", [source, id_list])
+    return prune_trails_not_listed(con, source, _id_table_from(con, ids))
+
+
+def prune_trails_not_listed(con: psycopg.Connection, source: str, id_table: LiteralString) -> int:
+    """:func:`prune_trails_missing_from` against an id table (:func:`create_id_table`) - what a
+    bulk load uses, so a national snapshot's millions of ids never become one query parameter.
+    Deletes nothing if the table is empty, for the same reason."""
+    if con.execute("SELECT 1 FROM " + id_table + " LIMIT 1").fetchone() is None:
+        return 0
+    result = con.execute(
+        "DELETE FROM trails t WHERE t.source = %s AND NOT EXISTS (SELECT 1 FROM "
+        + id_table
+        + " listed WHERE listed.id = t.id)",
+        [source],
+    )
     # Tombstones for this source's ids it no longer lists are dead weight (issue #442) - only
     # the OSM loader passes OSM ids, so the prefix keeps another source from clearing them.
-    con.execute("DELETE FROM trail_duplicates WHERE osm_id LIKE %s AND osm_id <> ALL(%s)", [f"{source}:%", id_list])
+    con.execute(
+        "DELETE FROM trail_duplicates d WHERE d.osm_id LIKE %s AND NOT EXISTS (SELECT 1 FROM "
+        + id_table
+        + " listed WHERE listed.id = d.osm_id)",
+        [f"{source}:%"],
+    )
     con.commit()
     if result.rowcount:
         _invalidate_rank_cache()

@@ -286,12 +286,11 @@ def test_a_source_never_loaded_to_completion_is_deduped_in_full(
     assert {row[0] for row in con.execute("SELECT id FROM trails").fetchall()} == {"osm:relation/20"}
 
 
-def _raise_runtime_error(*_args: object) -> int:
+def _raise_runtime_error(*_args: object, **_kwargs: object) -> int:
     raise RuntimeError("killed")
 
 
-def test_tiled_dedup_batches_a_long_id_list(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("foray.cache.land_trails._PRUNE_ID_BATCH", 1)
+def test_tiled_dedup_scoped_to_an_id_list(con: psycopg.Connection) -> None:
     path = _row("osm:way/11")
     upsert_trails(con, [path, ("osm:relation/20", path[1], "route", *path[3:]), _row("osm:way/12", lat=46.5)])
 
