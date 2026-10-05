@@ -136,6 +136,9 @@ class Tutorial:
     carousel_viewport: dict[str, int] | None = None
     carousel_dir: Path | None = None
     cast: Screencast | None = None
+    # Phone walkthrough: taps just land on their target. A gliding pointer would also read as a
+    # mouse leaving the open popup, and the hover controller would close it.
+    touch: bool = False
     started: bool = False
     steps: list[tuple[str, str]] = field(default_factory=list)
 
@@ -157,8 +160,12 @@ class Tutorial:
             # The cursor dot helps the GIF but would cover text in a still.
             self.page.screenshot(path=self.img_dir / name, type="png", style="#tut-cursor { display: none; }")
             self.steps.append((name, html))
-            self._carousel_still(name)
         time.sleep(hold)
+        # After the hold, not before: the resize freezes the Reel's frame and the map re-fits when
+        # it's restored, so doing it mid-caption read as a stall followed by a jump. Here it lands
+        # between the caption and the next move.
+        if shot:
+            self._carousel_still(f"{self.slug}-{len(self.steps):02d}-{shot}.png")
 
     def _carousel_still(self, name: str) -> None:
         viewport, carousel_dir = self.carousel_viewport, self.carousel_dir
@@ -180,9 +187,9 @@ class Tutorial:
         """Glide the visible cursor onto `target` (tap targets on mobile just jump)."""
         target.scroll_into_view_if_needed()
         box = target.bounding_box()
-        if box is None:
+        if box is None or self.touch:
             return
-        self.page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=18)
+        glide(self.page, box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=18)
         time.sleep(0.25)
 
     def click(self, target: Locator, *, pause: float = 0.6) -> None:
@@ -234,6 +241,25 @@ class Tutorial:
         self.click(target)
         target.press_sequentially(text, delay=90)
         time.sleep(0.8)
+
+
+# Last pointer position per page, so glide() can interpolate from where the pointer actually is.
+POINTER: dict[int, tuple[float, float]] = {}
+
+
+def glide(page: Page, x: float, y: float, *, steps: int = 18, delay: float = 0.016) -> None:
+    """Move the pointer to (x, y) in eased hops with a pause between each.
+
+    A bare `mouse.move(..., steps=n)` fires every hop back to back, so the screencast, which only
+    catches repaints, sees a handful of frames and a cursor or drag looks like it jumps.
+    """
+    start_x, start_y = POINTER.get(id(page), (x, y))
+    for step in range(1, steps + 1):
+        progress = step / steps
+        eased = progress * progress * (3 - 2 * progress)
+        page.mouse.move(start_x + (x - start_x) * eased, start_y + (y - start_y) * eased)
+        time.sleep(delay)
+    POINTER[id(page)] = (x, y)
 
 
 def wait_for_home(page: Page, name: str) -> None:
@@ -717,9 +743,9 @@ def drag_sheet(tut: Tutorial, to_y: float) -> None:
     if box is None:
         return
     start_x, start_y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-    page.mouse.move(start_x, start_y, steps=8)
+    glide(page, start_x, start_y, steps=8)
     page.mouse.down()
-    page.mouse.move(start_x, to_y, steps=25)
+    glide(page, start_x, to_y, steps=30)
     page.mouse.up()
     time.sleep(1.2)
 
@@ -727,9 +753,9 @@ def drag_sheet(tut: Tutorial, to_y: float) -> None:
 def pan_map(tut: Tutorial, delta_y: float) -> None:
     """Drag the map down by `delta_y` px (positive moves what's on screen downward)."""
     page = tut.page
-    page.mouse.move(200, 330, steps=4)
+    glide(page, 200, 330, steps=4)
     page.mouse.down()
-    page.mouse.move(200, 330 + delta_y, steps=20)
+    glide(page, 200, 330 + delta_y, steps=30)
     page.mouse.up()
     time.sleep(1.5)
 
@@ -802,9 +828,13 @@ def show_finds_phone(tut: Tutorial, *, what: str, follow: tuple[str, ...] = ()) 
     for key in follow:
         link_text, caption = captions[key]
         link = page.locator(".leaflet-popup-content a").filter(has_text=link_text)
-        if not link.is_visible():
+        time.sleep(1.0)  # the viewport restore after the carousel still can close the popup
+        try:
+            link.wait_for(timeout=2_000)
+        except PlaywrightTimeoutError:
             page.mouse.click(pin["x"], pin["y"])
             link.wait_for(timeout=10_000)
+        time.sleep(1.5)  # let the photo load
         tut.follow_link(link, caption)
     page.keyboard.press("Escape")
     time.sleep(0.5)
@@ -1088,7 +1118,7 @@ def record(playwright: Playwright, url: str, slug: str, *, headed: bool, instagr
         set_home_quietly(page)
     with tempfile.TemporaryDirectory() as frame_dir:
         cast = Screencast(page, Path(frame_dir), profile)
-        tut = Tutorial(page=page, slug=slug, img_dir=img_dir, on_start=cast.start, cast=cast)
+        tut = Tutorial(page=page, slug=slug, img_dir=img_dir, on_start=cast.start, cast=cast, touch=profile.mobile)
         if instagram:
             tut.carousel_viewport = CAROUSEL_VIEWPORTS[is_mobile]
             tut.carousel_dir = INSTAGRAM_DIR / "carousel-raw"
