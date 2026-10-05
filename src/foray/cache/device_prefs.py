@@ -7,6 +7,8 @@ from typing import Any
 
 import psycopg
 
+from foray.genus_icons import genus_icon
+
 
 def load_location(con: psycopg.Connection, device_id: str) -> dict[str, Any] | None:
     """This device's "Set location" override, if one has been saved. `None` = use the default."""
@@ -49,7 +51,8 @@ def list_selected_genera(con: psycopg.Connection, device_id: str) -> list[dict[s
     """This device's selected genera with their catalog names, for chip display."""
     rows = con.execute(
         """
-        SELECT fungi_genera.taxon_id, fungi_genera.name, fungi_genera.common_name
+        SELECT fungi_genera.taxon_id, fungi_genera.name, fungi_genera.common_name,
+               fungi_genera.family_name, fungi_genera.order_name, fungi_genera.class_name
         FROM app_genera
         JOIN fungi_genera ON fungi_genera.taxon_id = app_genera.taxon_id
         WHERE app_genera.device_id = %s
@@ -57,7 +60,15 @@ def list_selected_genera(con: psycopg.Connection, device_id: str) -> list[dict[s
         """,
         [device_id],
     ).fetchall()
-    return [{"taxon_id": taxon_id, "name": name, "common_name": common_name} for taxon_id, name, common_name in rows]
+    return [
+        {
+            "taxon_id": taxon_id,
+            "name": name,
+            "common_name": common_name,
+            "icon": genus_icon(name, family, order, class_name),
+        }
+        for taxon_id, name, common_name, family, order, class_name in rows
+    ]
 
 
 def add_genus(con: psycopg.Connection, device_id: str, taxon_id: int) -> None:

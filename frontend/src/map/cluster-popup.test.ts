@@ -9,6 +9,7 @@ function obs(overrides: Partial<PreciseObservation> = {}): PreciseObservation {
     taxon_id: 47348,
     name: "Morchella",
     common_name: null,
+    icon: "morchella",
     lat: 46,
     lng: -121,
     observed_on: "2026-05-01",

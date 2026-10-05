@@ -11,6 +11,7 @@ import pytest
 from click.testing import CliRunner
 
 import foray.cli as cli_module
+from foray.cache import search_fungi_genera
 from foray.cli import cli
 
 
@@ -57,19 +58,41 @@ def calls(monkeypatch):
 
 
 def test_genera_refresh_upserts_catalog(con: psycopg.Connection, env_config, monkeypatch) -> None:
+    fake_ranks = [
+        {"id": 50814, "name": "Agaricomycetes", "rank": "class"},
+        {"id": 47350, "name": "Cantharellales", "rank": "order"},
+        {"id": 48423, "name": "Hydnaceae", "rank": "family"},
+    ]
     fake_genera = [
-        {"id": 47348, "name": "Cantharellus", "preferred_common_name": "Chanterelles", "observations_count": 90000},
-        {"id": 999999, "name": "Obscurella", "observations_count": 3},  # no common name
+        {
+            "id": 47348,
+            "name": "Cantharellus",
+            "preferred_common_name": "Chanterelles",
+            "observations_count": 90000,
+            "ancestor_ids": [48460, 47170, 50814, 47350, 48423, 47348],
+        },
+        {"id": 999999, "name": "Obscurella", "observations_count": 3},  # no common name, no ancestry
+        {"id": 47390, "name": "Hydnum", "ancestor_ids": [50814, 47350, 48423, 47390]},
     ]
     monkeypatch.setattr(cli_module, "iter_fungi_genera", lambda: iter(fake_genera))
+    monkeypatch.setattr(cli_module, "iter_fungi_ranks", lambda: iter(fake_ranks))
 
     runner = CliRunner()
     result = runner.invoke(cli, ["genera-refresh"])
 
     assert result.exit_code == 0, result.output
-    assert "Cached 2 Fungi genera." in result.output
-    rows = con.execute("SELECT taxon_id, name, common_name FROM fungi_genera ORDER BY taxon_id").fetchall()
-    assert rows == [(47348, "Cantharellus", "Chanterelles"), (999999, "Obscurella", None)]
+    assert "Cached 3 Fungi genera." in result.output
+    rows = con.execute(
+        "SELECT taxon_id, name, common_name, class_name, order_id, order_name, family_id, family_name"
+        " FROM fungi_genera ORDER BY taxon_id"
+    ).fetchall()
+    assert rows == [
+        (47348, "Cantharellus", "Chanterelles", "Agaricomycetes", 47350, "Cantharellales", 48423, "Hydnaceae"),
+        (47390, "Hydnum", None, "Agaricomycetes", 47350, "Cantharellales", 48423, "Hydnaceae"),
+        (999999, "Obscurella", None, None, None, None, None, None),
+    ]
+    icons = {hit["name"]: hit["icon"] for hit in search_fungi_genera(con, "")}
+    assert icons == {"Cantharellus": "cantharellus", "Hydnum": "tooth", "Obscurella": "generic"}
 
 
 def test_refresh_default_runs_everything(env_config, calls) -> None:

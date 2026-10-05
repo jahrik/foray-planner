@@ -9,13 +9,14 @@ import click
 from foray import alerting, ingest_bulk, jobs
 from foray.cache import backfill_trail_land, connect, maybe_rebuild_phenology, observation_count, upsert_fungi_genera
 from foray.config import Settings
+from foray.genus_icons import catalog_rows
 from foray.logging_config import setup_logging
 from foray.refresh import REFRESH_LAYERS, parse_month_list, run_home_refresh
 from foray.scoring import build_phenology, plan_route
 from foray.sources import elevation_dem, fire, geocode, satellite
 from foray.sources.camps import ingest_campgrounds, ingest_campgrounds_coverage
 from foray.sources.dispersed import ingest_dispersed, ingest_dispersed_coverage
-from foray.sources.inat import InatQuotaExceeded, iter_fungi_genera
+from foray.sources.inat import InatQuotaExceeded, iter_fungi_genera, iter_fungi_ranks
 from foray.sources.ingest import (
     backfill_elevations,
     backfill_precip,
@@ -628,19 +629,8 @@ def genera_refresh_cmd() -> None:
     """Refresh the full Fungi genus catalog from iNat (issue #79's search/selection catalog)."""
     con = connect()
     try:
-        rows = list(iter_fungi_genera())
-        upsert_fungi_genera(
-            con,
-            [
-                {
-                    "taxon_id": row["id"],
-                    "name": row["name"],
-                    "common_name": row.get("preferred_common_name"),
-                    "observations_count": row.get("observations_count"),
-                }
-                for row in rows
-            ],
-        )
+        rows = catalog_rows(iter_fungi_genera(), iter_fungi_ranks())
+        upsert_fungi_genera(con, rows)
         click.echo(f"Cached {len(rows)} Fungi genera.")
         jobs.emit_rows(len(rows))
     finally:

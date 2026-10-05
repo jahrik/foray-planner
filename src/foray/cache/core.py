@@ -203,12 +203,19 @@ CREATE TABLE IF NOT EXISTS app_location (
 -- `foray genera-refresh` (see foray.sources.inat.iter_fungi_genera). Replaces the old hardcoded
 -- 21-genus seed list - `common_name` is NULL for most rows (only well-known genera have an
 -- English common name on iNat), so callers must treat `name` (scientific) as the primary
--- label, not an optional fallback.
+-- label, not an optional fallback. The class / order / family columns (issue #449) are filled by
+-- the same refresh; foray.genus_icons turns them into the genus's map/list icon at read time, so
+-- a change to its tables applies on deploy. NULL until the first refresh after they landed.
 CREATE TABLE IF NOT EXISTS fungi_genera (
     taxon_id            BIGINT PRIMARY KEY,
     name                TEXT NOT NULL,
     common_name         TEXT,
-    observations_count  INTEGER
+    observations_count  INTEGER,
+    class_name          TEXT,
+    order_id            BIGINT,
+    order_name          TEXT,
+    family_id           BIGINT,
+    family_name         TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_fungi_genera_name ON fungi_genera (name);
@@ -313,7 +320,7 @@ CREATE TABLE IF NOT EXISTS meta (
 # Bump whenever the SCHEMA string above OR the CONCURRENTLY index set in apply_schema changes,
 # so a running instance re-executes them once on its next apply_schema. (New _MIGRATIONS
 # entries are tracked separately by version and don't need a bump.)
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Fixed advisory-lock key so two processes starting together (API + scheduler) serialize on
 # the full apply_schema path instead of racing CREATE INDEX CONCURRENTLY.
@@ -892,6 +899,19 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # (APPALOOSA / "Apaloosa Trail"). A contrib extension DO's managed Postgres offers; creating it
     # builds no index and touches no rows.
     (55, "CREATE EXTENSION IF NOT EXISTS pg_trgm"),
+    # issue #449: each genus's taxonomy, which foray.genus_icons turns into its icon. A ~6k-row
+    # table; `foray genera-refresh` fills the columns on its next weekly run.
+    (
+        56,
+        """
+        ALTER TABLE fungi_genera
+            ADD COLUMN IF NOT EXISTS class_name TEXT,
+            ADD COLUMN IF NOT EXISTS order_id BIGINT,
+            ADD COLUMN IF NOT EXISTS order_name TEXT,
+            ADD COLUMN IF NOT EXISTS family_id BIGINT,
+            ADD COLUMN IF NOT EXISTS family_name TEXT
+        """,
+    ),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]

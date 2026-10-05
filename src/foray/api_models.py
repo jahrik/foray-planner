@@ -15,6 +15,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from foray.config import Home
+from foray.genus_icons import GenusIcon
 
 # Several models below mirror the stdlib dataclasses in foray.scoring.models (SpeciesHit, RegionScore,
 # CampSite, Trail, Stop, TripPlan). Routes return those dataclass instances directly
@@ -62,6 +63,8 @@ class GenusResult(BaseModel):
     taxon_id: int
     name: str
     common_name: str | None
+    # Map / list icon key (issue #449): a bespoke genus key or its shape group.
+    icon: GenusIcon = "generic"
 
 
 class CoverageRegionResponse(BaseModel):
@@ -86,6 +89,7 @@ class SpeciesHit(BaseModel):
     month_count: int
     total_count: int
     w_pheno: float
+    icon: GenusIcon = "generic"
 
 
 class FireNear(BaseModel):
@@ -155,6 +159,8 @@ class RegionPlace(BaseModel):
 class CalendarBucket(BaseModel):
     total: int
     species: dict[str, int]
+    # Each ``species`` label's icon key (issue #449), keyed the same way.
+    icons: dict[str, GenusIcon] = {}
 
 
 class ObservationPhoto(BaseModel):
@@ -168,6 +174,7 @@ class RecentObservation(BaseModel):
     taxon_id: int
     name: str
     common_name: str | None
+    icon: GenusIcon = "generic"
     observed_on: str | None
     place_guess: str | None
     uri: str | None
@@ -185,6 +192,7 @@ class PreciseObservation(BaseModel):
     taxon_id: int
     name: str
     common_name: str | None
+    icon: GenusIcon = "generic"
     lat: float
     lng: float
     observed_on: str | None
@@ -195,6 +203,7 @@ class AlertHit(BaseModel):
     taxon_id: int
     name: str
     common_name: str | None
+    icon: GenusIcon = "generic"
     count: int
     last_seen: str
     place_guess: str | None

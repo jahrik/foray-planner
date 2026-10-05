@@ -254,7 +254,7 @@ def test_search_fungi_genera_common_name_is_optional(con: psycopg.Connection) ->
     upsert_fungi_genera(con, _GENERA)
 
     hits = search_fungi_genera(con, "obscurella")
-    assert hits == [{"taxon_id": 999999, "name": "Obscurella", "common_name": None}]
+    assert hits == [{"taxon_id": 999999, "name": "Obscurella", "common_name": None, "icon": "generic"}]
 
 
 def test_upsert_fungi_genera_reupsert_updates_in_place(con: psycopg.Connection) -> None:
@@ -333,8 +333,8 @@ def test_list_selected_genera_joins_catalog_names(con: psycopg.Connection) -> No
     hits = list_selected_genera(con, "device-a")
 
     assert hits == [
-        {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles"},
-        {"taxon_id": 999999, "name": "Obscurella", "common_name": None},
+        {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "icon": "cantharellus"},
+        {"taxon_id": 999999, "name": "Obscurella", "common_name": None, "icon": "generic"},
     ]
 
 

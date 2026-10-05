@@ -20,6 +20,7 @@ class SpeciesHit:
     month_count: int
     total_count: int
     w_pheno: float
+    icon: str = "generic"  # foray.genus_icons key (issue #449)
 
 
 @dataclass

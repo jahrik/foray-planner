@@ -28,6 +28,7 @@ from foray.scoring._sql import (
     genus_name_map,
     sql_in,
     taxon_filter,
+    unknown_genus,
 )
 from foray.scoring.models import CampSite, FireNear, LandParcel, StopPin, Trail
 
@@ -881,7 +882,7 @@ def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[i
         [region_id, *taxon_ids],
     ).fetchall()
     genera = genus_name_map(con, {row[1] for row in rows})
-    calendar: dict[int, dict[str, Any]] = {month: {"total": 0, "species": {}} for month in range(1, 13)}
+    calendar: dict[int, dict[str, Any]] = {month: {"total": 0, "species": {}, "icons": {}} for month in range(1, 13)}
     per_month_counts: dict[int, dict[int, int]] = {month: {} for month in range(1, 13)}
     for month, taxon_id, cnt in rows:
         calendar[month]["total"] += cnt
@@ -890,13 +891,16 @@ def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[i
     for month, counts in per_month_counts.items():
         top = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:_CALENDAR_SPECIES_PER_MONTH]
         species: dict[str, int] = {}
+        icons: dict[str, str] = {}
         for taxon_id, cnt in top:
-            name, common_name = genera.get(taxon_id, (str(taxon_id), None))
-            label = f"{name} ({common_name})" if common_name else name
+            genus = genera.get(taxon_id) or unknown_genus(taxon_id)
+            label = f"{genus.name} ({genus.common_name})" if genus.common_name else genus.name
             if label in species:
                 label = f"{label} #{taxon_id}"  # disambiguate a display-name collision
             species[label] = cnt
+            icons[label] = genus.icon
         calendar[month]["species"] = species
+        calendar[month]["icons"] = icons
     return calendar
 
 
@@ -949,13 +953,14 @@ def recent_observations(
     genera = genus_name_map(con, {row[1] for row in rows})
     results = []
     for obs_id, taxon_id, observed_on, place_guess, uri, obscured in rows:
-        name, common_name = genera.get(taxon_id, (str(taxon_id), None))
+        name, common_name, icon = genera.get(taxon_id) or unknown_genus(taxon_id)
         results.append(
             {
                 "id": obs_id,
                 "taxon_id": taxon_id,
                 "name": name,
                 "common_name": common_name,
+                "icon": icon,
                 "observed_on": observed_on.isoformat() if observed_on else None,
                 "place_guess": place_guess,
                 "uri": uri,
@@ -1034,12 +1039,13 @@ def alerts(
             },
         )
         entry["total"] += cnt
-        name, common_name = genera.get(taxon_id, (str(taxon_id), None))
+        name, common_name, icon = genera.get(taxon_id) or unknown_genus(taxon_id)
         entry["species"].append(
             {
                 "taxon_id": taxon_id,
                 "name": name,
                 "common_name": common_name,
+                "icon": icon,
                 "count": cnt,
                 "last_seen": str(last_seen),
                 "place_guess": place_guess,
@@ -1116,13 +1122,14 @@ def precise_observations(
 
     results = []
     for obs_id, taxon_id, obs_lat, obs_lng, observed_on, uri in rows:
-        name, common_name = genera.get(taxon_id, (str(taxon_id), None))
+        name, common_name, icon = genera.get(taxon_id) or unknown_genus(taxon_id)
         results.append(
             {
                 "id": obs_id,
                 "taxon_id": taxon_id,
                 "name": name,
                 "common_name": common_name,
+                "icon": icon,
                 "lat": obs_lat,
                 "lng": obs_lng,
                 "observed_on": observed_on.isoformat() if observed_on else None,

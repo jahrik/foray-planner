@@ -14,6 +14,7 @@ from foray.sources.inat import (
     InatQuotaExceeded,
     _with_retries,
     iter_fungi_genera,
+    iter_fungi_ranks,
     iter_observations,
 )
 
@@ -51,6 +52,17 @@ def test_iter_fungi_genera_empty_result_stops_immediately() -> None:
 
     assert results == []
     mock_get_taxa.assert_called_once()
+
+
+def test_iter_fungi_ranks_asks_for_class_order_and_family() -> None:
+    with patch("foray.sources.inat.get_taxa") as mock_get_taxa:
+        mock_get_taxa.return_value = {"results": [{"id": 47350, "name": "Cantharellales", "rank": "order"}]}
+        results = list(iter_fungi_ranks())
+
+    assert [r["name"] for r in results] == ["Cantharellales"]
+    kwargs = mock_get_taxa.call_args.kwargs
+    assert kwargs["taxon_id"] == FUNGI_TAXON_ID
+    assert kwargs["rank"] == ["class", "order", "family"]
 
 
 def test_iter_observations_walks_id_above_pages_by_point_radius() -> None:

@@ -35,7 +35,7 @@ def cfg(con: psycopg.Connection) -> Settings:
         con,
         [
             {"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels"},
-            {"taxon_id": CHANT, "name": "Cantharellus", "common_name": "Chanterelles"},
+            {"taxon_id": CHANT, "name": "Cantharellus", "common_name": "Chanterelles", "icon": "cantharellus"},
             {"taxon_id": BOLET, "name": "Boletus", "common_name": "King Boletes"},
         ],
     )
@@ -201,10 +201,15 @@ def test_get_genera_searches_by_scientific_or_common_name(client: TestClient, co
     # "Chanterelles" genus into the shared catalog, so this scientific/common-name search
     # legitimately matches both - check the one this test seeded is among the hits, rather
     # than asserting an exact list (which would be coupled to that unrelated fixture).
-    assert {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles"} in response.json()
+    assert {
+        "taxon_id": 47348,
+        "name": "Cantharellus",
+        "common_name": "Chanterelles",
+        "icon": "cantharellus",
+    } in response.json()
 
     no_common_name = client.get("/api/genera", params={"q": "obscurella"})
-    assert no_common_name.json() == [{"taxon_id": 999999, "name": "Obscurella", "common_name": None}]
+    assert no_common_name.json() == [{"taxon_id": 999999, "name": "Obscurella", "common_name": None, "icon": "generic"}]
 
 
 def test_selected_genera_empty_for_fresh_device(client: TestClient) -> None:
@@ -215,7 +220,9 @@ def test_selected_genera_empty_for_fresh_device(client: TestClient) -> None:
 
 
 def test_add_and_remove_selected_genus_round_trip(client: TestClient, con: psycopg.Connection) -> None:
-    upsert_fungi_genera(con, [{"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles"}])
+    upsert_fungi_genera(
+        con, [{"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "icon": "cantharellus"}]
+    )
     client.cookies.set("device_id", "device-genera-roundtrip")
 
     added = client.post("/api/genera/47348")
@@ -223,7 +230,9 @@ def test_add_and_remove_selected_genus_round_trip(client: TestClient, con: psyco
     assert added.json() == {"status": "added"}
 
     selected = client.get("/api/genera/selected")
-    assert selected.json() == [{"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles"}]
+    assert selected.json() == [
+        {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "icon": "cantharellus"}
+    ]
 
     removed = client.delete("/api/genera/47348")
     assert removed.status_code == 200
