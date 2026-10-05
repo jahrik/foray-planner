@@ -59,6 +59,17 @@ from foray.genus_icons import (
         ("Teloschistes", "Teloschistaceae", "Teloschistales", "Lecanoromycetes", "shrubby-lichen"),
         ("Xylaria", "Xylariaceae", "Xylariales", "Sordariomycetes", "coral"),
         ("Pseudohydnum", None, "Auriculariales", "Agaricomycetes", "tooth"),
+        # Corrections from the FungalTraits cross-check
+        ("Erysiphe", "Erysiphaceae", "Helotiales", "Leotiomycetes", "rust"),
+        ("Lentinus", "Polyporaceae", "Polyporales", "Agaricomycetes", "gilled"),
+        ("Panus", "Panaceae", "Polyporales", "Agaricomycetes", "gilled"),
+        ("Phlebia", "Meruliaceae", "Polyporales", "Agaricomycetes", "crust"),
+        ("Merulius", "Meruliaceae", "Polyporales", "Agaricomycetes", "bracket"),
+        ("Rickenella", "Rickenellaceae", "Hymenochaetales", "Agaricomycetes", "gilled"),
+        ("Phylloporus", "Boletaceae", "Boletales", "Agaricomycetes", "gilled"),
+        ("Cora", "Hygrophoraceae", "Agaricales", "Agaricomycetes", "leafy-lichen"),
+        ("Calocera", "Dacrymycetaceae", "Dacrymycetales", "Dacrymycetes", "coral"),
+        ("Spathularia", "Cudoniaceae", "Rhytismatales", "Leotiomycetes", "coral"),
         # Class fallback for an unlisted order, then generic
         ("Lichenomphalia", None, "Somelichenales", "Lecanoromycetes", "leafy-lichen"),
         ("Penicillium", "Aspergillaceae", "Eurotiales", "Eurotiomycetes", "generic"),
