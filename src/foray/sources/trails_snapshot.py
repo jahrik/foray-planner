@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Iterator
 from datetime import date
-from typing import Any
+from typing import Any, LiteralString
 
 import psycopg
 import pyarrow as pa
@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 
 SNAPSHOT_FILENAME = "trails.parquet"
 _CHUNK_SIZE = 5000
+# Session temp tables holding one load's id sets (``cache.create_id_table``).
+_LISTED: LiteralString = "_snapshot_listed"
+_WRITTEN: LiteralString = "_snapshot_written"
+_HELD_BACK: LiteralString = "_snapshot_held_back"
 
 # Same order as the trails row tuple (``cache.upsert_trails``), except ``geometry_wkb`` (WKB
 # bytes) replaces the tuple's ``geojson`` text - issue #359's geometry-encoding decision,
@@ -156,48 +160,68 @@ def load_snapshot(
     con.commit()
     existing = con.execute("SELECT count(*) FROM trails WHERE source = %s", [trails_source]).fetchone()
     existing_count = existing[0] if existing else 0
-    listed: list[str] = []
-    written: list[str] = []
-    held_back: set[str] = set()
+    # The listed / written / tombstone-held-back id sets live in session temp tables, not Python:
+    # a national snapshot is millions of ids, and holding them (plus passing them back as one
+    # array) is what ran the 2 GB droplet out of memory on the first national OSM load.
+    cache.create_id_table(con, _LISTED)
+    cache.create_id_table(con, _WRITTEN)
+    cache.create_id_table(con, _HELD_BACK)
     for chunk in _read_rows(cfg, bulk_source, snapshot_date, run_id):
         chunk_ids = [row[0] for row in chunk]
-        listed.extend(chunk_ids)
-        written.extend(cache.upsert_trails_changed(con, chunk))
-        held_back |= cache.tombstoned_ids(con, chunk_ids)
+        cache.append_ids(con, _LISTED, chunk_ids)
+        cache.append_ids(con, _WRITTEN, cache.upsert_trails_changed(con, chunk))
+        cache.append_ids(con, _HELD_BACK, cache.tombstoned_ids(con, chunk_ids))
         con.commit()
+    for table in (_LISTED, _WRITTEN, _HELD_BACK):
+        con.execute("ANALYZE " + table)
+    listed_count = _count(con, _LISTED)
     pruned = 0
-    if existing_count and len(listed) < min_keep_ratio * existing_count:
+    if existing_count and listed_count < min_keep_ratio * existing_count:
         logger.error(
             "%s: snapshot lists %d rows but %d are cached - not pruning (truncated snapshot?)",
             bulk_source,
-            len(listed),
+            listed_count,
             existing_count,
         )
     else:
-        pruned = cache.prune_trails_missing_from(con, trails_source, listed)
+        pruned = cache.prune_trails_not_listed(con, trails_source, _LISTED)
     # A row held back by a tombstone loses it when its kept row is pruned (just above, cascading)
     # or rewritten (a later chunk) - Copilot review, PR #443. Write those now rather than leave
     # neither row cached until the next snapshot.
-    released = held_back - cache.tombstoned_ids(con, sorted(held_back))
+    released = {
+        row[0]
+        for row in con.execute(
+            "SELECT h.id FROM " + _HELD_BACK + " h "
+            "WHERE NOT EXISTS (SELECT 1 FROM trail_duplicates d WHERE d.osm_id = h.id)"
+        ).fetchall()
+    }
     if released:
         for chunk in _read_rows(cfg, bulk_source, snapshot_date, run_id):
             retry = [row for row in chunk if row[0] in released]
             if retry:
-                written.extend(cache.upsert_trails_changed(con, retry))
+                cache.append_ids(con, _WRITTEN, cache.upsert_trails_changed(con, retry))
                 con.commit()
+    written_count = _count(con, _WRITTEN)
     # A new or changed row can duplicate one cached long before - dedup the tiles those rows
     # cross (bounded per tile, never one table-wide sweep).
     if resume_full_dedup:
         logger.warning("%s: the previous load stopped before its dedup - deduping every tile", bulk_source)
-    cache.prune_trail_duplicates_tiled(con, trails_source, None if resume_full_dedup else written)
+        cache.prune_trail_duplicates_tiled(con, trails_source)
+    elif written_count:
+        cache.prune_trail_duplicates_tiled(con, trails_source, id_table=_WRITTEN)
     con.execute("DELETE FROM meta WHERE key = %s", [pending_key])
     con.commit()
     # Namespaced under "trails:" so /healthz/data's trails freshness picks this load up.
-    record_ingest(con, f"trails:{trails_source}:bulk:{snapshot_date.isoformat()}", len(written))
+    record_ingest(con, f"trails:{trails_source}:bulk:{snapshot_date.isoformat()}", written_count)
     logger.info(
         "%s: snapshot of %d rows - wrote %d new/changed, pruned %d no longer listed",
         bulk_source,
-        len(listed),
-        len(written),
+        listed_count,
+        written_count,
         pruned,
     )
+
+
+def _count(con: psycopg.Connection, table: LiteralString) -> int:
+    row = con.execute("SELECT count(*) FROM " + table).fetchone()
+    return row[0] if row else 0

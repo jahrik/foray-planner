@@ -337,6 +337,9 @@ def read_snapshot_parquet(
     key = snapshot_run_prefix(source, snapshot_date, run_id) + filename
     with tempfile.NamedTemporaryFile(suffix=".parquet") as tmp:
         download_file(cfg, key, tmp.name)
-        parquet_file = pq.ParquetFile(tmp.name)
+        # pre_buffer off: with it on (pyarrow's default), iter_batches kept every row group's
+        # buffers until the file closed - a 1.1 GB national snapshot cost 1.1 GB of RAM to read
+        # (measured), which pushed the 2 GB droplet into a swapless thrash (issue #442).
+        parquet_file = pq.ParquetFile(tmp.name, pre_buffer=False)
         for record_batch in parquet_file.iter_batches(batch_size=batch_size):
             yield record_batch.to_pylist()
