@@ -260,18 +260,15 @@ def getting_started(tut: Tutorial) -> None:
 
 
 # Screen position of one single (unclustered) precise-observation pin inside the map viewport,
-# or None. They're bare Leaflet SVG circles with no class of their own, so match on the
-# --spore fill markerPalette() gives them and their small radius.
+# or None (map.ts precisePinIcon).
 FIND_PIN_JS = """
 () => {
-  const spore = getComputedStyle(document.documentElement).getPropertyValue('--spore').trim().toLowerCase();
   const map = document.getElementById('map').getBoundingClientRect();
   const panel = document.getElementById('dock')?.getBoundingClientRect();
-  for (const path of document.querySelectorAll('#map path.leaflet-interactive')) {
-    if ((path.getAttribute('fill') || '').toLowerCase() !== spore) continue;
-    const box = path.getBoundingClientRect();
+  for (const pin of document.querySelectorAll('#map .precise-pin-icon')) {
+    const box = pin.getBoundingClientRect();
     const x = box.x + box.width / 2, y = box.y + box.height / 2;
-    if (box.width > 16 || x < map.left + 40 || x > map.right - 80) continue;
+    if (x < map.left + 40 || x > map.right - 80) continue;
     if (y < map.top + 180 || y > map.bottom - 140) continue;
     if (panel && x < panel.right + 20) continue;
     return { x, y };
@@ -302,7 +299,7 @@ def show_finds(tut: Tutorial, *, what: str) -> None:
     page.locator(".precise-cluster-icon").first.wait_for(timeout=30_000)
     time.sleep(2.0)
     tut.caption(
-        f"<b>Pink pins</b> are research-grade {what} with a verified location.",
+        f"<b>Ochre pins</b> are research-grade {what} with a verified location.",
         shot="pins",
         hold=3,
     )
@@ -333,12 +330,10 @@ def show_finds(tut: Tutorial, *, what: str) -> None:
     if not pin:
         raise RuntimeError("no single precise-observation pin on screen to demonstrate")
     page.mouse.move(pin["x"], pin["y"], steps=18)
-    time.sleep(0.3)
-    page.mouse.click(pin["x"], pin["y"])
     page.locator(".leaflet-popup-content").first.wait_for(timeout=10_000)
     time.sleep(0.8)
     tut.caption(
-        "Click a single find for its date, the full record on <b>iNaturalist ↗</b>, and "
+        "Hover a single find for its date, the full record on <b>iNaturalist ↗</b>, and "
         "<b>Directions</b> straight to the spot.",
         shot="find-popup",
         hold=3.6,
