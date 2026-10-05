@@ -754,6 +754,21 @@ def drag_sheet(tut: Tutorial, to_y: float) -> None:
     time.sleep(1.2)
 
 
+def raise_sheet(tut: Tutorial) -> None:
+    """Pull the sheet all the way up (its `full` detent) and make sure it stays there.
+
+    A drag that ends short of full snaps to the middle detent, and a re-render can let it settle
+    back down, so check the detent and drag again if it isn't full.
+    """
+    page = tut.page
+    for _ in range(3):
+        drag_sheet(tut, 40)
+        time.sleep(1.0)
+        if page.evaluate("document.querySelector('[data-detent]')?.dataset.detent") == "full":
+            return
+    raise RuntimeError("the bottom sheet would not stay fully open")
+
+
 def pan_map(tut: Tutorial, delta_y: float) -> None:
     """Drag the map down by `delta_y` px (positive moves what's on screen downward)."""
     page = tut.page
@@ -847,7 +862,7 @@ def show_finds_phone(tut: Tutorial, *, what: str, follow: tuple[str, ...] = ()) 
 def best_spot_phone(tut: Tutorial) -> None:
     page = tut.page
     tut.caption("No particular target? Find the <b>best spot right now</b> for anything fruiting.", hold=2.6)
-    drag_sheet(tut, 300)
+    raise_sheet(tut)
     card = page.locator("#panel .rank").first
     tut.point(card.locator(".why"))
     tut.caption(
@@ -864,7 +879,7 @@ def best_spot_phone(tut: Tutorial) -> None:
     tut.click(card.locator("h3"), pause=1.5)
     show_finds_phone(tut, what="finds", follow=("inaturalist",))
 
-    drag_sheet(tut, 300)
+    raise_sheet(tut)
     chip = page.locator("#panel .rank").first.locator(".chips .chip").first
     tut.point(chip)
     tut.caption("Each genus chip opens its iNaturalist page: photos, range and lookalikes.", hold=2.2)
@@ -874,7 +889,7 @@ def best_spot_phone(tut: Tutorial) -> None:
     tut.click(sort)
     tut.click(page.locator("#pills .pill-popover button").filter(has_text="Active now").first)
     wait_for_results(page)
-    drag_sheet(tut, 300)
+    raise_sheet(tut)
     tut.caption(
         "Sort by <b>Active now</b> for what's been seen in the last few weeks, with counts and dates.",
         shot="active-now",
@@ -901,7 +916,7 @@ def track_down_phone(tut: Tutorial) -> None:
     tut.click(suggestion, pause=1.0)
     page.keyboard.press("Escape")
     wait_for_results(page)
-    drag_sheet(tut, 300)
+    raise_sheet(tut)
     card = page.locator("#panel .rank").first
     tut.point(card.locator(".why"))
     tut.caption(
@@ -922,7 +937,7 @@ def track_down_phone(tut: Tutorial) -> None:
     tut.caption("<b>3. See the finds.</b> Select the spot; the pins are chanterelles only.", hold=2)
     show_finds_phone(tut, what="chanterelle finds", follow=("directions",))
 
-    drag_sheet(tut, 300)
+    raise_sheet(tut)
     tut.click(page.locator("#panel .rank").first.locator('[data-act="details"]'), pause=1.5)
     tut.click(page.locator('#panel [data-tab="trails"]'), pause=1.0)
     chip = page.locator('#panel [data-tab-content="trails"] .chip').first
@@ -994,7 +1009,7 @@ def getting_started_phone(tut: Tutorial) -> None:
     )
     tut.caption("Start by searching for <b>where you are</b> (or where you're headed).")
     set_home(tut, "Bend, Oregon")
-    drag_sheet(tut, 300)
+    raise_sheet(tut)
     tut.caption("The list re-ranks around your new home, best destination first.", shot="home-set")
 
     months = page.locator("#pills .pill-wrap").nth(2).locator(".pill")
@@ -1014,7 +1029,7 @@ def getting_started_phone(tut: Tutorial) -> None:
     page.keyboard.press("Escape")
     wait_for_results(page)
 
-    drag_sheet(tut, 300)
+    raise_sheet(tut)
     card = page.locator("#panel .rank").first
     tut.caption(
         "Each card leads with <b>why</b> it ranks: what's in season and how many records, "
