@@ -304,7 +304,7 @@ It needs `ffmpeg`. Captions are part of the script, so edit them there.
 posting, not the repo):
 
 ```bash
-just tutorials --instagram              # best-spot, track-down, mobile
+just tutorials --instagram              # getting-started, best-spot, track-down, mobile
 just tutorials --instagram plan-a-trip  # any other walkthrough
 ```
 
@@ -314,8 +314,16 @@ just tutorials --instagram plan-a-trip  # any other walkthrough
 | `carousel/<name>-NN-*.jpg` | **Feed carousel**: one 1080x1350 (4:5) still per step, in order. |
 | `stills/<name>-NN-*.png` | **Stories**: the same steps at 1080x1920. |
 
-Desktop walkthroughs are recorded in the desktop layout on a tall 810x1440 window; `mobile`
-uses the real phone layout. Both are rendered at exactly 1080x1920 device pixels, not upscaled.
+`getting-started`, `best-spot`, `track-down` and `mobile` are recorded in the real phone layout
+(bottom sheet over a full-screen map, everything by tap), since a Reel is watched on a phone.
+Any other walkthrough falls back to the desktop layout on a tall 810x1440 window. Both are
+rendered at exactly 1080x1920 device pixels, not upscaled. Reels capture JPEG frames (PNG frames
+at that size are too slow for smooth motion), and time spent waiting for another site to load, or
+for a carousel still to be taken, is cut out of the video.
+
+iNaturalist currently answers the headless browser with a bot check, so its pages are left out
+of the Reels. To try it with a visible browser, add `--headed`. A phone's Directions link opens
+the OS app chooser, so the recording points it at the Google Maps web page instead.
 
 Before posting publicly:
 
