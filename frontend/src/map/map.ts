@@ -490,6 +490,9 @@ function wirePrecisePopup(group: L.MarkerClusterGroup, hover: boolean): void {
       className: "cluster-popup",
       closeButton: !hover,
       autoPan: !hover,
+      // Touch: pan the map so the card clears the floating search bar and filter pills (about
+      // 190 px tall on a phone) instead of opening underneath them.
+      autoPanPaddingTopLeft: L.point(10, 190),
       maxWidth: 320,
       offset: L.point(0, -12),
     }),

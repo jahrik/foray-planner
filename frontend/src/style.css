@@ -1715,7 +1715,11 @@ table.cal .heat {
   white-space: nowrap;
 }
 
-.popup-thumb-slot:empty {
+.popup-thumb-slot.is-pending {
+  min-height: 190px;
+}
+
+.popup-thumb-slot:empty:not(.is-pending) {
   display: none;
 }
 .popup-thumb {

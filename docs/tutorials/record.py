@@ -670,6 +670,276 @@ def mobile(tut: Tutorial) -> None:
     tut.caption("<b>+ Plan</b> builds your trip from the sheet too.", shot="plan", hold=2.4)
 
 
+# --- phone-layout walkthroughs (Instagram Reels) -------------------------------------------
+# The desktop walkthroughs hover pins and use the side dock; a Reel is watched on a phone, so
+# these two retell the same stories in the phone layout: a bottom sheet over a full-screen map,
+# everything by tap.
+
+# One single precise-observation pin well clear of the floating controls (top) and the sheet
+# (bottom), or None. Taps need no hover, so unlike FIND_PIN_JS this only avoids overlap.
+FIND_PHONE_PIN_JS = """
+() => {
+  for (const pin of document.querySelectorAll('#map .precise-pin-icon')) {
+    const box = pin.getBoundingClientRect();
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    if (x < 50 || x > innerWidth - 50 || y < 300 || y > 520) continue;
+    const hit = document.elementFromPoint(x, y);
+    if (!hit || !pin.contains(hit)) continue;
+    return { x, y };
+  }
+  return null;
+}
+"""
+
+# Cluster badges clear of the controls and the sheet, smallest first: a small cluster opens a short
+# list and takes fewer zooms to break up.
+PHONE_CLUSTERS_JS = """
+() => [...document.querySelectorAll('.precise-cluster-icon')]
+  .map((badge) => {
+    const box = badge.getBoundingClientRect();
+    return { index: [...document.querySelectorAll('.precise-cluster-icon')].indexOf(badge),
+             x: box.x + box.width / 2, y: box.y + box.height / 2,
+             count: Number(badge.textContent.trim().replace(/[^0-9]/g, '')) || 0 };
+  })
+  .filter((entry) => entry.count >= 2 && entry.x > 50 && entry.x < innerWidth - 50
+                     && entry.y > 330 && entry.y < 520)
+  .sort((left, right) => left.count - right.count)
+"""
+
+
+CENTER_JS = "(element) => element.scrollIntoView({ block: 'center' })"
+
+
+def drag_sheet(tut: Tutorial, to_y: float) -> None:
+    """Drag the bottom sheet's handle to `to_y` (CSS px from the top): ~140 raises it, ~700 drops it."""
+    page = tut.page
+    box = page.locator("#sheet-handle").bounding_box()
+    if box is None:
+        return
+    start_x, start_y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(start_x, start_y, steps=8)
+    page.mouse.down()
+    page.mouse.move(start_x, to_y, steps=25)
+    page.mouse.up()
+    time.sleep(1.2)
+
+
+def pan_map(tut: Tutorial, delta_y: float) -> None:
+    """Drag the map down by `delta_y` px (positive moves what's on screen downward)."""
+    page = tut.page
+    page.mouse.move(200, 330, steps=4)
+    page.mouse.down()
+    page.mouse.move(200, 330 + delta_y, steps=20)
+    page.mouse.up()
+    time.sleep(1.5)
+
+
+def show_finds_phone(tut: Tutorial, *, what: str, follow: tuple[str, ...] = ()) -> None:
+    """Phone version of show_finds: tap a numbered pin for its list, "Zoom in" down to one find,
+    tap it for its popup. The sheet starts raised over the selected destination's card."""
+    page = tut.page
+    page.locator(".precise-cluster-icon").first.wait_for(timeout=30_000)
+    drag_sheet(tut, 700)
+    # Selecting a card centres the destination in the strip above the raised sheet; with the sheet
+    # lowered that strip is the top of the screen, behind the controls, so bring it down.
+    middle = page.evaluate(
+        "() => { const ys = [...document.querySelectorAll('.precise-cluster-icon, .precise-pin-icon')]"
+        ".map((el) => { const box = el.getBoundingClientRect(); return box.y + box.height / 2; });"
+        " return ys.length ? ys.reduce((total, value) => total + value, 0) / ys.length : null; }"
+    )
+    if middle is not None:
+        pan_map(tut, 430 - middle)
+    time.sleep(1.0)
+    tut.caption(
+        f"<b>Ochre pins</b> are research-grade {what} with a verified location.",
+        shot="pins",
+        hold=3,
+    )
+
+    clusters = page.evaluate(PHONE_CLUSTERS_JS)
+    if not clusters:
+        raise RuntimeError("no precise-observation cluster on screen to demonstrate")
+    page.locator(".precise-cluster-icon").nth(clusters[0]["index"]).tap()
+    page.locator(".cluster-popup").wait_for(timeout=10_000)
+    time.sleep(0.8)
+    tut.caption(
+        "A numbered pin groups nearby finds. <b>Tap</b> it to list them, newest first.",
+        shot="cluster-list",
+        hold=3.2,
+    )
+    tut.caption("Tap <b>Zoom in</b> until single finds separate out.", hold=1.4)
+    pin = None
+    for _ in range(8):
+        zoom = page.locator(".cluster-list-zoom")
+        if zoom.count():
+            zoom.first.tap()
+            time.sleep(2.2)
+        pin = page.evaluate(FIND_PHONE_PIN_JS)
+        if pin:
+            break
+        clusters = page.evaluate(PHONE_CLUSTERS_JS)
+        if not clusters:
+            break
+        page.locator(".precise-cluster-icon").nth(clusters[0]["index"]).tap()
+        page.locator(".cluster-popup").wait_for(timeout=10_000)
+        time.sleep(0.8)
+    if not pin:
+        raise RuntimeError("no single precise-observation pin on screen to demonstrate")
+    page.mouse.click(pin["x"], pin["y"])
+    find_link = page.locator(".leaflet-popup-content a").filter(has_text="iNaturalist")
+    find_link.wait_for(timeout=10_000)
+    time.sleep(2.5)  # let the photo load
+    tut.caption(
+        "Tap a single find for its photo, date, the full record on <b>iNaturalist ↗</b> and "
+        "<b>Directions</b> straight to the spot.",
+        shot="find-popup",
+        hold=3.6,
+    )
+    captions = {
+        "inaturalist": ("iNaturalist", "The full record on <b>iNaturalist</b>: photos, notes and who ID'd it."),
+        "directions": ("Directions", "<b>Directions</b> opens Google Maps, routed to the spot."),
+    }
+    for key in follow:
+        link_text, caption = captions[key]
+        link = page.locator(".leaflet-popup-content a").filter(has_text=link_text)
+        if not link.is_visible():
+            page.mouse.click(pin["x"], pin["y"])
+            link.wait_for(timeout=10_000)
+        tut.follow_link(link, caption)
+    page.keyboard.press("Escape")
+    time.sleep(0.5)
+
+
+def best_spot_phone(tut: Tutorial) -> None:
+    page = tut.page
+    tut.caption("No particular target? Find the <b>best spot right now</b> for anything fruiting.", hold=2.6)
+    drag_sheet(tut, 300)
+    card = page.locator("#panel .rank").first
+    tut.point(card.locator(".why"))
+    tut.caption(
+        "With <b>All genera</b> and <b>Best overall</b>, #1 has the strongest score for this month.",
+        shot="ranked",
+        hold=3.2,
+    )
+    tut.point(card.locator(".chips"))
+    tut.caption(
+        "Its chips show what's there: genus, share of the season in your months, record count.",
+        shot="chips",
+        hold=3.2,
+    )
+    tut.click(card.locator("h3"), pause=1.5)
+    show_finds_phone(tut, what="finds", follow=("inaturalist",))
+
+    drag_sheet(tut, 300)
+    chip = page.locator("#panel .rank").first.locator(".chips .chip").first
+    tut.point(chip)
+    tut.caption("Each genus chip opens its iNaturalist page: photos, range and lookalikes.", hold=2.2)
+    tut.follow_link(chip, "The genus on <b>iNaturalist</b>: photos, range and similar species.")
+
+    sort = page.locator("#pills .pill-wrap").nth(0).locator(".pill")
+    tut.click(sort)
+    tut.click(page.locator("#pills .pill-popover button").filter(has_text="Active now").first)
+    wait_for_results(page)
+    drag_sheet(tut, 300)
+    tut.caption(
+        "Sort by <b>Active now</b> for what's been seen in the last few weeks, with counts and dates.",
+        shot="active-now",
+        hold=3,
+    )
+    live = page.locator("#panel .rank").first.locator("a.chip.live").first
+    if live.count():
+        tut.point(live)
+    tut.caption("Each of those chips opens that exact observation on iNaturalist.", shot="live-chip", hold=3)
+    if live.count():
+        tut.follow_link(live, "That sighting on <b>iNaturalist</b>, with its date and photos.")
+
+
+def track_down_phone(tut: Tutorial) -> None:
+    page = tut.page
+    tut.caption(
+        "Got a target? Track it down from <b>where</b> to <b>which trail</b> to <b>where to sleep</b>.", hold=2.8
+    )
+    genera = page.locator("#pills .pill-wrap").nth(3).locator(".pill")
+    tut.click(genera)
+    tut.type_slowly(page.locator("#genus"), "Cantharellus")
+    suggestion = page.locator("#genus-suggestions li").first
+    suggestion.wait_for(timeout=15_000)
+    tut.click(suggestion, pause=1.0)
+    page.keyboard.press("Escape")
+    wait_for_results(page)
+    drag_sheet(tut, 300)
+    card = page.locator("#panel .rank").first
+    tut.point(card.locator(".why"))
+    tut.caption(
+        "<b>1. Pick your target</b> under Genera. The list now ranks spots for chanterelles only.",
+        shot="target",
+        hold=3.2,
+    )
+
+    tut.click(card.locator('[data-act="details"]'), pause=1.5)
+    tut.caption(
+        "<b>2. Check the season.</b> Calendar shows which months chanterelles turn up here.",
+        shot="season",
+        hold=3.2,
+    )
+    tut.click(page.locator("#panel .details-back"), pause=1.2)
+
+    tut.click(page.locator("#panel .rank").first.locator("h3"), pause=1.5)
+    tut.caption("<b>3. See the finds.</b> Select the spot; the pins are chanterelles only.", hold=2)
+    show_finds_phone(tut, what="chanterelle finds", follow=("directions",))
+
+    drag_sheet(tut, 300)
+    tut.click(page.locator("#panel .rank").first.locator('[data-act="details"]'), pause=1.5)
+    tut.click(page.locator('#panel [data-tab="trails"]'), pause=1.0)
+    chip = page.locator('#panel [data-tab-content="trails"] .chip').first
+    chip.wait_for(timeout=30_000)
+    time.sleep(1.0)
+    tut.point(chip)
+    tut.caption(
+        "<b>4. Pick a trail.</b> Trails with chanterelle finds close by get a boost in the ranking.",
+        shot="trails",
+        hold=3.2,
+    )
+    tut.click(chip, pause=2.5)
+    tut.caption("Select it to draw the trail on the map, right through the finds.", shot="trail-drawn", hold=3)
+
+    tut.click(page.locator('#panel [data-tab="camps"]'), pause=1.0)
+    camp = page.locator('#panel [data-tab-content="camps"] .chip').first
+    camp.wait_for(timeout=30_000)
+    time.sleep(1.0)
+    tut.click(camp, pause=1.5)
+    tut.caption(
+        "<b>5. Find a camp.</b> Free sites are listed first, then the nearest.",
+        shot="camp",
+        hold=3,
+    )
+    pin = page.locator("#panel .pin-action:visible").first
+    pin.wait_for(timeout=10_000)
+    drag_sheet(tut, 140)
+    pin.evaluate(CENTER_JS)
+    tut.point(pin)
+    pin.evaluate("(element) => element.click()")  # the fixed route bar can sit over the real tap point
+    time.sleep(1.0)
+    tut.click(page.locator("#panel .details-back"), pause=1.2)
+    plan_button = page.locator("#panel .rank").first.locator('[data-act="plan"]')
+    plan_button.evaluate(CENTER_JS)  # the fixed route bar would cover it at the sheet's edge
+    if "In route" in plan_button.inner_text():
+        tut.point(plan_button)
+    else:
+        tut.click(plan_button, pause=0.8)
+    tut.click(page.locator("#route-bar .route-bar-go"), pause=1.0)
+    page.locator("#panel .stop-card").first.wait_for(timeout=60_000)
+    time.sleep(2.5)
+    page.locator("#export-gmaps").evaluate(CENTER_JS)
+    tut.point(page.locator("#export-gmaps"))
+    tut.caption(
+        "<b>6. Go.</b> Plan the trip to that camp and open it in <b>Google Maps</b>, or export GPX.",
+        shot="go",
+        hold=3.4,
+    )
+    tut.follow_link(page.locator("#export-gmaps"), "The whole trip in <b>Google Maps</b>, stop by stop.")
+
+
 TUTORIALS: dict[str, tuple[Callable[[Tutorial], None], bool]] = {
     "getting-started": (getting_started, False),
     "best-spot": (best_spot, False),
@@ -677,6 +947,14 @@ TUTORIALS: dict[str, tuple[Callable[[Tutorial], None], bool]] = {
     "region-details": (region_details, False),
     "plan-a-trip": (plan_a_trip, False),
     "mobile": (mobile, True),
+}
+
+
+# Reels are watched on a phone, so `--instagram` swaps these desktop walkthroughs for their
+# phone-layout retellings (same slugs, same story, tap instead of hover).
+PHONE_REELS: dict[str, Callable[[Tutorial], None]] = {
+    "best-spot": best_spot_phone,
+    "track-down": track_down_phone,
 }
 
 
@@ -781,6 +1059,8 @@ class Screencast:
 
 def record(playwright: Playwright, url: str, slug: str, *, headed: bool, instagram: bool) -> Tutorial:
     run, is_mobile = TUTORIALS[slug]
+    if instagram and slug in PHONE_REELS:
+        run, is_mobile = PHONE_REELS[slug], True
     profile = PROFILES[instagram, is_mobile]
     out_dir = INSTAGRAM_DIR if instagram else OUT_DIR
     img_dir = INSTAGRAM_DIR / "stills" if instagram else IMG_DIR
