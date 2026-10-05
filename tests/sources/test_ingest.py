@@ -311,3 +311,20 @@ def test_ingest_cancelled_run_keeps_rows_but_skips_record_ingest(
 
     log_row = con.execute("SELECT key FROM ingest_log WHERE key LIKE %s", ["obs:fungi:%"]).fetchone()
     assert log_row is None
+
+
+def test_to_row_keeps_the_observations_own_identification() -> None:
+    """Issue #449: besides the genus taxon_id, a row carries the observation's own taxon name."""
+    from foray.sources.ingest import _to_row
+
+    obs = {
+        "id": 7,
+        "location": "47.6,-122.3",
+        "observed_on": "2024-05-01",
+        "quality_grade": "research",
+        "taxon": {"name": "Morchella importuna", "preferred_common_name": "Landscape Morel"},
+    }
+    row = _to_row(obs, 56830)
+    assert row is not None
+    assert row[1] == 56830
+    assert row[-2:] == ("Morchella importuna", "Landscape Morel")

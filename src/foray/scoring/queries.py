@@ -1108,7 +1108,7 @@ def precise_observations(
             LiteralString,
             f"""
             WITH pt AS (SELECT {GEOG_POINT} AS g)
-            SELECT o.id, o.taxon_id, o.lat, o.lng, o.observed_on, o.uri
+            SELECT o.id, o.taxon_id, o.lat, o.lng, o.observed_on, o.uri, o.taxon_name, o.taxon_common_name
             FROM observations o, pt
             WHERE o.quality_grade = 'research' AND o.obscured = FALSE
               AND o.geom IS NOT NULL AND ST_DWithin(o.geom, pt.g, %s)
@@ -1121,7 +1121,7 @@ def precise_observations(
     genera = genus_name_map(con, {row[1] for row in rows})
 
     results = []
-    for obs_id, taxon_id, obs_lat, obs_lng, observed_on, uri in rows:
+    for obs_id, taxon_id, obs_lat, obs_lng, observed_on, uri, taxon_name, taxon_common_name in rows:
         name, common_name, icon = genera.get(taxon_id) or unknown_genus(taxon_id)
         results.append(
             {
@@ -1134,6 +1134,8 @@ def precise_observations(
                 "lng": obs_lng,
                 "observed_on": observed_on.isoformat() if observed_on else None,
                 "uri": uri,
+                "taxon_name": taxon_name,
+                "taxon_common_name": taxon_common_name,
             }
         )
     return results

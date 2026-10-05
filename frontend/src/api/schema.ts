@@ -283,6 +283,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/observations/{obs_id}/thumbnail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Observation Thumbnail
+         * @description One CC-licensed photo for a precise observation's map popup (issue #449), or null when iNat
+         *     has none we may display. Fetched from iNat the first time a popup asks and cached in
+         *     `observation_thumbnails` (the "none" answer too), so hovering across pins costs iNat at most
+         *     one call per observation. Only serves observations already cached as precise, so this can't
+         *     be used to proxy arbitrary iNat lookups.
+         */
+        get: operations["observation_thumbnail_api_observations__obs_id__thumbnail_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/camps": {
         parameters: {
             query?: never;
@@ -996,6 +1020,18 @@ export interface components {
             attribution: string;
         };
         /**
+         * ObservationThumbnail
+         * @description One CC-licensed iNat photo for a precise observation's map popup (issue #449).
+         */
+        ObservationThumbnail: {
+            /** Url */
+            url: string;
+            /** Attribution */
+            attribution: string;
+            /** License Code */
+            license_code: string;
+        };
+        /**
          * PlaceSuggestion
          * @description One typeahead hit from ``/api/location/search`` (issue #145).
          */
@@ -1031,6 +1067,10 @@ export interface components {
             observed_on: string | null;
             /** Uri */
             uri: string | null;
+            /** Taxon Name */
+            taxon_name?: string | null;
+            /** Taxon Common Name */
+            taxon_common_name?: string | null;
         };
         /** RecentObservation */
         RecentObservation: {
@@ -1702,6 +1742,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PreciseObservation"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    observation_thumbnail_api_observations__obs_id__thumbnail_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                obs_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObservationThumbnail"] | null;
                 };
             };
             /** @description Validation Error */

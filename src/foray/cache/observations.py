@@ -37,8 +37,10 @@ def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
         "place_guess",
         "uri",
         "obscured",
+        "taxon_name",
+        "taxon_common_name",
     )
-    return copy_upsert(con, "observations", columns, rows, coalesce=set(columns) - {"id"})
+    return copy_upsert(con, "observations", columns, _pad(rows, len(columns)), coalesce=set(columns) - {"id"})
 
 
 def insert_observations_if_missing(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
@@ -60,8 +62,73 @@ def insert_observations_if_missing(con: psycopg.Connection, rows: Sequence[tuple
         "place_guess",
         "uri",
         "obscured",
+        "taxon_name",
+        "taxon_common_name",
     )
-    return copy_insert_ignore(con, "observations", columns, rows)
+    return copy_insert_ignore(con, "observations", columns, _pad(rows, len(columns)))
+
+
+def _pad(rows: Sequence[tuple[Any, ...]], width: int) -> list[tuple[Any, ...]]:
+    """Right-pad shorter tuples with NULL, so a caller that predates the trailing columns (the
+    taxon names, issue #449) still lines up; the upsert's COALESCE then keeps any stored value."""
+    return [row + (None,) * (width - len(row)) for row in rows]
+
+
+def fill_missing_taxon_names(con: psycopg.Connection, names: Sequence[tuple[int, str]]) -> int:
+    """Set ``taxon_name`` on cached rows that don't have one yet, from ``(id, name)`` pairs.
+
+    The bulk iNat loader is insert-only (``insert_observations_if_missing``), so without this
+    the ~2M rows it seeded before the column existed would only ever be named by the slow
+    ``resync`` grind. Touches only NULL rows, so once a row is named a re-run is a no-op.
+    Returns the number of rows updated.
+    """
+    if not names:
+        return 0
+    with con.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE observations AS o SET taxon_name = v.name
+            FROM unnest(%s::bigint[], %s::text[]) AS v(id, name)
+            WHERE o.id = v.id AND o.taxon_name IS NULL AND v.name <> ''
+            """,
+            [[obs_id for obs_id, _ in names], [name for _, name in names]],
+        )
+        return cur.rowcount
+
+
+def get_observation_thumbnail(
+    con: psycopg.Connection, obs_id: int, max_age_days: int
+) -> tuple[bool, dict[str, Any] | None]:
+    """``(cached, thumbnail)`` for one observation: ``cached`` False means look it up; a cached
+    ``None`` thumbnail means iNat had no displayable photo."""
+    row = con.execute(
+        """
+        SELECT url, attribution, license_code FROM observation_thumbnails
+        WHERE id = %s AND fetched_at > now() - make_interval(days => %s)
+        """,
+        [obs_id, max_age_days],
+    ).fetchone()
+    if row is None:
+        return False, None
+    url, attribution, license_code = row
+    return True, ({"url": url, "attribution": attribution, "license_code": license_code} if url else None)
+
+
+def save_observation_thumbnail(con: psycopg.Connection, obs_id: int, thumbnail: dict[str, Any] | None) -> None:
+    con.execute(
+        """
+        INSERT INTO observation_thumbnails (id, url, attribution, license_code, fetched_at)
+        VALUES (%s, %s, %s, %s, now())
+        ON CONFLICT (id) DO UPDATE SET url = EXCLUDED.url, attribution = EXCLUDED.attribution,
+            license_code = EXCLUDED.license_code, fetched_at = EXCLUDED.fetched_at
+        """,
+        [
+            obs_id,
+            thumbnail and thumbnail["url"],
+            thumbnail and thumbnail["attribution"],
+            thumbnail and thumbnail["license_code"],
+        ],
+    )
 
 
 def suspect_genus_taxon_ids(con: psycopg.Connection, ratio: float = 3.0) -> list[int]:

@@ -39,7 +39,22 @@ CREATE TABLE IF NOT EXISTS observations (
     obscured            BOOLEAN,
     elevation_m         INTEGER,  -- ground elevation (issue #36), enriched post-ingest via Open-Meteo
     precip_7d_mm        DOUBLE PRECISION,  -- rain in the 7 d before observed_on (issue #226), post-ingest
-    precip_30d_mm       DOUBLE PRECISION   -- rain in the 30 d before observed_on (issue #226), post-ingest
+    precip_30d_mm       DOUBLE PRECISION,  -- rain in the 30 d before observed_on (issue #226), post-ingest
+    -- The observation's own identification (issue #449), e.g. "Morchella importuna" - finer than
+    -- `taxon_id`, which is always the genus. NULL until an ingest / resync / bulk load fills it.
+    taxon_name          TEXT,
+    taxon_common_name   TEXT
+);
+
+-- One cached thumbnail per precise observation (issue #449), fetched lazily the first time its
+-- map popup opens (`/api/observations/{id}/thumbnail`) so hovering pins never fans out to iNat.
+-- `url` NULL means "looked up, no displayable (CC-licensed) photo" - also cached.
+CREATE TABLE IF NOT EXISTS observation_thumbnails (
+    id            BIGINT PRIMARY KEY,
+    url           TEXT,
+    attribution   TEXT,
+    license_code  TEXT,
+    fetched_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS ingest_log (
@@ -320,7 +335,7 @@ CREATE TABLE IF NOT EXISTS meta (
 # Bump whenever the SCHEMA string above OR the CONCURRENTLY index set in apply_schema changes,
 # so a running instance re-executes them once on its next apply_schema. (New _MIGRATIONS
 # entries are tracked separately by version and don't need a bump.)
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Fixed advisory-lock key so two processes starting together (API + scheduler) serialize on
 # the full apply_schema path instead of racing CREATE INDEX CONCURRENTLY.
@@ -910,6 +925,24 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
             ADD COLUMN IF NOT EXISTS order_name TEXT,
             ADD COLUMN IF NOT EXISTS family_id BIGINT,
             ADD COLUMN IF NOT EXISTS family_name TEXT
+        """,
+    ),
+    # issue #449: each observation's own identification for its map popup, and the lazy
+    # thumbnail cache. Nullable columns with no default: a catalog-only change on the ~2M-row
+    # table, no rewrite. Filled by ingest / resync / the weekly bulk load over time.
+    (
+        57,
+        """
+        ALTER TABLE observations
+            ADD COLUMN IF NOT EXISTS taxon_name TEXT,
+            ADD COLUMN IF NOT EXISTS taxon_common_name TEXT;
+        CREATE TABLE IF NOT EXISTS observation_thumbnails (
+            id            BIGINT PRIMARY KEY,
+            url           TEXT,
+            attribution   TEXT,
+            license_code  TEXT,
+            fetched_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
         """,
     ),
 ]

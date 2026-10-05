@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 
 import psycopg
+import requests
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from psycopg_pool import ConnectionPool
 
@@ -23,11 +24,13 @@ from foray.api.state import AppState
 from foray.api_models import (
     AlertRegion,
     CalendarBucket,
+    ObservationThumbnail,
     PreciseObservation,
     RecentObservation,
     RecentObservationsPage,
     RegionScore,
 )
+from foray.cache import get_observation_thumbnail, save_observation_thumbnail
 from foray.sources import inat
 
 router = APIRouter()
@@ -226,3 +229,49 @@ def observations_precise(
         return []
     response.headers["Cache-Control"] = _DESTINATIONS_CACHE_CONTROL
     return [PreciseObservation.model_validate(obs) for obs in observations]
+
+
+# A cached thumbnail (or "no displayable photo") is re-checked after this long, so a photo added or
+# relicensed on iNat eventually shows up.
+_THUMBNAIL_MAX_AGE_DAYS = 30
+
+
+@router.get("/api/observations/{obs_id}/thumbnail")
+def observation_thumbnail(
+    obs_id: int,
+    response: Response,
+    pool: ConnectionPool = Depends(get_pool),
+) -> ObservationThumbnail | None:
+    """One CC-licensed photo for a precise observation's map popup (issue #449), or null when iNat
+    has none we may display. Fetched from iNat the first time a popup asks and cached in
+    `observation_thumbnails` (the "none" answer too), so hovering across pins costs iNat at most
+    one call per observation. Only serves observations already cached as precise, so this can't
+    be used to proxy arbitrary iNat lookups."""
+    with pool.connection() as conn:
+        known = conn.execute("SELECT 1 FROM observations WHERE id = %s AND obscured = FALSE", [obs_id]).fetchone()
+        if known is None:
+            raise HTTPException(404, "not a cached precise observation")
+        cached, thumbnail = get_observation_thumbnail(conn, obs_id, _THUMBNAIL_MAX_AGE_DAYS)
+        if not cached:
+            try:
+                photos = inat.photos_for_observations([obs_id]).get(obs_id, [])
+            except (requests.exceptions.RequestException, inat.InatQuotaExceeded):
+                raise HTTPException(503, "iNaturalist is unavailable - try again shortly") from None
+            photo = next(
+                (photo for photo in photos if photo.get("license_code") in inat.DISPLAYABLE_PHOTO_LICENSES),
+                None,
+            )
+            # iNat's API hands back the 75 px "square" size; "small" (240 px) stays sharp at the
+            # popup's size on a high-DPI screen.
+            thumbnail = (
+                {
+                    "url": str(photo["url"]).replace("/square.", "/small."),
+                    "attribution": photo.get("attribution") or "",
+                    "license_code": photo["license_code"],
+                }
+                if photo and photo.get("url")
+                else None
+            )
+            save_observation_thumbnail(conn, obs_id, thumbnail)
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    return ObservationThumbnail.model_validate(thumbnail) if thumbnail else None

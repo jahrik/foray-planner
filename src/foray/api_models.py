@@ -197,6 +197,18 @@ class PreciseObservation(BaseModel):
     lng: float
     observed_on: str | None
     uri: str | None
+    # The observation's own identification (issue #449), finer than the genus `name`, e.g.
+    # "Morchella importuna"; None until ingest / resync / the bulk load has filled it.
+    taxon_name: str | None = None
+    taxon_common_name: str | None = None
+
+
+class ObservationThumbnail(BaseModel):
+    """One CC-licensed iNat photo for a precise observation's map popup (issue #449)."""
+
+    url: str
+    attribution: str
+    license_code: str
 
 
 class AlertHit(BaseModel):

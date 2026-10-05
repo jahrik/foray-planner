@@ -164,6 +164,8 @@ def _to_row(obs: dict[str, Any], genus_taxon_id: int) -> tuple[Any, ...] | None:
         obs.get("place_guess"),
         obs.get("uri"),
         obs.get("obscured"),
+        (obs.get("taxon") or {}).get("name"),
+        (obs.get("taxon") or {}).get("preferred_common_name"),
     )
 
 

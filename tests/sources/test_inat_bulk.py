@@ -236,6 +236,46 @@ def test_load_inat_resolves_genus_and_upserts_observations(
     assert marker == (1,)
 
 
+def test_load_inat_names_new_rows_and_fills_existing_unnamed_ones(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #449: the loader stores each row's own identification, and - since it is otherwise
+    insert-only - also names rows it seeded before the column existed, without overwriting a
+    name a live ingest already set."""
+    upsert_rows(con, "fungi_genera", ("taxon_id", "name"), [(48701, "Amanita")], conflict="taxon_id")
+    con.execute(
+        "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade)"
+        " VALUES (5, 48701, 47.6, -122.3, '2026-05-01', 5, 'research')"
+    )
+    con.execute(
+        "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade, taxon_name)"
+        " VALUES (6, 48701, 47.6, -122.3, '2026-05-01', 5, 'research', 'Amanita pantherina')"
+    )
+    base = {
+        "genus": "Amanita",
+        "lat": 47.6,
+        "lng": -122.3,
+        "event_date": "2026-06-01",
+        "coordinate_uncertainty_m": None,
+    }
+    payload = _write_parquet_bytes(
+        [
+            {"id": 1, **base, "scientific_name": "Amanita muscaria"},
+            {"id": 5, **base, "scientific_name": "Amanita augusta"},
+            {"id": 6, **base, "scientific_name": "Amanita muscaria"},
+        ],
+        inat_bulk._SNAPSHOT_SCHEMA,
+    )
+    monkeypatch.setattr(
+        inat_bulk.spaces, "download_file", lambda cfg, key, dest_path: Path(dest_path).write_bytes(payload)
+    )
+
+    load_inat(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
+
+    names = con.execute("SELECT id, taxon_name FROM observations ORDER BY id").fetchall()
+    assert names == [(1, "Amanita muscaria"), (5, "Amanita augusta"), (6, "Amanita pantherina")]
+
+
 def test_load_inat_triggers_phenology_rebuild_over_threshold(
     con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
