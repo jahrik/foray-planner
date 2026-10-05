@@ -249,6 +249,38 @@ def test_a_twin_comes_back_in_the_same_load_that_drops_its_kept_row(
     assert {row[0] for row in con.execute("SELECT id FROM trails").fetchall()} == {"osm:way/11"}
 
 
+def test_a_load_that_died_before_its_dedup_is_deduped_in_full_on_the_rerun(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The first load wrote the twin and died before deduping. The rerun's diff writes nothing
+    # (the twin is cached and unchanged), so only the pending marker gets its tile deduped.
+    twin = trails_snapshot.record_to_row(trails_snapshot.row_to_record(_row("osm:way/11")))
+    route = ("osm:relation/20", twin[1], "route", *twin[3:])
+    _serve_snapshot(monkeypatch, [twin, route])
+    monkeypatch.setattr(cache, "prune_trail_duplicates_tiled", _raise_runtime_error)
+    with pytest.raises(RuntimeError):
+        osm_trails.load_osm_trails(con, Settings(spaces=_SPACES_CFG), date(2026, 10, 4), "run1")
+    monkeypatch.undo()
+    _serve_snapshot(monkeypatch, [twin, route])
+
+    osm_trails.load_osm_trails(con, Settings(spaces=_SPACES_CFG), date(2026, 10, 4), "run1")
+
+    assert {row[0] for row in con.execute("SELECT id FROM trails").fetchall()} == {"osm:relation/20"}
+    assert con.execute("SELECT 1 FROM meta WHERE key LIKE 'trails_dedup_pending:%'").fetchone() is None
+
+
+def _raise_runtime_error(*_args: object) -> int:
+    raise RuntimeError("killed")
+
+
+def test_tiled_dedup_batches_a_long_id_list(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("foray.cache.land_trails._PRUNE_ID_BATCH", 1)
+    path = _row("osm:way/11")
+    upsert_trails(con, [path, ("osm:relation/20", path[1], "route", *path[3:]), _row("osm:way/12", lat=46.5)])
+
+    assert cache.prune_trail_duplicates_tiled(con, "osm", ["osm:way/11", "osm:way/12", "osm:relation/20"]) == 1
+
+
 def test_a_tombstone_goes_away_with_the_row_that_replaced_it(con: psycopg.Connection) -> None:
     upsert_trails(con, [_row("usfs:trail/1", source="usfs")])
     con.execute("INSERT INTO trail_duplicates (osm_id, kept_id) VALUES ('osm:way/7', 'usfs:trail/1')")

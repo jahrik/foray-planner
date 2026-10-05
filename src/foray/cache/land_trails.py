@@ -766,6 +766,7 @@ def prune_trail_duplicates(
 
 
 _PRUNE_TILE_DEG = 2.0
+_PRUNE_ID_BATCH = 50_000
 
 
 def prune_trail_duplicates_tiled(con: psycopg.Connection, source: str, ids: Sequence[str] | None = None) -> int:
@@ -778,27 +779,38 @@ def prune_trail_duplicates_tiled(con: psycopg.Connection, source: str, ids: Sequ
     if ids is not None and not ids:
         return 0
     id_filter: LiteralString = "AND id = ANY(%s)" if ids is not None else ""
-    params: list[Any] = [_PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, source]
-    if ids is not None:
-        params.append(list(ids))
-    # Every tile each line's bbox crosses, not just the tile holding its centre - an OSM twin of
-    # a long line's far end lies wholly outside the centre's tile (Copilot review, PR #441).
-    cells = con.execute(
-        f"""
-        SELECT DISTINCT lat_cell, lng_cell
-        FROM trails,
-             generate_series(
-                 floor(ST_YMin(geom::geometry) / %s)::int, floor(ST_YMax(geom::geometry) / %s)::int
-             ) AS lat_cell,
-             generate_series(
-                 floor(ST_XMin(geom::geometry) / %s)::int, floor(ST_XMax(geom::geometry) / %s)::int
-             ) AS lng_cell
-        WHERE source = %s AND geom IS NOT NULL {id_filter}
-        """,
-        params,
-    ).fetchall()
+    # Ids go in batches: a national first load writes millions, and one array that size made
+    # Postgres hash it in shared memory and fail on a 64 MB /dev/shm (dev's container).
+    id_batches: list[list[str]] | list[None] = (
+        [list(ids[start : start + _PRUNE_ID_BATCH]) for start in range(0, len(ids), _PRUNE_ID_BATCH)]
+        if ids is not None
+        else [None]
+    )
+    cells: set[tuple[int, int]] = set()
+    for id_batch in id_batches:
+        params: list[Any] = [_PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, _PRUNE_TILE_DEG, source]
+        if id_batch is not None:
+            params.append(id_batch)
+        # Every tile each line's bbox crosses, not just the tile holding its centre - an OSM twin
+        # of a long line's far end lies wholly outside the centre's tile (Copilot review, PR #441).
+        cells.update(
+            con.execute(
+                f"""
+                SELECT DISTINCT lat_cell, lng_cell
+                FROM trails,
+                     generate_series(
+                         floor(ST_YMin(geom::geometry) / %s)::int, floor(ST_YMax(geom::geometry) / %s)::int
+                     ) AS lat_cell,
+                     generate_series(
+                         floor(ST_XMin(geom::geometry) / %s)::int, floor(ST_XMax(geom::geometry) / %s)::int
+                     ) AS lng_cell
+                WHERE source = %s AND geom IS NOT NULL {id_filter}
+                """,
+                params,
+            ).fetchall()
+        )
     total = 0
-    for lat_cell, lng_cell in cells:
+    for lat_cell, lng_cell in sorted(cells):
         south, west = lat_cell * _PRUNE_TILE_DEG, lng_cell * _PRUNE_TILE_DEG
         total += prune_trail_duplicates(
             con, min_lat=south, min_lng=west, max_lat=south + _PRUNE_TILE_DEG, max_lng=west + _PRUNE_TILE_DEG
