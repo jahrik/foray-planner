@@ -325,6 +325,10 @@ iNaturalist currently answers the headless browser with a bot check, so its page
 of the Reels. To try it with a visible browser, add `--headed`. A phone's Directions link opens
 the OS app chooser, so the recording points it at the Google Maps web page instead.
 
+Each Reel ends on a credits card (map, observation, photo, elevation, terrain and, when shown,
+Google Maps credits) and `credits/<name>.txt` lists the same plus every photo credit that
+appeared, to paste into the post caption.
+
 Before posting publicly:
 
 - **Map attribution.** The basemap is OpenStreetMap data via Protomaps. The in-map credit is
