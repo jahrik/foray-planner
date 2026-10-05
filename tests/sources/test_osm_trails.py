@@ -162,10 +162,9 @@ def test_upsert_trails_changed_writes_only_new_and_changed_rows(con: psycopg.Con
     assert con.execute("SELECT name FROM trails WHERE id = 'osm:way/2'").fetchone() == ("Renamed",)
 
 
-def test_a_pruned_twin_stays_pruned_when_the_next_snapshot_lists_it_again(con: psycopg.Connection) -> None:
-    # issue #442: every weekly OSM snapshot still lists a twin the dedup deleted. Without a
-    # tombstone the diff load would see it as new, re-insert it, and the prune would delete it
-    # again - every week.
+def _prune_twin(con: psycopg.Connection) -> tuple[tuple, tuple, tuple]:
+    """Cache an OSM way beside a USFS trail plus a trailhead linked to it, and prune the way as
+    the USFS trail's twin. Returns (twin, usfs, trailhead)."""
     twin = (*_row("osm:way/7")[:5], 44.0002, -122.0, *_row("osm:way/7")[7:])
     twin = (
         *twin[:7],
@@ -189,6 +188,14 @@ def test_a_pruned_twin_stays_pruned_when_the_next_snapshot_lists_it_again(con: p
     upsert_trails(con, [twin, usfs, trailhead])
     cache.prune_trail_duplicates(con, min_lat=43.9, min_lng=-122.1, max_lat=44.1, max_lng=-121.9)
     assert con.execute("SELECT 1 FROM trails WHERE id = 'osm:way/7'").fetchone() is None
+    return twin, usfs, trailhead
+
+
+def test_a_pruned_twin_stays_pruned_when_the_next_snapshot_lists_it_again(con: psycopg.Connection) -> None:
+    # issue #442: every weekly OSM snapshot still lists a twin the dedup deleted. Without a
+    # tombstone the diff load would see it as new, re-insert it, and the prune would delete it
+    # again - every week.
+    twin, _usfs, trailhead = _prune_twin(con)
 
     written = upsert_trails_changed(con, [twin, trailhead])
 
@@ -196,6 +203,50 @@ def test_a_pruned_twin_stays_pruned_when_the_next_snapshot_lists_it_again(con: p
     assert con.execute("SELECT 1 FROM trails WHERE id = 'osm:way/7'").fetchone() is None
     stored = con.execute("SELECT connects FROM trails WHERE id = 'osm:node/9'").fetchone()
     assert stored is not None and stored[0] == ["usfs:trail/1"]
+
+
+def test_an_edited_twin_is_let_back_in(con: psycopg.Connection) -> None:
+    # Copilot review, PR #443: a tombstone keyed on the id alone would hide every later edit to
+    # the way - here it's been renamed and moved well off the USFS trail.
+    twin, _usfs, _trailhead = _prune_twin(con)
+    moved = json.dumps({"type": "LineString", "coordinates": [[-121.5, 44.0], [-121.5, 44.01]]})
+    edited = (twin[0], "Lookout Way", *twin[2:7], moved, *twin[8:])
+
+    assert upsert_trails_changed(con, [edited]) == ["osm:way/7"]
+
+    assert con.execute("SELECT name FROM trails WHERE id = 'osm:way/7'").fetchone() == ("Lookout Way",)
+    assert con.execute("SELECT count(*) FROM trail_duplicates").fetchone() == (0,)
+
+
+def test_rewriting_the_kept_row_releases_its_tombstones(con: psycopg.Connection) -> None:
+    # The USFS trail was rerouted: the old "same trail" verdict no longer stands.
+    _twin, usfs, _trailhead = _prune_twin(con)
+    rerouted = json.dumps({"type": "LineString", "coordinates": [[-121.5, 44.0], [-121.5, 44.01]]})
+
+    upsert_trails_changed(con, [(*usfs[:7], rerouted, *usfs[8:])])
+
+    assert con.execute("SELECT count(*) FROM trail_duplicates").fetchone() == (0,)
+
+
+def test_a_twin_comes_back_in_the_same_load_that_drops_its_kept_row(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Copilot review, PR #443: the snapshot no longer lists the OSM route but still lists its
+    # member path. The path is held back by its tombstone, then the route's prune cascades the
+    # tombstone away - the path must still end up cached, not wait for next week's snapshot.
+    # Rows as a snapshot carries them (GeoJSON re-serialised from WKB), so the tombstone's
+    # fingerprint matches the listed path and it really is held back.
+    path = trails_snapshot.record_to_row(trails_snapshot.row_to_record(_row("osm:way/11")))
+    route = (*path[:2], "route", *path[3:])
+    route = ("osm:relation/20", *route[1:])
+    upsert_trails(con, [path, route])
+    cache.prune_trail_duplicates(con, min_lat=43.9, min_lng=-122.1, max_lat=44.1, max_lng=-121.9)
+    assert con.execute("SELECT kept_id FROM trail_duplicates").fetchall() == [("osm:relation/20",)]
+    _serve_snapshot(monkeypatch, [path])
+
+    osm_trails.load_osm_trails(con, Settings(spaces=_SPACES_CFG), date(2026, 10, 4), "run1")
+
+    assert {row[0] for row in con.execute("SELECT id FROM trails").fetchall()} == {"osm:way/11"}
 
 
 def test_a_tombstone_goes_away_with_the_row_that_replaced_it(con: psycopg.Connection) -> None:
