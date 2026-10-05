@@ -9,8 +9,11 @@ them without importing each other.
 from __future__ import annotations
 
 from collections.abc import Collection
+from typing import NamedTuple
 
 import psycopg
+
+from foray.genus_icons import genus_icon
 
 # The "research-grade only" invariant (see AGENTS.md) is enforced here, centrally, rather
 # than trusted from the iNat API query param it started as (inat.py) - any row that lands in
@@ -88,8 +91,22 @@ def taxon_filter(taxon_ids: list[int], column: str = "taxon_id") -> str:
     return f"{column} IN ({sql_in(taxon_ids)})" if taxon_ids else "TRUE"
 
 
-def genus_name_map(con: psycopg.Connection, taxon_ids: Collection[int]) -> dict[int, tuple[str, str | None]]:
-    """taxon_id -> (scientific name, common name or None) for the given taxon_ids only.
+class GenusLabel(NamedTuple):
+    """How a genus is shown: scientific name, optional common name, and its icon key
+    (``foray.genus_icons``)."""
+
+    name: str
+    common_name: str | None
+    icon: str
+
+
+def unknown_genus(taxon_id: int) -> GenusLabel:
+    """The label for a taxon_id missing from the catalog - its id as the name."""
+    return GenusLabel(str(taxon_id), None, "generic")
+
+
+def genus_name_map(con: psycopg.Connection, taxon_ids: Collection[int]) -> dict[int, GenusLabel]:
+    """taxon_id -> ``GenusLabel`` for the given taxon_ids only.
 
     ``name`` is the primary display label (every ~6,018-genus catalog row has one);
     ``common_name`` is optional secondary enrichment - most genera outside the old curated
@@ -101,7 +118,13 @@ def genus_name_map(con: psycopg.Connection, taxon_ids: Collection[int]) -> dict[
     if not taxon_ids:
         return {}
     rows = con.execute(
-        "SELECT taxon_id, name, common_name FROM fungi_genera WHERE taxon_id = ANY(%s)",
+        """
+        SELECT taxon_id, name, common_name, family_name, order_name, class_name
+        FROM fungi_genera WHERE taxon_id = ANY(%s)
+        """,
         [list(taxon_ids)],
     ).fetchall()
-    return {taxon_id: (name, common_name) for taxon_id, name, common_name in rows}
+    return {
+        taxon_id: GenusLabel(name, common_name, genus_icon(name, family, order, class_name))
+        for taxon_id, name, common_name, family, order, class_name in rows
+    }

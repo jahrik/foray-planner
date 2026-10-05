@@ -8,19 +8,41 @@ from typing import Any
 
 import psycopg
 
+from foray.genus_icons import genus_icon
+
+_GENUS_COLUMNS = (
+    "taxon_id",
+    "name",
+    "common_name",
+    "observations_count",
+    "class_name",
+    "order_id",
+    "order_name",
+    "family_id",
+    "family_name",
+)
+
 
 def upsert_fungi_genera(con: psycopg.Connection, rows: Iterable[dict[str, Any]]) -> None:
+    """Upsert catalog rows (``foray.genus_icons.catalog_rows``); a key missing from a row is
+    written as NULL."""
     with con.cursor() as cur:
         cur.executemany(
             """
-            INSERT INTO fungi_genera (taxon_id, name, common_name, observations_count)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO fungi_genera (taxon_id, name, common_name, observations_count,
+                                      class_name, order_id, order_name, family_id, family_name)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (taxon_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 common_name = EXCLUDED.common_name,
-                observations_count = EXCLUDED.observations_count
+                observations_count = EXCLUDED.observations_count,
+                class_name = EXCLUDED.class_name,
+                order_id = EXCLUDED.order_id,
+                order_name = EXCLUDED.order_name,
+                family_id = EXCLUDED.family_id,
+                family_name = EXCLUDED.family_name
             """,
-            [(row["taxon_id"], row["name"], row.get("common_name"), row.get("observations_count")) for row in rows],
+            [tuple(row.get(column) for column in _GENUS_COLUMNS) for row in rows],
         )
 
 
@@ -60,7 +82,7 @@ def search_fungi_genera(con: psycopg.Connection, query: str, limit: int = 20) ->
     if stripped:
         rows = con.execute(
             """
-            SELECT taxon_id, name, common_name
+            SELECT taxon_id, name, common_name, family_name, order_name, class_name
             FROM fungi_genera
             WHERE name ILIKE %s OR common_name ILIKE %s
             ORDER BY observations_count DESC NULLS LAST, name
@@ -71,11 +93,19 @@ def search_fungi_genera(con: psycopg.Connection, query: str, limit: int = 20) ->
     else:
         rows = con.execute(
             """
-            SELECT taxon_id, name, common_name
+            SELECT taxon_id, name, common_name, family_name, order_name, class_name
             FROM fungi_genera
             ORDER BY observations_count DESC NULLS LAST, name
             LIMIT %s
             """,
             [limit],
         ).fetchall()
-    return [{"taxon_id": taxon_id, "name": name, "common_name": common_name} for taxon_id, name, common_name in rows]
+    return [
+        {
+            "taxon_id": taxon_id,
+            "name": name,
+            "common_name": common_name,
+            "icon": genus_icon(name, family, order, class_name),
+        }
+        for taxon_id, name, common_name, family, order, class_name in rows
+    ]

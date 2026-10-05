@@ -688,6 +688,12 @@ export interface components {
             name: string;
             /** Common Name */
             common_name: string | null;
+            /**
+             * Icon
+             * @default generic
+             * @enum {string}
+             */
+            icon: "gilled" | "bolete" | "bracket" | "crust" | "coral" | "puffball" | "earthstar" | "cup" | "morel" | "tooth" | "vase" | "jelly" | "stinkhorn" | "leafy-lichen" | "shrubby-lichen" | "rust" | "generic" | "trametes" | "amanita" | "laetiporus" | "pleurotus" | "fomitopsis" | "cerioporus" | "ganoderma" | "lactarius" | "stereum" | "schizophyllum" | "mycena" | "suillus" | "cladonia" | "omphalotus" | "coprinus" | "flavoparmelia" | "cantharellus" | "hericium" | "desarmillaria" | "lobaria" | "hypomyces" | "chlorophyllum" | "russula" | "cortinarius" | "artomyces" | "apioperdon" | "entoloma" | "agaricus" | "leucocoprinus" | "morchella";
             /** Count */
             count: number;
             /** Last Seen */
@@ -747,6 +753,13 @@ export interface components {
             /** Species */
             species: {
                 [key: string]: number;
+            };
+            /**
+             * Icons
+             * @default {}
+             */
+            icons: {
+                [key: string]: "gilled" | "bolete" | "bracket" | "crust" | "coral" | "puffball" | "earthstar" | "cup" | "morel" | "tooth" | "vase" | "jelly" | "stinkhorn" | "leafy-lichen" | "shrubby-lichen" | "rust" | "generic" | "trametes" | "amanita" | "laetiporus" | "pleurotus" | "fomitopsis" | "cerioporus" | "ganoderma" | "lactarius" | "stereum" | "schizophyllum" | "mycena" | "suillus" | "cladonia" | "omphalotus" | "coprinus" | "flavoparmelia" | "cantharellus" | "hericium" | "desarmillaria" | "lobaria" | "hypomyces" | "chlorophyllum" | "russula" | "cortinarius" | "artomyces" | "apioperdon" | "entoloma" | "agaricus" | "leucocoprinus" | "morchella";
             };
         };
         /** CampSite */
@@ -889,6 +902,12 @@ export interface components {
             name: string;
             /** Common Name */
             common_name: string | null;
+            /**
+             * Icon
+             * @default generic
+             * @enum {string}
+             */
+            icon: "gilled" | "bolete" | "bracket" | "crust" | "coral" | "puffball" | "earthstar" | "cup" | "morel" | "tooth" | "vase" | "jelly" | "stinkhorn" | "leafy-lichen" | "shrubby-lichen" | "rust" | "generic" | "trametes" | "amanita" | "laetiporus" | "pleurotus" | "fomitopsis" | "cerioporus" | "ganoderma" | "lactarius" | "stereum" | "schizophyllum" | "mycena" | "suillus" | "cladonia" | "omphalotus" | "coprinus" | "flavoparmelia" | "cantharellus" | "hericium" | "desarmillaria" | "lobaria" | "hypomyces" | "chlorophyllum" | "russula" | "cortinarius" | "artomyces" | "apioperdon" | "entoloma" | "agaricus" | "leucocoprinus" | "morchella";
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -998,6 +1017,12 @@ export interface components {
             name: string;
             /** Common Name */
             common_name: string | null;
+            /**
+             * Icon
+             * @default generic
+             * @enum {string}
+             */
+            icon: "gilled" | "bolete" | "bracket" | "crust" | "coral" | "puffball" | "earthstar" | "cup" | "morel" | "tooth" | "vase" | "jelly" | "stinkhorn" | "leafy-lichen" | "shrubby-lichen" | "rust" | "generic" | "trametes" | "amanita" | "laetiporus" | "pleurotus" | "fomitopsis" | "cerioporus" | "ganoderma" | "lactarius" | "stereum" | "schizophyllum" | "mycena" | "suillus" | "cladonia" | "omphalotus" | "coprinus" | "flavoparmelia" | "cantharellus" | "hericium" | "desarmillaria" | "lobaria" | "hypomyces" | "chlorophyllum" | "russula" | "cortinarius" | "artomyces" | "apioperdon" | "entoloma" | "agaricus" | "leucocoprinus" | "morchella";
             /** Lat */
             lat: number;
             /** Lng */
@@ -1017,6 +1042,12 @@ export interface components {
             name: string;
             /** Common Name */
             common_name: string | null;
+            /**
+             * Icon
+             * @default generic
+             * @enum {string}
+             */
+            icon: "gilled" | "bolete" | "bracket" | "crust" | "coral" | "puffball" | "earthstar" | "cup" | "morel" | "tooth" | "vase" | "jelly" | "stinkhorn" | "leafy-lichen" | "shrubby-lichen" | "rust" | "generic" | "trametes" | "amanita" | "laetiporus" | "pleurotus" | "fomitopsis" | "cerioporus" | "ganoderma" | "lactarius" | "stereum" | "schizophyllum" | "mycena" | "suillus" | "cladonia" | "omphalotus" | "coprinus" | "flavoparmelia" | "cantharellus" | "hericium" | "desarmillaria" | "lobaria" | "hypomyces" | "chlorophyllum" | "russula" | "cortinarius" | "artomyces" | "apioperdon" | "entoloma" | "agaricus" | "leucocoprinus" | "morchella";
             /** Observed On */
             observed_on: string | null;
             /** Place Guess */
@@ -1110,6 +1141,12 @@ export interface components {
             total_count: number;
             /** W Pheno */
             w_pheno: number;
+            /**
+             * Icon
+             * @default generic
+             * @enum {string}
+             */
+            icon: "gilled" | "bolete" | "bracket" | "crust" | "coral" | "puffball" | "earthstar" | "cup" | "morel" | "tooth" | "vase" | "jelly" | "stinkhorn" | "leafy-lichen" | "shrubby-lichen" | "rust" | "generic" | "trametes" | "amanita" | "laetiporus" | "pleurotus" | "fomitopsis" | "cerioporus" | "ganoderma" | "lactarius" | "stereum" | "schizophyllum" | "mycena" | "suillus" | "cladonia" | "omphalotus" | "coprinus" | "flavoparmelia" | "cantharellus" | "hericium" | "desarmillaria" | "lobaria" | "hypomyces" | "chlorophyllum" | "russula" | "cortinarius" | "artomyces" | "apioperdon" | "entoloma" | "agaricus" | "leucocoprinus" | "morchella";
         };
         /** StatusResponse */
         StatusResponse: {

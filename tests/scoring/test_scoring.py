@@ -15,6 +15,7 @@ from foray.scoring import (
     precise_observations,
     rank_destinations,
 )
+from foray.scoring._sql import genus_name_map
 
 RES = 4
 
@@ -73,6 +74,7 @@ def test_april_ranks_morel_region_first(con: psycopg.Connection) -> None:
     top = ranked[0]
     assert haversine_km(top.center_lat, top.center_lng, APR_LAT, APR_LNG) < 50
     assert top.species[0].common_name == "Morels"
+    assert top.species[0].icon == "morchella"  # bespoke tier, by name (issue #449)
     assert top.score_norm == 1.0
 
 
@@ -158,6 +160,7 @@ def test_place_calendar_peaks_in_expected_month(con: psycopg.Connection) -> None
     peak_month = max(calendar, key=lambda month: calendar[month]["total"])
     assert peak_month == 10
     assert calendar[10]["species"]["Cantharellus (Chanterelles)"] == 30
+    assert calendar[10]["icons"]["Cantharellus (Chanterelles)"] == "cantharellus"
 
 
 def test_place_calendar_empty_taxon_ids_means_no_filter(con: psycopg.Connection) -> None:
@@ -493,6 +496,7 @@ def test_precise_observations_excludes_null_and_true_obscured(con: psycopg.Conne
     assert results[0]["lat"] == pytest.approx(precise_lat)
     assert results[0]["lng"] == pytest.approx(precise_lng)
     assert results[0]["name"] == "Morchella"
+    assert results[0]["icon"] == "morchella"
     assert results[0]["uri"] == "https://x/9001"
 
 
@@ -576,3 +580,17 @@ def test_build_phenology_recovers_from_a_stray_staging_table(con: psycopg.Connec
     assert rank_destinations(
         con, months=[4], taxon_ids=[MOREL], home_lat=APR_LAT, home_lng=APR_LNG, radius_km=50, h3_resolution=RES
     )
+
+
+def test_genus_icon_follows_stored_taxonomy(con: psycopg.Connection) -> None:
+    """A genus without bespoke art takes its shape group from the taxonomy genera-refresh
+    stored (issue #449); before that refresh it shows the generic icon."""
+    con.execute("INSERT INTO fungi_genera (taxon_id, name) VALUES (333, 'Hydnum')")
+    con.execute("INSERT INTO fungi_genera (taxon_id, name) VALUES (444, 'Craterellus')")
+    assert genus_name_map(con, [444])[444].icon == "generic"
+    con.execute(
+        "UPDATE fungi_genera SET class_name = 'Agaricomycetes', order_name = 'Cantharellales',"
+        " family_name = 'Hydnaceae' WHERE taxon_id IN (333, 444)"
+    )
+    labels = genus_name_map(con, [333, 444])
+    assert (labels[333].icon, labels[444].icon) == ("tooth", "vase")

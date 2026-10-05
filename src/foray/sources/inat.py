@@ -238,6 +238,26 @@ def iter_fungi_genera() -> Iterator[dict[str, Any]]:
     )
 
 
+def iter_fungi_ranks() -> Iterator[dict[str, Any]]:
+    """Yield every class, order and family under Fungi (~1,400 taxa as of 2026-10).
+
+    ``/v1/taxa`` gives each genus only its ``ancestor_ids``, not the ancestors' names, so
+    ``foray genera-refresh`` looks those ids up here to give each genus its class / order /
+    family - the taxonomy behind its map icon (issue #449, ``foray.genus_icons``).
+    """
+    return _iter_id_above(
+        lambda id_above: get_taxa(
+            taxon_id=FUNGI_TAXON_ID,
+            rank=["class", "order", "family"],
+            per_page=_PAGE_SIZE,
+            order_by="id",
+            order="asc",
+            id_above=id_above,
+            user_agent=USER_AGENT,
+        )
+    )
+
+
 def fetch_observations(ids: list[int]) -> Iterator[dict[str, Any]]:
     """Fetch full current observation records for a batch of ids - each result's ``taxon``
     reflects iNat's identification *right now*, not whatever it was at original ingest time.

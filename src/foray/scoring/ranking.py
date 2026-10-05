@@ -31,7 +31,7 @@ from foray.geo import (
     segment_progress_and_offset,
 )
 from foray.scoring import rank_cache
-from foray.scoring._sql import genus_name_map, sql_in, taxon_filter
+from foray.scoring._sql import genus_name_map, sql_in, taxon_filter, unknown_genus
 from foray.scoring.models import FireNear, RegionScore, SpeciesHit
 from foray.scoring.queries import fire_near, region_access
 from foray.scoring.regions import recent_counts, region_elevations, region_precip_obs
@@ -157,8 +157,10 @@ def _rank_candidates(
             {"clat": clat, "clng": clng, "dist": dist, "score": 0.0, "species": []},
         )
         agg["score"] += w_pheno * math.log1p(month_cnt)
-        name, common_name = genera.get(taxon_id, (str(taxon_id), None))
-        agg["species"].append(SpeciesHit(taxon_id, name, common_name, month_cnt, total_cnt, w_pheno))
+        label = genera.get(taxon_id) or unknown_genus(taxon_id)
+        agg["species"].append(
+            SpeciesHit(taxon_id, label.name, label.common_name, month_cnt, total_cnt, w_pheno, label.icon)
+        )
 
     elevations = region_elevations(con, regions.keys())
     precip_obs = region_precip_obs(con, regions.keys())
