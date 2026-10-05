@@ -35,11 +35,14 @@ export function thumbnailFigure(thumbnail: Thumbnail): HTMLElement {
   return figure;
 }
 
-/** An empty slot that fills with the observation's photo once (and if) one is found. */
+/** A slot that fills with the observation's photo once (and if) one is found. While the lookup is
+ * pending it already holds the photo's height, so the popup opens at its final size and the map's
+ * auto-pan (touch) clears the controls; a find with no photo collapses it. */
 export function thumbnailSlot(obsId: number): HTMLElement {
   const slot = document.createElement("div");
-  slot.className = "popup-thumb-slot";
+  slot.className = "popup-thumb-slot is-pending";
   void fetchThumbnail(obsId).then((thumbnail) => {
+    slot.classList.remove("is-pending");
     if (thumbnail) slot.append(thumbnailFigure(thumbnail));
   });
   return slot;
