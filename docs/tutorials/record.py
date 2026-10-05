@@ -315,7 +315,8 @@ def set_home(tut: Tutorial, query: str) -> None:
 def getting_started(tut: Tutorial) -> None:
     page = tut.page
     tut.caption(
-        "Foray Planner ranks where target fungi are being found <b>right now</b>, near you.",
+        "Foray Planner uses <b>iNaturalist records</b> to show where fungi "
+        "have been observed in past seasons, for the months you pick.",
         shot="overview",
         hold=3,
     )
@@ -493,7 +494,9 @@ def show_finds(tut: Tutorial, *, what: str, follow: tuple[str, ...] = ()) -> Non
 
 def best_spot(tut: Tutorial) -> None:
     page = tut.page
-    tut.caption("No particular target? Find the <b>best spot right now</b> for anything fruiting.", hold=2.6)
+    tut.caption(
+        "No particular target? Rank places by the <b>most past observations</b> of any fungi in your months.", hold=2.6
+    )
     card = page.locator("#panel .rank").first
     tut.point(card.locator(".why"))
     tut.caption(
@@ -890,7 +893,9 @@ def show_finds_phone(tut: Tutorial, *, what: str, follow: tuple[str, ...] = ()) 
 
 def best_spot_phone(tut: Tutorial) -> None:
     page = tut.page
-    tut.caption("No particular target? Find the <b>best spot right now</b> for anything fruiting.", hold=2.6)
+    tut.caption(
+        "No particular target? Rank places by the <b>most past observations</b> of any fungi in your months.", hold=2.6
+    )
     raise_sheet(tut)
     card = page.locator("#panel .rank").first
     tut.point(card.locator(".why"))
@@ -1033,7 +1038,8 @@ def getting_started_phone(tut: Tutorial) -> None:
     follow one find to its iNaturalist record and Google Maps directions."""
     page = tut.page
     tut.caption(
-        "Foray Planner ranks where target fungi are being found <b>right now</b>, near you.",
+        "Foray Planner uses <b>iNaturalist records</b> to show where fungi "
+        "have been observed in past seasons, for the months you pick.",
         shot="overview",
         hold=3,
     )
