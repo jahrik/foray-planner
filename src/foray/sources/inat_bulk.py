@@ -63,7 +63,13 @@ import pyarrow as pa
 from stream_unzip import stream_unzip
 
 from foray import spaces
-from foray.cache import genus_taxon_ids, insert_observations_if_missing, maybe_rebuild_phenology, record_ingest
+from foray.cache import (
+    fill_missing_taxon_names,
+    genus_taxon_ids,
+    insert_observations_if_missing,
+    maybe_rebuild_phenology,
+    record_ingest,
+)
 from foray.config import Settings
 from foray.sources.http import USER_AGENT
 from foray.sources.inat import OBSCURED_ACCURACY_HIGH, OBSCURED_ACCURACY_LOW
@@ -82,6 +88,7 @@ _COL_LAT = 20
 _COL_LNG = 21
 _COL_COORD_UNCERTAINTY = 22
 _COL_COUNTRY_CODE = 24
+_COL_SCIENTIFIC_NAME = 30  # the observation's own identification, e.g. "Amanita muscaria" (issue #449)
 _COL_KINGDOM = 32
 _COL_GENUS = 37
 
@@ -110,6 +117,7 @@ _SNAPSHOT_SCHEMA = pa.schema(
         ("lng", pa.float64()),
         ("event_date", pa.string()),
         ("coordinate_uncertainty_m", pa.string()),
+        ("scientific_name", pa.string()),
     ]
 )
 
@@ -171,6 +179,7 @@ def iter_fungi_us_rows(client: httpx.Client) -> Iterator[dict[str, Any]]:
                     "lng": float(lng),
                     "event_date": row[_COL_EVENT_DATE] or None,
                     "coordinate_uncertainty_m": row[_COL_COORD_UNCERTAINTY] or None,
+                    "scientific_name": row[_COL_SCIENTIFIC_NAME] or None,
                 }
                 if kept % 100_000 == 0:
                     logger.info("inat_bulk: scanned %d rows, kept %d Fungi/US so far", scanned, kept)
@@ -251,6 +260,7 @@ def load_inat(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
     if not genera:
         raise RuntimeError("fungi_genera catalog is empty - run `foray genera-refresh` first")
     total = 0
+    named = 0
     skipped_unknown_genus = 0
     skipped_no_date = 0
     max_date: dt.date | None = None
@@ -258,6 +268,7 @@ def load_inat(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
         cfg.spaces, "inat", snapshot_date, run_id, _SNAPSHOT_FILENAME, batch_size=_CHUNK_SIZE
     ):
         chunk: list[tuple[Any, ...]] = []
+        names: list[tuple[int, str]] = []
         for rec in batch:
             taxon_id = genera.get(rec["genus"])
             if taxon_id is None:
@@ -283,18 +294,25 @@ def load_inat(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
                     None,  # place_guess
                     f"https://www.inaturalist.org/observations/{rec['id']}",
                     obscured,
+                    rec.get("scientific_name"),  # absent from snapshots staged before issue #449
+                    None,  # taxon_common_name: the DwC-A carries none; live ingest / resync fill it
                 )
             )
+            if rec.get("scientific_name"):
+                names.append((rec["id"], rec["scientific_name"]))
             if max_date is None or day > max_date:
                 max_date = day
         if chunk:
             insert_observations_if_missing(con, chunk)
+            # Name rows this loader seeded before taxon_name existed (insert-only above won't).
+            named += fill_missing_taxon_names(con, names)
             total += len(chunk)
     logger.info(
-        "inat_bulk: loaded %d observations (%d unknown genus, %d no date)",
+        "inat_bulk: loaded %d observations (%d unknown genus, %d no date), named %d existing rows",
         total,
         skipped_unknown_genus,
         skipped_no_date,
+        named,
     )
     if max_date is not None:
         ingest_key = f"obs:fungi:place:{_PLACE_ID_US}:{_SINCE_YEAR_FLOOR}:{max_date.isoformat()}"

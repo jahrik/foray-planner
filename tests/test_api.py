@@ -1575,3 +1575,61 @@ def test_metrics_reports_layer_age_and_staleness(client: TestClient, con: psycop
         line for line in body.splitlines() if line.startswith('foray_layer_age_seconds{layer="land"}')
     )
     assert float(layer_age_line.split()[-1]) < 5.0
+
+
+def _photo(number: int, license_code: str | None) -> dict:
+    return {
+        "url": f"https://static.inaturalist.org/photos/{number}/square.jpg",
+        "license_code": license_code,
+        "attribution": f"(c) person {number}",
+    }
+
+
+def test_observation_thumbnail_fetches_once_then_serves_the_cache(
+    client: TestClient, con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    con.execute("UPDATE observations SET obscured = FALSE WHERE id = 1")
+    calls: list[list[int]] = []
+
+    def fake_photos(ids: list[int]) -> dict[int, list[dict]]:
+        calls.append(ids)
+        return {1: [_photo(9, None), _photo(10, "cc-by-nc")]}
+
+    monkeypatch.setattr("foray.api.routes.destinations.inat.photos_for_observations", fake_photos)
+    first = client.get("/api/observations/1/thumbnail")
+    assert first.status_code == 200
+    assert first.json() == {
+        "url": "https://static.inaturalist.org/photos/10/small.jpg",
+        "attribution": "(c) person 10",
+        "license_code": "cc-by-nc",
+    }
+    assert client.get("/api/observations/1/thumbnail").json() == first.json()
+    assert calls == [[1]]  # the second request came from observation_thumbnails
+
+
+def test_observation_thumbnail_caches_no_displayable_photo(
+    client: TestClient, con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    con.execute("UPDATE observations SET obscured = FALSE WHERE id = 2")
+    calls: list[list[int]] = []
+
+    def fake_photos(ids: list[int]) -> dict[int, list[dict]]:
+        calls.append(ids)
+        return {2: [_photo(11, "cc-by-nd")]}
+
+    monkeypatch.setattr("foray.api.routes.destinations.inat.photos_for_observations", fake_photos)
+    assert client.get("/api/observations/2/thumbnail").json() is None
+    assert client.get("/api/observations/2/thumbnail").json() is None
+    assert calls == [[2]]
+
+
+def test_observation_thumbnail_only_serves_cached_precise_observations(
+    client: TestClient, con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    con.execute("UPDATE observations SET obscured = TRUE WHERE id = 3")
+    monkeypatch.setattr(
+        "foray.api.routes.destinations.inat.photos_for_observations",
+        lambda ids: pytest.fail("must not reach iNat"),
+    )
+    assert client.get("/api/observations/3/thumbnail").status_code == 404  # obscured
+    assert client.get("/api/observations/999999/thumbnail").status_code == 404  # not cached

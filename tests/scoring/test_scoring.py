@@ -477,8 +477,18 @@ def test_precise_observations_excludes_null_and_true_obscured(con: psycopg.Conne
     with con.cursor() as cur:
         cur.execute(
             "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
-            " quality_grade, uri, obscured) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false)",
-            (9001, MOREL, precise_lat, precise_lng, dt.date(2022, 4, 15), 4, "research", "https://x/9001"),
+            " quality_grade, uri, obscured, taxon_name) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false, %s)",
+            (
+                9001,
+                MOREL,
+                precise_lat,
+                precise_lng,
+                dt.date(2022, 4, 15),
+                4,
+                "research",
+                "https://x/9001",
+                "Morchella importuna",
+            ),
         )
         cur.execute(
             "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month,"
@@ -497,6 +507,7 @@ def test_precise_observations_excludes_null_and_true_obscured(con: psycopg.Conne
     assert results[0]["lng"] == pytest.approx(precise_lng)
     assert results[0]["name"] == "Morchella"
     assert results[0]["icon"] == "morchella"
+    assert results[0]["taxon_name"] == "Morchella importuna"
     assert results[0]["uri"] == "https://x/9001"
 
 
