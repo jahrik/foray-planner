@@ -173,7 +173,7 @@ class Tutorial:
         if viewport is None or carousel_dir is None:
             return
         if self.cast:
-            self.cast.paused = True
+            self.cast.pause()
         original = self.page.viewport_size
         self.page.set_viewport_size({"width": viewport["width"], "height": viewport["height"]})
         time.sleep(0.45)  # Leaflet re-fits the map on resize
@@ -182,7 +182,7 @@ class Tutorial:
             self.page.set_viewport_size(original)
         time.sleep(0.45)
         if self.cast:
-            self.cast.paused = False
+            self.cast.resume()
 
     def point(self, target: Locator) -> None:
         """Glide the visible cursor onto `target` (tap targets on mobile just jump)."""
@@ -210,9 +210,24 @@ class Tutorial:
         original = self.page
         self.point(link)
         link.evaluate(PIN_ORIGIN_JS, MAPS_ORIGIN)
+        # The wait for the other site to load is cut out of the video: the viewer goes from the
+        # tap straight to the loaded page.
+        if self.cast:
+            self.cast.pause()
         with original.context.expect_page(timeout=15_000) as opened:
             link.click()
         external = opened.value
+        # Check for a bot-check interstitial as soon as the document exists, so a blocked site
+        # costs seconds, not the full load and network-idle waits below.
+        with contextlib.suppress(PlaywrightTimeoutError):
+            external.wait_for_load_state("domcontentloaded", timeout=15_000)
+        if external.evaluate(BOT_CHECK_JS):
+            print(f"{self.slug}: {external.url} served a bot check - leaving that visit out")
+            external.close()
+            original.bring_to_front()
+            if self.cast:
+                self.cast.resume()
+            return
         # Trackers can hold "load" open; what has painted by then is enough to show.
         with contextlib.suppress(PlaywrightTimeoutError):
             external.wait_for_load_state("load", timeout=30_000)
@@ -227,8 +242,11 @@ class Tutorial:
             print(f"{self.slug}: {external.url} served a bot check - leaving that visit out")
             external.close()
             original.bring_to_front()
+            if self.cast:
+                self.cast.resume()
             return
         if self.cast:
+            self.cast.resume()
             self.cast.switch_to(external)
         self.page = external
         try:
@@ -740,6 +758,16 @@ PHONE_CLUSTERS_JS = """
 CENTER_JS = "(element) => element.scrollIntoView({ block: 'center' })"
 
 
+# A phone's Directions link is a `geo:` URI, which hands off to the OS chooser (directions.ts) and
+# opens no tab to record. Point it at the Google Maps web page the desktop link uses.
+GEO_TO_MAPS_JS = """
+(anchor) => {
+  const match = /^geo:(-?[\\d.]+),(-?[\\d.]+)/.exec(anchor.getAttribute('href') || '');
+  if (match) anchor.href = `https://www.google.com/maps/dir/?api=1&destination=${match[1]},${match[2]}`;
+}
+"""
+
+
 def drag_sheet(tut: Tutorial, to_y: float) -> None:
     """Drag the bottom sheet's handle to `to_y` (CSS px from the top): ~140 raises it, ~700 drops it."""
     page = tut.page
@@ -854,6 +882,7 @@ def show_finds_phone(tut: Tutorial, *, what: str, follow: tuple[str, ...] = ()) 
             page.mouse.click(pin["x"], pin["y"])
             link.wait_for(timeout=10_000)
         time.sleep(1.5)  # let the photo load
+        link.evaluate(GEO_TO_MAPS_JS)
         tut.follow_link(link, caption)
     page.keyboard.press("Escape")
     time.sleep(0.5)
@@ -1000,7 +1029,8 @@ TUTORIALS: dict[str, tuple[Callable[[Tutorial], None], bool]] = {
 
 
 def getting_started_phone(tut: Tutorial) -> None:
-    """The intro Reel, in the phone layout: search a home, months, genera, a card, radius, sort."""
+    """The intro Reel, in the phone layout: search a home, set the filters, pick a target, then
+    follow one find to its iNaturalist record and Google Maps directions."""
     page = tut.page
     tut.caption(
         "Foray Planner ranks where target fungi are being found <b>right now</b>, near you.",
@@ -1015,6 +1045,16 @@ def getting_started_phone(tut: Tutorial) -> None:
     months = page.locator("#pills .pill-wrap").nth(2).locator(".pill")
     tut.click(months)
     tut.caption("<b>Months</b>: pick when you'll be out. It defaults to this month.", shot="months")
+    page.keyboard.press("Escape")
+    time.sleep(0.5)
+
+    radius = page.locator("#pills .pill-wrap").nth(1).locator(".pill")
+    tut.click(radius)
+    tut.caption("<b>Radius</b> sets how far from home to search.", shot="radius")
+    page.keyboard.press("Escape")
+    sort = page.locator("#pills .pill-wrap").nth(0).locator(".pill")
+    tut.click(sort)
+    tut.caption("<b>Sort</b> by best overall, what's active now, or nearest.", shot="sort")
     page.keyboard.press("Escape")
     time.sleep(0.5)
 
@@ -1039,15 +1079,7 @@ def getting_started_phone(tut: Tutorial) -> None:
     )
     tut.click(card.locator("h3"), pause=1.5)
     tut.caption("Tap a card to fly the map to that destination.", shot="selected", hold=2.6)
-
-    radius = page.locator("#pills .pill-wrap").nth(1).locator(".pill")
-    tut.click(radius)
-    tut.caption("<b>Radius</b> sets how far from home to search.", shot="radius")
-    page.keyboard.press("Escape")
-    sort = page.locator("#pills .pill-wrap").nth(0).locator(".pill")
-    tut.click(sort)
-    tut.caption("<b>Sort</b> by best overall, what's active now, or nearest.", shot="sort")
-    page.keyboard.press("Escape")
+    show_finds_phone(tut, what="chanterelle finds", follow=("inaturalist", "directions"))
     tut.caption("That's the basics. Next: find the <b>best spot</b> and track down a target.", hold=2.5)
 
 
@@ -1102,6 +1134,10 @@ class Screencast:
         self.frames: list[tuple[float, Path]] = []
         # While set, frames are acked but dropped: the last kept frame holds over the gap.
         self.paused = False
+        # Wall-clock spans (epoch seconds) cut out of the timeline: pausing drops frames, and
+        # without this the last kept frame would hold across the whole gap.
+        self.pauses: list[tuple[float, float]] = []
+        self.pause_started = 0.0
         self.running = False
         self.session = self._attach(page)
         self.stopped_at = 0.0
@@ -1123,6 +1159,20 @@ class Screencast:
         path.write_bytes(data)
         self.frames.append((event["metadata"]["timestamp"], path))
         session.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
+
+    def pause(self) -> None:
+        if not self.paused:
+            self.paused = True
+            self.pause_started = time.time()
+
+    def resume(self) -> None:
+        if self.paused:
+            self.paused = False
+            self.pauses.append((self.pause_started, time.time()))
+
+    def _cut(self, start: float, end: float) -> float:
+        """Seconds of [start, end] that fall inside a pause."""
+        return sum(max(0.0, min(end, stop) - max(start, begin)) for begin, stop in self.pauses)
 
     def switch_to(self, page: Page) -> None:
         """Move the recording to another tab (Tutorial.follow_link) and keep the same timeline."""
@@ -1161,7 +1211,8 @@ class Screencast:
         frames = sorted(self.frames)
         for index, (stamp, path) in enumerate(frames):
             following = frames[index + 1][0] if index + 1 < len(frames) else self.stopped_at
-            lines += [f"file '{path.name}'", f"duration {max(following - stamp, 0.01):.3f}"]
+            shown = following - stamp - self._cut(stamp, following)
+            lines += [f"file '{path.name}'", f"duration {max(shown, 0.01):.3f}"]
         lines.append(f"file '{frames[-1][1].name}'")
         concat.write_text("\n".join(lines) + "\n")
         return concat
