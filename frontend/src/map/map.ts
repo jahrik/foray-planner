@@ -419,6 +419,7 @@ export function clearMarkers(): void {
 }
 
 export function clearPrecise(): void {
+  pendingPrecise.length = 0;
   closePrecisePopup();
   preciseCluster.clearLayers();
   loadedGenusCounts.clear();
@@ -434,7 +435,15 @@ export function addPreciseMarker(
 ): void {
   preciseObservations.set(marker, { obs, content });
   loadedGenusCounts.set(obs.taxon_id, (loadedGenusCounts.get(obs.taxon_id) ?? 0) + 1);
-  preciseCluster.addLayer(marker);
+  pendingPrecise.push(marker);
+}
+
+// Pins are added in one `addLayers` after every `addPreciseMarker`, so the genus counts that break
+// vote ties are final before any cluster icon is built, and clustering runs once instead of
+// re-voting a growing cluster per pin.
+const pendingPrecise: L.Marker[] = [];
+export function commitPreciseMarkers(): void {
+  preciseCluster.addLayers(pendingPrecise.splice(0));
 }
 
 // The precise-observation popup (hover-popup.ts): a cluster badge lists the observations folded
