@@ -71,7 +71,7 @@ def con(_pg_session: psycopg.Connection) -> psycopg.Connection:
     _pg_session.execute(f"TRUNCATE {', '.join(_TABLES)} RESTART IDENTITY CASCADE")
     # `public_land_parts` truncates with `public_land` (FK cascade), but its "built" flag lives in
     # `meta` - reset it so every test starts on the whole-polygon lookup, whatever ran before.
-    _pg_session.execute("DELETE FROM meta WHERE key = 'public_land_parts' OR key LIKE 'trails_dedup_pending:%'")
+    _pg_session.execute("DELETE FROM meta WHERE key = 'public_land_parts' OR key LIKE 'trails_dedup%'")
     # rank_destinations/rank_destinations_corridor cache in-process (issue #333 PR 2), keyed on
     # request params only - without this, two tests reusing the same lat/lng/months/taxon
     # constants (common across this suite) could read a previous test's cached result off the

@@ -592,6 +592,10 @@ _GENERIC_WORDS_REGEX = r"\m(" + "|".join(_GENERIC_TRAIL_WORDS) + r")\M"
 # 0.58-0.89 (Apaloosa/APPALOOSA, Tiddly Winks/TIDDLYWINKS, Tyler's/TYLERS'S, Black Rock/
 # BLACKROCK), genuinely different trails 0.33 and below (Upper Pinedrops/WHOOPS).
 _NAME_SIMILARITY = 0.5
+# Bump whenever a dedup rule changes what counts as a duplicate: each bulk trails source's next
+# load then dedups every tile once (``trails_snapshot.load_snapshot``), so pairs the old rule
+# kept are judged again - a diff load alone only reaches rows that changed. 2: fuzzy names.
+TRAIL_DEDUP_RULE_VERSION = 2
 
 
 def _normalised_name(column: LiteralString) -> LiteralString:
