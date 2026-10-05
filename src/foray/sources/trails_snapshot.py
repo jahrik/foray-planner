@@ -153,6 +153,11 @@ def load_snapshot(
         ).fetchone()
         is None
     )
+    # A changed dedup rule has to re-judge pairs the old rule kept - rows a diff load never
+    # rewrites, so only a full pass reaches them. Recorded per source once a full pass finishes.
+    rule_key = f"trails_dedup_rule:{trails_source}"
+    rule_row = con.execute("SELECT value FROM meta WHERE key = %s", [rule_key]).fetchone()
+    rule_changed = rule_row is None or rule_row[0] != str(cache.TRAIL_DEDUP_RULE_VERSION)
     con.execute(
         "INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
         [pending_key, snapshot_date.isoformat()],
@@ -204,9 +209,14 @@ def load_snapshot(
     written_count = _count(con, _WRITTEN)
     # A new or changed row can duplicate one cached long before - dedup the tiles those rows
     # cross (bounded per tile, never one table-wide sweep).
-    if resume_full_dedup:
-        logger.warning("%s: the previous load stopped before its dedup - deduping every tile", bulk_source)
+    if resume_full_dedup or rule_changed:
+        reason = "the previous load stopped before its dedup" if resume_full_dedup else "the dedup rule changed"
+        logger.warning("%s: %s - deduping every tile", bulk_source, reason)
         cache.prune_trail_duplicates_tiled(con, trails_source)
+        con.execute(
+            "INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            [rule_key, str(cache.TRAIL_DEDUP_RULE_VERSION)],
+        )
     elif written_count:
         cache.prune_trail_duplicates_tiled(con, trails_source, id_table=_WRITTEN)
     con.execute("DELETE FROM meta WHERE key = %s", [pending_key])

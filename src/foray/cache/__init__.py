@@ -65,6 +65,7 @@ from foray.cache.ingest_log import (
     record_job_run,
 )
 from foray.cache.land_trails import (
+    TRAIL_DEDUP_RULE_VERSION,
     _assign_trail_land,
     append_ids,
     backfill_trail_land,
@@ -116,6 +117,7 @@ from foray.cache.region_cache import (
 __all__ = [
     "SCHEMA",
     "SCHEMA_VERSION",
+    "TRAIL_DEDUP_RULE_VERSION",
     "_assign_trail_land",
     "_invalidate_rank_cache",
     "_schema_is_current",
