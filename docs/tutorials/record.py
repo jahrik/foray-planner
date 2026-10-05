@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import shutil
 import subprocess
 import tempfile
@@ -28,6 +29,7 @@ from pathlib import Path
 
 # playwright comes from the inline script metadata above, not the project venv `just lint` checks.
 from playwright.sync_api import (  # ty: ignore[unresolved-import]
+    CDPSession,
     Locator,
     Page,
     Playwright,
@@ -41,6 +43,12 @@ IMG_DIR = OUT_DIR / "img"
 INSTAGRAM_DIR = OUT_DIR / "instagram"
 DEFAULT_URL = "https://forayplanner.com/"
 INSTAGRAM_DEFAULT = ["best-spot", "track-down", "mobile"]
+# The home every tutorial searches for, as the origin of any Google Maps page a tutorial opens
+# (Tutorial.follow_link). A find's Directions link carries no origin - it routes from wherever the
+# user is - so Maps would start at "Your location" from the recording machine's IP and publish it
+# in the GIF. The trip route's origin is the home's coordinates, which Maps labels with whatever
+# business sits on that point; the place name reads as what it is.
+MAPS_ORIGIN = "Bend, Oregon"
 
 
 @dataclass(frozen=True)
@@ -110,6 +118,13 @@ OVERLAY_JS = """
 """
 
 
+# True when a page is a bot-check interstitial instead of the content (see Tutorial.follow_link).
+BOT_CHECK_JS = """
+() => /just a moment|attention required|security verification|verify you are human/i.test(
+  document.title + ' ' + (document.body?.innerText || '').slice(0, 600))
+"""
+
+
 @dataclass
 class Tutorial:
     page: Page
@@ -174,6 +189,46 @@ class Tutorial:
         self.point(target)
         target.click()
         time.sleep(pause)
+
+    def follow_link(self, link: Locator, html: str, *, hold: float = 3.4) -> None:
+        """Click a link that opens a new tab, record that tab under a caption, then close it.
+
+        The screencast follows the tab, so the GIF shows the page the link really opens
+        (iNaturalist, Google Maps). GIF only - no numbered guide screenshot of a third-party page.
+        """
+        original = self.page
+        self.point(link)
+        link.evaluate(PIN_ORIGIN_JS, MAPS_ORIGIN)
+        with original.context.expect_page(timeout=15_000) as opened:
+            link.click()
+        external = opened.value
+        # Trackers can hold "load" open; what has painted by then is enough to show.
+        with contextlib.suppress(PlaywrightTimeoutError):
+            external.wait_for_load_state("load", timeout=30_000)
+        # A multi-stop Maps route keeps loading well past "load"; wait for it to go quiet.
+        with contextlib.suppress(PlaywrightTimeoutError):
+            external.wait_for_load_state("networkidle", timeout=10_000)
+        time.sleep(1.5)  # let tiles / photos paint
+        # Some sites answer a headless browser with a bot check (Cloudflare's "Just a moment...")
+        # instead of the page. Leave that visit out of the recording rather than show the check.
+        blocked = external.evaluate(BOT_CHECK_JS)
+        if blocked:
+            print(f"{self.slug}: {external.url} served a bot check - leaving that visit out")
+            external.close()
+            original.bring_to_front()
+            return
+        if self.cast:
+            self.cast.switch_to(external)
+        self.page = external
+        try:
+            self.caption(html, hold=hold)
+        finally:
+            self.page = original
+            if self.cast:
+                self.cast.switch_to(original)
+            external.close()
+            original.bring_to_front()
+            time.sleep(0.6)
 
     def type_slowly(self, target: Locator, text: str) -> None:
         self.click(target)
@@ -271,9 +326,32 @@ FIND_PIN_JS = """
     if (x < map.left + 40 || x > map.right - 80) continue;
     if (y < map.top + 180 || y > map.bottom - 140) continue;
     if (panel && x < panel.right + 20) continue;
+    // Skip a pin a cluster badge (or an open popup) overlaps - hovering there opens the wrong card.
+    const hit = document.elementFromPoint(x, y);
+    if (!hit || !pin.contains(hit)) continue;
     return { x, y };
   }
   return null;
+}
+"""
+
+
+# Set the origin of a Google Maps directions URL the element opens (see MAPS_ORIGIN): rewrites an
+# anchor's href, and wraps window.open for buttons (plan.ts's "Open in Google Maps").
+PIN_ORIGIN_JS = """
+(element, origin) => {
+  const pin = (href) => {
+    const url = new URL(href, location.href);
+    if (!url.hostname.endsWith('google.com') || !url.pathname.startsWith('/maps/dir')) return href;
+    url.searchParams.set('origin', origin);
+    return url.toString();
+  };
+  if (element instanceof HTMLAnchorElement) element.href = pin(element.href);
+  if (!window.__tutOpenPinned) {
+    const open = window.open.bind(window);
+    window.open = (href, ...rest) => open(href === undefined ? href : pin(String(href)), ...rest);
+    window.__tutOpenPinned = true;
+  }
 }
 """
 
@@ -290,10 +368,11 @@ def visible_cluster(page: Page) -> Locator | None:
     return None
 
 
-def show_finds(tut: Tutorial, *, what: str) -> None:
+def show_finds(tut: Tutorial, *, what: str, follow: tuple[str, ...] = ()) -> None:
     """From a selected destination: pins -> hover a cluster's list -> zoom -> one find's popup.
 
-    `what` names the finds in the captions ("finds", "chanterelle finds").
+    `what` names the finds in the captions ("finds", "chanterelle finds"). `follow` opens the
+    find's links and shows the page each one lands on: "inaturalist", "directions".
     """
     page = tut.page
     page.locator(".precise-cluster-icon").first.wait_for(timeout=30_000)
@@ -330,7 +409,16 @@ def show_finds(tut: Tutorial, *, what: str) -> None:
     if not pin:
         raise RuntimeError("no single precise-observation pin on screen to demonstrate")
     page.mouse.move(pin["x"], pin["y"], steps=18)
-    page.locator(".leaflet-popup-content").first.wait_for(timeout=10_000)
+    find_link = page.locator(".leaflet-popup-content a").filter(has_text="iNaturalist")
+    try:
+        find_link.wait_for(timeout=3_000)
+    except PlaywrightTimeoutError:
+        # The glide crossed a cluster badge and its list now covers the pin: step off, let the
+        # list close, then jump straight onto the pin.
+        page.mouse.move(pin["x"] + 300, pin["y"] + 200, steps=4)
+        time.sleep(0.8)
+        page.mouse.move(pin["x"], pin["y"])
+        find_link.wait_for(timeout=10_000)
     time.sleep(0.8)
     tut.caption(
         "Hover a single find for its date, the full record on <b>iNaturalist ↗</b>, and "
@@ -338,7 +426,20 @@ def show_finds(tut: Tutorial, *, what: str) -> None:
         shot="find-popup",
         hold=3.6,
     )
-    page.keyboard.press("Escape")
+    captions = {
+        "inaturalist": ("iNaturalist", "The full record on <b>iNaturalist</b>: photos, notes and who ID'd it."),
+        "directions": ("Directions", "<b>Directions</b> opens Google Maps, routed to the spot."),
+    }
+    for key in follow:
+        link_text, caption = captions[key]
+        link = page.locator(".leaflet-popup-content a").filter(has_text=link_text)
+        if not link.is_visible():
+            # The pointer stays on the popup while the other tab records, but re-hover the pin
+            # in case the popup closed meanwhile.
+            page.mouse.move(pin["x"], pin["y"])
+            link.wait_for(timeout=10_000)
+        tut.follow_link(link, caption)
+    page.mouse.move(pin["x"] + 300, pin["y"], steps=8)
     time.sleep(0.5)
 
 
@@ -359,11 +460,12 @@ def best_spot(tut: Tutorial) -> None:
         hold=3.2,
     )
     tut.click(card.locator("h3"), pause=1.0)
-    show_finds(tut, what="finds")
+    show_finds(tut, what="finds", follow=("inaturalist",))
 
     chip = card.locator(".chips .chip").first
     tut.point(chip)
-    tut.caption("Each genus chip opens its iNaturalist page: photos, range and lookalikes.", hold=2.8)
+    tut.caption("Each genus chip opens its iNaturalist page: photos, range and lookalikes.", hold=2.2)
+    tut.follow_link(chip, "The genus on <b>iNaturalist</b>: photos, range and similar species.")
 
     sort = page.locator("#pills .pill-wrap").nth(0).locator(".pill")
     tut.click(sort)
@@ -378,6 +480,8 @@ def best_spot(tut: Tutorial) -> None:
     if live.count():
         tut.point(live)
     tut.caption("Each of those chips opens that exact observation on iNaturalist.", shot="live-chip", hold=3)
+    if live.count():
+        tut.follow_link(live, "That sighting on <b>iNaturalist</b>, with its date and photos.")
 
 
 def track_down(tut: Tutorial) -> None:
@@ -411,7 +515,7 @@ def track_down(tut: Tutorial) -> None:
 
     tut.click(page.locator("#panel .rank").first.locator("h3"), pause=1.0)
     tut.caption("<b>3. See the finds.</b> Select the spot; the pins are chanterelles only.", hold=2)
-    show_finds(tut, what="chanterelle finds")
+    show_finds(tut, what="chanterelle finds", follow=("directions",))
 
     tut.click(page.locator("#panel .rank").first.locator('[data-act="details"]'), pause=1.5)
     tut.click(page.locator('#panel [data-tab="trails"]'), pause=1.0)
@@ -457,6 +561,7 @@ def track_down(tut: Tutorial) -> None:
         shot="go",
         hold=3.4,
     )
+    tut.follow_link(page.locator("#export-gmaps"), "The whole trip in <b>Google Maps</b>, stop by stop.")
 
 
 def region_details(tut: Tutorial) -> None:
@@ -538,6 +643,7 @@ def plan_a_trip(tut: Tutorial) -> None:
         shot="export",
         hold=3,
     )
+    tut.follow_link(page.locator("#export-gmaps"), "<b>Open in Google Maps</b> hands the route to Maps for the drive.")
 
 
 def mobile(tut: Tutorial) -> None:
@@ -592,24 +698,40 @@ class Screencast:
         self.frames: list[tuple[float, Path]] = []
         # While set, frames are acked but dropped: the last kept frame holds over the gap.
         self.paused = False
-        self.session = page.context.new_cdp_session(page)
-        self.session.on("Page.screencastFrame", self._on_frame)
+        self.running = False
+        self.session = self._attach(page)
         self.stopped_at = 0.0
 
-    def _on_frame(self, event: dict) -> None:
+    def _attach(self, page: Page) -> CDPSession:
+        session = page.context.new_cdp_session(page)
+        session.on("Page.screencastFrame", lambda event: self._on_frame(session, event))
+        return session
+
+    def _on_frame(self, session: CDPSession, event: dict) -> None:
         data = base64.b64decode(event["data"])
         # PNG IHDR: width/height are the big-endian uint32s at bytes 16-24. A frame rendered
         # mid-resize (carousel still) can land after unpausing; anything off-size is dropped.
         size = (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big"))
         if self.paused or size != self.frame_size:
-            self.session.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
+            session.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
             return
         path = self.frame_dir / f"{len(self.frames):05d}.png"
         path.write_bytes(data)
         self.frames.append((event["metadata"]["timestamp"], path))
-        self.session.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
+        session.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
+
+    def switch_to(self, page: Page) -> None:
+        """Move the recording to another tab (Tutorial.follow_link) and keep the same timeline."""
+        was_running = self.running
+        if was_running:
+            self.session.send("Page.stopScreencast")
+        self.session.detach()
+        self.session = self._attach(page)
+        if was_running:
+            self.start()
 
     def start(self) -> None:
+        self.running = True
         # Frames only come at device resolution when the browser itself runs at that scale
         # (--force-device-scale-factor, see record()); max* just has to not cap them.
         self.session.send(
@@ -624,15 +746,18 @@ class Screencast:
 
     def stop(self) -> None:
         self.stopped_at = time.time()
+        self.running = False
         self.session.send("Page.stopScreencast")
 
     def _concat_list(self) -> Path:
         concat = self.frame_dir / "frames.txt"
         lines = []
-        for index, (stamp, path) in enumerate(self.frames):
-            following = self.frames[index + 1][0] if index + 1 < len(self.frames) else self.stopped_at
+        # A tab switch can deliver the old tab's last frames after the new tab's first ones.
+        frames = sorted(self.frames)
+        for index, (stamp, path) in enumerate(frames):
+            following = frames[index + 1][0] if index + 1 < len(frames) else self.stopped_at
             lines += [f"file '{path.name}'", f"duration {max(following - stamp, 0.01):.3f}"]
-        lines.append(f"file '{self.frames[-1][1].name}'")
+        lines.append(f"file '{frames[-1][1].name}'")
         concat.write_text("\n".join(lines) + "\n")
         return concat
 
