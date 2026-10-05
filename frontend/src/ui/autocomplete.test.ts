@@ -64,6 +64,22 @@ describe("initAutocomplete", () => {
     expect(list.classList.contains("open")).toBe(true);
   });
 
+  it("prepends decorate()'s node to each suggestion, keeping the label text", async () => {
+    const { input, list } = setup({
+      decorate: (row) => {
+        const mark = document.createElement("i");
+        mark.className = "mark";
+        mark.dataset.id = String(row.id);
+        return mark;
+      },
+    });
+    type(input, "al");
+    await vi.advanceTimersByTimeAsync(300);
+    const first = list.querySelector("li")!;
+    expect(first.firstElementChild?.className).toBe("mark");
+    expect(first.textContent).toBe("Alpha");
+  });
+
   it("does not fetch below minChars and closes the list", async () => {
     const { input, list, fetchSuggestions } = setup();
     type(input, "al");

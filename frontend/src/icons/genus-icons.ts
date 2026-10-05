@@ -92,6 +92,12 @@ export function genusIconSvg(key: string | null | undefined): string {
   return markupByKey.get(key ?? "generic") ?? markupByKey.get("generic") ?? "";
 }
 
+/** `genusIconElement` as an HTML string, for the string-template builders (card chips, calendar
+ * rows). The markup is a bundled static file, so it's safe to interpolate. */
+export function genusIconHtml(key: string | null | undefined): string {
+  return `<span class="genus-icon" aria-hidden="true">${genusIconSvg(key)}</span>`;
+}
+
 /** A decorative `<span class="genus-icon">` holding the icon, for beside a genus name. The
  * name itself carries the meaning, so the icon is hidden from assistive tech. */
 export function genusIconElement(key: string | null | undefined, className = "genus-icon"): HTMLElement {

@@ -4,6 +4,7 @@
 // built from the numeric observation id (observationUrl), not the cached upstream `uri`. No
 // state - see cluster-popup.test.ts.
 
+import { genusIconElement } from "../icons/genus-icons";
 import type { PreciseObservation } from "../api/types";
 import { displayName, observationUrl } from "../state";
 
@@ -37,7 +38,7 @@ export function buildClusterList(
     anchor.href = observationUrl(obs.id);
     anchor.target = "_blank";
     anchor.rel = "noopener";
-    anchor.textContent = displayName(obs);
+    anchor.append(genusIconElement(obs.icon), displayName(obs));
     item.append(anchor);
     if (obs.observed_on) {
       const date = document.createElement("span");

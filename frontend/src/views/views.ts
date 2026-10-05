@@ -5,6 +5,7 @@ import type { AlertRegion, RegionPlace, RegionScore } from "../api/types";
 import { escapeHtml } from "../format";
 import { createCardSelection, createRunGuard } from "../ui/card-select";
 import { buildResultCard, speciesChip, type ResultCardModel } from "../ui/card-dom";
+import { genusIconHtml } from "../icons/genus-icons";
 import { whySentence } from "../ui/why";
 import { sortRegions } from "./sort";
 import { openDetails } from "./details";
@@ -424,7 +425,7 @@ async function runActiveNow({ reuseCache = false }: { reuseCache?: boolean }): P
         const safeUri = hit.uri && hit.uri.startsWith("https://") ? hit.uri : null;
         if (safeUri) {
           return `<a class="chip live" href="${escapeHtml(safeUri)}" target="_blank" rel="noopener"
-             >${escapeHtml(displayName(hit))} · ${escapeHtml(label)}</a>`;
+             >${genusIconHtml(hit.icon)}${escapeHtml(displayName(hit))} · ${escapeHtml(label)}</a>`;
         }
         return speciesChip({ ...hit, label }, "live");
       })

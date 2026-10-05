@@ -14,6 +14,8 @@ export interface AutocompleteConfig<T> {
   fetchSuggestions: (query: string) => Promise<T[] | null>;
   /** Visible text for one suggestion. */
   label: (item: T) => string;
+  /** Optional decorative node placed before the label (e.g. the genus icon, issue #449). */
+  decorate?: (item: T) => Node | null;
   /** A suggestion was chosen (click or Enter). */
   onPick: (item: T) => void;
   /** Drop items before they're shown (e.g. genera already selected). Applied wherever the
@@ -94,6 +96,8 @@ export function initAutocomplete<T>(config: AutocompleteConfig<T>): void {
     results.forEach((item, index) => {
       const li = document.createElement("li");
       li.textContent = label(item);
+      const decoration = config.decorate?.(item);
+      if (decoration) li.prepend(decoration);
       li.dataset.index = String(index);
       li.id = optionId(index);
       li.setAttribute("role", "option");

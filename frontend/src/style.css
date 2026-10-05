@@ -1694,3 +1694,23 @@ table.cal .heat {
     }
   }
 }
+
+/* Genus icon beside a genus name (issue #449, icons/genus-icons.ts): card chips, Active-now
+   chips, the Genera picker and its suggestions, cluster list rows, calendar rows. Decorative
+   (aria-hidden); it takes the text colour, so it follows the theme and chip states. */
+.genus-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 1.15em;
+  height: 1.15em;
+  margin-right: 0.3em;
+  vertical-align: -0.2em;
+}
+.genus-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.cal-genus {
+  white-space: nowrap;
+}

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { buildResultCard, type ResultCardModel } from "./card-dom";
+import { buildResultCard, speciesChip, type ResultCardModel } from "./card-dom";
 
 function model(over: Partial<ResultCardModel> = {}): ResultCardModel {
   return {
@@ -82,5 +82,21 @@ describe("buildResultCard", () => {
     const { card } = buildResultCard(model(), spies);
     card.click();
     expect(spies.onSelect).toHaveBeenCalledOnce();
+  });
+});
+
+describe("speciesChip", () => {
+  it("draws the genus icon before the name when the hit carries one", () => {
+    const holder = document.createElement("div");
+    holder.innerHTML = speciesChip({ taxon_id: 1, name: "Morchella", icon: "morchella", label: "40% · 12" });
+    const chip = holder.querySelector("a")!;
+    expect(chip.firstElementChild?.className).toBe("genus-icon");
+    expect(chip.textContent?.trim()).toBe("Morchella · 40% · 12");
+  });
+
+  it("is plain text without an icon", () => {
+    const holder = document.createElement("div");
+    holder.innerHTML = speciesChip({ taxon_id: 1, name: "Morchella" });
+    expect(holder.querySelector(".genus-icon")).toBeNull();
   });
 });
