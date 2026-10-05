@@ -77,6 +77,16 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   every row, including `obscured` (never set by the bulk historical import) and
   misidentifications too rare within their genus for `revalidate`'s ratio to flag. Both share
   the actual re-check/purge/reassign logic (`_recheck_ids`).
+- `src/foray/genus_icons.py` - the genus icon vocabulary (issue #449): 17 morphological shape
+  groups (not taxonomic ranks) plus 30 bespoke genus icons. A genus's group comes from the most
+  specific override (genus, family, order, class, generic), resolved at read time from the
+  `class_name`/`order_name`/`family_name` columns `genera-refresh` stores on `fungi_genera`. The
+  `icon` field on every genus payload is a `GenusIcon` Literal, so `schema.ts` carries the union
+  and the frontend's `src/icons/genus-icons.ts` (art in `icons/shapes/` and `icons/genera/`,
+  one-colour path-only SVGs) fails `tsc` when a key has no art. `icons.html` is a dev-only review
+  gallery. Precise observations also carry their own `taxon_name`/`taxon_common_name`, and
+  `GET /api/observations/{id}/thumbnail` lazily caches one CC-licensed photo for a precise
+  observation's popup (`observation_thumbnails`, "none" cached too).
 - `src/foray/sources/camps.py` - developed-campground ingest from the Recreation.gov **RIDB API**
   (httpx, key from env `RIDB_API_KEY`). Pages `facilities?state=XX&full=true` for every state the
   home disk reaches, clips to the true radius with `haversine_km` (RIDB's point+radius search
