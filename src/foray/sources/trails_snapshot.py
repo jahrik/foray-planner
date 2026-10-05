@@ -136,6 +136,16 @@ def load_snapshot(
     would wipe good data. The new rows are still written either way."""
     # Fast land-ownership tagging for every row this load writes (built once, then kept current).
     cache.ensure_land_parts(con)
+    # Set while rows are written but not yet deduped. A load that died in between (killed, OOM,
+    # a failed query) left rows that a rerun's diff sees as unchanged - so it finds the marker
+    # and dedups every tile of the source instead of only this run's written rows.
+    pending_key = f"trails_dedup_pending:{trails_source}"
+    resume_full_dedup = con.execute("SELECT 1 FROM meta WHERE key = %s", [pending_key]).fetchone() is not None
+    con.execute(
+        "INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+        [pending_key, snapshot_date.isoformat()],
+    )
+    con.commit()
     existing = con.execute("SELECT count(*) FROM trails WHERE source = %s", [trails_source]).fetchone()
     existing_count = existing[0] if existing else 0
     listed: list[str] = []
@@ -169,7 +179,11 @@ def load_snapshot(
                 con.commit()
     # A new or changed row can duplicate one cached long before - dedup the tiles those rows
     # cross (bounded per tile, never one table-wide sweep).
-    cache.prune_trail_duplicates_tiled(con, trails_source, written)
+    if resume_full_dedup:
+        logger.warning("%s: the previous load stopped before its dedup - deduping every tile", bulk_source)
+    cache.prune_trail_duplicates_tiled(con, trails_source, None if resume_full_dedup else written)
+    con.execute("DELETE FROM meta WHERE key = %s", [pending_key])
+    con.commit()
     # Namespaced under "trails:" so /healthz/data's trails freshness picks this load up.
     record_ingest(con, f"trails:{trails_source}:bulk:{snapshot_date.isoformat()}", len(written))
     logger.info(
