@@ -138,9 +138,17 @@ def load_snapshot(
     cache.ensure_land_parts(con)
     # Set while rows are written but not yet deduped. A load that died in between (killed, OOM,
     # a failed query) left rows that a rerun's diff sees as unchanged - so it finds the marker
-    # and dedups every tile of the source instead of only this run's written rows.
+    # and dedups every tile of the source instead of only this run's written rows. The same
+    # holds until a load of this source has ever completed: a first load that died before the
+    # marker existed left no marker to find (Copilot review, PR #444).
     pending_key = f"trails_dedup_pending:{trails_source}"
-    resume_full_dedup = con.execute("SELECT 1 FROM meta WHERE key = %s", [pending_key]).fetchone() is not None
+    resume_full_dedup = (
+        con.execute("SELECT 1 FROM meta WHERE key = %s", [pending_key]).fetchone() is not None
+        or con.execute(
+            "SELECT 1 FROM ingest_log WHERE key LIKE %s LIMIT 1", [f"trails:{trails_source}:bulk:%"]
+        ).fetchone()
+        is None
+    )
     con.execute(
         "INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
         [pending_key, snapshot_date.isoformat()],

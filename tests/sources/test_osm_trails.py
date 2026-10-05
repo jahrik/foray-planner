@@ -253,7 +253,9 @@ def test_a_load_that_died_before_its_dedup_is_deduped_in_full_on_the_rerun(
     con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The first load wrote the twin and died before deduping. The rerun's diff writes nothing
-    # (the twin is cached and unchanged), so only the pending marker gets its tile deduped.
+    # (the twin is cached and unchanged), so only the pending marker gets its tile deduped. An
+    # earlier load completed, so "never loaded" isn't what triggers the full dedup here.
+    cache.record_ingest(con, "trails:osm:bulk:2026-09-27", 0)
     twin = trails_snapshot.record_to_row(trails_snapshot.row_to_record(_row("osm:way/11")))
     route = ("osm:relation/20", twin[1], "route", *twin[3:])
     _serve_snapshot(monkeypatch, [twin, route])
@@ -267,6 +269,21 @@ def test_a_load_that_died_before_its_dedup_is_deduped_in_full_on_the_rerun(
 
     assert {row[0] for row in con.execute("SELECT id FROM trails").fetchall()} == {"osm:relation/20"}
     assert con.execute("SELECT 1 FROM meta WHERE key LIKE 'trails_dedup_pending:%'").fetchone() is None
+
+
+def test_a_source_never_loaded_to_completion_is_deduped_in_full(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Copilot review, PR #444: a first load that died before the pending marker existed left
+    # its rows cached with no marker. Until a load completes, every tile is deduped.
+    twin = trails_snapshot.record_to_row(trails_snapshot.row_to_record(_row("osm:way/11")))
+    route = ("osm:relation/20", twin[1], "route", *twin[3:])
+    upsert_trails(con, [twin, route])
+    _serve_snapshot(monkeypatch, [twin, route])
+
+    osm_trails.load_osm_trails(con, Settings(spaces=_SPACES_CFG), date(2026, 10, 4), "run1")
+
+    assert {row[0] for row in con.execute("SELECT id FROM trails").fetchall()} == {"osm:relation/20"}
 
 
 def _raise_runtime_error(*_args: object) -> int:
