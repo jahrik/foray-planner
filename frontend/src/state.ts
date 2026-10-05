@@ -233,6 +233,18 @@ export const observationUrl = (observationId: number): string =>
 export const displayName = (entry: { name: string; common_name?: string | null }): string =>
   entry.common_name ? `${entry.name} (${entry.common_name})` : entry.name;
 
+/** A precise observation's own identification (species, with its common name) when known, else
+ * its genus. */
+export const observationLabel = (obs: {
+  name: string;
+  common_name?: string | null;
+  taxon_name?: string | null;
+  taxon_common_name?: string | null;
+}): string =>
+  obs.taxon_name
+    ? displayName({ name: obs.taxon_name, common_name: obs.taxon_common_name ?? null })
+    : displayName(obs);
+
 // Re-exported so the many `from "./state"` importers keep working; the implementation
 // (and escapeXml / feeLabel) now lives in the pure-helper module.
 export { escapeHtml } from "./format";

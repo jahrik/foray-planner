@@ -6,7 +6,7 @@
 
 import { genusIconElement } from "../icons/genus-icons";
 import type { PreciseObservation } from "../api/types";
-import { displayName, observationUrl } from "../state";
+import { observationLabel, observationUrl } from "../state";
 
 /** Rows shown before the list collapses into a "+N more" line - a dense cluster can hold
  * hundreds of pins, and the hover card should stay glanceable. */
@@ -38,7 +38,7 @@ export function buildClusterList(
     anchor.href = observationUrl(obs.id);
     anchor.target = "_blank";
     anchor.rel = "noopener";
-    anchor.append(genusIconElement(obs.icon), displayName(obs));
+    anchor.append(genusIconElement(obs.icon), observationLabel(obs));
     item.append(anchor);
     if (obs.observed_on) {
       const date = document.createElement("span");

@@ -9,6 +9,8 @@ import { FORAGE_RAMP, forageTier } from "./forage";
 import { isRoughSurface } from "./trail-attrs";
 import { directionsLink } from "./directions";
 import { circleStyle } from "./markers";
+import { genusIconElement } from "../icons/genus-icons";
+import { thumbnailSlot } from "./observation-thumbnail";
 import { buildPopup } from "./popup";
 import { regionRadiusKm, setFocused } from "./destinations";
 import {
@@ -31,7 +33,7 @@ import {
 import { addCampMarker, clearCamps } from "./pins";
 import {
   dist,
-  displayName,
+  observationLabel,
   errorDetail,
   observationUrl,
   qs,
@@ -291,7 +293,7 @@ export async function loadPreciseObservations(): Promise<void> {
     // An accessible name for the focusable pin, set on every add since the cluster group
     // re-creates the element when the pin leaves and re-enters a cluster. Not `title`: its native
     // tooltip would sit on top of the hover popup.
-    marker.on("add", () => marker.getElement()?.setAttribute("aria-label", displayName(obs)));
+    marker.on("add", () => marker.getElement()?.setAttribute("aria-label", observationLabel(obs)));
     addPreciseMarker(marker, obs, () => precisePopup(obs));
   });
 }
@@ -299,13 +301,16 @@ export async function loadPreciseObservations(): Promise<void> {
 // name/observed_on come from an external API (buildPopup sets them via textContent); the link is
 // built from the numeric observation id (observationUrl), not the cached upstream `uri`.
 function precisePopup(obs: PreciseObservation): HTMLElement {
-  const name = displayName(obs);
-  return buildPopup({
+  // The observation's own identification (species) when known, else its genus.
+  const name = observationLabel(obs);
+  const popup = buildPopup({
     title: name,
     lines: obs.observed_on ? [obs.observed_on] : [],
     link: { href: observationUrl(obs.id), text: "iNaturalist ↗" },
     directions: directionsLink(obs.lat, obs.lng, name),
   });
+  popup.prepend(genusIconElement(obs.icon), thumbnailSlot(obs.id));
+  return popup;
 }
 
 // Public land depends only on state.home (whole search radius), not the focused destination, so
