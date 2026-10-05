@@ -140,9 +140,12 @@ def load_snapshot(
     existing_count = existing[0] if existing else 0
     listed: list[str] = []
     written: list[str] = []
+    held_back: set[str] = set()
     for chunk in _read_rows(cfg, bulk_source, snapshot_date, run_id):
-        listed.extend(row[0] for row in chunk)
+        chunk_ids = [row[0] for row in chunk]
+        listed.extend(chunk_ids)
         written.extend(cache.upsert_trails_changed(con, chunk))
+        held_back |= cache.tombstoned_ids(con, chunk_ids)
         con.commit()
     pruned = 0
     if existing_count and len(listed) < min_keep_ratio * existing_count:
@@ -154,6 +157,16 @@ def load_snapshot(
         )
     else:
         pruned = cache.prune_trails_missing_from(con, trails_source, listed)
+    # A row held back by a tombstone loses it when its kept row is pruned (just above, cascading)
+    # or rewritten (a later chunk) - Copilot review, PR #443. Write those now rather than leave
+    # neither row cached until the next snapshot.
+    released = held_back - cache.tombstoned_ids(con, sorted(held_back))
+    if released:
+        for chunk in _read_rows(cfg, bulk_source, snapshot_date, run_id):
+            retry = [row for row in chunk if row[0] in released]
+            if retry:
+                written.extend(cache.upsert_trails_changed(con, retry))
+                con.commit()
     # A new or changed row can duplicate one cached long before - dedup the tiles those rows
     # cross (bounded per tile, never one table-wide sweep).
     cache.prune_trail_duplicates_tiled(con, trails_source, written)

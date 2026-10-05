@@ -852,13 +852,16 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # weekly bulk load would re-insert it and the next prune would delete it again. `upsert_trails`
     # skips a tombstoned id and remaps trailhead `connects` through it. `kept_id` cascades: if the
     # surviving USFS/route row ever goes away, the tombstone does too and the OSM row returns on
-    # the next load. Created empty - no backfill, no geometry work at deploy time.
+    # the next load. `fingerprint` is the pruned row's name/attrs/geometry hash: an OSM edit that
+    # changes the row releases the tombstone so the edit is written and judged again. Created
+    # empty - no backfill, no geometry work at deploy time.
     (
         53,
         """
         CREATE TABLE IF NOT EXISTS trail_duplicates (
-            osm_id  TEXT PRIMARY KEY,
-            kept_id TEXT NOT NULL REFERENCES trails (id) ON DELETE CASCADE
+            osm_id      TEXT PRIMARY KEY,
+            kept_id     TEXT NOT NULL REFERENCES trails (id) ON DELETE CASCADE,
+            fingerprint TEXT
         );
         CREATE INDEX IF NOT EXISTS ix_trail_duplicates_kept ON trail_duplicates (kept_id);
         """,

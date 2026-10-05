@@ -125,7 +125,11 @@ against a shared API, timed out, and never picked up OSM edits after the first p
     `prune_trail_duplicates_tiled` dedups only the tiles changed rows cross. Each pruned OSM
     twin leaves a `trail_duplicates` tombstone (migration 53) that `upsert_trails` honours, so
     the next snapshot listing the twin doesn't re-insert it - and trailhead `connects` are
-    remapped through it.
+    remapped through it. A tombstone holds only while it still describes the same pair: it
+    stores the pruned row's name/attrs/geometry fingerprint, so an OSM edit to the way lets it
+    back in to be judged again, and rewriting or deleting the kept row releases its tombstones
+    (within the same load, too - the loader re-writes any listed row it held back whose
+    tombstone the load released).
   - **Land-ownership tagging:** `trails.land_agency`/`land_unit` are looked up in
     `public_land_parts` (migration 54, `ST_Subdivide` pieces of `public_land`, built by
     `cache.ensure_land_parts` from a job, never at deploy): ~0.3 ms per trail versus ~20 ms

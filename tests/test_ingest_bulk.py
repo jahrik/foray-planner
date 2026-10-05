@@ -38,9 +38,10 @@ def test_inat_and_ridb_stagers_and_loaders_are_registered() -> None:
     # covered by tests/sources/test_inat_bulk.py, tests/sources/test_camps.py,
     # test_usfs_trails.py, test_usfs_mvum.py, and test_ravg.py; this just guards the registration
     # itself against a future refactor silently dropping an entry (Copilot review, PR #366,
-    # caught this set missing "ravg"; PR #367 extended it to cover "usfs_mvum" too).
-    assert set(ingest_bulk.STAGERS) >= {"inat", "ridb", "usfs_trails", "usfs_mvum", "ravg"}
-    assert set(ingest_bulk.LOADERS) >= {"inat", "ridb", "usfs_trails", "usfs_mvum", "ravg"}
+    # caught this set missing "ravg"; PR #367 extended it to cover "usfs_mvum" too, PR #443
+    # "osm_trails").
+    assert set(ingest_bulk.STAGERS) >= {"inat", "ridb", "usfs_trails", "usfs_mvum", "ravg", "osm_trails"}
+    assert set(ingest_bulk.LOADERS) >= {"inat", "ridb", "usfs_trails", "usfs_mvum", "ravg", "osm_trails"}
 
 
 def test_stage_snapshot_calls_registered_stager_then_publishes_its_run(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -3,6 +3,7 @@ join that persists ``trails.land_agency``/``land_unit`` (issue #335 PR 2)."""
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Sequence
 from typing import Any, LiteralString, cast
@@ -301,19 +302,55 @@ def upsert_public_land(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]])
     return result
 
 
+# A trail row's identity for a ``trail_duplicates`` tombstone: what the dedup judged it on (name,
+# attrs - a forest road's ``ref`` - and geometry). The SQL and Python forms must hash the same
+# bytes; a pruned row's fingerprint is taken in SQL as it's deleted, an incoming row's here.
+_FINGERPRINT_SQL: LiteralString = (
+    "md5(concat_ws('|', coalesce(p.name, ''), coalesce(p.attrs, ''), "
+    "coalesce((SELECT g.geojson FROM trail_geometry g WHERE g.id = p.id), '')))"
+)
+
+
+def _row_fingerprint(row: tuple[Any, ...]) -> str:
+    return hashlib.md5(
+        "|".join((row[1] or "", row[10] or "", row[7] or "")).encode(), usedforsecurity=False
+    ).hexdigest()
+
+
+def tombstoned_ids(con: psycopg.Connection, ids: Sequence[str]) -> set[str]:
+    """The ``ids`` a ``trail_duplicates`` tombstone currently keeps out of ``trails``."""
+    if not ids:
+        return set()
+    found = con.execute("SELECT osm_id FROM trail_duplicates WHERE osm_id = ANY(%s)", [list(ids)]).fetchall()
+    return {row[0] for row in found}
+
+
 def _drop_known_duplicates(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
     """``rows`` minus those a dedup prune already replaced, with each remaining trailhead's
-    ``connects`` pointed at the surviving rows (deduped, sorted)."""
+    ``connects`` pointed at the surviving rows (deduped, sorted).
+
+    A tombstone only holds while the incoming row is the one that was pruned (Copilot review,
+    PR #443): an OSM edit that renames or reroutes the way no longer matches the fingerprint, so
+    the tombstone is released and the row written - the caller's dedup pass judges it afresh."""
     lookup = {row[0] for row in rows}
     for row in rows:
         lookup.update(row[8] or ())
     if not lookup:
         return list(rows)
-    replaced = dict(
-        con.execute("SELECT osm_id, kept_id FROM trail_duplicates WHERE osm_id = ANY(%s)", [list(lookup)]).fetchall()
-    )
-    if not replaced:
+    tombstones = {
+        osm_id: (kept_id, fingerprint)
+        for osm_id, kept_id, fingerprint in con.execute(
+            "SELECT osm_id, kept_id, fingerprint FROM trail_duplicates WHERE osm_id = ANY(%s)", [list(lookup)]
+        ).fetchall()
+    }
+    if not tombstones:
         return list(rows)
+    stale = [row[0] for row in rows if row[0] in tombstones and tombstones[row[0]][1] != _row_fingerprint(row)]
+    if stale:
+        con.execute("DELETE FROM trail_duplicates WHERE osm_id = ANY(%s)", [stale])
+        for osm_id in stale:
+            del tombstones[osm_id]
+    replaced = {osm_id: kept_id for osm_id, (kept_id, _fingerprint) in tombstones.items()}
     kept: list[tuple[Any, ...]] = []
     for row in rows:
         if row[0] in replaced:
@@ -333,7 +370,11 @@ def upsert_trails_changed(con: psycopg.Connection, rows: Sequence[tuple[Any, ...
     1-vCPU database - rewriting all of it every week is what made the MVUM load take ~2.4 h.
     Compared column by column (and ``trail_geometry.geojson``), which works because every
     source builds its row tuple deterministically from the same inputs. Tombstoned duplicates
-    are dropped first, so they never count as "new"."""
+    are dropped first, so they never count as "new".
+
+    A rewritten row releases the tombstones of the twins it replaced (Copilot review, PR #443):
+    once a USFS trail or OSM route is rerouted, the old verdict no longer stands, so the twin is
+    let back in on its next load and the dedup decides again."""
     rows = _drop_known_duplicates(con, rows)
     if not rows:
         return []
@@ -373,6 +414,7 @@ def upsert_trails_changed(con: psycopg.Connection, rows: Sequence[tuple[Any, ...
     changed = [row for row in rows if row[0] in changed_ids]
     if changed:
         upsert_trails(con, changed)
+        con.execute("DELETE FROM trail_duplicates WHERE kept_id = ANY(%s)", [list(changed_ids)])
     return [row[0] for row in changed]
 
 
@@ -469,7 +511,7 @@ def prune_duplicate_route_paths(
           AND p.geom && {envelope}
           AND ST_DWithin(p.geom, r.route_geom, 5)
           AND ST_CoveredBy(p.geom, r.buf)
-        RETURNING p.id, r.route_id
+        RETURNING p.id, r.route_id, {_FINGERPRINT_SQL}
         """,
         [*envelope_params, *envelope_params],
     )
@@ -481,27 +523,30 @@ def prune_duplicate_route_paths(
     return len(replaced)
 
 
-def _record_replacements(con: psycopg.Connection, replaced: Sequence[tuple[str, str]]) -> None:
-    """Bookkeeping for rows a dedup prune just deleted, as (deleted id, surviving id) pairs.
+def _record_replacements(con: psycopg.Connection, replaced: Sequence[tuple[str, str, str]]) -> None:
+    """Bookkeeping for rows a dedup prune just deleted, as (deleted id, surviving id, deleted
+    row's fingerprint) triples.
 
     - A ``trail_duplicates`` tombstone per pair (issue #442), so the next write of the same
       source row - every weekly OSM snapshot still lists it - is dropped by ``upsert_trails``
-      instead of re-inserted and pruned all over again.
+      instead of re-inserted and pruned all over again - as long as it's still the row that was
+      pruned (the fingerprint, see :func:`_drop_known_duplicates`).
     - Trailhead ``connects`` arrays pointing at a deleted id move to its replacement (Copilot
       review, PR #441): ``resolve_trail_network`` / ``connected_trails`` drop ids that no longer
       exist, so without this a pruned twin silently truncated a trailhead's network - or, with
       every linked row gone, forced a live Overpass lookup on the next selection."""
     if not replaced:
         return
-    old_ids = [old_id for old_id, _new_id in replaced]
-    new_ids = [new_id for _old_id, new_id in replaced]
+    old_ids = [old_id for old_id, _new_id, _fingerprint in replaced]
+    new_ids = [new_id for _old_id, new_id, _fingerprint in replaced]
+    fingerprints = [fingerprint for _old_id, _new_id, fingerprint in replaced]
     con.execute(
         """
-        INSERT INTO trail_duplicates (osm_id, kept_id)
-        SELECT old_id, new_id FROM unnest(%s::text[], %s::text[]) AS pair(old_id, new_id)
-        ON CONFLICT (osm_id) DO UPDATE SET kept_id = EXCLUDED.kept_id
+        INSERT INTO trail_duplicates (osm_id, kept_id, fingerprint)
+        SELECT * FROM unnest(%s::text[], %s::text[], %s::text[])
+        ON CONFLICT (osm_id) DO UPDATE SET kept_id = EXCLUDED.kept_id, fingerprint = EXCLUDED.fingerprint
         """,
-        [old_ids, new_ids],
+        [old_ids, new_ids, fingerprints],
     )
     _remap_connects(con, old_ids, new_ids)
 
@@ -690,7 +735,7 @@ def _prune_cross_source(
         DELETE FROM trails p
         USING matched m
         WHERE p.id = m.id
-        RETURNING p.id, m.usfs_id
+        RETURNING p.id, m.usfs_id, {_FINGERPRINT_SQL}
         """,
         [kind, usfs_source, *usfs_envelope_params, kind, *envelope_params, *guard_params],
     )
