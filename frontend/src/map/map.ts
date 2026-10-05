@@ -10,6 +10,7 @@ import { clearLayer, clearLayerList } from "./layer-lifecycle";
 import { clearSatelliteOverlay, resetSelection } from "./destinations";
 import { inspectRoadAt } from "./inspect";
 import { buildClusterList } from "./cluster-popup";
+import { createHoverPopup, type HoverPopup } from "./hover-popup";
 import { circleStyle } from "./markers";
 import { accuracyLabel, dist, onScopeChange, qs, state } from "../state";
 
@@ -62,9 +63,10 @@ let homeMarker: L.CircleMarker;
 // reload) rather than recreated per fetch, since MarkerClusterGroup itself owns the spatial
 // index that makes re-clustering on zoom cheap.
 let preciseCluster: L.MarkerClusterGroup;
-// Each precise pin's source observation, so a cluster's observation list (wirePreciseClusterList) can
-// read back what's folded into it from getAllChildMarkers().
-const preciseObservations = new WeakMap<L.Layer, PreciseObservation>();
+// Each precise pin's source observation and popup card, so a cluster's observation list
+// (wirePrecisePopup) can read back what's folded into it from getAllChildMarkers(), and a single
+// pin's hover can build its card.
+const preciseObservations = new WeakMap<L.Layer, { obs: PreciseObservation; content: () => HTMLElement }>();
 
 export const currentTheme = (): "dark" | "light" =>
   document.documentElement.dataset.theme === "light" ? "light" : "dark";
@@ -93,7 +95,7 @@ export function markerPalette(): MarkerPalette {
     flush: cssVar("--flush", "#5f7d3e"),
     purple: cssVar("--purple", "#4a3a4d"),
     moss: cssVar("--moss", "#4c5d43"),
-    spore: cssVar("--spore", "#b06a82"),
+    spore: cssVar("--spore", "#c9961a"),
   };
   paletteCacheTheme = theme;
   return paletteCache;
@@ -224,7 +226,7 @@ export function renderLegend(): void {
     .join("");
 }
 
-// Cluster badge styling: a spore-pink disc (same --spore hue as an individual pin) with a dark
+// Cluster badge styling: an ochre spore-print disc (same --spore hue as an individual pin) with a dark
 // ring and the count in the middle - readable on both the dark and light basemap, and visually
 // reads as "more precise pins" rather than borrowing the plugin's default blue/yellow/orange
 // severity gradient, which has no meaning here.
@@ -240,6 +242,14 @@ function preciseClusterIcon(cluster: L.MarkerCluster): L.DivIcon {
     className: "precise-cluster-icon",
     iconSize: L.point(size, size),
   });
+}
+
+// A single precise pin (issue #447): a 13 px --spore dot with a 2 px ink ring (style.css
+// .precise-pin-icon), centred in a 24 px transparent hit box so the hover popup is easy to
+// trigger. Still well under the destination markers and the 30 px cluster badges. A divIcon
+// rather than a circleMarker so the pin is a focusable element for the keyboard path.
+export function precisePinIcon(): L.DivIcon {
+  return L.divIcon({ className: "precise-pin-icon", html: "<span></span>", iconSize: L.point(24, 24) });
 }
 
 // The attribution lists four providers (OSM + iNaturalist + Open-Meteo + Esri) and rendered as a
@@ -306,10 +316,10 @@ export function initMap(home: Home): void {
     maxClusterRadius: 40,
     spiderfyOnMaxZoom: true,
     // Touch: a tap opens the observation list (which has its own Zoom in button) - see
-    // wirePreciseClusterList.
+    // wirePrecisePopup.
     zoomToBoundsOnClick: hover,
   }).addTo(map);
-  wirePreciseClusterList(preciseCluster, hover);
+  wirePrecisePopup(preciseCluster, hover);
   renderLegend();
   homeMarker = L.circleMarker([home.lat, home.lng], HOME_DOT_STYLE)
     .addTo(map)
@@ -375,35 +385,35 @@ export function clearMarkers(): void {
 }
 
 export function clearPrecise(): void {
-  closeClusterPopup();
+  closePrecisePopup();
   preciseCluster.clearLayers();
 }
 
 // Adds a precise-observation pin into the cluster group (see preciseCluster above) instead of
 // directly onto the map - the cluster group itself decides whether it renders standalone or
 // folded into a nearby cluster badge at the current zoom.
-export function addPreciseMarker(marker: L.CircleMarker, obs: PreciseObservation): void {
-  preciseObservations.set(marker, obs);
+export function addPreciseMarker(
+  marker: L.Marker,
+  obs: PreciseObservation,
+  content: () => HTMLElement,
+): void {
+  preciseObservations.set(marker, { obs, content });
   preciseCluster.addLayer(marker);
 }
 
-// A cluster badge lists the observations folded into it (cluster-popup.ts). With a mouse,
-// hovering opens the list and clicking still zooms to the badge's bounds (the plugin default);
-// the popup stays open while the pointer moves from the badge onto it - the rows are iNaturalist
-// links, so it has to be reachable - and closes a beat after the pointer leaves both. Touch
-// screens have no hover, so there a tap opens the list instead of zooming, and the list carries
-// a "Zoom in" button for the drill-down (see initMap's zoomToBoundsOnClick). Keyboard: focusing
-// a badge opens the list, Tab moves into it, Escape closes it back to the badge (Enter on the
-// badge still zooms). The popup closes on any zoom since the clusters re-form, and on
+// The precise-observation popup (hover-popup.ts): a cluster badge lists the observations folded
+// into it (cluster-popup.ts), a single pin shows its own observation card. With a mouse, hovering
+// either opens it and clicking a badge still zooms to its bounds (the plugin default); the popup
+// stays open while the pointer moves onto it and closes a beat after the pointer leaves both.
+// Touch screens have no hover, so a tap opens it instead - on a badge that replaces the zoom, and
+// the list carries a "Zoom in" button for the drill-down (see initMap's zoomToBoundsOnClick).
+// Keyboard: focusing a badge or pin opens it, Tab moves into it, Escape closes it back to the
+// marker (Enter on a badge still zooms). It closes on any zoom since the clusters re-form, and on
 // clearPrecise() since its pins are about to be replaced.
-const CLUSTER_POPUP_CLOSE_MS = 250;
+let precisePopup: HoverPopup | null = null;
 
-let clusterPopup: L.Popup | null = null;
-let clusterCloseTimer: number | undefined;
-
-function closeClusterPopup(): void {
-  window.clearTimeout(clusterCloseTimer);
-  if (clusterPopup) map.closePopup(clusterPopup);
+function closePrecisePopup(): void {
+  precisePopup?.close();
 }
 
 const hoverCapable = (): boolean => window.matchMedia?.("(hover: hover)").matches ?? true;
@@ -411,96 +421,96 @@ const hoverCapable = (): boolean => window.matchMedia?.("(hover: hover)").matche
 function clusterObservations(cluster: L.MarkerCluster): PreciseObservation[] {
   return cluster
     .getAllChildMarkers()
-    .map((marker) => preciseObservations.get(marker))
+    .map((marker) => preciseObservations.get(marker)?.obs)
     .filter((obs): obs is PreciseObservation => obs !== undefined);
 }
 
-// The cluster whose badge is `element`, via the public getVisibleParent - cluster icons are
-// rebuilt on every re-cluster, so there's no stable element -> cluster handle to keep.
-function clusterForBadge(group: L.MarkerClusterGroup, element: Element): L.MarkerCluster | null {
+// The cluster badge or single pin whose icon is `element`. Cluster icons are rebuilt on every
+// re-cluster, so there's no stable element -> cluster handle to keep; the public getVisibleParent
+// finds the badge a pin is folded into.
+function preciseMarkerFor(group: L.MarkerClusterGroup, element: Element): L.Marker | null {
   for (const layer of group.getLayers()) {
-    const parent = group.getVisibleParent(layer as L.Marker) as L.Marker | null;
-    if (parent && parent !== layer && parent.getElement() === element) return parent as L.MarkerCluster;
+    const marker = layer as L.Marker;
+    if (marker.getElement() === element) return marker;
+    const parent = group.getVisibleParent(marker) as L.Marker | null;
+    if (parent && parent !== marker && parent.getElement() === element) return parent;
   }
   return null;
 }
 
-function wirePreciseClusterList(group: L.MarkerClusterGroup, hover: boolean): void {
-  const popup = L.popup({
-    className: "cluster-popup",
-    closeButton: !hover,
-    autoPan: !hover,
-    maxWidth: 320,
-    offset: L.point(0, -12),
-  });
-  clusterPopup = popup;
-  let badge: HTMLElement | null = null;
-  // Set while Escape hands focus back to the badge, so that focusin doesn't reopen the list.
-  let returningFocus = false;
-  const cancelClose = (): void => window.clearTimeout(clusterCloseTimer);
-  const scheduleClose = (): void => {
-    cancelClose();
-    clusterCloseTimer = window.setTimeout(() => map.closePopup(popup), CLUSTER_POPUP_CLOSE_MS);
-  };
-  const inPopup = (target: EventTarget | null): boolean =>
-    target instanceof Node && !!popup.getElement()?.contains(target);
-  const open = (cluster: L.MarkerCluster): void => {
-    cancelClose();
+function wirePrecisePopup(group: L.MarkerClusterGroup, hover: boolean): void {
+  const popupView = createHoverPopup(
+    map,
+    L.popup({
+      className: "cluster-popup",
+      closeButton: !hover,
+      autoPan: !hover,
+      maxWidth: 320,
+      offset: L.point(0, -12),
+    }),
+  );
+  precisePopup = popupView;
+  const openCluster = (cluster: L.MarkerCluster): void => {
     const observations = clusterObservations(cluster);
     if (!observations.length) return;
-    badge = (cluster as unknown as L.Marker).getElement() ?? null;
     const options = hover ? {} : { onZoom: () => cluster.zoomToBounds({ padding: [20, 20] }) };
-    popup.setLatLng(cluster.getLatLng()).setContent(buildClusterList(observations, options)).openOn(map);
-    const element = popup.getElement();
-    if (element && !element.dataset.listWired) {
-      element.dataset.listWired = "1";
-      L.DomEvent.on(element, "mouseenter", cancelClose);
-      L.DomEvent.on(element, "mouseleave", scheduleClose);
-      L.DomEvent.on(element, "focusin", cancelClose);
-      L.DomEvent.on(element, "focusout", (event) => {
-        const next = (event as FocusEvent).relatedTarget;
-        if (!inPopup(next) && next !== badge) scheduleClose();
-      });
-      L.DomEvent.on(element, "keydown", (event) => {
-        if ((event as KeyboardEvent).key !== "Escape") return;
-        map.closePopup(popup);
-        returningFocus = true;
-        badge?.focus();
-        returningFocus = false;
-      });
-    }
+    popupView.open({
+      latLng: cluster.getLatLng(),
+      anchor: (cluster as unknown as L.Marker).getElement() ?? null,
+      content: buildClusterList(observations, options),
+    });
+  };
+  const openPin = (marker: L.Marker): void => {
+    const entry = preciseObservations.get(marker);
+    if (!entry) return;
+    popupView.open({
+      latLng: marker.getLatLng(),
+      anchor: marker.getElement() ?? null,
+      content: entry.content(),
+    });
+  };
+  const open = (marker: L.Marker): void => {
+    if (marker instanceof L.MarkerCluster) openCluster(marker);
+    else openPin(marker);
   };
 
   if (hover) {
-    group.on("clustermouseover", (event: L.LeafletEvent) => open(event.layer as L.MarkerCluster));
-    group.on("clustermouseout", scheduleClose);
+    group.on("clustermouseover", (event: L.LeafletEvent) => openCluster(event.layer as L.MarkerCluster));
+    group.on("clustermouseout mouseout", popupView.scheduleClose);
+    group.on("mouseover", (event: L.LeafletEvent) => openPin(event.layer as L.Marker));
   } else {
-    group.on("clusterclick", (event: L.LeafletEvent) => open(event.layer as L.MarkerCluster));
+    group.on("clusterclick", (event: L.LeafletEvent) => openCluster(event.layer as L.MarkerCluster));
   }
+  // A click on a pin opens its card on touch, and keeps it open on a mouse (it's already showing).
+  group.on("click", (event: L.LeafletEvent) => openPin(event.layer as L.Marker));
 
   // Keyboard path, delegated on the map container since badges are recreated on re-cluster.
   const container = map.getContainer();
-  const badgeOf = (target: EventTarget | null): HTMLElement | null =>
-    target instanceof HTMLElement && target.classList.contains("precise-cluster-icon") ? target : null;
+  const iconOf = (target: EventTarget | null): HTMLElement | null =>
+    target instanceof HTMLElement &&
+    (target.classList.contains("precise-cluster-icon") || target.classList.contains("precise-pin-icon"))
+      ? target
+      : null;
   L.DomEvent.on(container, "focusin", (event) => {
-    const focused = returningFocus ? null : badgeOf(event.target);
-    const cluster = focused && clusterForBadge(group, focused);
-    if (cluster) open(cluster);
+    const focused = popupView.returningFocus() ? null : iconOf(event.target);
+    const marker = focused && preciseMarkerFor(group, focused);
+    if (marker) open(marker);
   });
   L.DomEvent.on(container, "focusout", (event) => {
-    if (badgeOf(event.target) && !inPopup((event as FocusEvent).relatedTarget)) scheduleClose();
+    if (iconOf(event.target) && !popupView.contains((event as FocusEvent).relatedTarget))
+      popupView.scheduleClose();
   });
   L.DomEvent.on(container, "keydown", (event) => {
     const keyEvent = event as KeyboardEvent;
-    if (keyEvent.key !== "Tab" || keyEvent.shiftKey || !badgeOf(keyEvent.target) || !map.hasLayer(popup))
-      return;
-    const first = popup.getElement()?.querySelector<HTMLElement>(".cluster-list a, .cluster-list button");
+    const icon = iconOf(keyEvent.target);
+    if (keyEvent.key !== "Tab" || keyEvent.shiftKey || !icon || popupView.anchor() !== icon) return;
+    const first = map.getContainer().querySelector<HTMLElement>(".cluster-popup a, .cluster-popup button");
     if (!first) return;
     keyEvent.preventDefault();
     first.focus();
   });
 
-  map.on("zoomstart", closeClusterPopup);
+  map.on("zoomstart", closePrecisePopup);
 }
 
 // Public-land agency toggles (#show-land-blm/usfs/tribal, layers.ts's loadLand) - live

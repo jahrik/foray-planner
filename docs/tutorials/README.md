@@ -54,8 +54,8 @@ score bar, species count, recent sightings, elevation and rainfall, then the top
 
 ![A destination card](img/getting-started-05-card.png)
 
-**6. Select a destination.** Click a card to fly the map there. Small pink dots are precise
-(verified-location) observations; click one for its iNaturalist record. A pink circle with a
+**6. Select a destination.** Click a card to fly the map there. Small ochre dots are precise
+(verified-location) observations; hover or tap one for its iNaturalist record. An ochre circle with a
 number groups that many nearby observations: hover or tap it to list them, or zoom in to split
 it apart. The top three destinations carry their rank number on the map.
 
@@ -136,8 +136,8 @@ has been found there, so you know if you're early, on time, or late.
 
 ![The season calendar](img/track-down-02-season.png)
 
-**3. See the finds.** Back on the list, select the spot. The pink pins are now chanterelle
-finds only. Hover a numbered pin for the list, and zoom in to open single finds, each with
+**3. See the finds.** Back on the list, select the spot. The ochre pins are now chanterelle
+finds only. Hover a numbered pin for the list, and hover or tap a single find to open it, each with
 **Directions** to the spot.
 
 ![Chanterelle finds on the map](img/track-down-03-pins.png)

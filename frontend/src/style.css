@@ -852,7 +852,33 @@ a.chip:hover {
   transform: scale(1.25);
   transform-origin: 50% 92%;
 }
-/* Precise-observation cluster list (map.ts wirePreciseClusterList / cluster-popup.ts): hover
+/* A single precise-observation pin (map.ts precisePinIcon): the 24px icon box is the hover/tap
+   target, the dot inside it is what shows. Reads --spore live, so a theme toggle recolours the
+   pins already on the map. */
+.precise-pin-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.precise-pin-icon span {
+  width: 13px;
+  height: 13px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--spore);
+  border: 2px solid #0c0d09; /* map.ts HOME_RING */
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.55);
+}
+.precise-pin-icon:hover span,
+.precise-pin-icon:focus-visible span {
+  transform: scale(1.25);
+}
+.precise-pin-icon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 50%;
+}
+/* Precise-observation popup (map.ts wirePrecisePopup / hover-popup.ts / cluster-popup.ts): hover
    on desktop, tap on touch. Scrolls inside the popup rather than growing past the map. */
 .cluster-popup .cluster-list ul {
   list-style: none;

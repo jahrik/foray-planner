@@ -20,7 +20,7 @@ import {
   clearSelectedTrail,
   HOME_RING,
   map,
-  markerPalette,
+  precisePinIcon,
   renderLegend,
   setFireVisibility,
   setLandVisibility,
@@ -282,13 +282,14 @@ export async function loadPreciseObservations(): Promise<void> {
     return;
   }
   if (!isCurrent()) return;
-  const spore = markerPalette().spore;
   observations.forEach((obs) => {
-    const marker = L.circleMarker(
-      [obs.lat, obs.lng],
-      circleStyle({ radius: 4, fill: spore, stroke: HOME_RING, weight: 1, fillOpacity: 0.9 }),
-    ).bindPopup(precisePopup(obs));
-    addPreciseMarker(marker, obs);
+    // Popup opening (hover, tap, keyboard) is wired once on the cluster group - map.ts wirePrecisePopup.
+    const marker = L.marker([obs.lat, obs.lng], { icon: precisePinIcon(), bubblingMouseEvents: false });
+    // An accessible name for the focusable pin, set on every add since the cluster group
+    // re-creates the element when the pin leaves and re-enters a cluster. Not `title`: its native
+    // tooltip would sit on top of the hover popup.
+    marker.on("add", () => marker.getElement()?.setAttribute("aria-label", displayName(obs)));
+    addPreciseMarker(marker, obs, () => precisePopup(obs));
   });
 }
 

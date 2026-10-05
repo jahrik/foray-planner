@@ -55,7 +55,7 @@ camp within range hurts).
 
 Selecting a card (or its marker) snaps that circle to its true real-world footprint,
 drops every other circle to a ring so the basemap stays readable, and drops
-verified-location observation pins (spore-pink) inside the footprint.
+verified-location observation pins (ochre spore-print) inside the footprint.
 
 ### Details view
 
