@@ -120,7 +120,14 @@ export async function loadCircleTrailheads(): Promise<void> {
   try {
     // `geometry` is real GeoJSON, just untyped on the backend - see `Trail`'s cast in ./api/types.
     trailheads = (await getJson("/api/trails", {
-      query: { lat, lng, kind: "trailhead", radius_km: regionRadiusKm(), limit: CIRCLE_TRAILHEAD_LIMIT },
+      query: {
+        lat,
+        lng,
+        kind: "trailhead",
+        radius_km: regionRadiusKm(),
+        limit: CIRCLE_TRAILHEAD_LIMIT,
+        distinct_names: false,
+      },
     })) as unknown as Trail[];
   } catch (error) {
     if (isLatest() && state.focused === focused) setStatus(errorDetail(error));
