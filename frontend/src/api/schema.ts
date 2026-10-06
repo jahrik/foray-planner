@@ -814,6 +814,13 @@ export interface components {
             fee_low?: number | null;
             /** Fee High */
             fee_high?: number | null;
+            /** Camp Type */
+            camp_type?: ("tent" | "rv" | "mixed" | "backcountry" | "group" | "equestrian" | "cabin" | "pitch") | null;
+            /**
+             * Pitch Count
+             * @default 0
+             */
+            pitch_count: number;
         };
         /** ConfigResponse */
         ConfigResponse: {

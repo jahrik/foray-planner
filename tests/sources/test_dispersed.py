@@ -240,3 +240,59 @@ def test_ingest_dispersed_coverage_a_failing_region_does_not_block_others(con: p
     ingest_dispersed_coverage(cfg, con, client=client)
     assert calls["redwoods"] >= 1
     assert calls["cascades"] == 0
+
+
+def test_camp_type_reports_what_the_osm_tags_say() -> None:
+    from foray.sources.dispersed import _camp_type
+
+    assert _camp_type({"tourism": "camp_pitch", "tents": "yes"}) == "pitch"
+    assert _camp_type({"tourism": "camp_site", "backcountry": "yes"}) == "backcountry"
+    assert _camp_type({"tourism": "camp_site", "group_only": "yes"}) == "group"
+    assert _camp_type({"tourism": "caravan_site"}) == "rv"
+    assert _camp_type({"tourism": "caravan_site", "tents": "yes"}) == "mixed"
+    assert _camp_type({"tourism": "camp_site", "tents": "yes", "caravans": "yes"}) == "mixed"
+    assert _camp_type({"tourism": "camp_site", "caravans": "yes"}) == "rv"
+    assert _camp_type({"tourism": "camp_site", "tents": "yes"}) == "tent"
+    # Silence is not an answer, and "no" is not "yes".
+    assert _camp_type({"tourism": "camp_site"}) is None
+    assert _camp_type({"tourism": "camp_site", "tents": "no", "caravans": "no"}) is None
+
+
+def test_parse_reported_stores_the_camp_type_and_names_a_caravan_site() -> None:
+    payload = {
+        "elements": [
+            {"type": "node", "id": 1, "lat": 47.6, "lon": -122.3, "tags": {"tourism": "caravan_site"}},
+        ]
+    }
+    (row,) = _parse_reported(payload)
+    assert row[1] == "Caravan site (OSM)"
+    assert row[12] == "rv"
+
+
+def test_ingest_dispersed_folds_pitches_into_their_campground(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("foray.sources.overpass.time.sleep", lambda _seconds: None)
+    elements = [
+        {
+            "type": "way",
+            "id": 1,
+            "center": {"lat": 47.61, "lon": -122.31},
+            "tags": {"tourism": "camp_site", "name": "Riverside"},
+        },
+        {"type": "node", "id": 2, "lat": 47.6101, "lon": -122.31, "tags": {"tourism": "camp_pitch"}},
+        {"type": "node", "id": 3, "lat": 47.6102, "lon": -122.31, "tags": {"tourism": "camp_pitch"}},
+    ]
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"elements": elements}))
+    )
+    cfg = Settings(
+        home=Home(name="Home", lat=HOME_LAT, lng=HOME_LNG, radius_km=40.0),
+        h3_resolution=4,
+        ingest=Ingest(since_year=2015, quality_grade="research", recent_weeks=4),
+    )
+
+    ingest_dispersed(cfg, con, client=client)
+
+    sites = camps_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0)
+    assert [(site.name, site.pitch_count) for site in sites] == [("Riverside", 2)]

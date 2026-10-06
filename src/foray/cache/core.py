@@ -945,6 +945,28 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         )
         """,
     ),
+    # issue #451: what kind of camp a campsite row is (`camp_type`, drives the map icon), how many
+    # individual OSM pitches were folded into it (`pitch_count`), the OSM twin merged into a RIDB
+    # row (`osm_id`), and the tombstones for those folds - same role as `trail_duplicates`: every
+    # later OSM load still lists a folded pitch, and without a record the next ingest would put it
+    # back. `kept_id` cascades, so a pruned parent releases what was folded into it. Nullable
+    # columns without defaults and an empty table: catalog-only, no geometry work at deploy time
+    # (the dedup itself runs from the ingests and `foray prune-duplicates`).
+    (
+        58,
+        """
+        ALTER TABLE campsites
+            ADD COLUMN IF NOT EXISTS camp_type TEXT,
+            ADD COLUMN IF NOT EXISTS pitch_count INTEGER,
+            ADD COLUMN IF NOT EXISTS osm_id TEXT;
+        CREATE TABLE IF NOT EXISTS campsite_duplicates (
+            dropped_id TEXT PRIMARY KEY,
+            kept_id    TEXT NOT NULL REFERENCES campsites (id) ON DELETE CASCADE,
+            reason     TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_campsite_duplicates_kept ON campsite_duplicates (kept_id);
+        """,
+    ),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]

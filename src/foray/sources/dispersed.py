@@ -25,7 +25,7 @@ import httpx
 import psycopg
 
 from foray import cache
-from foray.cache import upsert_campsites
+from foray.cache import upsert_campsites_deduped
 from foray.config import CoverageRegion, Settings, coverage_envelope
 from foray.sources import overpass
 from foray.sources.http import SOURCE_ERRORS
@@ -36,10 +36,16 @@ logger = logging.getLogger(__name__)
 
 # Bump when the Overpass selector set below changes: the marker ``dispersed:place:{id}:v{N}``
 # stops matching and the next ``dispersed --all`` cron (jobs.yaml's ``dispersed-coverage``)
-# re-pulls every region (issue #306 workstream B, same self-heal as trails).
-_DISPERSED_COVERAGE_VERSION = 1
+# re-pulls every region (issue #306 workstream B, same self-heal as trails). 2: caravan sites,
+# the camp type, and the pitch / RIDB-twin dedup (issue #451).
+_DISPERSED_COVERAGE_VERSION = 2
 
-_SELECTORS = ('nwr["tourism"="camp_site"]', 'nwr["tourism"="camp_pitch"]', 'nwr["backcountry"="yes"]')
+_SELECTORS = (
+    'nwr["tourism"="camp_site"]',
+    'nwr["tourism"="camp_pitch"]',
+    'nwr["tourism"="caravan_site"]',
+    'nwr["backcountry"="yes"]',
+)
 
 
 def _reported_query(lat: float, lng: float, radius_m: float) -> str:
@@ -72,7 +78,32 @@ def _reported_name(tags: dict[str, Any]) -> str:
         return "Backcountry campsite (OSM)"
     if tags.get("tourism") == "camp_pitch":
         return "Camp pitch (OSM)"
+    if tags.get("tourism") == "caravan_site":
+        return "Caravan site (OSM)"
     return "Campsite (OSM)"
+
+
+def _camp_type(tags: dict[str, Any]) -> str | None:
+    """What kind of camp the OSM tags say a place is - drives the map icon (issue #451). Reports
+    the tags, nothing more: ``None`` when they don't say, ``tents``/``caravans`` read as the
+    mapper's statement of what the site takes, not a promise about it."""
+    tourism = tags.get("tourism")
+    if tourism == "camp_pitch":
+        return "pitch"
+    if tags.get("backcountry") == "yes":
+        return "backcountry"
+    if tags.get("group_only") == "yes":
+        return "group"
+    tents, caravans = tags.get("tents") == "yes", tags.get("caravans") == "yes"
+    if tourism == "caravan_site":
+        return "mixed" if tents else "rv"
+    if tents and caravans:
+        return "mixed"
+    if caravans:
+        return "rv"
+    if tents:
+        return "tent"
+    return None
 
 
 def _parse_reported(payload: dict[str, Any]) -> list[tuple[Any, ...]]:
@@ -109,6 +140,7 @@ def _parse_reported(payload: dict[str, Any]) -> list[tuple[Any, ...]]:
                 None,  # reservable - OSM dispersed sites are first-come
                 None,  # fee_low
                 None,  # fee_high
+                _camp_type(tags),
             )
         )
     return rows
@@ -186,7 +218,7 @@ def ingest_dispersed(
         label="dispersed",
         noun="Dispersed camping",
         fetch=lambda **kw: fetch_reported_campsites(client=client, **kw),
-        upsert=upsert_campsites,
+        upsert=upsert_campsites_deduped,
         progress_cb=progress_cb,
     )
 
@@ -246,7 +278,7 @@ def ingest_dispersed_region(
                 )
                 had_failures = True
                 continue
-            upsert_campsites(db, rows)
+            upsert_campsites_deduped(db, rows)
             total += len(rows)
         if had_failures:
             logger.warning(

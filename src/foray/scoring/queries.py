@@ -30,7 +30,7 @@ from foray.scoring._sql import (
     taxon_filter,
     unknown_genus,
 )
-from foray.scoring.models import CampSite, FireNear, LandParcel, StopPin, Trail
+from foray.scoring.models import CAMP_TYPES, CampSite, FireNear, LandParcel, StopPin, Trail
 
 _CALENDAR_SPECIES_PER_MONTH = 15
 
@@ -57,7 +57,11 @@ def camps_near(
     # and preserves the module's SQL-injection discipline. Same pattern in the other near-* reads.
     sql: LiteralString = f"""
         WITH pt AS (SELECT {GEOG_POINT} AS g)
-        SELECT id, name, kind, fee, free, lat, lng, source, url, reservable, fee_low, fee_high,
+        SELECT id,
+               CASE WHEN c.camp_type = 'pitch' AND coalesce(c.pitch_count, 0) > 1 THEN 'Campsite (OSM)'
+                    ELSE c.name END,
+               kind, fee, free, lat, lng, source, url, reservable, fee_low, fee_high,
+               c.camp_type, coalesce(c.pitch_count, 0),
                ST_Distance(c.geom, pt.g) / 1000.0 AS dist_km
         FROM campsites c, pt
         WHERE c.geom IS NOT NULL AND ST_DWithin(c.geom, pt.g, %s)
@@ -67,7 +71,23 @@ def camps_near(
     # Keep the unrounded distance alongside each site so ranking is exact; distance_km is
     # only rounded for display and must not be the sort key (near-equal sites would tie).
     scored: list[tuple[bool, float, CampSite]] = []
-    for site_id, name, kind, fee, free, site_lat, site_lng, source, url, reservable, fee_low, fee_high, dist in rows:
+    for (
+        site_id,
+        name,
+        kind,
+        fee,
+        free,
+        site_lat,
+        site_lng,
+        source,
+        url,
+        reservable,
+        fee_low,
+        fee_high,
+        camp_type,
+        pitch_count,
+        dist,
+    ) in rows:
         if free_only and not free:
             continue
         site = CampSite(
@@ -84,6 +104,8 @@ def camps_near(
             reservable=reservable,
             fee_low=fee_low,
             fee_high=fee_high,
+            camp_type=camp_type if camp_type in CAMP_TYPES else None,
+            pitch_count=pitch_count,
         )
         scored.append((free is not True, dist, site))
     # Free sites first (True > None/False), then nearest by true distance.

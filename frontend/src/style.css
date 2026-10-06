@@ -886,6 +886,81 @@ a.chip:hover {
   outline-offset: 1px;
   border-radius: 50%;
 }
+/* A campground marker (poi-layers.ts campIcon, issue #451): the camp-type icon in ink on a disc
+   whose fill is set inline from the free / paid / OSM-reported colours the legend names. 26px
+   box, 24px disc with an ink ring, same keyline as the precise pins. A count chip marks a row
+   standing for several OSM pitches. `active` is the Campgrounds tab's selected row. */
+.camp-pin-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.camp-pin-icon span {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid #0c0d09; /* map.ts HOME_RING */
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.55);
+  color: #0c0d09;
+  transition: transform 0.12s ease;
+}
+.camp-pin-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.camp-pin-icon b {
+  position: absolute;
+  top: -7px;
+  right: -9px;
+  min-width: 15px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: #0c0d09;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+}
+.camp-pin-icon:hover span,
+.camp-pin-icon:focus-visible span {
+  transform: scale(1.15);
+}
+.camp-pin-icon.active span {
+  transform: scale(1.25);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.camp-pin-icon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 50%;
+}
+/* The count badge a cluster of campgrounds / trailheads folds into at low zoom (poi-layers.ts). */
+.poi-cluster-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid #0c0d09;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.55);
+  color: #0c0d09;
+  font-size: 12px;
+  font-weight: 700;
+}
+.poi-cluster-badge.camp {
+  background: #ff9e2e; /* map.ts CAMP_PAID */
+}
+.poi-cluster-badge.trailhead {
+  background: #ff5555; /* map.ts TRAIL */
+  color: #fff;
+}
 /* Cluster badge (map.ts preciseClusterIcon): the cluster's most common genus icon on the same
    disc, with the pin count in an ink corner chip. */
 .precise-cluster-badge {
@@ -1267,6 +1342,24 @@ table.cal .heat {
 .map-legend i.legend-pin svg {
   width: 10px;
   height: 10px;
+}
+/* The camp-type legend entries: the same icon on a neutral disc (the disc colour is the free /
+   paid / reported entries above). */
+.map-legend i.legend-pin.camp {
+  background: #fff;
+}
+/* The trailhead signpost, bare. */
+.map-legend i.legend-signpost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  background: none;
+}
+.map-legend i.legend-signpost svg {
+  width: 14px;
+  height: 14px;
 }
 
 @media (max-width: 780px) {

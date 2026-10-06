@@ -7,7 +7,15 @@ import datetime as dt
 import click
 
 from foray import alerting, ingest_bulk, jobs
-from foray.cache import backfill_trail_land, connect, maybe_rebuild_phenology, observation_count, upsert_fungi_genera
+from foray.cache import (
+    backfill_trail_land,
+    connect,
+    maybe_rebuild_phenology,
+    observation_count,
+    prune_duplicate_campsites_tiled,
+    prune_duplicate_trailheads_tiled,
+    upsert_fungi_genera,
+)
 from foray.config import Settings
 from foray.genus_icons import catalog_rows
 from foray.logging_config import setup_logging
@@ -406,6 +414,22 @@ def backfill_trail_land_cmd() -> None:
     try:
         updated = backfill_trail_land(con)
         click.echo(f"Backfilled land_agency/land_unit for {updated} trails.")
+    finally:
+        con.close()
+
+
+@cli.command("prune-duplicates")
+def prune_duplicates_cmd() -> None:
+    """Fold the duplicate campsite rows (one OSM pitch per dot, OSM/RIDB twins) and trailhead
+    points (issue #451) already in the cache. The ingests do this for what they write, so this is
+    the catch-up for rows cached before the rule existed: tile by tile, each its own committed
+    statement (never one table-wide sweep), so it is safe to interrupt and to re-run. Run it
+    detached on a big database rather than from a deploy step."""
+    con = connect()
+    try:
+        camps = prune_duplicate_campsites_tiled(con)
+        trailheads = prune_duplicate_trailheads_tiled(con)
+        click.echo(f"Folded {camps} duplicate campsites and {trailheads} duplicate trailheads.")
     finally:
         con.close()
 

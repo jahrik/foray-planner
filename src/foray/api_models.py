@@ -10,7 +10,7 @@ return.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -239,6 +239,9 @@ class AlertRegion(BaseModel):
     fire_nearby: list[FireNear] = []
 
 
+CampType = Literal["tent", "rv", "mixed", "backcountry", "group", "equestrian", "cabin", "pitch"]
+
+
 class CampSite(BaseModel):
     model_config = _FROM_DATACLASS
 
@@ -255,6 +258,8 @@ class CampSite(BaseModel):
     reservable: bool | None = None  # RIDB Reservable (issue #306)
     fee_low: float | None = None  # nightly USD range parsed from the fee prose
     fee_high: float | None = None
+    camp_type: CampType | None = None  # what the source says it is (issue #451); None = unstated
+    pitch_count: int = 0  # OSM pitches folded into this row
 
 
 class Trail(BaseModel):

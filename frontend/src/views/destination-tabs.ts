@@ -345,8 +345,8 @@ export async function loadCampgroundsInto(
   // previous set), same as the Trails tab's trailhead markers.
   clearCardCampMarkers();
   const pinAction = createPinAction(region.region_id);
-  const rows: { button: HTMLButtonElement; marker: L.CircleMarker; site: CampSite }[] = [];
-  const selectRow = (site: CampSite, button: HTMLButtonElement, marker: L.CircleMarker): void => {
+  const rows: { button: HTMLButtonElement; marker: L.Marker; site: CampSite }[] = [];
+  const selectRow = (site: CampSite, button: HTMLButtonElement, marker: L.Marker): void => {
     rows.forEach((row) => {
       row.button.classList.remove("active");
       setCardCampActive(row.marker, row.site, false);

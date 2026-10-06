@@ -52,8 +52,12 @@ def _clear_ridb_bulk_marker(con: psycopg.Connection):
     con.execute("DELETE FROM meta WHERE key = 'bulk_snapshot:ridb'")
 
 
-def _ridb_export_zip(facilities: list[dict[str, str]], entity_activities: list[dict[str, str]] | None = None) -> bytes:
-    """Build a minimal in-memory RIDB full-export zip with just the two CSVs the bulk loader
+def _ridb_export_zip(
+    facilities: list[dict[str, str]],
+    entity_activities: list[dict[str, str]] | None = None,
+    campsites: list[dict[str, str]] | None = None,
+) -> bytes:
+    """Build a minimal in-memory RIDB full-export zip with just the CSVs the bulk loader
     reads - real-shaped column names, a tiny fixed row set."""
     facility_cols = ["FacilityID", "FacilityName", "FacilityTypeDescription", "FacilityLatitude", "FacilityLongitude"]
     activity_cols = ["ActivityID", "ActivityDescription", "ActivityFeeDescription", "EntityID", "EntityType"]
@@ -72,6 +76,13 @@ def _ridb_export_zip(facilities: list[dict[str, str]], entity_activities: list[d
         for row in entity_activities or []:
             writer.writerow(row)
         zf.writestr("EntityActivities_API_v1.csv", act_buf.getvalue())
+
+        site_buf = io.StringIO()
+        writer = csv.DictWriter(site_buf, fieldnames=["CampsiteID", "FacilityID", "CampsiteType"])
+        writer.writeheader()
+        for row in campsites or []:
+            writer.writerow(row)
+        zf.writestr("Campsites_API_v1.csv", site_buf.getvalue())
     return buf.getvalue()
 
 
@@ -596,13 +607,27 @@ def test_stage_ridb_uploads_filtered_rows_as_gzip_jsonl(monkeypatch: pytest.Monk
 def test_load_ridb_upserts_and_prunes_stale_rows(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     upsert_campsites(
         con,
-        [("ridb:stale", "Gone Now", "campground", None, None, 47.5, -122.2, "ridb", "u", None, None, None)],
+        [("ridb:stale", "Gone Now", "campground", None, None, 47.5, -122.2, "ridb", "u", None, None, None, None)],
     )
     dict_rows = [
         dict(
             zip(
                 camps._CAMPSITE_COLUMNS,
-                ("ridb:1", "A Campground", "campground", None, None, 47.6, -122.3, "ridb", "u1", False, None, None),
+                (
+                    "ridb:1",
+                    "A Campground",
+                    "campground",
+                    None,
+                    None,
+                    47.6,
+                    -122.3,
+                    "ridb",
+                    "u1",
+                    False,
+                    None,
+                    None,
+                    "tent",
+                ),
                 strict=True,
             )
         )
@@ -621,6 +646,24 @@ def test_load_ridb_upserts_and_prunes_stale_rows(con: psycopg.Connection, monkey
 
     ids = {row[0] for row in con.execute("SELECT id FROM campsites").fetchall()}
     assert ids == {"ridb:1"}
+    assert con.execute("SELECT camp_type FROM campsites").fetchone() == ("tent",)
+
+
+def test_load_ridb_reads_a_snapshot_staged_before_camp_type_existed(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old_schema = pa.schema([field for field in camps._BULK_SNAPSHOT_SCHEMA if field.name != "camp_type"])
+    columns = [name for name in camps._CAMPSITE_COLUMNS if name != "camp_type"]
+    values = ("ridb:1", "A Campground", "campground", None, None, 47.6, -122.3, "ridb", "u1", False, None, None)
+    buf = pa.BufferOutputStream()
+    with pq.ParquetWriter(buf, old_schema) as writer:
+        writer.write_table(pa.Table.from_pylist([dict(zip(columns, values, strict=True))], schema=old_schema))
+    payload = buf.getvalue().to_pybytes()
+    monkeypatch.setattr(camps.spaces, "download_file", lambda cfg, key, dest_path: Path(dest_path).write_bytes(payload))
+
+    load_ridb(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
+
+    assert con.execute("SELECT id, camp_type FROM campsites").fetchall() == [("ridb:1", None)]
 
 
 def test_ridb_bulk_loaded_reflects_meta_marker(con: psycopg.Connection) -> None:
@@ -638,3 +681,57 @@ def test_ingest_campgrounds_skips_live_crawl_once_bulk_loaded(con: psycopg.Conne
 
     assert ingest_campgrounds(Settings(), con, api_key="unused") == 0
     assert ingest_campgrounds_coverage(Settings(), con, api_key="unused") == 0
+
+
+def test_facility_camp_type_reads_the_site_mix() -> None:
+    assert camps.facility_camp_type(["TENT ONLY NONELECTRIC"]) == "tent"
+    assert camps.facility_camp_type(["RV ELECTRIC", "RV NONELECTRIC"]) == "rv"
+    assert camps.facility_camp_type(["TENT ONLY NONELECTRIC", "RV ELECTRIC"]) == "mixed"
+    assert camps.facility_camp_type(["STANDARD NONELECTRIC", "STANDARD ELECTRIC"]) == "mixed"
+    # A plain standard site names no vehicle, so it says nothing.
+    assert camps.facility_camp_type(["STANDARD NONELECTRIC"]) is None
+    assert camps.facility_camp_type(["GROUP STANDARD NONELECTRIC", "GROUP SHELTER ELECTRIC"]) == "group"
+    assert camps.facility_camp_type(["EQUESTRIAN NONELECTRIC"]) == "equestrian"
+    assert camps.facility_camp_type(["CABIN NONELECTRIC", "YURT"]) == "cabin"
+    assert camps.facility_camp_type(["WALK TO", "BOAT IN"]) == "backcountry"
+    # A campground with one group site is still a campground.
+    assert camps.facility_camp_type(["TENT ONLY NONELECTRIC", "GROUP TENT ONLY AREA NONELECTRIC"]) == "tent"
+    # Rows that aren't camping say nothing.
+    assert camps.facility_camp_type(["MANAGEMENT", "PARKING", "PICNIC"]) is None
+    assert camps.facility_camp_type([]) is None
+
+
+def test_camp_type_falls_back_to_the_facility_name() -> None:
+    record = {
+        "FacilityID": "7",
+        "FacilityName": "Black Butte Horse Camp",
+        "FacilityLatitude": 44,
+        "FacilityLongitude": -122,
+    }
+    row = _parse_facility(record)
+    assert row is not None and row[12] == "equestrian"
+    row = _parse_facility({**record, "FacilityName": "Plain Campground"})
+    assert row is not None and row[12] is None
+    row = _parse_facility(record, "tent")  # what the campsite list says wins over the name
+    assert row is not None and row[12] == "tent"
+
+
+def test_bulk_rows_carry_the_camp_type_from_the_campsite_list() -> None:
+    zip_bytes = _ridb_export_zip(
+        facilities=[
+            {
+                "FacilityID": "1",
+                "FacilityName": "Typed Campground",
+                "FacilityTypeDescription": "Campground",
+                "FacilityLatitude": "47.6",
+                "FacilityLongitude": "-122.3",
+            }
+        ],
+        campsites=[
+            {"CampsiteID": "10", "FacilityID": "1", "CampsiteType": "TENT ONLY NONELECTRIC"},
+            {"CampsiteID": "11", "FacilityID": "1", "CampsiteType": "RV ELECTRIC"},
+        ],
+    )
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        rows = list(_iter_bulk_campsite_rows(zf))
+    assert [row[12] for row in rows] == ["mixed"]

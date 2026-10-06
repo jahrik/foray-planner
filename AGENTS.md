@@ -100,6 +100,16 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   caveat rides on `kind`+UI label, never asserted. (A `public_land`-proxy signal - unmapped roads
   within public land, inferred as likely dispersed sites - was scoped but never implemented; see
   issue #110.)
+- **Campsite dedup + camp type (issue #451).** `campsites.camp_type` (tent / rv / mixed /
+  backcountry / group / equestrian / cabin / pitch) is what the source reports: OSM tags in
+  `dispersed._camp_type`, RIDB's per-site `CampsiteType` list in `camps.facility_camp_type` (bulk
+  export only; the live API falls back to the facility name). `cache.prune_duplicate_campsites`
+  folds OSM `camp_pitch` rows into the campground they sit in (`pitch_count`), an OSM campground
+  into its RIDB twin within 150 m (fuzzy name, `osm_id` attached), and orphan pitches into one row
+  per cluster, each with a `campsite_duplicates` tombstone that `upsert_campsites` honours. RIDB~RIDB
+  pairs are deliberately left alone. Every campsite ingest writes through
+  `upsert_campsites_deduped`; `just prune-duplicates` is the catch-up (also merges trailhead twins,
+  `cache.prune_duplicate_trailheads`, which `prune_trail_duplicates` runs per tile).
 - `src/foray/sources/trails.py` - trail layer from OSM **Overpass** (httpx, no key). One ODbL request
   pulls backcountry paths (`highway=path`/`bridleway` -> `kind='path'`; `footway` **excluded** -
   mostly urban sidewalks), forest / logging roads (`highway=track`, and `highway=service` +
@@ -276,6 +286,12 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
     `src/ui/pill.ts` is the popover primitive. `src/ui/ui-prefs.ts` wires the search-bar `⋮`
     menu (units / theme / text-size). `src/ui/card-select.ts` / `card-dom.ts` / `lazy-panel.ts`
     / `autocomplete.ts` - shared UI primitives.
+  - `src/map/poi-layers.ts` - the always-on campground + trailhead markers inside a selected
+    destination's circle (issue #451): `loadCamps` / `loadCircleTrailheads` (`layers.ts`) fetch at
+    the circle's own `regionRadiusKm()`; two marker-cluster groups in a `pois` pane under the
+    precise pins; camp-type icons from `icons/camp-icons.ts` (art in `icons/camps/`) on a
+    free / paid / OSM-coloured disc. The Layers pill's Campgrounds / Dispersed / Trailheads boxes
+    default on and only hide.
   - `src/map/map.ts` - Leaflet init, theme/tile switching, `markerPalette()` (reads `tokens.css`
     at runtime, memoised per theme), the marker hierarchy in `plot()` (top-3 = filled circle +
     rank numeral, next-7 = ring, 11+ = dim moss dot), `selectSize`/`deselectSize`, `clear*()`,

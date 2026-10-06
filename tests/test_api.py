@@ -15,7 +15,13 @@ from fastapi.testclient import TestClient
 
 from foray import refresh as refresh_module
 from foray.api import create_app
-from foray.cache import upsert_campsites, upsert_fungi_genera, upsert_public_land, upsert_trails
+from foray.cache import (
+    prune_duplicate_campsites_tiled,
+    upsert_campsites,
+    upsert_fungi_genera,
+    upsert_public_land,
+    upsert_trails,
+)
 from foray.config import Home, Settings
 from foray.geo import grid_cell, grid_cell_center, h3_edge_length_km
 from foray.scoring import TripPlan, build_phenology
@@ -522,6 +528,71 @@ def test_camps_limit_caps_the_results(client: TestClient, con: psycopg.Connectio
     response = client.get("/api/camps", params={"lat": HOME_LAT, "lng": HOME_LNG, "limit": 1})
     assert response.status_code == 200
     assert len(response.json()) == 1
+
+
+def test_camps_carry_the_camp_type_and_the_pitches_folded_into_them(
+    client: TestClient, con: psycopg.Connection
+) -> None:
+    upsert_campsites(
+        con,
+        [
+            (
+                "osm:way/1",
+                "Riverside",
+                "reported",
+                None,
+                None,
+                HOME_LAT + 0.01,
+                HOME_LNG,
+                "osm",
+                "u1",
+                None,
+                None,
+                None,
+                "rv",
+            ),
+            (
+                "osm:node/1",
+                "Camp pitch (OSM)",
+                "reported",
+                None,
+                None,
+                HOME_LAT + 0.0101,
+                HOME_LNG,
+                "osm",
+                "u2",
+                None,
+                None,
+                None,
+                "pitch",
+            ),
+            # A type this build does not know is sent as unstated, never as a validation error.
+            (
+                "ridb:2",
+                "Odd",
+                "campground",
+                None,
+                None,
+                HOME_LAT + 0.02,
+                HOME_LNG,
+                "ridb",
+                "u3",
+                None,
+                None,
+                None,
+                "treehouse",
+            ),
+        ],
+    )
+    prune_duplicate_campsites_tiled(con)
+
+    response = client.get("/api/camps", params={"lat": HOME_LAT, "lng": HOME_LNG})
+
+    assert response.status_code == 200
+    by_name = {site["name"]: site for site in response.json()}
+    assert (by_name["Riverside"]["camp_type"], by_name["Riverside"]["pitch_count"]) == ("rv", 1)
+    assert by_name["Odd"]["camp_type"] is None
+    assert "Camp pitch (OSM)" not in by_name
 
 
 def test_trails_by_latlng_empty(client: TestClient) -> None:
