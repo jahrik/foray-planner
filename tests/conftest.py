@@ -42,6 +42,9 @@ _TABLES = (
     "fire_perimeters",
     "job_runs",
     "backfill_queue",
+    # Keyed by observation id, which every test reuses: a row left by an earlier run on a long-lived
+    # test database makes the thumbnail endpoint answer from cache and skip the fetch under test.
+    "observation_thumbnails",
 )
 
 _TEST_DB_NAME = "foray_test"
