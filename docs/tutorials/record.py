@@ -46,6 +46,10 @@ CREDITS_DIR = INSTAGRAM_DIR / "credits"
 # Walkthroughs that show campgrounds (the Details Campgrounds tab or a camp pin).
 CAMPGROUND_SLUGS = {"track-down", "region-details", "plan-a-trip"}
 DEFAULT_URL = "https://forayplanner.com/"
+# The genus the phone Reels pick as their target: less familiar than chanterelles, with plenty of
+# finds near the demo home. (The desktop walkthroughs behind the committed README still use
+# chanterelles.)
+REEL_TARGET = "Hydnellum"
 INSTAGRAM_DEFAULT = ["getting-started", "best-spot", "track-down", "mobile"]
 # The home every tutorial searches for, as the origin of any Google Maps page a tutorial opens
 # (Tutorial.follow_link). A find's Directions link carries no origin - it routes from wherever the
@@ -1067,7 +1071,7 @@ def track_down_phone(tut: Tutorial) -> None:
     )
     genera = page.locator("#pills .pill-wrap").nth(3).locator(".pill")
     tut.click(genera)
-    tut.type_slowly(page.locator("#genus"), "Cantharellus")
+    tut.type_slowly(page.locator("#genus"), REEL_TARGET)
     suggestion = page.locator("#genus-suggestions li").first
     suggestion.wait_for(timeout=15_000)
     tut.click(suggestion, pause=1.0)
@@ -1077,22 +1081,22 @@ def track_down_phone(tut: Tutorial) -> None:
     card = page.locator("#panel .rank").first
     tut.point(card.locator(".why"))
     tut.caption(
-        "<b>1. Pick your target</b> under Genera. The list now ranks spots for chanterelles only.",
+        f"<b>1. Pick your target</b> under Genera. The list now ranks spots for {REEL_TARGET} only.",
         shot="target",
         hold=3.2,
     )
 
     tut.click(card.locator('[data-act="details"]'), pause=1.5)
     tut.caption(
-        "<b>2. Check the season.</b> Calendar shows which months chanterelles turn up here.",
+        f"<b>2. Check the season.</b> Calendar shows which months {REEL_TARGET} turns up here.",
         shot="season",
         hold=3.2,
     )
     tut.click(page.locator("#panel .details-back"), pause=1.2)
 
     tut.click(page.locator("#panel .rank").first.locator("h3"), pause=1.5)
-    tut.caption("<b>3. See the finds.</b> Select the spot; the pins are chanterelles only.", hold=2)
-    show_finds_phone(tut, what="chanterelle finds", follow=("directions",))
+    tut.caption(f"<b>3. See the finds.</b> Select the spot; the pins are {REEL_TARGET} only.", hold=2)
+    show_finds_phone(tut, what=f"{REEL_TARGET} finds", follow=("directions",))
 
     raise_sheet(tut)
     tut.click(page.locator("#panel .rank").first.locator('[data-act="details"]'), pause=1.5)
@@ -1102,7 +1106,7 @@ def track_down_phone(tut: Tutorial) -> None:
     time.sleep(1.0)
     tut.point(chip)
     tut.caption(
-        "<b>4. Pick a trail.</b> Trails with chanterelle finds close by get a boost in the ranking.",
+        f"<b>4. Pick a trail.</b> Trails with {REEL_TARGET} finds close by get a boost in the ranking.",
         shot="trails",
         hold=3.2,
     )
@@ -1190,11 +1194,11 @@ def getting_started_phone(tut: Tutorial) -> None:
     genera = page.locator("#pills .pill-wrap").nth(3).locator(".pill")
     tut.click(genera)
     tut.caption("<b>Genera</b>: narrow the ranking to the mushrooms you're after.")
-    tut.type_slowly(page.locator("#genus"), "Cantharellus")
+    tut.type_slowly(page.locator("#genus"), REEL_TARGET)
     suggestion = page.locator("#genus-suggestions li").first
     suggestion.wait_for(timeout=15_000)
     tut.click(suggestion, pause=1.0)
-    tut.caption("Chanterelles added. Add as many genera as you like.", shot="genera")
+    tut.caption(f"<b>{REEL_TARGET}</b> added. Add as many genera as you like.", shot="genera")
     page.keyboard.press("Escape")
     wait_for_results(page)
 
@@ -1208,7 +1212,7 @@ def getting_started_phone(tut: Tutorial) -> None:
     )
     tut.click(card.locator("h3"), pause=1.5)
     tut.caption("Tap a card to fly the map to that destination.", shot="selected", hold=2.6)
-    show_finds_phone(tut, what="chanterelle finds", follow=("inaturalist", "directions"))
+    show_finds_phone(tut, what=f"{REEL_TARGET} finds", follow=("inaturalist", "directions"))
     tut.caption("That's the basics. Next: find the <b>best spot</b> and track down a target.", hold=2.5)
 
 
