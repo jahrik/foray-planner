@@ -134,7 +134,7 @@ export function setFocused(lat: number, lng: number): void {
 // `foray backfill-satellite` pre-fetches every known region so a selection is normally an
 // instant cache hit instead of paying that render time in the browser. `regionId` addresses the
 // same fixed grid cell the circle's true footprint (regionRadiusKm) already matches server-side.
-const SATELLITE_ATTRIBUTION = "Imagery © Esri";
+const SATELLITE_ATTRIBUTION = "Imagery: Esri, Vantor, Earthstar Geographics, and the GIS User Community";
 
 export function satelliteImageUrl(regionId: string): string {
   return `/api/destinations/${regionId}/satellite/image`;
