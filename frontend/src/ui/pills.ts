@@ -94,6 +94,7 @@ export function initPills(): void {
     "show-camps",
     "show-dispersed",
     "free-camps",
+    "show-trailheads",
     "show-fire",
     "show-aerial",
     "show-contours",

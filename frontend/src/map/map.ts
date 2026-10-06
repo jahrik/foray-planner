@@ -5,7 +5,15 @@ import type { Home, PreciseObservation } from "../api/types";
 import { FIRE_ACTIVE, FIRE_SCAR } from "./basemap-fire";
 import { LAND_COLORS, LAND_DEFAULT } from "./basemap-land";
 import { FORAGE_RAMP, FORAGE_TIER_LABELS } from "./forage";
-import { clearCardCampMarkers, clearCamps, clearTrailheadMarkers } from "./pins";
+import { clearCardCampMarkers, clearTrailheadMarkers, trailheadSvg } from "./pins";
+import { campIconSvg } from "../icons/camp-icons";
+import {
+  clearCampMarkers,
+  clearCircleTrailheads,
+  initPoiLayers,
+  poiLegendEntries,
+  type PoiLegendEntry,
+} from "./poi-layers";
 import { clearLayer, clearLayerList } from "./layer-lifecycle";
 import { clearSatelliteOverlay, resetSelection } from "./destinations";
 import { inspectRoadAt } from "./inspect";
@@ -204,8 +212,6 @@ const PRECISE_SWATCH = "precise-pin";
 
 export function renderLegend(): void {
   const el = qs("#legend");
-  const camps = (document.getElementById("show-camps") as HTMLInputElement | null)?.checked;
-  const dispersed = (document.getElementById("show-dispersed") as HTMLInputElement | null)?.checked;
   const blm = (document.getElementById("show-land-blm") as HTMLInputElement | null)?.checked;
   const usfs = (document.getElementById("show-land-usfs") as HTMLInputElement | null)?.checked;
   const tribal = (document.getElementById("show-land-tribal") as HTMLInputElement | null)?.checked;
@@ -218,10 +224,6 @@ export function renderLegend(): void {
     [palette.purple, "Selected"],
     [PRECISE_SWATCH, "Precise observation: icon shows its genus or shape"],
   ];
-  if (camps) {
-    entries.push([CAMP_FREE, "Free campground"], [CAMP_PAID, "Paid / unknown campground"]);
-  }
-  if (dispersed) entries.push([CAMP_OSM, "Reported campsite (OSM)"]);
   if ((document.getElementById("show-fire") as HTMLInputElement | null)?.checked) {
     entries.push([FIRE_ACTIVE, "Active wildfire"], [FIRE_SCAR, "Recent burn scar"]);
   }
@@ -234,13 +236,26 @@ export function renderLegend(): void {
     const idx = state.selectedTrailForage - 1; // 0..2 into the tier-1/2/3 ramp
     entries.push([FORAGE_RAMP[idx] ?? FORAGE_RAMP[2], `Selected trail: ${FORAGE_TIER_LABELS[idx] ?? ""}`]);
   }
-  el.innerHTML = entries
-    .map(([color, label]) =>
-      color === PRECISE_SWATCH
-        ? `<span class="legend-item"><i class="legend-pin" aria-hidden="true">${genusIconSvg("gilled")}</i>${label}</span>`
-        : `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`,
-    )
-    .join("");
+  el.innerHTML =
+    entries
+      .map(([color, label]) =>
+        color === PRECISE_SWATCH
+          ? `<span class="legend-item"><i class="legend-pin" aria-hidden="true">${genusIconSvg("gilled")}</i>${label}</span>`
+          : `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`,
+      )
+      .join("") + poiLegendEntries().map(poiLegendItem).join("");
+}
+
+// A camp (disc colour or type icon) or the trailhead signpost, from the camp/trailhead layers
+// inside the selected destination (poi-layers.ts, issue #451).
+function poiLegendItem(entry: PoiLegendEntry): string {
+  const label = escapeHtml(entry.label);
+  if ("swatch" in entry)
+    return `<span class="legend-item"><i style="background:${entry.swatch}"></i>${label}</span>`;
+  if ("iconKey" in entry) {
+    return `<span class="legend-item"><i class="legend-pin camp" aria-hidden="true">${campIconSvg(entry.iconKey)}</i>${label}</span>`;
+  }
+  return `<span class="legend-item"><i class="legend-signpost" aria-hidden="true">${trailheadSvg()}</i>${label}</span>`;
 }
 
 // Cluster badge (issue #449): the icon of the cluster's most common genus (cluster-vote.ts) on the
@@ -351,6 +366,7 @@ export function initMap(home: Home): void {
   // top of the satellite image, not under it (see showSatelliteOverlay).
   map.createPane("satellite");
   map.getPane("satellite")!.style.zIndex = "350";
+  initPoiLayers(map);
   const hover = hoverCapable();
   preciseCluster = L.markerClusterGroup({
     iconCreateFunction: preciseClusterIcon,
@@ -414,7 +430,8 @@ export function renderHomeLine(): void {
 
 export function clearMarkers(): void {
   clearLayerList(map, state.markers);
-  clearCamps();
+  clearCampMarkers();
+  clearCircleTrailheads();
   clearTrailheadMarkers();
   clearCardCampMarkers();
   clearSelectedTrail();

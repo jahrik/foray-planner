@@ -158,6 +158,14 @@ backfill-forage *args: db
 backfill-trail-land *args: db
     docker compose run --rm app foray backfill-trail-land {{ args }}
 
+# Catch-up for duplicate campsite rows (one OSM pitch per dot, OSM/RIDB twins) and trailhead points
+# already cached (issue #451); the ingests fold what they write. Tile by tile, each its own
+# committed statement - safe to interrupt and re-run, but run it detached on a big database.
+[doc('Fold duplicate campsites and trailheads already cached (issue #451)')]
+[group('data')]
+prune-duplicates: db
+    docker compose run --rm app foray prune-duplicates
+
 # Refresh the recent-rain-per-destination layer (issue #226, Open-Meteo forecast API). Skips
 # region cells refreshed in the last ~20h, so a re-run resumes rather than starting over.
 [doc('Refresh the recent-rain-per-destination layer (issue #226)')]

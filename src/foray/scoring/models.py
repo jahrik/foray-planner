@@ -57,6 +57,10 @@ class RegionScore:
     camp_is_free: bool | None = None
 
 
+# The camp types a `campsites.camp_type` can carry (issue #451); mirrored by api_models.CampType.
+CAMP_TYPES = frozenset({"tent", "rv", "mixed", "backcountry", "group", "equestrian", "cabin", "pitch"})
+
+
 @dataclass
 class CampSite:
     id: str
@@ -74,6 +78,11 @@ class CampSite:
     reservable: bool | None = None
     fee_low: float | None = None
     fee_high: float | None = None
+    # What the source says kind of camp this is (issue #451): tent / rv / mixed / backcountry /
+    # group / equestrian / cabin / pitch, or None when it doesn't say. `pitch_count` is how many
+    # OSM pitches were folded into this row (a campground mapped pitch by pitch), 0 when none.
+    camp_type: str | None = None
+    pitch_count: int = 0
 
 
 @dataclass

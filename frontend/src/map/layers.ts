@@ -8,7 +8,6 @@ import { LAND_AGENCIES, LAND_OTHER } from "./basemap-land";
 import { FORAGE_RAMP, forageTier } from "./forage";
 import { isRoughSurface } from "./trail-attrs";
 import { directionsLink } from "./directions";
-import { circleStyle } from "./markers";
 import { genusIconElement } from "../icons/genus-icons";
 import { thumbnailSlot } from "./observation-thumbnail";
 import { buildPopup } from "./popup";
@@ -16,12 +15,8 @@ import { regionRadiusKm, setFocused } from "./destinations";
 import {
   addPreciseMarker,
   commitPreciseMarkers,
-  CAMP_FREE,
-  CAMP_OSM,
-  CAMP_PAID,
   clearPrecise,
   clearSelectedTrail,
-  HOME_RING,
   map,
   precisePinIcon,
   renderLegend,
@@ -31,7 +26,14 @@ import {
   TRAIL,
   TRAIL_WALKIN,
 } from "./map";
-import { addCampMarker, clearCamps } from "./pins";
+import {
+  addCampMarkers,
+  addCircleTrailheads,
+  clearCampMarkers,
+  clearCircleTrailheads,
+  createCampMarker,
+  createTrailheadMarker,
+} from "./poi-layers";
 import {
   dist,
   observationLabel,
@@ -60,39 +62,79 @@ const LAND_TOGGLES: Record<string, () => boolean> = {
 // OSM dispersed-camping layer: sites tagged campable in OpenStreetMap (kind='reported').
 const isDispersed = (site: CampSite): boolean => site.kind === "reported";
 
-// Fetch + plot camping near the focused region. `/api/camps` returns developed campgrounds and
-// the OSM dispersed layer together; each is drawn only when its toggle is on. No-op (just clears)
-// when neither is on. Failures degrade quietly to a status line rather than throwing.
+export const trailheadsOn = (): boolean => qs<HTMLInputElement>("#show-trailheads").checked;
+
+// A newer load supersedes a slower one still in flight (focus moved, a toggle flipped), so a
+// stale response can never paint over the current destination's markers.
+const campGuard = createRunGuard();
+
+// Fetch + plot every campground inside the focused destination's circle (issue #451). Always on
+// for a selection: the Campgrounds / Dispersed checkboxes only hide their half, and the query
+// radius is the circle's own (`regionRadiusKm()`), not the route's 40 km default - what the
+// circle shows is what the card's Campgrounds tab lists. `/api/camps` returns developed
+// campgrounds and the OSM dispersed layer together. Markers go into a cluster group (poi-layers.ts)
+// so a hundred of them fold into count badges at low zoom. Failures degrade quietly to a status
+// line rather than throwing.
 export async function loadCamps(): Promise<void> {
-  clearCamps();
+  const isLatest = campGuard.begin();
+  clearCampMarkers();
   renderLegend();
-  if ((!campsOn() && !dispersedOn()) || !state.focused) return;
-  const { lat, lng } = state.focused;
+  const focused = state.focused;
+  if (!focused || (!campsOn() && !dispersedOn())) return;
+  const { lat, lng } = focused;
   let sites: CampSite[];
   try {
-    sites = await getJson("/api/camps", { query: { lat, lng, free_only: freeOnly() } });
+    sites = await getJson("/api/camps", {
+      query: { lat, lng, radius_km: regionRadiusKm(), free_only: freeOnly() },
+    });
   } catch (error) {
-    setStatus(errorDetail(error));
+    if (isLatest() && state.focused === focused) setStatus(errorDetail(error));
     return;
   }
-  sites.forEach((site) => {
-    const dispersed = isDispersed(site);
-    if (dispersed ? !dispersedOn() : !campsOn()) return; // gated by the matching toggle
-    const isFree = site.free === true;
-    const marker = L.circleMarker(
-      [site.center_lat, site.center_lng],
-      circleStyle({
-        radius: dispersed ? 6 : 5,
-        fill: dispersed ? CAMP_OSM : isFree ? CAMP_FREE : CAMP_PAID,
-        stroke: HOME_RING,
-        weight: 1,
-        fillOpacity: 0.9,
+  if (!isLatest() || state.focused !== focused) return;
+  const entries = sites
+    .filter((site) => (isDispersed(site) ? dispersedOn() : campsOn())) // gated by the matching toggle
+    .map((site) => {
+      const marker = createCampMarker(site);
+      marker.bindPopup(campPopup(site));
+      return { site, marker };
+    });
+  addCampMarkers(entries);
+  renderLegend();
+}
+
+// Same shape for the trailheads (`kind=trailhead` only - the Trails tab still lists the paths,
+// routes and forest roads). Clicking a signpost draws that trailhead's real trail, the same as
+// its row in the Trails tab.
+const trailheadGuard = createRunGuard();
+const CIRCLE_TRAILHEAD_LIMIT = 500;
+
+export async function loadCircleTrailheads(): Promise<void> {
+  const isLatest = trailheadGuard.begin();
+  clearCircleTrailheads();
+  renderLegend();
+  const focused = state.focused;
+  if (!focused || !trailheadsOn()) return;
+  const { lat, lng } = focused;
+  let trailheads: Trail[];
+  try {
+    // `geometry` is real GeoJSON, just untyped on the backend - see `Trail`'s cast in ./api/types.
+    trailheads = (await getJson("/api/trails", {
+      query: { lat, lng, kind: "trailhead", radius_km: regionRadiusKm(), limit: CIRCLE_TRAILHEAD_LIMIT },
+    })) as unknown as Trail[];
+  } catch (error) {
+    if (isLatest() && state.focused === focused) setStatus(errorDetail(error));
+    return;
+  }
+  if (!isLatest() || state.focused !== focused) return;
+  addCircleTrailheads(
+    trailheads.map((trailhead) =>
+      createTrailheadMarker(trailhead.center_lat, trailhead.center_lng, trailhead.name, () => {
+        void selectTrailhead(trailhead);
       }),
-    )
-      .addTo(map)
-      .bindPopup(campPopup(site));
-    addCampMarker(marker);
-  });
+    ),
+  );
+  renderLegend();
 }
 
 // `site.name` and the fee text come from an external API (buildPopup sets them via textContent);
@@ -290,6 +332,7 @@ export async function loadPreciseObservations(): Promise<void> {
     const marker = L.marker([obs.lat, obs.lng], {
       icon: precisePinIcon(obs.icon),
       bubblingMouseEvents: false,
+      zIndexOffset: 1000, // above the camp / trailhead layers (poi-layers.ts)
     });
     // An accessible name for the focusable pin, set on every add since the cluster group
     // re-creates the element when the pin leaves and re-enters a cluster. Not `title`: its native
@@ -322,5 +365,6 @@ function precisePopup(obs: PreciseObservation): HTMLElement {
 export function focusRegion(lat: number, lng: number): void {
   setFocused(lat, lng);
   loadCamps();
+  loadCircleTrailheads();
   loadPreciseObservations();
 }

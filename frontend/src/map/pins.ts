@@ -3,20 +3,11 @@ import L from "leaflet";
 import type { CampSite } from "../api/types";
 import { state } from "../state";
 import { clearLayerList } from "./layer-lifecycle";
-import { CAMP_FREE, CAMP_PAID, HOME_RING, map, TRAIL } from "./map";
-import { circleStyle } from "./markers";
+import { HOME_RING, map, TRAIL } from "./map";
+import { campIcon, campLabel } from "./poi-layers";
 
-// Global camp-layer markers (#show-camps/#show-dispersed toggle, layers.ts's loadCamps) - kept
-// separate from the per-card cardCampMarkers below so the two don't interact.
-export function clearCamps(): void {
-  clearLayerList(map, state.campMarkers);
-}
-
-export function addCampMarker(marker: L.CircleMarker): void {
-  state.campMarkers.push(marker);
-}
-
-// Signpost marker for a destination card's Trails tab trailhead list (views.ts) - only the
+// Signpost marker for a destination card's Trails tab trailhead list (views.ts) - drawn over the
+// always-on circle layer's identical signposts (poi-layers.ts) so a selected row can light up. Only the
 // currently open card's trailheads are on the map at once (plotTrailhead clears the previous
 // set first), same "one destination's detail at a time" approach as camps/land. Clicking a
 // marker selects that trailhead's real trail (layers.ts's selectTrailhead), same as clicking
@@ -28,7 +19,7 @@ export function addCampMarker(marker: L.CircleMarker): void {
 // and a top-level template literal reading those bindings at pins.ts's own module-eval time can
 // run before map.ts's `const HOME_RING = ...` has executed, hitting the TDZ and throwing
 // "Cannot access 'HOME_RING' before initialization" on load (Copilot review, PR #376).
-function trailheadSvg(): string {
+export function trailheadSvg(): string {
   return [
     `<svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">`,
     `<path d="M12 3.5v18" stroke="${HOME_RING}" stroke-width="3.4" stroke-linecap="round"/>`,
@@ -39,7 +30,7 @@ function trailheadSvg(): string {
   ].join("");
 }
 
-function trailheadIcon(active: boolean): L.DivIcon {
+export function trailheadIcon(active: boolean): L.DivIcon {
   return L.divIcon({
     html: `<div class="trailhead-marker${active ? " active" : ""}">${trailheadSvg()}</div>`,
     className: "trailhead-icon",
@@ -71,34 +62,28 @@ export function setTrailheadActive(marker: L.Marker, active: boolean): void {
 
 // Campground marker for a destination card's Campgrounds tab (views.ts) - same "one card's
 // detail at a time" scoping as the Trails tab's trailhead markers, kept in a dedicated
-// state.cardCampMarkers array rather than reusing state.campMarkers so this doesn't interact
-// with the global #show-camps/#show-dispersed toggle's own marker set (loadCamps in layers.ts).
-// Styled the same free/paid gold-vs-amber as that toggle's markers for visual consistency.
-function cardCampStyle(site: CampSite, active: boolean): L.CircleMarkerOptions {
-  return circleStyle({
-    radius: active ? 8 : 6,
-    fill: site.free === true ? CAMP_FREE : CAMP_PAID,
-    stroke: HOME_RING,
-    weight: active ? 2 : 1,
-    fillOpacity: 0.9,
-  });
-}
-
+// state.cardCampMarkers array. Drawn with the same camp-type icon as the always-on circle layer
+// (poi-layers.ts) so it sits over its twin without a visible seam; `active` (its list chip is
+// selected) is the only difference.
 export function clearCardCampMarkers(): void {
   clearLayerList(map, state.cardCampMarkers);
 }
 
-export function plotCardCamp(site: CampSite, onSelect: () => void): L.CircleMarker {
+export function plotCardCamp(site: CampSite, onSelect: () => void): L.Marker {
   const tooltip = document.createElement("span");
   tooltip.textContent = site.name;
-  const marker = L.circleMarker([site.center_lat, site.center_lng], cardCampStyle(site, false))
+  const marker = L.marker([site.center_lat, site.center_lng], {
+    icon: campIcon(site),
+    bubblingMouseEvents: false,
+  })
     .addTo(map)
-    .bindTooltip(tooltip, { direction: "top", offset: [0, -6] });
+    .bindTooltip(tooltip, { direction: "top", offset: [0, -10] });
   marker.on("click", onSelect);
+  marker.on("add", () => marker.getElement()?.setAttribute("aria-label", campLabel(site)));
   state.cardCampMarkers.push(marker);
   return marker;
 }
 
-export function setCardCampActive(marker: L.CircleMarker, site: CampSite, active: boolean): void {
-  marker.setStyle(cardCampStyle(site, active));
+export function setCardCampActive(marker: L.Marker, site: CampSite, active: boolean): void {
+  marker.setIcon(campIcon(site, active));
 }

@@ -62,6 +62,7 @@ const CAMP = {
   distance_km: 1,
   source: "ridb",
   url: "u",
+  pitch_count: 0,
 };
 
 describe("stop points", () => {

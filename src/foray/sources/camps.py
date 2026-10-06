@@ -30,7 +30,7 @@ import os
 import re
 import time
 import zipfile
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from datetime import date
 from typing import Any
 
@@ -39,7 +39,7 @@ import psycopg
 import pyarrow as pa
 
 from foray import cache, spaces
-from foray.cache import upsert_campsites
+from foray.cache import upsert_campsites, upsert_campsites_deduped
 from foray.config import CoverageRegion, Settings, coverage_envelope
 from foray.geo import KM_PER_DEG_LAT, haversine_km
 from foray.sources.http import SOURCE_ERRORS, USER_AGENT, HttpRangeReader, Throttle, retry_after_seconds
@@ -271,8 +271,69 @@ def _coverage_state_codes(coverage: Sequence[CoverageRegion]) -> list[str]:
     return codes
 
 
-def _parse_facility(record: dict[str, Any]) -> tuple[Any, ...] | None:
-    """RIDB facility record -> a campsites row tuple, or None if it lacks usable coords."""
+# Words in a facility name that state what kind of camp it is.
+_NAME_TYPE_WORDS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("equestrian", re.compile(r"\b(equestrian|horse|horsecamp|stock)\b", re.IGNORECASE)),
+    ("group", re.compile(r"\bgroup\b", re.IGNORECASE)),
+    ("cabin", re.compile(r"\b(cabin|cabins|yurt|lookout|hut)\b", re.IGNORECASE)),
+    ("backcountry", re.compile(r"\b(backcountry|hike[- ]in|walk[- ]in|boat[- ]in)\b", re.IGNORECASE)),
+    ("rv", re.compile(r"\brv\b", re.IGNORECASE)),
+)
+
+
+def _camp_type_from_name(name: str | None) -> str | None:
+    """The camp type a facility's own name states ("Black Butte Horse Camp", "RV Park"), or None."""
+    for camp_type, pattern in _NAME_TYPE_WORDS:
+        if name and pattern.search(name):
+            return camp_type
+    return None
+
+
+def _site_kind(campsite_type: str) -> str | None:
+    """One RIDB ``CampsiteType`` (Campsites_API_v1.csv in the full export) -> tent / rv / standard /
+    group / equestrian / cabin / backcountry, or None for the non-camping rows (MANAGEMENT,
+    PARKING, PICNIC, MOORING...). STANDARD is a plain site with no stated vehicle, a STANDARD
+    ELECTRIC one implies hookups."""
+    text = campsite_type.upper()
+    if "GROUP" in text:
+        return "group"
+    if "EQUESTRIAN" in text:
+        return "equestrian"
+    if any(word in text for word in ("CABIN", "YURT", "LOOKOUT", "SHELTER")):
+        return "cabin"
+    if any(word in text for word in ("WALK TO", "HIKE TO", "BOAT IN")):
+        return "backcountry"
+    if "TENT" in text:
+        return "tent"
+    if "RV" in text or ("STANDARD" in text and "ELECTRIC" in text and "NONELECTRIC" not in text):
+        return "rv"
+    if "STANDARD" in text:
+        return "standard"
+    return None
+
+
+def facility_camp_type(campsite_types: Collection[str]) -> str | None:
+    """A facility's camp type from the ``CampsiteType`` of every site it lists. A campground that
+    offers tent and RV (or plain standard plus electric) sites is ``mixed``; tent-only and
+    RV-only are their own; plain standard sites alone say nothing about a vehicle (None).
+    Group / equestrian / cabin / backcountry only name a facility that has nothing else."""
+    kinds = {kind for campsite_type in campsite_types if (kind := _site_kind(campsite_type)) is not None}
+    main = kinds & {"tent", "rv", "standard"}
+    if main:
+        if "rv" in main and main & {"tent", "standard"}:
+            return "mixed"
+        return None if main == {"standard"} else ("tent" if "tent" in main else "rv")
+    for specialty in ("group", "equestrian", "cabin", "backcountry"):
+        if specialty in kinds:
+            return specialty
+    return None
+
+
+def _parse_facility(record: dict[str, Any], camp_type: str | None = None) -> tuple[Any, ...] | None:
+    """RIDB facility record -> a campsites row tuple, or None if it lacks usable coords.
+
+    ``camp_type`` is what the facility's campsite list says (:func:`facility_camp_type`); without
+    it (the live API has no per-site list) the facility's own name is the only evidence."""
     facility_id = record.get("FacilityID")
     raw_lat = record.get("FacilityLatitude")
     raw_lng = record.get("FacilityLongitude")
@@ -284,9 +345,10 @@ def _parse_facility(record: dict[str, Any]) -> tuple[Any, ...] | None:
     fee = _clean_text(record.get("FacilityUseFeeDescription"))
     fee_low, fee_high = _fee_range(fee)
     reservable = record.get("Reservable")  # bool with full=true, absent otherwise
+    name = record.get("FacilityName") or f"Facility {facility_id}"
     return (
         f"ridb:{facility_id}",
-        record.get("FacilityName") or f"Facility {facility_id}",
+        name,
         "campground",
         fee,
         _free_from_fee(fee),
@@ -297,6 +359,7 @@ def _parse_facility(record: dict[str, Any]) -> tuple[Any, ...] | None:
         reservable if isinstance(reservable, bool) else None,
         fee_low,
         fee_high,
+        camp_type or _camp_type_from_name(name),
     )
 
 
@@ -447,7 +510,7 @@ def ingest_campgrounds(
         label="camps",
         noun="Campgrounds",
         fetch=lambda **kw: fetch_campsites(api_key=api_key, client=client, states=states, **kw),
-        upsert=upsert_campsites,
+        upsert=upsert_campsites_deduped,
         progress_cb=progress_cb,
     )
     # The home-radius prune would delete every row the coverage-wide ingest cached outside the
@@ -511,7 +574,7 @@ def ingest_campgrounds_coverage(
             client=client,
             progress_cb=progress_cb,
         )
-        upsert_campsites(db, rows)
+        upsert_campsites_deduped(db, rows)
         cache.record_ingest(db, key, len(rows))
         pruned = 0
         # Only prune when every coverage region has a bbox: with a mixed config the envelope
@@ -572,6 +635,7 @@ _CAMPSITE_COLUMNS = (
     "reservable",
     "fee_low",
     "fee_high",
+    "camp_type",
 )
 _BULK_SNAPSHOT_SCHEMA = pa.schema(
     [
@@ -587,6 +651,7 @@ _BULK_SNAPSHOT_SCHEMA = pa.schema(
         ("reservable", pa.bool_()),
         ("fee_low", pa.float64()),
         ("fee_high", pa.float64()),
+        ("camp_type", pa.string()),
     ]
 )
 
@@ -602,10 +667,22 @@ def _camping_facility_ids(zf: zipfile.ZipFile) -> set[str]:
     return ids
 
 
+def _facility_campsite_types(zf: zipfile.ZipFile) -> dict[str, set[str]]:
+    """Every facility's set of ``CampsiteType`` values from the full export's campsite list."""
+    types: dict[str, set[str]] = {}
+    with zf.open("Campsites_API_v1.csv") as raw:
+        reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8", newline=""))
+        for row in reader:
+            if row["CampsiteType"]:
+                types.setdefault(row["FacilityID"], set()).add(row["CampsiteType"])
+    return types
+
+
 def _iter_bulk_campsite_rows(zf: zipfile.ZipFile) -> Iterator[tuple[Any, ...]]:
     """Every camping-facility row from an open RIDB full-export zip, in ``campsites`` tuple
     shape (``_parse_facility``'s shape) - the same rows the live per-state crawl produces."""
     camping_ids = _camping_facility_ids(zf)
+    campsite_types = _facility_campsite_types(zf)
     with zf.open("Facilities_API_v1.csv") as raw:
         reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8", newline=""))
         for record in reader:
@@ -613,7 +690,7 @@ def _iter_bulk_campsite_rows(zf: zipfile.ZipFile) -> Iterator[tuple[Any, ...]]:
                 continue
             coerced = dict(record)
             coerced["Reservable"] = (record.get("Reservable") or "").strip().lower() == "true"
-            row = _parse_facility(coerced)
+            row = _parse_facility(coerced, facility_camp_type(campsite_types.get(record["FacilityID"], ())))
             if row is not None:
                 yield row
 
@@ -652,12 +729,15 @@ def load_ridb(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
     # in-memory size, the same guarantee `write_snapshot_parquet`'s streaming write already gives
     # the stage side.
     for batch in spaces.read_snapshot_parquet(cfg.spaces, "ridb", snapshot_date, run_id, _BULK_SNAPSHOT_FILENAME):
-        chunk = [tuple(rec[col] for col in _CAMPSITE_COLUMNS) for rec in batch]
+        # .get: a snapshot staged before camp_type existed has no such column.
+        chunk = [tuple(rec.get(col) for col in _CAMPSITE_COLUMNS) for rec in batch]
         if chunk:
             upsert_campsites(con, chunk)
             total += len(chunk)
-            ids.extend(row[0] for row in chunk)
+            ids.extend(rec["id"] for rec in batch)
     pruned = cache.prune_campsites_missing_from(con, "ridb", ids)
+    # A facility this load added or moved can twin an OSM campground cached long before (#451).
+    cache.prune_duplicate_campsites_tiled(con)
     # `/healthz/data` (issue #332) computes campground freshness from the newest `fetched_at`
     # across every `camps:`-prefixed ingest_log key (`latest_ingest_at`) - without this, a
     # successful bulk load would still read as stale there even though the live crawl above is

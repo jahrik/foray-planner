@@ -351,12 +351,19 @@ def _drop_known_duplicates(con: psycopg.Connection, rows: Sequence[tuple[Any, ..
         for osm_id in stale:
             del tombstones[osm_id]
     replaced = {osm_id: kept_id for osm_id, (kept_id, _fingerprint) in tombstones.items()}
+    # A merged trailhead twin's own links go to its survivor (issue #451), so rewriting the
+    # survivor from this snapshot does not shrink the trail network it opens.
+    inherited: dict[str, set[str]] = {}
+    for row in rows:
+        if row[0] in replaced and row[8]:
+            inherited.setdefault(replaced[row[0]], set()).update(row[8])
     kept: list[tuple[Any, ...]] = []
     for row in rows:
         if row[0] in replaced:
             continue
-        if row[8]:
-            row = (*row[:8], sorted({replaced.get(linked, linked) for linked in row[8]}), *row[9:])
+        if row[8] or row[0] in inherited:
+            linked_ids = {*(row[8] or ()), *inherited.get(row[0], ())}
+            row = (*row[:8], sorted({replaced.get(linked, linked) for linked in linked_ids}), *row[9:])
         kept.append(row)
     return kept
 
@@ -595,11 +602,12 @@ _NAME_SIMILARITY = 0.5
 # Bump whenever a dedup rule changes what counts as a duplicate: each bulk trails source's next
 # load then dedups every tile once (``trails_snapshot.load_snapshot``), so pairs the old rule
 # kept are judged again - a diff load alone only reaches rows that changed. 2: fuzzy names.
-TRAIL_DEDUP_RULE_VERSION = 2
+# 3: trailhead twins (issue #451).
+TRAIL_DEDUP_RULE_VERSION = 3
 
 
-def _normalised_name(column: LiteralString) -> LiteralString:
-    """SQL for a trail name lowercased, apostrophes dropped, non-letters -> space, generic words
+def normalised_name_sql(column: LiteralString) -> LiteralString:
+    """SQL for a trail (or campground) name lowercased, apostrophes dropped, non-letters -> space, generic words
     removed (one ``%s`` parameter: ``_GENERIC_WORDS_REGEX``)."""
     return (
         "trim(regexp_replace(regexp_replace(regexp_replace(lower("
@@ -665,9 +673,9 @@ def prune_duplicate_cross_source_paths(
         "WHERE length(word) > 2 AND word <> ALL (%s) "
         "AND word = ANY (regexp_split_to_array(lower(u.name), '[^a-z]+'))) "
         "OR EXISTS (SELECT 1 FROM (SELECT "
-        + _normalised_name("p.name")
+        + normalised_name_sql("p.name")
         + " AS osm_name, "
-        + _normalised_name("u.name")
+        + normalised_name_sql("u.name")
         + " AS usfs_name) names WHERE osm_name <> '' AND usfs_name <> '' "
         "AND greatest(word_similarity(osm_name, usfs_name), word_similarity(usfs_name, osm_name)) >= %s)"
     )
@@ -679,6 +687,100 @@ def prune_duplicate_cross_source_paths(
         guard_sql=name_guard,
         guard_params=[list(_GENERIC_TRAIL_WORDS), _GENERIC_WORDS_REGEX, _GENERIC_WORDS_REGEX, _NAME_SIMILARITY],
     )
+
+
+# Two trailhead points this close are one trailhead when they share a name, or one is the
+# generic "Trailhead (OSM)" fallback for an unnamed node (issue #451: 699 pairs within 100 m on
+# prod, 282 of them with the same name). Different names stay apart however close - "Hidden Valley
+# Trailhead" and "Pipe Dream Trailhead" 3 m apart are two trailheads on one lot.
+_TRAILHEAD_MERGE_M = 50.0
+
+
+def prune_duplicate_trailheads(
+    con: psycopg.Connection, *, min_lat: float, min_lng: float, max_lat: float, max_lng: float
+) -> int:
+    """Merge OSM trailhead points in this bbox that repeat one another (issue #451). Returns rows
+    deleted.
+
+    The named row survives a generic twin, and the lowest id survives a same-name twin; a dropped
+    row's ``connects`` are unioned into the survivor so the trail network a merged trailhead opens
+    is unchanged. Each dropped row gets a ``trail_duplicates`` tombstone like every other prune
+    here, so the next OSM snapshot does not re-insert it."""
+    generic: LiteralString = "(t.name IS NULL OR t.name LIKE '%%(OSM)')"
+    generic_twin: LiteralString = generic.replace("t.", "other.")
+    pairs = con.execute(
+        f"""
+        SELECT t.id, other.id, {generic_twin} AS other_generic
+        FROM trails t
+        JOIN trails other ON other.kind = 'trailhead' AND other.source = 'osm' AND other.id <> t.id
+                         AND ST_DWithin(other.geom, t.geom, %s)
+        WHERE t.kind = 'trailhead' AND t.source = 'osm' AND t.geom && ST_MakeEnvelope(%s, %s, %s, %s, 4326)::geography
+          AND (
+              (NOT {generic_twin} AND {generic})
+              OR (lower(coalesce(t.name, '')) = lower(coalesce(other.name, '')) AND t.id > other.id)
+          )
+        ORDER BY t.id, other_generic, ST_Distance(other.geom, t.geom), other.id
+        """,
+        [_TRAILHEAD_MERGE_M, min_lng, min_lat, max_lng, max_lat],
+    ).fetchall()
+    # First row per dropped id is its best survivor (named before generic, then nearest).
+    survivor: dict[str, str] = {}
+    for dropped_id, kept_id, _other_generic in pairs:
+        survivor.setdefault(dropped_id, kept_id)
+    if not survivor:
+        return 0
+    # A survivor can itself be dropped for a lower-id twin: follow the chain to the end. Edges
+    # only run generic -> named, or to a strictly lower id, so it terminates.
+    for dropped_id, kept_id in survivor.items():
+        while kept_id in survivor:
+            kept_id = survivor[kept_id]
+        survivor[dropped_id] = kept_id
+    dropped = list(survivor)
+    fingerprints = dict(
+        con.execute(
+            f"SELECT p.id, {_FINGERPRINT_SQL} FROM trails p WHERE p.id = ANY(%s)",
+            [dropped],
+        ).fetchall()
+    )
+    con.execute(
+        """
+        UPDATE trails kept
+        SET connects = ARRAY(SELECT DISTINCT linked FROM unnest(kept.connects || merged.connects) AS linked ORDER BY 1)
+        FROM (
+            SELECT swap.kept_id, array_agg(DISTINCT linked) AS connects
+            FROM unnest(%s::text[], %s::text[]) AS swap(dropped_id, kept_id)
+            JOIN trails d ON d.id = swap.dropped_id,
+                 unnest(coalesce(d.connects, '{}')) AS linked
+            GROUP BY swap.kept_id
+        ) merged
+        WHERE kept.id = merged.kept_id
+        """,
+        [dropped, [survivor[dropped_id] for dropped_id in dropped]],
+    )
+    _record_replacements(con, [(dropped_id, survivor[dropped_id], fingerprints[dropped_id]) for dropped_id in dropped])
+    con.execute("DELETE FROM trails WHERE id = ANY(%s)", [dropped])
+    con.commit()
+    _invalidate_rank_cache()
+    return len(dropped)
+
+
+def prune_duplicate_trailheads_tiled(con: psycopg.Connection) -> int:
+    """:func:`prune_duplicate_trailheads` over every ``_PRUNE_TILE_DEG`` tile holding an OSM
+    trailhead - the catch-up for twins cached before the rule existed (a diff load only reaches
+    rows that changed). Tile by tile, each its own committed statement."""
+    cells = con.execute(
+        "SELECT DISTINCT floor(center_lat / %s)::int, floor(center_lng / %s)::int FROM trails "
+        "WHERE kind = 'trailhead' AND source = 'osm' AND geom IS NOT NULL ORDER BY 1, 2",
+        [_PRUNE_TILE_DEG, _PRUNE_TILE_DEG],
+    ).fetchall()
+    total = 0
+    for lat_cell, lng_cell in cells:
+        south, west = lat_cell * _PRUNE_TILE_DEG, lng_cell * _PRUNE_TILE_DEG
+        total += prune_duplicate_trailheads(
+            con, min_lat=south, min_lng=west, max_lat=south + _PRUNE_TILE_DEG, max_lng=west + _PRUNE_TILE_DEG
+        )
+    logger.info("trails: merged %d duplicate trailheads across %d tiles", total, len(cells))
+    return total
 
 
 # Strips the agency prefix OSM puts on a forest-road number ("NF-2710", "FR 27N07A") so it
@@ -808,6 +910,7 @@ def prune_trail_duplicates(
         prune_duplicate_route_paths(con, **bounds)
         + prune_duplicate_cross_source_paths(con, **bounds)
         + prune_duplicate_cross_source_roads(con, **bounds)
+        + prune_duplicate_trailheads(con, **bounds)
     )
 
 

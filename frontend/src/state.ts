@@ -23,9 +23,8 @@ export type Sort = "best" | "active" | "nearest";
 /** Leaflet layer/marker handles - written only from map.ts (issue #103). */
 interface MapState {
   markers: L.CircleMarker[];
-  campMarkers: L.CircleMarker[];
   trailheadMarkers: L.Marker[];
-  cardCampMarkers: L.CircleMarker[];
+  cardCampMarkers: L.Marker[];
   selectedTrailLayer: L.Polyline | null;
   // Whether the currently-drawn selected trail is a walk-in (gated) forest road - drives the
   // matching legend entry (issue A4b). Reset when the trail is cleared.
@@ -82,7 +81,6 @@ export const state: State = {
   home: null,
   homeAccuracyM: null,
   markers: [],
-  campMarkers: [],
   trailheadMarkers: [],
   cardCampMarkers: [],
   selectedTrailLayer: null,

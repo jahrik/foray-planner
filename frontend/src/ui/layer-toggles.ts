@@ -3,7 +3,7 @@
 // in-flight ingest for that layer and re-plots without it. Public land is visibility-only - see
 // below. Split out of main.ts (issue #242 Part 2d).
 
-import { loadCamps, loadFire, loadLand } from "../map/layers";
+import { loadCamps, loadCircleTrailheads, loadFire, loadLand } from "../map/layers";
 import { setAerialEnabled } from "../map/destinations";
 import { setContoursEnabled, setSatelliteBasemapEnabled } from "../map/map";
 import { cancelRefresh, startRefresh } from "../refresh";
@@ -45,6 +45,8 @@ export function initLayerToggles(): void {
   wireLayerToggle("#show-camps", "camps", "Fetching campgrounds…", loadCamps);
   wireLayerToggle("#show-dispersed", "dispersed", "Fetching dispersed camping…", loadCamps);
   qs("#free-camps").onchange = () => loadCamps();
+  // Trailheads come from the cached `trails` table (the weekly OSM snapshot) - no on-demand ingest.
+  qs("#show-trailheads").onchange = () => loadCircleTrailheads();
   // Land is a vector-tile layer drawn straight from the cached `public_land` table (issue #336
   // PR 2), which the scheduled `layers-land` job keeps filled coverage-wide - so a toggle is a
   // style flip, no fetch, same as Fire below. It used to run the old per-home-radius land ingest
