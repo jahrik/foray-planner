@@ -1199,11 +1199,7 @@ def getting_started_phone(tut: Tutorial) -> None:
     """The intro Reel, in the phone layout: search a home, set the filters, pick a target, then
     follow one find to its iNaturalist record and Google Maps directions."""
     page = tut.page
-    tut.caption(
-        "Introducing: <b>forayplanner.com</b><br>for mycology geeks and casual foragers",
-        shot="intro",
-        hold=3.5,
-    )
+    tut.caption("Introducing: <b>forayplanner.com</b>", shot="intro", hold=3)
     tut.caption(
         "Foray Planner uses <b>iNaturalist records</b> to show where fungi "
         "have been observed in past seasons, for the months you pick.",
