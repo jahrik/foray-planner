@@ -50,6 +50,9 @@ DEFAULT_URL = "https://forayplanner.com/"
 # finds near the demo home. (The desktop walkthroughs behind the committed README still use
 # chanterelles.)
 REEL_TARGET = "Hydnellum"
+# The search radius the phone Reels use (an option on the Radius pill). The dev default (400 km)
+# ranks a Washington county first for a Bend search; 150 km keeps the top spots near Bend.
+REEL_RADIUS = "150 km"
 INSTAGRAM_DEFAULT = ["getting-started", "best-spot", "track-down", "mobile"]
 # The home every tutorial searches for, as the origin of any Google Maps page a tutorial opens
 # (Tutorial.follow_link). A find's Directions link carries no origin - it routes from wherever the
@@ -1216,8 +1219,10 @@ def getting_started_phone(tut: Tutorial) -> None:
 
     radius = page.locator("#pills .pill-wrap").nth(1).locator(".pill")
     tut.click(radius)
-    tut.caption("<b>Radius</b> sets how far from home to search.", shot="radius")
+    tut.caption("<b>Radius</b> sets how far from home to search. Try 150 km.", shot="radius")
+    tut.click(page.locator("#pills .pill-popover button").filter(has_text=REEL_RADIUS).first, pause=1.0)
     page.keyboard.press("Escape")
+    wait_for_results(page)
     sort = page.locator("#pills .pill-wrap").nth(0).locator(".pill")
     tut.click(sort)
     tut.caption("<b>Sort</b> by best overall, what's active now, or nearest.", shot="sort")
@@ -1439,6 +1444,8 @@ def record(playwright: Playwright, url: str, slug: str, *, headed: bool, instagr
     wait_for_results(page)
     if slug != "getting-started":
         set_home_quietly(page)
+        if instagram and is_mobile:
+            choose_radius(page, REEL_RADIUS)  # a Bend search should rank Bend-area spots
     with tempfile.TemporaryDirectory() as frame_dir:
         cast = Screencast(page, Path(frame_dir), profile, jpeg=instagram)
         tut = Tutorial(page=page, slug=slug, img_dir=img_dir, on_start=cast.start, cast=cast, touch=profile.mobile)
@@ -1491,6 +1498,15 @@ def to_carousel(tut: Tutorial) -> None:
         ]
         subprocess.run([*command, "-q:v", "2", str(target)], check=True)
         source.unlink()
+
+
+def choose_radius(page: Page, label: str) -> None:
+    """Open the Radius pill, pick `label` (for example "150 km") and wait for the list to re-rank."""
+    page.locator("#pills .pill-wrap").nth(1).locator(".pill").click()
+    page.locator("#pills .pill-popover button").filter(has_text=label).first.click()
+    time.sleep(0.8)
+    page.keyboard.press("Escape")
+    wait_for_results(page)
 
 
 def set_home_quietly(page: Page) -> None:
