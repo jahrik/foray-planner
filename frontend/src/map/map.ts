@@ -55,7 +55,9 @@ export const HOME_DOT_STYLE = circleStyle({
 // (served via Open-Meteo and from the AWS mirror).
 const DATA_ATTRIBUTION =
   'observations © <a href="https://www.inaturalist.org">iNaturalist</a> contributors · ' +
-  '<a href="https://open-meteo.com/">Weather data by Open-Meteo.com</a> · elevation: Copernicus DEM';
+  '<a href="https://open-meteo.com/">Weather data by Open-Meteo.com</a> · rain: ERA5, Copernicus Climate Change Service · ' +
+  'elevation: Copernicus DEM © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 ' +
+  'provided under COPERNICUS by the European Union and ESA; all rights reserved';
 const VECTOR_ATTRIBUTION = `© OpenStreetMap · © Protomaps · ${DATA_ATTRIBUTION}`;
 // Shown only when a terrain layer is active (hillshade/contours from the DEM tiles).
 const TERRAIN_ATTRIBUTION =
