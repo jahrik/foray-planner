@@ -192,6 +192,8 @@ class Tutorial:
 
     def caption(self, html: str, *, shot: str | None = None, hold: float = 2.2) -> None:
         """Show a caption, optionally save it as a numbered guide screenshot, then hold."""
+        if self.touch:
+            self._wait_for_sheet()
         self.page.evaluate(OVERLAY_JS)
         self.page.evaluate(
             "(html) => { const el = document.getElementById('tut-caption');"
@@ -216,6 +218,20 @@ class Tutorial:
         # between the caption and the next move.
         if shot:
             self._carousel_still(f"{self.slug}-{len(self.steps):02d}-{shot}.png")
+
+    def _wait_for_sheet(self, *, gap: float = 0.2, limit: float = 4.0) -> None:
+        """Hold the caption back until the bottom sheet has stopped sliding (it eases down when a
+        filter pill opens), so the caption never appears over a half-moved sheet."""
+        deadline = time.time() + limit
+        last: float | None = None
+        still = 0
+        while time.time() < deadline and still < 2:
+            top = self.page.evaluate("document.getElementById('sheet')?.getBoundingClientRect().top ?? null")
+            if top is None:
+                return  # no sheet here (another tab, or the desktop layout)
+            still = still + 1 if top == last else 0
+            last = top
+            time.sleep(gap)
 
     def _collect_credits(self) -> None:
         """Remember each photo credit on screen: a find popup's photo caption, or a Photos-tab
