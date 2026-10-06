@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 from collections.abc import Sequence
@@ -15,13 +16,28 @@ from foray.cache.land_trails import normalised_name_sql
 logger = logging.getLogger(__name__)
 
 
+def _fingerprint(name: str | None, camp_type: str | None, lat: float, lng: float) -> str:
+    """What a dedup judged a campsite row on: its name, type and position. The SQL form in
+    :func:`_fold` hashes the same bytes for the row it deletes; this is the incoming row's."""
+    text = "|".join((name or "", camp_type or "", f"{lat:.6f}", f"{lng:.6f}"))
+    return hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()
+
+
+_FINGERPRINT_SQL: LiteralString = (
+    "md5(concat_ws('|', coalesce(c.name, ''), coalesce(c.camp_type, ''), "
+    "round(c.lat::numeric, 6)::text, round(c.lng::numeric, 6)::text))"
+)
+
+
 def upsert_campsites(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
     """Upsert campsite tuples, refreshing existing rows in place. Returns rows attempted.
 
     Each tuple is (id, name, kind, fee, free, lat, lng, source, url, reservable, fee_low, fee_high,
     camp_type); a 12-tuple (no ``camp_type``) is read as ``camp_type = None``. Rows a dedup prune
     already folded away (a ``campsite_duplicates`` tombstone, issue #451) are dropped - every OSM
-    reload still lists them, so without this each ingest would put the same pitch back.
+    reload still lists them, so without this each ingest would put the same pitch back - but only
+    while the incoming row is still the one that was folded: an OSM edit that renames, retypes or
+    moves it releases the tombstone (and the parent's pitch count), and the row is written.
     """
     columns: tuple[LiteralString, ...] = (
         "id",
@@ -39,20 +55,34 @@ def upsert_campsites(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -
         "camp_type",
     )
     rows = [(*row, None) if len(row) == len(columns) - 1 else row for row in rows]
-    folded = _folded_ids(con, [row[0] for row in rows])
-    rows = [row for row in rows if row[0] not in folded]
-    # camp_type is coalesced: a RIDB row's merged-in OSM type survives a reload that has none.
-    result = upsert_rows(con, "campsites", columns, rows, coalesce=("camp_type",))
+    rows = _drop_folded(con, rows)
+    # A RIDB row keeps the type its OSM twin gave it across a reload that has none (coalesce);
+    # an OSM row's type is whatever its tags say now, so removing a tag clears the icon.
+    ridb_rows = [row for row in rows if row[7] == "ridb"]
+    result = upsert_rows(con, "campsites", columns, ridb_rows, coalesce=("camp_type",))
+    result += upsert_rows(con, "campsites", columns, [row for row in rows if row[7] != "ridb"])
     _invalidate_rank_cache()
     return result
 
 
-def _folded_ids(con: psycopg.Connection, ids: Sequence[str]) -> set[str]:
-    """The ``ids`` a ``campsite_duplicates`` tombstone currently keeps out of ``campsites``."""
-    if not ids:
-        return set()
-    found = con.execute("SELECT dropped_id FROM campsite_duplicates WHERE dropped_id = ANY(%s)", [list(ids)])
-    return {row[0] for row in found.fetchall()}
+def _drop_folded(con: psycopg.Connection, rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+    """``rows`` minus those a tombstone still holds back; stale tombstones are released."""
+    found = con.execute(
+        "SELECT dropped_id, kept_id, fingerprint FROM campsite_duplicates WHERE dropped_id = ANY(%s)",
+        [[row[0] for row in rows]],
+    ).fetchall()
+    if not found:
+        return rows
+    tombstones = {dropped_id: (kept_id, fingerprint) for dropped_id, kept_id, fingerprint in found}
+    released = {
+        row[0]
+        for row in rows
+        if row[0] in tombstones and tombstones[row[0]][1] != _fingerprint(row[1], row[12], row[5], row[6])
+    }
+    if released:
+        con.execute("DELETE FROM campsite_duplicates WHERE dropped_id = ANY(%s)", [sorted(released)])
+        _recount_pitches(con, sorted({tombstones[dropped_id][0] for dropped_id in released}))
+    return [row for row in rows if row[0] not in tombstones or row[0] in released]
 
 
 def prune_campsites_outside_radius(
@@ -152,6 +182,8 @@ _GENERIC_CAMP_REGEX = r"\m(" + "|".join(_GENERIC_CAMP_WORDS) + r")\M"
 # camp names are short ("snow lake" vs "woods lake" is 0.5 by it).
 _CAMP_NAME_SIMILARITY = 0.5
 _PRUNE_TILE_DEG = 2.0
+# Margin around a tile for the pitch clustering: ~1 km, several times the merge radius.
+_TILE_MARGIN_DEG = 0.01
 PITCH = "pitch"
 
 
@@ -178,13 +210,15 @@ def prune_duplicate_campsites(
     bounds = {"min_lat": min_lat, "min_lng": min_lng, "max_lat": max_lat, "max_lng": max_lng}
     folded_into: set[str] = set()
     total = 0
-    for fold in (_fold_pitches_into_sites, _fold_osm_into_ridb, _fold_pitch_clusters):
-        removed, parents = fold(con, **bounds)
-        total += removed
-        folded_into |= parents
-    if folded_into:
-        _recount_pitches(con, sorted(folded_into))
-    con.commit()
+    # One transaction per tile (the connection is autocommit): an interruption between the
+    # deletes and the recount rolls the tile back, so a rerun never finds counts it can't repair.
+    with con.transaction():
+        for fold in (_fold_pitches_into_sites, _fold_osm_into_ridb, _fold_pitch_clusters):
+            removed, parents = fold(con, **bounds)
+            total += removed
+            folded_into |= parents
+        if folded_into:
+            _recount_pitches(con, sorted(folded_into))
     if total:
         _invalidate_rank_cache()
     return total
@@ -207,9 +241,13 @@ def _fold(con: psycopg.Connection, pairs: Sequence[tuple[str, str]], reason: str
         [dropped, kept],
     )
     con.execute(
-        "INSERT INTO campsite_duplicates (dropped_id, kept_id, reason) "
-        "SELECT dropped_id, kept_id, %s FROM unnest(%s::text[], %s::text[]) AS pair(dropped_id, kept_id) "
-        "ON CONFLICT (dropped_id) DO UPDATE SET kept_id = EXCLUDED.kept_id, reason = EXCLUDED.reason",
+        "INSERT INTO campsite_duplicates (dropped_id, kept_id, reason, fingerprint) "
+        "SELECT pair.dropped_id, pair.kept_id, %s, "
+        + _FINGERPRINT_SQL
+        + " FROM unnest(%s::text[], %s::text[]) AS pair(dropped_id, kept_id) "
+        "JOIN campsites c ON c.id = pair.dropped_id "
+        "ON CONFLICT (dropped_id) DO UPDATE SET kept_id = EXCLUDED.kept_id, reason = EXCLUDED.reason, "
+        "fingerprint = EXCLUDED.fingerprint",
         [reason, dropped, kept],
     )
     con.execute("DELETE FROM campsites WHERE id = ANY(%s)", [dropped])
@@ -243,8 +281,9 @@ def _fold_osm_into_ridb(
 ) -> tuple[int, set[str]]:
     name_match: LiteralString = (
         # An OSM site with no real name of its own ("Campsite (OSM)") counts as a match on
-        # location alone - but a backcountry site is a place of its own, never a campground twin.
-        "(osm.name LIKE '%%(OSM)' AND osm.camp_type IS DISTINCT FROM 'backcountry') "
+        # location alone. A legacy unnamed pitch is not a campground (its type predates
+        # `camp_type`, see :func:`upgrade_legacy_pitches`).
+        "(osm.name LIKE '%%(OSM)' AND osm.name <> 'Camp pitch (OSM)') "
         "OR (osm.name NOT LIKE '%%(OSM)' AND "
         "EXISTS (SELECT 1 FROM (SELECT "
         + normalised_name_sql("osm.name")
@@ -259,6 +298,7 @@ def _fold_osm_into_ridb(
         FROM campsites osm
         JOIN campsites ridb ON ridb.source = 'ridb' AND ST_DWithin(ridb.geom, osm.geom, %s)
         WHERE osm.source = 'osm' AND osm.camp_type IS DISTINCT FROM %s
+          AND osm.camp_type IS DISTINCT FROM 'backcountry'  -- a backcountry site is a place of its own
           AND osm.geom && {_ENVELOPE}
           AND ({name_match})
         ORDER BY osm.id, ST_Distance(ridb.geom, osm.geom), ridb.id
@@ -302,6 +342,9 @@ def _fold_pitch_clusters(
     # DBSCAN in Web Mercator, whose distances are the ground distance over cos(latitude): the
     # tile's middle latitude sets one eps for the whole bbox (a 2-degree tile is within ~3%).
     eps = _CAMP_RADIUS_M / max(math.cos(math.radians((min_lat + max_lat) / 2)), 0.05)
+    # Cluster over the tile plus a margin, so pitches either side of a tile edge land in one
+    # cluster; the survivor is the lowest id of the whole cluster, whichever tile finds it, so
+    # two tiles never disagree about who stays.
     rows = con.execute(
         f"""
         SELECT id, cluster FROM (
@@ -310,7 +353,14 @@ def _fold_pitch_clusters(
             WHERE camp_type = %s AND geom && {_ENVELOPE}
         ) clustered
         """,
-        [eps, PITCH, min_lng, min_lat, max_lng, max_lat],
+        [
+            eps,
+            PITCH,
+            min_lng - _TILE_MARGIN_DEG,
+            min_lat - _TILE_MARGIN_DEG,
+            max_lng + _TILE_MARGIN_DEG,
+            max_lat + _TILE_MARGIN_DEG,
+        ],
     ).fetchall()
     members: dict[int, list[str]] = {}
     for campsite_id, cluster in rows:
@@ -322,20 +372,35 @@ def _fold_pitch_clusters(
     return _fold(con, pairs, PITCH), {kept_id for _, kept_id in pairs}
 
 
-def _recount_pitches(con: psycopg.Connection, kept_ids: Sequence[str]) -> None:
-    """``pitch_count`` = the pitches folded into each row (+1 when the row is itself a pitch)."""
+def _recount_pitches(con: psycopg.Connection, ids: Sequence[str]) -> None:
+    """``pitch_count`` = the pitches folded into each row (+1 when the row is itself a pitch),
+    0 when none are (a released tombstone can take a count back to nothing)."""
     con.execute(
         """
         UPDATE campsites c
-        SET pitch_count = counted.folded + CASE WHEN c.camp_type = %s THEN 1 ELSE 0 END
+        SET pitch_count = n.folded + CASE WHEN c.camp_type = %s AND n.folded > 0 THEN 1 ELSE 0 END
         FROM (
-            SELECT kept_id, count(*) AS folded FROM campsite_duplicates
-            WHERE reason = %s AND kept_id = ANY(%s) GROUP BY kept_id
-        ) counted
-        WHERE c.id = counted.kept_id
+            SELECT t.id, (
+                SELECT count(*) FROM campsite_duplicates d WHERE d.reason = %s AND d.kept_id = t.id
+            ) AS folded
+            FROM unnest(%s::text[]) AS t(id)
+        ) n
+        WHERE c.id = n.id
         """,
-        [PITCH, PITCH, list(kept_ids)],
+        [PITCH, PITCH, list(ids)],
     )
+
+
+def upgrade_legacy_pitches(con: psycopg.Connection) -> int:
+    """Mark OSM rows cached before ``camp_type`` existed whose fallback name says they are a
+    pitch ("Camp pitch (OSM)"), so the dedup folds them as pitches instead of leaving them. The
+    next dispersed re-pull rewrites every row with its real type; this only closes the gap for a
+    catch-up run before it. Returns rows marked."""
+    result = con.execute(
+        "UPDATE campsites SET camp_type = %s WHERE source = 'osm' AND camp_type IS NULL AND name = 'Camp pitch (OSM)'",
+        [PITCH],
+    )
+    return result.rowcount
 
 
 def prune_duplicate_campsites_tiled(

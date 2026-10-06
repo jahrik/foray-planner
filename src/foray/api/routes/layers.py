@@ -257,6 +257,7 @@ def get_trails(
     limit: int | None = Query(None, gt=0),
     sort: scoring.TrailSort = "nearest",
     significant_only: bool = False,
+    distinct_names: bool = True,
     species: str = Query("all"),
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
@@ -267,6 +268,7 @@ def get_trails(
     card's Trails tab, instead of every path/route/trailhead in the radius. ``sort`` is
     ``nearest`` (default), ``relevance`` (named-route / longer trail / target-genus finds along
     the line first), or ``longest``; ``significant_only`` drops the unnamed OSM connector stubs.
+    ``distinct_names=false`` skips the one-row-per-name collapse (the map layer wants every point).
     ``species`` scopes the relevance obs-density term to the device's selected genera.
 
     Geometry is omitted (``with_geometry=False``): this feeds a name + distance row list, and
@@ -296,6 +298,7 @@ def get_trails(
             limit=limit,
             sort=sort,
             significant_only=significant_only,
+            distinct_names=distinct_names,
             taxon_ids=parse_species(species, conn, device_id) or None,
             with_geometry=False,
         )

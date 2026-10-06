@@ -7,8 +7,10 @@ from __future__ import annotations
 import json
 
 import psycopg
+import pytest
 
-from foray import cache
+from foray import cache, scoring
+from foray.cache import campsites as campsites_module
 from foray.cache import upsert_campsites, upsert_trails
 
 TILE = {"min_lat": 43.0, "min_lng": -123.0, "max_lat": 45.0, "max_lng": -121.0}
@@ -287,3 +289,132 @@ def test_trailhead_twin_chains_resolve_to_one_survivor(con: psycopg.Connection) 
         ("osm:node/2", "osm:node/1"),
         ("osm:node/3", "osm:node/1"),
     ]
+
+
+def test_a_folded_pitch_that_moves_is_released_and_the_count_repaired(con: psycopg.Connection) -> None:
+    parent = _camp("osm:way/1", "Woods Lake Campground")
+    pitch = _camp("osm:node/1", "Camp pitch (OSM)", lat=LAT + 0.0003, camp_type="pitch")
+    upsert_campsites(con, [parent, pitch])
+    cache.prune_duplicate_campsites(con, **TILE)
+    moved = (*pitch[:5], LAT + 0.3, *pitch[6:])
+
+    upsert_campsites(con, [moved])
+
+    assert _ids(con) == ["osm:node/1", "osm:way/1"]
+    assert con.execute("SELECT pitch_count FROM campsites WHERE id = 'osm:way/1'").fetchone() == (0,)
+    assert con.execute("SELECT count(*) FROM campsite_duplicates").fetchone() == (0,)
+
+
+def test_an_osm_reload_clears_a_removed_type_but_a_ridb_reload_keeps_the_merged_one(
+    con: psycopg.Connection,
+) -> None:
+    upsert_campsites(con, [_camp("osm:way/1", "Riverside", camp_type="rv")])
+
+    upsert_campsites(con, [_camp("osm:way/1", "Riverside", camp_type=None)])
+
+    assert con.execute("SELECT camp_type FROM campsites").fetchone() == (None,)
+
+
+def test_a_named_backcountry_site_is_not_folded_into_a_ridb_twin(con: psycopg.Connection) -> None:
+    upsert_campsites(
+        con,
+        [
+            _camp("ridb:1", "Woods Lake Campground"),
+            _camp("osm:node/1", "Woods Lake Camp", lat=LAT + M100 / 2, camp_type="backcountry"),
+        ],
+    )
+
+    assert cache.prune_duplicate_campsites(con, **TILE) == 0
+
+
+def test_pitches_either_side_of_a_tile_edge_fold_into_one(con: psycopg.Connection) -> None:
+    upsert_campsites(
+        con,
+        [
+            _camp("osm:node/1", "Camp pitch (OSM)", lat=43.9998, camp_type="pitch"),
+            _camp("osm:node/2", "Camp pitch (OSM)", lat=44.0002, camp_type="pitch"),
+        ],
+    )
+
+    cache.prune_duplicate_campsites_tiled(con)
+
+    assert _ids(con) == ["osm:node/1"]
+    assert con.execute("SELECT pitch_count FROM campsites").fetchone() == (2,)
+
+
+def test_an_interrupted_tile_rolls_back_whole(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+    upsert_campsites(
+        con,
+        [
+            _camp("osm:way/1", "Woods Lake Campground"),
+            _camp("osm:node/1", "Camp pitch (OSM)", lat=LAT + 0.0003, camp_type="pitch"),
+        ],
+    )
+
+    def interrupted(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("killed")
+
+    monkeypatch.setattr(campsites_module, "_recount_pitches", interrupted)
+    with pytest.raises(RuntimeError):
+        cache.prune_duplicate_campsites(con, **TILE)
+
+    assert _ids(con) == ["osm:node/1", "osm:way/1"]
+    assert con.execute("SELECT count(*) FROM campsite_duplicates").fetchone() == (0,)
+
+
+def test_a_legacy_unnamed_pitch_is_upgraded_not_merged_as_a_campground_twin(con: psycopg.Connection) -> None:
+    # Cached before camp_type existed: no type, only the fallback name.
+    upsert_campsites(
+        con,
+        [_camp("ridb:1", "Woods Lake Campground"), _camp("osm:node/1", "Camp pitch (OSM)", lat=LAT + M100 / 2)],
+    )
+    assert cache.prune_duplicate_campsites(con, **TILE) == 0
+
+    assert cache.upgrade_legacy_pitches(con) == 1
+    assert cache.prune_duplicate_campsites(con, **TILE) == 1
+
+    assert con.execute("SELECT reason FROM campsite_duplicates").fetchone() == ("pitch",)
+    assert con.execute("SELECT pitch_count FROM campsites").fetchone() == (1,)
+
+
+def test_reloading_only_the_surviving_trailhead_keeps_the_merged_trails(con: psycopg.Connection) -> None:
+    survivor = _trailhead("osm:node/1", "Eklutna Trailhead", connects=["osm:way/1"])
+    twin = _trailhead("osm:node/2", "Eklutna Trailhead", lat=LAT + 0.0002, connects=["osm:way/2"])
+    upsert_trails(con, [_path("osm:way/1"), _path("osm:way/2"), survivor, twin])
+    cache.prune_duplicate_trailheads(con, **TILE)
+
+    upsert_trails(con, [survivor])
+
+    assert con.execute("SELECT connects FROM trails WHERE id = 'osm:node/1'").fetchone() == (
+        ["osm:way/1", "osm:way/2"],
+    )
+
+
+def test_reloading_only_the_pruned_twin_adds_its_trails_to_the_survivor(con: psycopg.Connection) -> None:
+    survivor = _trailhead("osm:node/1", "Eklutna Trailhead", connects=["osm:way/1"])
+    twin = _trailhead("osm:node/2", "Eklutna Trailhead", lat=LAT + 0.0002, connects=["osm:way/2"])
+    upsert_trails(con, [_path("osm:way/1"), _path("osm:way/2"), _path("osm:way/3"), survivor, twin])
+    cache.prune_duplicate_trailheads(con, **TILE)
+    regrown = _trailhead("osm:node/2", "Eklutna Trailhead", lat=LAT + 0.0002, connects=["osm:way/2", "osm:way/3"])
+
+    upsert_trails(con, [regrown])
+
+    assert _trailhead_ids(con) == ["osm:node/1"]
+    assert con.execute("SELECT connects FROM trails WHERE id = 'osm:node/1'").fetchone() == (
+        ["osm:way/1", "osm:way/2", "osm:way/3"],
+    )
+
+
+def test_trails_near_can_keep_every_trailhead_of_a_repeated_name(con: psycopg.Connection) -> None:
+    upsert_trails(
+        con,
+        [
+            _trailhead("osm:node/1", "Trailhead (OSM)", connects=[]),
+            _trailhead("osm:node/2", "Trailhead (OSM)", lat=LAT + 0.05, connects=[]),
+        ],
+    )
+
+    collapsed = scoring.trails_near(con, lat=LAT, lng=LNG, radius_km=20, kind="trailhead")
+    every = scoring.trails_near(con, lat=LAT, lng=LNG, radius_km=20, kind="trailhead", distinct_names=False)
+
+    assert (len(collapsed), len(every)) == (1, 2)

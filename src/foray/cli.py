@@ -14,6 +14,7 @@ from foray.cache import (
     observation_count,
     prune_duplicate_campsites_tiled,
     prune_duplicate_trailheads_tiled,
+    upgrade_legacy_pitches,
     upsert_fungi_genera,
 )
 from foray.config import Settings
@@ -427,6 +428,7 @@ def prune_duplicates_cmd() -> None:
     detached on a big database rather than from a deploy step."""
     con = connect()
     try:
+        upgrade_legacy_pitches(con)
         camps = prune_duplicate_campsites_tiled(con)
         trailheads = prune_duplicate_trailheads_tiled(con)
         click.echo(f"Folded {camps} duplicate campsites and {trailheads} duplicate trailheads.")

@@ -967,6 +967,11 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         CREATE INDEX IF NOT EXISTS ix_campsite_duplicates_kept ON campsite_duplicates (kept_id);
         """,
     ),
+    # issue #451: the folded row's name/type/position hash. An OSM edit that moves or retypes it
+    # releases the tombstone so the row is written and judged again - the same idea as
+    # `trail_duplicates.fingerprint`. NULL on a tombstone written before this column: it never
+    # matches, so that row is released on its next load and folded again if it still qualifies.
+    (59, "ALTER TABLE campsite_duplicates ADD COLUMN IF NOT EXISTS fingerprint TEXT"),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]

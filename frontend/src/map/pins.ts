@@ -79,11 +79,15 @@ export function plotCardCamp(site: CampSite, onSelect: () => void): L.Marker {
     .addTo(map)
     .bindTooltip(tooltip, { direction: "top", offset: [0, -10] });
   marker.on("click", onSelect);
-  marker.on("add", () => marker.getElement()?.setAttribute("aria-label", campLabel(site)));
+  // `addTo` has already fired `add`, so label the element now; the listener covers later re-adds.
+  const label = (): void => marker.getElement()?.setAttribute("aria-label", campLabel(site));
+  label();
+  marker.on("add", label);
   state.cardCampMarkers.push(marker);
   return marker;
 }
 
 export function setCardCampActive(marker: L.Marker, site: CampSite, active: boolean): void {
   marker.setIcon(campIcon(site, active));
+  marker.getElement()?.setAttribute("aria-label", campLabel(site)); // setIcon builds a new element
 }

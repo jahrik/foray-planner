@@ -343,7 +343,13 @@ def _drop_known_duplicates(con: psycopg.Connection, rows: Sequence[tuple[Any, ..
             "SELECT osm_id, kept_id, fingerprint FROM trail_duplicates WHERE osm_id = ANY(%s)", [list(lookup)]
         ).fetchall()
     }
-    if not tombstones:
+    survivors = {
+        kept_id
+        for (kept_id,) in con.execute(
+            "SELECT DISTINCT kept_id FROM trail_duplicates WHERE kept_id = ANY(%s)", [[row[0] for row in rows]]
+        ).fetchall()
+    }
+    if not tombstones and not survivors:
         return list(rows)
     stale = [row[0] for row in rows if row[0] in tombstones and tombstones[row[0]][1] != _row_fingerprint(row)]
     if stale:
@@ -351,18 +357,34 @@ def _drop_known_duplicates(con: psycopg.Connection, rows: Sequence[tuple[Any, ..
         for osm_id in stale:
             del tombstones[osm_id]
     replaced = {osm_id: kept_id for osm_id, (kept_id, _fingerprint) in tombstones.items()}
-    # A merged trailhead twin's own links go to its survivor (issue #451), so rewriting the
-    # survivor from this snapshot does not shrink the trail network it opens.
+    # A merged trailhead twin keeps opening its trails through its survivor (issue #451), however
+    # the loads are batched: a twin's links in this batch go to its survivor (written below when
+    # the survivor is in the batch, else straight into the stored row), and an incoming survivor
+    # also keeps the links it already stores, so reloading it alone does not shrink the network.
+    in_batch = {row[0] for row in rows}
     inherited: dict[str, set[str]] = {}
     for row in rows:
         if row[0] in replaced and row[8]:
             inherited.setdefault(replaced[row[0]], set()).update(row[8])
+    absent = {survivor: links for survivor, links in inherited.items() if survivor not in in_batch}
+    for survivor, links in absent.items():
+        con.execute(
+            "UPDATE trails SET connects = ARRAY(SELECT DISTINCT linked FROM "
+            "unnest(coalesce(connects, '{}') || %s::text[]) AS linked ORDER BY 1) WHERE id = %s",
+            [sorted(links), survivor],
+        )
+    survivors |= {kept_id for kept_id in replaced.values() if kept_id in in_batch}
+    stored = (
+        dict(con.execute("SELECT id, connects FROM trails WHERE id = ANY(%s)", [sorted(survivors)]).fetchall())
+        if survivors
+        else {}
+    )
     kept: list[tuple[Any, ...]] = []
     for row in rows:
         if row[0] in replaced:
             continue
-        if row[8] or row[0] in inherited:
-            linked_ids = {*(row[8] or ()), *inherited.get(row[0], ())}
+        if row[8] or row[0] in inherited or stored.get(row[0]):
+            linked_ids = {*(row[8] or ()), *inherited.get(row[0], ()), *(stored.get(row[0]) or ())}
             row = (*row[:8], sorted({replaced.get(linked, linked) for linked in linked_ids}), *row[9:])
         kept.append(row)
     return kept

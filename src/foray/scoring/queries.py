@@ -260,6 +260,7 @@ def trails_near(
     taxon_ids: list[int] | None = None,
     with_camp_distance: bool = True,
     with_geometry: bool = True,
+    distinct_names: bool = True,
 ) -> list[Trail]:
     """Trails within ``radius_km`` of a hotspot.
 
@@ -435,7 +436,9 @@ def trails_near(
     else:
         # Rank on the unrounded distance so near-ties keep their true order (matches ``camps_near``).
         candidates.sort(key=lambda row: row[10])
-    if significant_only or kinds == ["trailhead"]:
+    if distinct_names and (significant_only or kinds == ["trailhead"]):
+        # `distinct_names=False` (the map's circle layer, issue #451) keeps every row: repeated
+        # names there are different places, not duplicates the 50 m trailhead dedup missed.
         # Several rows often share a name: different access points to one park, or the OSM way
         # segments of one long named trail. For the card list (``significant_only``) keep only
         # the best-ranked of each name so it isn't three "Beaver Pond Natural Area" rows or a

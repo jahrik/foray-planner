@@ -29,6 +29,7 @@ from foray.cache.campsites import (
     prune_campsites_outside_radius,
     prune_duplicate_campsites,
     prune_duplicate_campsites_tiled,
+    upgrade_legacy_pitches,
     upsert_campsites,
     upsert_campsites_deduped,
 )
@@ -203,6 +204,7 @@ __all__ = [
     "stale_precip_region_ids",
     "suspect_genus_taxon_ids",
     "tombstoned_ids",
+    "upgrade_legacy_pitches",
     "upsert_campsites",
     "upsert_campsites_deduped",
     "upsert_fire_perimeters",
