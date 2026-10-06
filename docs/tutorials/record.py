@@ -1260,7 +1260,10 @@ def getting_started_phone(tut: Tutorial) -> None:
     tut.click(card.locator("h3"), pause=1.5)
     tut.caption(f"Pick a spot to see just the {REEL_TARGET} finds.", shot="selected", hold=2.6)
     show_finds_phone(tut, what=f"{REEL_TARGET} finds", follow=("inaturalist", "directions"), list_caption=False)
-    tut.caption("That's the basics. Next: find the <b>best spot</b> and track down a target.", hold=2.5)
+    tut.caption(
+        "Try it at <b>forayplanner.com</b>. A free, open-source side project: bugs and ideas welcome on <b>GitHub</b>.",
+        hold=4,
+    )
 
 
 # Reels are watched on a phone, so `--instagram` swaps these desktop walkthroughs for their
@@ -1393,7 +1396,11 @@ class Screencast:
             following = frames[index + 1][0] if index + 1 < len(frames) else self.stopped_at
             shown = following - stamp - self._cut(stamp, following)
             lines += [f"file '{path.name}'", f"duration {max(shown, 0.01):.3f}"]
-        lines.append(f"file '{frames[-1][1].name}'")
+        # ffmpeg's concat demuxer gives the final entry the duration of the one before it, so a
+        # bare repeat of the last frame doubles its hold. A near-zero duration on the repeat, then
+        # one more entry to receive it, keeps the last frame's real duration exact.
+        last = frames[-1][1].name
+        lines += [f"file '{last}'", "duration 0.04", f"file '{last}'"]
         concat.write_text("\n".join(lines) + "\n")
         return concat
 
