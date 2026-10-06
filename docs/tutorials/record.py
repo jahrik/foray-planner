@@ -109,6 +109,9 @@ OVERLAY_JS = """
     /* A scripted drag (the phone sheet, the map) must never select the text it passes over. */
     body, body * { -webkit-user-select: none !important; user-select: none !important; }
     input, textarea { -webkit-user-select: text !important; user-select: text !important; }
+    /* Popups fade in and out over 0.2s; the screencast only emits frames on repaint, so a frame
+       caught mid-fade can hold for seconds as a half-loaded "ghost" popup. Switch them on and off. */
+    .leaflet-popup, .leaflet-fade-anim .leaflet-popup { transition: none !important; animation: none !important; }
     /* Chrome flashes a translucent teal over whatever a touch tap lands on. */
     * { -webkit-tap-highlight-color: transparent !important; }
   `;
@@ -951,9 +954,19 @@ def pan_map(tut: Tutorial, delta_y: float) -> None:
     time.sleep(1.5)
 
 
-def show_finds_phone(tut: Tutorial, *, what: str, follow: tuple[str, ...] = ()) -> None:
+def show_finds_phone(
+    tut: Tutorial,
+    *,
+    what: str,
+    follow: tuple[str, ...] = (),
+    list_caption: bool = True,
+    stop_after_list: bool = False,
+) -> None:
     """Phone version of show_finds: tap a numbered pin for its list, "Zoom in" down to one find,
-    tap it for its popup. The sheet starts raised over the selected destination's card."""
+    tap it for its popup. The sheet starts raised over the selected destination's card.
+
+    `list_caption=False` skips explaining the cluster list (already shown earlier in the Reel) and
+    `stop_after_list=True` returns with that list open, before zooming in."""
     page = tut.page
     page.locator(".precise-cluster-icon").first.wait_for(timeout=30_000)
     drag_sheet(tut, 700)
@@ -979,11 +992,14 @@ def show_finds_phone(tut: Tutorial, *, what: str, follow: tuple[str, ...] = ()) 
     page.locator(".precise-cluster-icon").nth(clusters[0]["index"]).tap()
     page.locator(".cluster-popup").wait_for(timeout=10_000)
     time.sleep(0.8)
-    tut.caption(
-        "A numbered pin groups nearby finds. <b>Tap</b> it to list them, newest first.",
-        shot="cluster-list",
-        hold=3.2,
-    )
+    if list_caption:
+        tut.caption(
+            "A numbered pin groups nearby finds. <b>Tap</b> it to list them, newest first.",
+            shot="cluster-list",
+            hold=3.2,
+        )
+    if stop_after_list:
+        return
     tut.caption("Tap <b>Zoom in</b> until single finds separate out.", hold=1.4)
     pin = None
     for _ in range(8):
@@ -1208,6 +1224,15 @@ def getting_started_phone(tut: Tutorial) -> None:
     page.keyboard.press("Escape")
     time.sleep(0.5)
 
+    # Before narrowing to a target, look at the top destination as it is: its finds on the map and
+    # what a numbered pin lists.
+    card = page.locator("#panel .rank").first
+    tut.click(card.locator("h3"), pause=1.5)
+    tut.caption("Tap a destination to fly the map there and see its finds.", shot="destination", hold=2.6)
+    show_finds_phone(tut, what="finds", stop_after_list=True)
+    page.keyboard.press("Escape")
+    time.sleep(0.6)
+
     genera = page.locator("#pills .pill-wrap").nth(3).locator(".pill")
     tut.click(genera)
     tut.caption("<b>Genera</b>: narrow the ranking to the mushrooms you're after.")
@@ -1228,8 +1253,8 @@ def getting_started_phone(tut: Tutorial) -> None:
         hold=3.2,
     )
     tut.click(card.locator("h3"), pause=1.5)
-    tut.caption("Tap a card to fly the map to that destination.", shot="selected", hold=2.6)
-    show_finds_phone(tut, what=f"{REEL_TARGET} finds", follow=("inaturalist", "directions"))
+    tut.caption(f"Pick a spot to see just the {REEL_TARGET} finds.", shot="selected", hold=2.6)
+    show_finds_phone(tut, what=f"{REEL_TARGET} finds", follow=("inaturalist", "directions"), list_caption=False)
     tut.caption("That's the basics. Next: find the <b>best spot</b> and track down a target.", hold=2.5)
 
 
