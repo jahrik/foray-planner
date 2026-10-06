@@ -65,8 +65,31 @@ def upsert_campsites(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -
     return result
 
 
+def _release_edited_parents(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> None:
+    """Release every fold into an incoming row whose name, type or position changed from what is
+    stored: pitches and OSM twins were folded into the old place, not this one, so they come back
+    on their next load and are judged against the new position. Run before the incoming rows are
+    filtered against tombstones, and the parent's count is reset with them."""
+    by_id = {row[0]: row for row in rows}
+    stored = con.execute(
+        "SELECT c.id, " + _FINGERPRINT_SQL + " FROM campsites c WHERE c.id = ANY(%s) AND EXISTS "
+        "(SELECT 1 FROM campsite_duplicates d WHERE d.kept_id = c.id)",
+        [list(by_id)],
+    ).fetchall()
+    edited = [
+        campsite_id
+        for campsite_id, fingerprint in stored
+        if fingerprint
+        != _fingerprint(by_id[campsite_id][1], by_id[campsite_id][12], by_id[campsite_id][5], by_id[campsite_id][6])
+    ]
+    if edited:
+        con.execute("DELETE FROM campsite_duplicates WHERE kept_id = ANY(%s)", [edited])
+        _recount_pitches(con, edited)
+
+
 def _drop_folded(con: psycopg.Connection, rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
     """``rows`` minus those a tombstone still holds back; stale tombstones are released."""
+    _release_edited_parents(con, rows)
     found = con.execute(
         "SELECT dropped_id, kept_id, fingerprint FROM campsite_duplicates WHERE dropped_id = ANY(%s)",
         [[row[0] for row in rows]],
@@ -351,6 +374,11 @@ def _fold_pitch_clusters(
             SELECT id, ST_ClusterDBSCAN(ST_Transform(geom::geometry, 3857), %s, 1) OVER () AS cluster
             FROM campsites
             WHERE camp_type = %s AND geom && {_ENVELOPE}
+              -- a pitch a campground claims belongs to it (pass 1 only looked inside the tile)
+              AND NOT EXISTS (
+                  SELECT 1 FROM campsites site
+                  WHERE site.camp_type IS DISTINCT FROM %s AND ST_DWithin(site.geom, campsites.geom, %s)
+              )
         ) clustered
         """,
         [
@@ -360,6 +388,8 @@ def _fold_pitch_clusters(
             min_lat - _TILE_MARGIN_DEG,
             max_lng + _TILE_MARGIN_DEG,
             max_lat + _TILE_MARGIN_DEG,
+            PITCH,
+            _CAMP_RADIUS_M,
         ],
     ).fetchall()
     members: dict[int, list[str]] = {}
