@@ -8,6 +8,38 @@ Imagery below.
 
 ---
 
+## Licences and attribution
+
+Audited 2026-10-06 against the code (every external host the backend and frontend call) and each
+provider's own terms. Foray Planner is free, open source and non-commercial (no ads, no paid
+tier); several providers' free terms depend on that, so keep it true or revisit this table.
+"Checked" means the provider's page was read during the audit; "not verified" means it was not
+reachable or did not state terms, so treat the entry as an assumption.
+
+| Source | Used for | Terms | Attribution | Status |
+|---|---|---|---|---|
+| iNaturalist observations (GBIF DwC-A bulk load + API) | Every pin, count and phenology curve | Dataset licence [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/legalcode); the export only holds Research Grade records under CC0, CC BY or CC BY-NC | "iNaturalist contributors, iNaturalist (2026). iNaturalist Research-grade Observations. https://doi.org/10.15468/ab3s5x" | Checked (GBIF dataset record) |
+| iNaturalist photos | Popup and Photos-tab thumbnails | Per-photo licence; only `cc0`, `cc-by`, `cc-by-sa`, `cc-by-nc`, `cc-by-nc-sa` are shown (`inat.DISPLAYABLE_PHOTO_LICENSES`); `-nd` and unlicensed are dropped | The photographer's attribution string, shown beside each photo | Checked (code) |
+| OpenStreetMap (Protomaps basemap, Geofabrik trail extracts, Overpass, Nominatim) | Basemap, trails, roads, trailheads, geocoding | [ODbL](https://opendatacommons.org/licenses/odbl/) | "© OpenStreetMap contributors" | Checked (Protomaps docs) |
+| Protomaps daily build, styles, glyphs, sprites | Basemap rendering | Data ODbL (a Produced Work); styles, fonts and sprites BSD | "© Protomaps" | Checked |
+| Terrain tiles (Terrarium, AWS Open Data; Tilezen/Mapzen) | Hillshade and contours | Per-region source terms; the project's [attribution list](https://github.com/tilezen/joerd/blob/master/docs/attribution.md) credits USGS 3DEP and global GMTED2010 and SRTM "courtesy of the U.S. Geological Survey" (plus other national sources outside the US) | "Tilezen (USGS 3DEP and others)" linking that list. NASA is not named in the required text. | Checked |
+| Copernicus DEM GLO-90 | Elevation (via Open-Meteo, and read directly from the AWS mirror by `elevation_dem.py`) | Free to the general public, including non-commercial and open-source use, with the credit | "© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved" | Checked |
+| Open-Meteo | Rain history (ERA5) and recent rain | [CC BY 4.0](https://open-meteo.com/en/licence); the free API is for non-commercial use only (under 10,000 calls/day) | A link reading "Weather data by Open-Meteo.com". Underlying ERA5 is Copernicus Climate Change Service data (Copernicus Products licence). | Checked |
+| Recreation.gov RIDB | Developed campgrounds | Not verified (the API docs page was not readable in the audit); US government data, previously noted as "free for use with attribution" | "Recreation.gov (RIDB)" | Not verified |
+| USFS (Trail_NFS, MVUM, boundaries, RAVG), BLM surface management, Census TIGERweb (tribal land), PAD-US | Trails, forest roads, land ownership, burn severity | U.S. federal agency data | Courtesy credit: "U.S. Forest Service, BLM, USGS" | Not verified (US government works; no per-service terms read) |
+| NIFC / WFIGS wildfire perimeters | Fire layer | U.S. federal agency data | Courtesy credit: NIFC | Not verified |
+| Esri World Imagery + World Transportation / Reference tiles | Opt-in aerial overlay only | Esri's terms for the public tile services were not read. The overlay is stitched on the server and cached per region (`region_satellite`), which those terms may not allow. | "Esri, Vantor, Earthstar Geographics, and the GIS User Community" (the service's own current text; "Vantor" is the former Maxar) | Attribution checked; caching terms not verified |
+| Nominatim (public instance) | Place search | [Usage policy](https://operations.osmfoundation.org/policies/nominatim/): at most 1 request/second, identifying User-Agent, cache results, **no autocomplete/typeahead** | "© OpenStreetMap contributors" | Checked. **Conflict:** `GET /api/location/search` is a typeahead. |
+| Overpass public mirrors | Manual region trail pulls only (the weekly OSM bulk load replaced the crawl) | Public-instance fair use | "© OpenStreetMap contributors" | Not verified |
+| Google Maps | "Directions" and "Open in Google Maps" links (the app only builds a URL; the Reels show the page) | Not verified for screen recordings | "Directions: Google Maps" | Not verified |
+
+Where each credit appears: the map's corner attribution (`map.ts`, `basemap.ts`,
+`destinations.ts`) lists OpenStreetMap, Protomaps, iNaturalist, Open-Meteo, Copernicus DEM,
+terrain and (aerial overlay only) Esri; photo credits ride beside each photo; the Instagram
+Reels end on a credits card built from this table (`docs/tutorials/record.py`, `end_card`).
+
+---
+
 ## iNaturalist
 
 **Role:** The core data source - research-grade fungal observations that drive all phenology
@@ -21,8 +53,10 @@ scoring.
   coordinates. `needs_id` and `casual` are excluded from all scoring.
 - **Terms:** [iNaturalist API reference](https://www.inaturalist.org/pages/api+reference) -
   respect rate limits, send a descriptive User-Agent, no bulk scraping
-- **License:** Observations are CC-BY-NC; cached locally for private trip planning, not
-  redistribution or public serving of raw observation records
+- **License:** The bulk export's dataset licence is CC BY-NC 4.0; each record is CC0, CC BY or
+  CC BY-NC. Free, non-commercial, attributed display (map pins with a link back to the
+  observation) is within those terms. Commercial use is not, so keep the project non-commercial
+  or drop the bulk records. See "Licences and attribution" above.
 
 ---
 
@@ -272,7 +306,8 @@ the rest of the map, without losing the road/city names the basemap would otherw
   against the live endpoints.
 - **CSP:** `img-src` doesn't need an Esri entry - the browser only ever talks to our own origin
   (`'self'`) for satellite imagery now.
-- **Attribution:** "Imagery © Esri", added to the Leaflet attribution control only while a
+- **Attribution:** "Imagery: Esri, Vantor, Earthstar Geographics, and the GIS User Community" (the
+  service's own copyright text), added to the Leaflet attribution control only while a
   selection is active (`map.attributionControl.addAttribution`/`removeAttribution`).
 - **Backfill:** `foray backfill-satellite [--limit N] [--concurrency N]` (default concurrency 8) -
   fetches every region in `regions` missing from `region_satellite`. Safe to re-run (only
@@ -376,8 +411,9 @@ URL change (`FORAY_TERRAIN_URL`).
 - **CSP:** `_content_security_policy(basemap_url, terrain_url)` adds the terrain tile host to
   `connect-src` (MapLibre + `maplibre-contour` fetch the tiles) and `img-src` (raster-dem tile
   decode); the contour worker is covered by the same `worker-src 'self' blob:`.
-- **Attribution:** per the terrain-tiles dataset - USGS / NASA (SRTM) / NASADEM etc. via the
-  Tilezen attribution string, added to the Leaflet attribution control.
+- **Attribution:** "Tilezen (USGS 3DEP and others)", linking the Tilezen attribution list, added
+  to the Leaflet attribution control. The required text credits USGS for 3DEP, GMTED2010 and
+  SRTM; it does not name NASA.
 
 ---
 
@@ -389,6 +425,9 @@ URL change (`FORAY_TERRAIN_URL`).
 - **Policy:** [Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/)
   - max 1 request/second, descriptive `User-Agent` required, no bulk geocoding
 - **Attribution:** "© OpenStreetMap contributors"
+- **Known conflict with the policy:** the policy forbids autocomplete/typeahead against the
+  public instance, and `GET /api/location/search` (`geocode.suggest`) is a typeahead. The
+  server-side throttle and User-Agent satisfy the rate and identification rules but not that one.
 - **Fallback:** Raw `lat,lng` input bypasses geocoding entirely (parsed directly in `sources/geocode.py`)
 - **Tests:** Network-mocked with `httpx.MockTransport` - geocoding tests never hit the real API
 
@@ -414,8 +453,11 @@ or filtering, same posture as land ownership.
   phenology tables use (`foray.geo.grid_cell`) and cache raw daily values in `precip_daily`, so
   many observations and the per-destination layer share one series per cell - "reuse the grid,
   don't invent a second geography."
-- **Terms:** Free for non-commercial use; [Open-Meteo terms](https://open-meteo.com/en/terms).
-  "© Open-Meteo" is shown in the map credits line (`map.ts` `TILE_ATTRIBUTION`).
+- **Terms:** CC BY 4.0, free API for non-commercial use only ([terms](https://open-meteo.com/en/terms),
+  [licence](https://open-meteo.com/en/licence)). The credit is a link reading "Weather data by
+  Open-Meteo.com", shown in the map credits line (`map.ts` `DATA_ATTRIBUTION`). Elevation is
+  Copernicus DEM, ERA5 rain is Copernicus Climate Change Service data; both carry their own
+  credits (see the table at the top).
 - **Tests:** Network-mocked with `httpx.MockTransport`; the suite never hits the real API.
 
 ---

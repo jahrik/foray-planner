@@ -50,11 +50,16 @@ export const HOME_DOT_STYLE = circleStyle({
 // inside Leaflet via ./basemap. Its light/dark styles are real cartography (no CSS invert()
 // hack), swapped on theme change. There is no raster fallback: the server must hand the
 // frontend a `basemap_url` in /api/config (FORAY_BASEMAP_URL) or the map has no base layer.
-const DATA_ATTRIBUTION = "observations © iNaturalist · elevation &amp; weather © Open-Meteo";
+// Each credit follows its provider's own wording (docs/data-sources.md, "Licences and attribution"):
+// Open-Meteo requires a link reading "Weather data by Open-Meteo.com"; elevation is Copernicus DEM
+// (served via Open-Meteo and from the AWS mirror).
+const DATA_ATTRIBUTION =
+  'observations © <a href="https://www.inaturalist.org">iNaturalist</a> contributors · ' +
+  '<a href="https://open-meteo.com/">Weather data by Open-Meteo.com</a> · elevation: Copernicus DEM';
 const VECTOR_ATTRIBUTION = `© OpenStreetMap · © Protomaps · ${DATA_ATTRIBUTION}`;
 // Shown only when a terrain layer is active (hillshade/contours from the DEM tiles).
 const TERRAIN_ATTRIBUTION =
-  'terrain <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md">© Tilezen / Mapzen, USGS, NASA</a>';
+  'terrain <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md">Tilezen (USGS 3DEP and others)</a>';
 let tileTheme: "dark" | "light" | null = null;
 
 export let map: L.Map;
@@ -600,7 +605,7 @@ export function setContoursEnabled(on: boolean): void {
 // aerial photo fill (destinations.ts's setAerialEnabled), which stays independently available.
 // Hidden when there is no basemap or no satellite tile URL configured, same guard shape as
 // setContoursEnabled.
-const SATELLITE_ATTRIBUTION = "Imagery © Esri";
+const SATELLITE_ATTRIBUTION = "Imagery: Esri, Vantor, Earthstar Geographics, and the GIS User Community";
 
 export function setSatelliteBasemapEnabled(on: boolean): void {
   if (!state.basemapUrl || !state.satelliteTilesUrl) {

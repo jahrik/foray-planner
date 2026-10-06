@@ -43,6 +43,8 @@ IMG_DIR = OUT_DIR / "img"
 # `--instagram` output (gitignored - regenerated, and meant for posting, not the repo).
 INSTAGRAM_DIR = OUT_DIR / "instagram"
 CREDITS_DIR = INSTAGRAM_DIR / "credits"
+# Walkthroughs that show campgrounds (the Details Campgrounds tab or a camp pin).
+CAMPGROUND_SLUGS = {"track-down", "region-details", "plan-a-trip"}
 DEFAULT_URL = "https://forayplanner.com/"
 INSTAGRAM_DEFAULT = ["getting-started", "best-spot", "track-down", "mobile"]
 # The home every tutorial searches for, as the origin of any Google Maps page a tutorial opens
@@ -141,8 +143,8 @@ CREDITS_CARD_JS = """
 (lines) => {
   const card = document.createElement('div');
   card.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#14100c;color:#f6efe6;' +
-    'display:flex;flex-direction:column;justify-content:center;gap:12px;padding:32px 24px;' +
-    'font:500 15px/1.35 system-ui,sans-serif;';
+    'display:flex;flex-direction:column;justify-content:center;gap:9px;padding:24px 22px;' +
+    'font:500 13px/1.3 system-ui,sans-serif;';
   const title = document.createElement('div');
   title.textContent = 'Credits';
   title.style.cssText = 'font:700 26px system-ui,sans-serif;color:#f0a46a;margin-bottom:8px;';
@@ -218,22 +220,36 @@ class Tutorial:
         self.photo_credits.extend(text for text in seen if text and text not in self.photo_credits)
 
     def end_card(self) -> None:
-        """Finish a Reel on a credits card, and write the complete list to instagram/credits/."""
-        fixed = [
+        """Finish a Reel on a credits card, and write the complete list to instagram/credits/.
+
+        Wording follows each provider's own terms (docs/data-sources.md, "Licences and
+        attribution"). The data credits are the sources every walkthrough shows (basemap, finds,
+        rain and elevation on the cards, terrain shading, public land and trails); campgrounds
+        and Google Maps are added only when that walkthrough shows them.
+        """
+        head = [
             "Map data: © OpenStreetMap contributors, © Protomaps",
-            "Observations and photos: iNaturalist",
+            "Observations and photos: iNaturalist contributors (records CC BY-NC)",
         ]
-        data = ["Elevation and weather: © Open-Meteo", "Terrain: USGS 3DEP, via Tilezen / Mapzen"]
+        data = [
+            "Weather data by Open-Meteo.com (CC BY 4.0)",
+            "Elevation: Copernicus DEM. © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH "
+            "2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
+            "Terrain shading: USGS 3DEP and others, via Tilezen / Mapzen",
+            "Public land and trails: U.S. Forest Service, BLM, USGS (U.S. government data)",
+        ]
+        if self.slug in CAMPGROUND_SLUGS:
+            data.append("Campgrounds: Recreation.gov (RIDB)")
         if self.showed_google_maps:
             data.append("Directions: Google Maps")
         shown = self.photo_credits[:4]
-        card = [*fixed, *(f"Photo: {text}" for text in shown)]
+        card = [*head, *(f"Photo: {text}" for text in shown)]
         if len(self.photo_credits) > len(shown):
             card.append(f"and {len(self.photo_credits) - len(shown)} more (see the caption)")
         self.page.evaluate(CREDITS_CARD_JS, [*card, *data])
-        time.sleep(6)
+        time.sleep(7)
         CREDITS_DIR.mkdir(parents=True, exist_ok=True)
-        everything = [*fixed, *(f"Photo: {text}" for text in self.photo_credits), *data]
+        everything = [*head, *(f"Photo: {text}" for text in self.photo_credits), *data]
         (CREDITS_DIR / f"{self.slug}.txt").write_text("\n".join(everything) + "\n")
 
     def _carousel_still(self, name: str) -> None:
