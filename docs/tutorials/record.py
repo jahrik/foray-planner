@@ -103,6 +103,8 @@ OVERLAY_JS = """
     /* A scripted drag (the phone sheet, the map) must never select the text it passes over. */
     body, body * { -webkit-user-select: none !important; user-select: none !important; }
     input, textarea { -webkit-user-select: text !important; user-select: text !important; }
+    /* Chrome flashes a translucent teal over whatever a touch tap lands on. */
+    * { -webkit-tap-highlight-color: transparent !important; }
   `;
   document.head.appendChild(style);
   const caption = document.createElement('div');
