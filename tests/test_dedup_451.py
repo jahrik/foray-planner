@@ -418,3 +418,64 @@ def test_trails_near_can_keep_every_trailhead_of_a_repeated_name(con: psycopg.Co
     every = scoring.trails_near(con, lat=LAT, lng=LNG, radius_km=20, kind="trailhead", distinct_names=False)
 
     assert (len(collapsed), len(every)) == (1, 2)
+
+
+def test_a_parent_that_moves_releases_the_pitches_folded_into_it(con: psycopg.Connection) -> None:
+    parent = _camp("osm:way/1", "Woods Lake Campground")
+    pitch = _camp("osm:node/1", "Camp pitch (OSM)", lat=LAT + 0.0003, camp_type="pitch")
+    upsert_campsites(con, [parent, pitch])
+    cache.prune_duplicate_campsites(con, **TILE)
+    moved_parent = (*parent[:5], LAT + 0.3, *parent[6:])
+
+    upsert_campsites(con, [moved_parent, pitch])  # the pitch is unchanged
+
+    assert _ids(con) == ["osm:node/1", "osm:way/1"]
+    assert con.execute("SELECT pitch_count FROM campsites WHERE id = 'osm:way/1'").fetchone() == (0,)
+
+
+def test_a_pitch_a_campground_claims_does_not_cluster_with_pitches_across_the_tile_edge(
+    con: psycopg.Connection,
+) -> None:
+    upsert_campsites(
+        con,
+        [
+            _camp("osm:node/1", "Camp pitch (OSM)", lat=43.9998, camp_type="pitch"),
+            _camp("osm:node/2", "Camp pitch (OSM)", lat=44.0002, camp_type="pitch"),
+            _camp("osm:way/9", "North Campground", lat=44.0014),
+        ],
+    )
+
+    cache.prune_duplicate_campsites_tiled(con)
+
+    assert con.execute("SELECT kept_id FROM campsite_duplicates WHERE dropped_id = 'osm:node/2'").fetchone() == (
+        "osm:way/9",
+    )
+
+
+def test_an_absent_survivor_inherits_links_through_their_replacements(con: psycopg.Connection) -> None:
+    survivor = _trailhead("osm:node/1", "Eklutna Trailhead", connects=["osm:way/1"])
+    twin = _trailhead("osm:node/2", "Eklutna Trailhead", lat=LAT + 0.0002, connects=["osm:way/4"])
+    usfs = ("usfs:trail/1", "Ridge", "path", "usfs", "u", LAT, LNG, _path("x")[7], None, 1.1, None)
+    upsert_trails(con, [_path("osm:way/1"), _path("osm:way/4"), survivor, twin, usfs])
+    cache.prune_duplicate_trailheads(con, **TILE)
+    # osm:way/2 was pruned as a twin of the USFS trail; the regrown twin now lists it.
+    con.execute("INSERT INTO trail_duplicates (osm_id, kept_id) VALUES ('osm:way/2', 'usfs:trail/1')")
+    regrown = _trailhead("osm:node/2", "Eklutna Trailhead", lat=LAT + 0.0002, connects=["osm:way/2"])
+
+    upsert_trails(con, [regrown])
+
+    assert con.execute("SELECT connects FROM trails WHERE id = 'osm:node/1'").fetchone() == (
+        ["osm:way/1", "osm:way/4", "usfs:trail/1"],
+    )
+
+
+def test_a_survivor_that_moves_drops_the_links_it_inherited(con: psycopg.Connection) -> None:
+    survivor = _trailhead("osm:node/1", "Eklutna Trailhead", connects=["osm:way/1"])
+    twin = _trailhead("osm:node/2", "Eklutna Trailhead", lat=LAT + 0.0002, connects=["osm:way/2"])
+    upsert_trails(con, [_path("osm:way/1"), _path("osm:way/2"), _path("osm:way/3"), survivor, twin])
+    cache.prune_duplicate_trailheads(con, **TILE)
+    moved = _trailhead("osm:node/1", "Eklutna Trailhead", lat=LAT + 0.5, connects=["osm:way/3"])
+
+    upsert_trails(con, [moved])
+
+    assert con.execute("SELECT connects FROM trails WHERE id = 'osm:node/1'").fetchone() == (["osm:way/3"],)

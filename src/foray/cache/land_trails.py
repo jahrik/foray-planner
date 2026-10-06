@@ -366,7 +366,11 @@ def _drop_known_duplicates(con: psycopg.Connection, rows: Sequence[tuple[Any, ..
     for row in rows:
         if row[0] in replaced and row[8]:
             inherited.setdefault(replaced[row[0]], set()).update(row[8])
-    absent = {survivor: links for survivor, links in inherited.items() if survivor not in in_batch}
+    absent = {
+        survivor: {replaced.get(linked, linked) for linked in links}
+        for survivor, links in inherited.items()
+        if survivor not in in_batch
+    }
     for survivor, links in absent.items():
         con.execute(
             "UPDATE trails SET connects = ARRAY(SELECT DISTINCT linked FROM "
@@ -374,11 +378,22 @@ def _drop_known_duplicates(con: psycopg.Connection, rows: Sequence[tuple[Any, ..
             [sorted(links), survivor],
         )
     survivors |= {kept_id for kept_id in replaced.values() if kept_id in in_batch}
-    stored = (
-        dict(con.execute("SELECT id, connects FROM trails WHERE id = ANY(%s)", [sorted(survivors)]).fetchall())
-        if survivors
-        else {}
-    )
+    # Only a survivor that is still the row its twins were merged into keeps their links: an edit
+    # to its name, attrs or geometry (the fingerprint the prune judged it on) ends the merge, and
+    # its stored union goes with it.
+    by_id = {row[0]: row for row in rows}
+    stored = {
+        trail_id: connects
+        for trail_id, connects, fingerprint in (
+            con.execute(
+                f"SELECT p.id, p.connects, {_FINGERPRINT_SQL} FROM trails p WHERE p.id = ANY(%s)",
+                [sorted(survivors)],
+            ).fetchall()
+            if survivors
+            else []
+        )
+        if fingerprint == _row_fingerprint(by_id[trail_id])
+    }
     kept: list[tuple[Any, ...]] = []
     for row in rows:
         if row[0] in replaced:
