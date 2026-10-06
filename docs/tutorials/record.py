@@ -1210,6 +1210,10 @@ def getting_started_phone(tut: Tutorial) -> None:
     set_home(tut, "Bend, Oregon")
     raise_sheet(tut)
     tut.caption("The list re-ranks around your new home, best destination first.", shot="home-set")
+    # Lower the sheet now, while that caption is up. Opening a filter pill with the sheet raised
+    # slides it to half, and Escape then closes it, so the Months caption would sit over a moving
+    # sheet; with it already down, nothing moves under the next three captions.
+    drag_sheet(tut, 715)
 
     months = page.locator("#pills .pill-wrap").nth(2).locator(".pill")
     tut.click(months)

@@ -10,8 +10,9 @@ and points you to the closest hiking trail, campsite, BLM & FS land near that ar
 
 ![Foray Planner finding the best spot near Bend, Oregon, then showing the iNaturalist finds behind it](docs/tutorials/best-spot.gif)
 
-*See it in action. Step-by-step guides, including tracking down a specific mushroom from
-trail to campsite: [How to use Foray Planner](docs/tutorials/README.md).*
+*See it in action. New here? Start with [Getting started](docs/tutorials/README.md#1-getting-started).
+More step-by-step guides, including tracking down a specific mushroom from trail to campsite:
+[How to use Foray Planner](docs/tutorials/README.md).*
 
 > **No identification or edibility claims are made here.** This is a trip-planning
 > and mapping tool only. Every species links to its
@@ -178,7 +179,7 @@ Run `just check` before pushing (lint + type-check + tests). See the
 
 ## Docs
 
-- [How to use Foray Planner](docs/tutorials/README.md) - illustrated walkthroughs: getting started, destination details, planning a road trip, mobile
+- [How to use Foray Planner](docs/tutorials/README.md) - illustrated walkthroughs: [getting started](docs/tutorials/README.md#1-getting-started), destination details, planning a road trip, mobile
 - [Development guide](docs/development.md) - setup, config, CLI, architecture, scoring formula, adding species, testing
 - [Data sources](docs/data-sources.md) - iNaturalist, RIDB, OSM/Overpass, ArcGIS BLM/USFS, Nominatim - licenses, rate limits, what's off-limits
 - [Deployment](docs/deployment.md) - Docker, Digital Ocean + Ansible + Cloudflare setup, scheduler, refresh patterns
