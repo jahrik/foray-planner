@@ -125,6 +125,17 @@ OVERLAY_JS = """
 """
 
 
+# Photo attributions currently on screen: find popups (`.popup-thumb figcaption`) and Photos-tab
+# thumbnails (the `.meta` right after the image in `.obs-photo`, destination-tabs.ts).
+CREDITS_ON_SCREEN_JS = """
+() => [
+  ...document.querySelectorAll('.popup-thumb figcaption'),
+  ...[...document.querySelectorAll('.obs-photo')]
+    .filter((card) => card.querySelector('img.obs-thumb'))
+    .map((card) => card.querySelector(':scope > .meta')),
+].filter(Boolean).map((el) => el.textContent.trim())
+"""
+
 # A full-screen credits card for the end of a Reel: `lines` is the list of credit lines.
 CREDITS_CARD_JS = """
 (lines) => {
@@ -193,6 +204,7 @@ class Tutorial:
             self.page.screenshot(path=self.img_dir / name, type="png", style="#tut-cursor { display: none; }")
             self.steps.append((name, html))
         time.sleep(hold)
+        self._collect_credits()  # a photo lookup can finish during the hold
         # After the hold, not before: the resize freezes the Reel's frame and the map re-fits when
         # it's restored, so doing it mid-caption read as a stall followed by a jump. Here it lands
         # between the caption and the next move.
@@ -200,10 +212,9 @@ class Tutorial:
             self._carousel_still(f"{self.slug}-{len(self.steps):02d}-{shot}.png")
 
     def _collect_credits(self) -> None:
-        """Remember each photo credit currently on screen (a find popup's photo caption)."""
-        seen = self.page.evaluate(
-            "() => [...document.querySelectorAll('.popup-thumb figcaption')].map((el) => el.textContent.trim())"
-        )
+        """Remember each photo credit on screen: a find popup's photo caption, or a Photos-tab
+        thumbnail's attribution (not the species and date line beside it)."""
+        seen = self.page.evaluate(CREDITS_ON_SCREEN_JS)
         self.photo_credits.extend(text for text in seen if text and text not in self.photo_credits)
 
     def end_card(self) -> None:
@@ -212,7 +223,7 @@ class Tutorial:
             "Map data: © OpenStreetMap contributors, © Protomaps",
             "Observations and photos: iNaturalist",
         ]
-        data = ["Elevation and weather: © Open-Meteo", "Terrain: © Tilezen / Mapzen, USGS, NASA"]
+        data = ["Elevation and weather: © Open-Meteo", "Terrain: USGS 3DEP, via Tilezen / Mapzen"]
         if self.showed_google_maps:
             data.append("Directions: Google Maps")
         shown = self.photo_credits[:4]
@@ -806,6 +817,20 @@ FIND_PHONE_PIN_JS = """
 }
 """
 
+# The single pin nearest (x, y): the find a popup belonged to, after the map has panned a little.
+NEAREST_PIN_JS = """
+([x, y]) => {
+  let best = null;
+  for (const pin of document.querySelectorAll('#map .precise-pin-icon')) {
+    const box = pin.getBoundingClientRect();
+    const px = box.x + box.width / 2, py = box.y + box.height / 2;
+    const distance = Math.hypot(px - x, py - y);
+    if (!best || distance < best.distance) best = { x: px, y: py, distance };
+  }
+  return best;
+}
+"""
+
 # Cluster badges clear of the controls and the sheet, smallest first: a small cluster opens a short
 # list and takes fewer zooms to break up.
 PHONE_CLUSTERS_JS = """
@@ -961,7 +986,10 @@ def show_finds_phone(tut: Tutorial, *, what: str, follow: tuple[str, ...] = ()) 
         try:
             link.wait_for(timeout=2_000)
         except PlaywrightTimeoutError:
-            page.mouse.click(pin["x"], pin["y"])  # the popup closed meanwhile: reopen it
+            # The popup closed meanwhile: reopen the same find (the map may have panned a little,
+            # so aim at the pin now nearest where it was).
+            pin = page.evaluate(NEAREST_PIN_JS, [pin["x"], pin["y"]]) or pin
+            page.mouse.click(pin["x"], pin["y"])
             link.wait_for(timeout=10_000)
         wait_until_still(link)
         link.evaluate(GEO_TO_MAPS_JS)
