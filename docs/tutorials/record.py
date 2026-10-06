@@ -229,6 +229,11 @@ class Tutorial:
         viewport, carousel_dir = self.carousel_viewport, self.carousel_dir
         if viewport is None or carousel_dir is None:
             return
+        if self.touch:
+            # Resizing a phone viewport leaves the bottom sheet between detents, and it snaps up
+            # over whatever popup is open. Shoot at the real size; to_carousel fits it to 4:5.
+            self.page.screenshot(path=carousel_dir / name, type="png", style="#tut-cursor { display: none; }")
+            return
         if self.cast:
             self.cast.pause()
         original = self.page.viewport_size
@@ -844,6 +849,22 @@ def drag_sheet(tut: Tutorial, to_y: float) -> None:
     time.sleep(1.2)
 
 
+def wait_until_still(locator: Locator, *, polls: int = 3, gap: float = 0.35, limit: float = 8.0) -> None:
+    """Wait for `locator` to stop moving (a popup still panning into place after its photo loads).
+
+    A tap aimed at a link that is still sliding lands on the map beneath it, and a tap on the map
+    raises the bottom sheet over the popup.
+    """
+    deadline = time.time() + limit
+    still = 0
+    last = None
+    while time.time() < deadline and still < polls:
+        box = locator.bounding_box()
+        still = still + 1 if box is not None and box == last else 0
+        last = box
+        time.sleep(gap)
+
+
 def raise_sheet(tut: Tutorial) -> None:
     """Pull the sheet all the way up (its `full` detent) and make sure it stays there.
 
@@ -937,13 +958,12 @@ def show_finds_phone(tut: Tutorial, *, what: str, follow: tuple[str, ...] = ()) 
     for key in follow:
         link_text, caption = captions[key]
         link = page.locator(".leaflet-popup-content a").filter(has_text=link_text)
-        time.sleep(1.0)  # the viewport restore after the carousel still can close the popup
         try:
             link.wait_for(timeout=2_000)
         except PlaywrightTimeoutError:
-            page.mouse.click(pin["x"], pin["y"])
+            page.mouse.click(pin["x"], pin["y"])  # the popup closed meanwhile: reopen it
             link.wait_for(timeout=10_000)
-        time.sleep(1.5)  # let the photo load
+        wait_until_still(link)
         link.evaluate(GEO_TO_MAPS_JS)
         tut.follow_link(link, caption)
     page.keyboard.press("Escape")
@@ -1366,7 +1386,19 @@ def to_carousel(tut: Tutorial) -> None:
     for name, _caption in tut.steps:
         source = tut.carousel_dir / name
         target = carousel / Path(name).with_suffix(".jpg").name
-        command = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(source), "-vf", "scale=1080:1350:flags=lanczos"]
+        # A phone still is 9:16: fit it to the 4:5 frame (side bars in the app's dark colour), not
+        # a stretch.
+        fit = "scale=-2:1350:flags=lanczos,pad=1080:1350:(ow-iw)/2:0:color=0x14100c" if tut.touch else None
+        command = [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source),
+            "-vf",
+            fit or "scale=1080:1350:flags=lanczos",
+        ]
         subprocess.run([*command, "-q:v", "2", str(target)], check=True)
         source.unlink()
 
