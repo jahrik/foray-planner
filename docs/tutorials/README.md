@@ -23,7 +23,10 @@ Six short walkthroughs, each with an animated overview and step-by-step screensh
 
 ## 1. Getting started
 
-![Getting started walkthrough](getting-started.gif)
+![Getting started walkthrough, on a phone](getting-started.gif)
+
+*The animation is the phone layout and matches the Instagram video; the screenshots below are the
+desktop layout.*
 
 **1. Open the site.** The map shows destinations near your home location, and the panel on
 the left ranks them, best first.
@@ -296,6 +299,11 @@ just tutorials plan-a-trip     # just one
 ```
 
 It needs `ffmpeg`. Captions are part of the script, so edit them there.
+
+`getting-started.gif` (also the README's hero) is the exception: it is cut from the phone Reel so
+the two always match. Refresh it with `just tutorials --instagram getting-started` (that also
+rewrites the Reel in `instagram/`); a plain `just tutorials getting-started` only refreshes the
+guide's desktop screenshots. Record against the live site once a change has deployed.
 
 ### Instagram versions
 

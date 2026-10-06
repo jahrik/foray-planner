@@ -44,6 +44,10 @@ IMG_DIR = OUT_DIR / "img"
 INSTAGRAM_DIR = OUT_DIR / "instagram"
 CREDITS_DIR = INSTAGRAM_DIR / "credits"
 # Walkthroughs that show campgrounds (the Details Campgrounds tab or a camp pin).
+# How long the Reel's closing credits card is held, and the walkthrough whose phone Reel doubles as
+# the README's animated GIF (hero_gif).
+CREDITS_SECONDS = 7
+HERO_SLUG = "getting-started"
 CAMPGROUND_SLUGS = {"track-down", "region-details", "plan-a-trip"}
 DEFAULT_URL = "https://forayplanner.com/"
 # The genus the phone Reels pick as their target: less familiar than chanterelles, with plenty of
@@ -273,7 +277,7 @@ class Tutorial:
         if len(self.photo_credits) > len(shown):
             card.append(f"and {len(self.photo_credits) - len(shown)} more (see the caption)")
         self.page.evaluate(CREDITS_CARD_JS, [*card, *data])
-        time.sleep(7)
+        time.sleep(CREDITS_SECONDS)
         CREDITS_DIR.mkdir(parents=True, exist_ok=True)
         everything = [*head, *(f"Photo: {text}" for text in self.photo_credits), *data]
         (CREDITS_DIR / f"{self.slug}.txt").write_text("\n".join(everything) + "\n")
@@ -1478,10 +1482,35 @@ def record(playwright: Playwright, url: str, slug: str, *, headed: bool, instagr
         browser.close()
         if instagram:
             cast.to_mp4(out_dir / f"{slug}.mp4")
+            if slug == HERO_SLUG:
+                hero_gif(out_dir / f"{slug}.mp4", OUT_DIR / f"{slug}.gif")
             to_carousel(tut)
         else:
-            cast.to_gif(out_dir / f"{slug}.gif")
+            if slug == HERO_SLUG:
+                # The README GIF is cut from the phone Reel (`--instagram`), so it matches the
+                # video; this desktop run only refreshes the guide's screenshots.
+                print(f"{slug}: GIF not written - run with --instagram to refresh it from the Reel")
+            else:
+                cast.to_gif(out_dir / f"{slug}.gif")
     return tut
+
+
+def hero_gif(mp4: Path, target: Path) -> None:
+    """The README's animated GIF, cut from the Reel so the two always match: the same walkthrough
+    without the closing credits card, small (300 px wide, 8 fps, 96 colours) to stay a few MB."""
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(mp4)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    keep = float(probe.stdout.strip()) - CREDITS_SECONDS - 0.2
+    filters = (
+        "fps=8,scale=300:-1:flags=lanczos,mpdecimate=hi=1:lo=1:frac=1,split[a][b];"
+        "[a]palettegen=max_colors=96:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle"
+    )
+    command = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(mp4), "-t", f"{keep:.1f}", "-vf", filters]
+    subprocess.run([*command, "-fps_mode", "vfr", str(target)], check=True)
 
 
 def to_carousel(tut: Tutorial) -> None:
