@@ -28,14 +28,14 @@ reachable or did not state terms, so treat the entry as an assumption.
 | Recreation.gov RIDB | Developed campgrounds | Not verified (the API docs page was not readable in the audit); US government data, previously noted as "free for use with attribution" | "Recreation.gov (RIDB)" | Not verified |
 | USFS (Trail_NFS, MVUM, boundaries, RAVG), BLM surface management, Census TIGERweb (tribal land), PAD-US | Trails, forest roads, land ownership, burn severity | U.S. federal agency data | Courtesy credit: "U.S. Forest Service, BLM, USGS" | Not verified (US government works; no per-service terms read) |
 | NIFC / WFIGS wildfire perimeters | Fire layer | U.S. federal agency data | Courtesy credit: NIFC | Not verified |
-| Esri World Imagery + World Transportation / Reference tiles | Opt-in aerial overlay only | Esri's terms for the public tile services were not read. The overlay is stitched on the server and cached per region (`region_satellite`), which those terms may not allow. | "Esri, Vantor, Earthstar Geographics, and the GIS User Community" (the service's own current text; "Vantor" is the former Maxar) | Attribution checked; caching terms not verified |
+| Esri World Imagery + World Transportation / Reference tiles | Opt-in aerial overlay (stitched on the server, cached per region in `region_satellite`) and the full-viewport satellite basemap (`api/routes/tiles.py`, proxied tile by tile, browser-cached for a week) | Esri's terms for the public tile services were not read. Both the per-region cache and the week of browser caching may not be allowed. | "Esri, Vantor, Earthstar Geographics, and the GIS User Community" (the service's own current text; "Vantor" is the former Maxar) | Attribution checked; caching terms not verified |
 | Nominatim (public instance) | Place search | [Usage policy](https://operations.osmfoundation.org/policies/nominatim/): at most 1 request/second, identifying User-Agent, cache results, **no autocomplete/typeahead** | "© OpenStreetMap contributors" | Checked. **Conflict:** `GET /api/location/search` is a typeahead. |
-| Overpass public mirrors | Manual region trail pulls only (the weekly OSM bulk load replaced the crawl) | Public-instance fair use | "© OpenStreetMap contributors" | Not verified |
+| Overpass public mirrors | Scheduled dispersed-camping coverage (`jobs.yaml`, weekly), home-radius ingests, live trail-network lookups, and manual region trail pulls (the weekly OSM bulk load replaced the trail crawl) | Public-instance fair use | "© OpenStreetMap contributors" | Not verified |
 | Google Maps | "Directions" and "Open in Google Maps" links (the app only builds a URL; the Reels show the page) | Not verified for screen recordings | "Directions: Google Maps" | Not verified |
 
 Where each credit appears: the map's corner attribution (`map.ts`, `basemap.ts`,
 `destinations.ts`) lists OpenStreetMap, Protomaps, iNaturalist, Open-Meteo, Copernicus DEM,
-terrain and (aerial overlay only) Esri; photo credits ride beside each photo; the Instagram
+terrain and (aerial overlay or satellite basemap) Esri; photo credits ride beside each photo; the Instagram
 Reels end on a credits card built from this table (`docs/tutorials/record.py`, `end_card`).
 
 ---

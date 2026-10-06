@@ -259,10 +259,11 @@ class Tutorial:
         """
         head = [
             "Map data: © OpenStreetMap contributors, © Protomaps",
-            "Observations and photos: iNaturalist contributors (records CC BY-NC)",
+            "Observations and photos: iNaturalist contributors "
+            "(bulk dataset CC BY-NC; individual records and photos carry their own licences)",
         ]
         data = [
-            "Weather data by Open-Meteo.com (CC BY 4.0)",
+            "Weather data by Open-Meteo.com (CC BY 4.0); historical rain from ERA5, Copernicus Climate Change Service",
             "Elevation: Copernicus DEM. © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH "
             "2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
             "Terrain shading: USGS 3DEP and others, via Tilezen / Mapzen",
