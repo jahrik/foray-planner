@@ -287,11 +287,14 @@ def observation_thumbnails(
         ids = [obs_id for obs_id in dict.fromkeys(body.ids) if obs_id in precise]
         found = get_observation_thumbnails(conn, ids, _THUMBNAIL_MAX_AGE_DAYS)
     missing = [obs_id for obs_id in ids if obs_id not in found]
-    if missing:
-        # Serialized so two overlapping requests for one circle don't both fetch the same
-        # observations: the second waits, then finds them cached. The DB connection is released
-        # while waiting on iNat.
-        with state.thumbnail_lock:
+    # Prefetch is best effort, so it never queues: a sync request worker is scarce (the pool is
+    # small, and iNat's 429 backoff can hold one for minutes) and a waiting prefetch would starve
+    # unrelated requests, including the per-pin fallbacks. While another prefetch is fetching,
+    # answer with what is cached and leave the rest to the per-pin endpoint. The lock also keeps
+    # overlapping requests for one circle from fetching the same observations twice.
+    if missing and state.thumbnail_lock.acquire(blocking=False):
+        try:
+            # Another request may have filled some in since the first read.
             with pool.connection() as conn:
                 found = get_observation_thumbnails(conn, ids, _THUMBNAIL_MAX_AGE_DAYS)
             missing = [obs_id for obs_id in ids if obs_id not in found]
@@ -306,4 +309,6 @@ def observation_thumbnails(
                             thumbnail = inat.pick_thumbnail(photos.get(obs_id, []))
                             save_observation_thumbnail(conn, obs_id, thumbnail)
                             found[obs_id] = thumbnail
+        finally:
+            state.thumbnail_lock.release()
     return ObservationThumbnails(thumbnails={str(obs_id): found[obs_id] for obs_id in ids if obs_id in found})

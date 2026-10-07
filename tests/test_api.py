@@ -1757,3 +1757,18 @@ def test_observation_thumbnails_batch_omits_ids_when_inat_is_unavailable(
 def test_observation_thumbnails_batch_is_bounded(client: TestClient) -> None:
     too_many = list(range(1, 302))
     assert client.post("/api/observations/thumbnails", json={"ids": too_many}).status_code == 422
+
+
+def test_observation_thumbnails_batch_does_not_wait_when_another_prefetch_is_running(
+    client: TestClient, con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    con.execute("UPDATE observations SET obscured = FALSE WHERE id IN (1, 2)")
+    monkeypatch.setattr(
+        "foray.api.routes.destinations.inat.photos_for_observations",
+        lambda ids: pytest.fail("a busy prefetch must not queue behind the lock or reach iNat"),
+    )
+    state = client.app.state.foray  # the AppState create_app() attached
+    with state.thumbnail_lock:
+        response = client.post("/api/observations/thumbnails", json={"ids": [1, 2]})
+    assert response.status_code == 200
+    assert response.json() == {"thumbnails": {}}  # nothing cached yet: left for the per-pin fallback

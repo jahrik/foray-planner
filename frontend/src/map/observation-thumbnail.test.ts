@@ -66,11 +66,16 @@ describe("prefetchThumbnails", () => {
     expect(getJson).toHaveBeenCalledTimes(1);
   });
 
-  it("skips ids already known and swallows a failed batch", async () => {
+  it("swallows a failed batch", async () => {
     postJson.mockRejectedValue(new Error("offline"));
     await expect(prefetchThumbnails([{ id: 301, lat: 47.0, lng: -122.0 }], center)).resolves.toBeUndefined();
+  });
+
+  it("skips ids already known", async () => {
+    postJson.mockResolvedValue({ thumbnails: { "401": photo } });
+    await prefetchThumbnails([{ id: 401, lat: 47.0, lng: -122.0 }], center); // seeds 401 itself
     postJson.mockClear();
-    await prefetchThumbnails([{ id: 101, lat: 47.0, lng: -122.0 }], center); // memoised by the first test
+    await prefetchThumbnails([{ id: 401, lat: 47.0, lng: -122.0 }], center);
     expect(postJson).not.toHaveBeenCalled();
   });
 
