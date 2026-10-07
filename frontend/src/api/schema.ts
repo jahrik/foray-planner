@@ -307,6 +307,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/observations/thumbnails": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Observation Thumbnails
+         * @description Warm and return popup photos for many precise observations at once (issue #449), so a
+         *     destination's pins already have theirs when one is hovered. Same rules as the per-pin
+         *     endpoint - only cached precise observations, fetched from iNat once and cached (the "none"
+         *     answer too) - but the missing ones are looked up together, ~200 per iNat request instead of
+         *     one each. An iNat failure just leaves the missing ids out of the result (the client falls
+         *     back to the per-pin endpoint), it doesn't fail the batch.
+         */
+        post: operations["observation_thumbnails_api_observations_thumbnails_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/camps": {
         parameters: {
             query?: never;
@@ -1038,6 +1063,26 @@ export interface components {
             attribution: string;
             /** License Code */
             license_code: string;
+        };
+        /**
+         * ObservationThumbnailRequest
+         * @description Observation ids whose popup photos the client wants warmed (issue #449).
+         */
+        ObservationThumbnailRequest: {
+            /** Ids */
+            ids: number[];
+        };
+        /**
+         * ObservationThumbnails
+         * @description Thumbnails by observation id (as a string key). A null value means iNat has no photo we may
+         *     display; an id that is absent was not resolved (not a cached precise observation, or the
+         *     lookup failed) and falls back to the per-pin endpoint.
+         */
+        ObservationThumbnails: {
+            /** Thumbnails */
+            thumbnails: {
+                [key: string]: components["schemas"]["ObservationThumbnail"] | null;
+            };
         };
         /**
          * PlaceSuggestion
@@ -1781,6 +1826,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ObservationThumbnail"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    observation_thumbnails_api_observations_thumbnails_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservationThumbnailRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObservationThumbnails"];
                 };
             };
             /** @description Validation Error */

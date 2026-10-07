@@ -25,6 +25,7 @@ from foray.cache import (
 from foray.config import Home, Settings
 from foray.geo import grid_cell, grid_cell_center, h3_edge_length_km
 from foray.scoring import TripPlan, build_phenology
+from foray.sources import inat
 from foray.sources import land as land_source
 from foray.sources.trails import _parse_element
 
@@ -1704,3 +1705,55 @@ def test_observation_thumbnail_only_serves_cached_precise_observations(
     )
     assert client.get("/api/observations/3/thumbnail").status_code == 404  # obscured
     assert client.get("/api/observations/999999/thumbnail").status_code == 404  # not cached
+
+
+def test_observation_thumbnails_batch_fetches_missing_together_and_caches(
+    client: TestClient, con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    con.execute("UPDATE observations SET obscured = FALSE WHERE id IN (1, 2, 4)")
+    con.execute("UPDATE observations SET obscured = TRUE WHERE id = 3")
+    calls: list[list[int]] = []
+
+    def fake_photos(ids: list[int]) -> dict[int, list[dict]]:
+        calls.append(ids)
+        return {1: [_photo(10, "cc-by-nc")], 2: [_photo(11, "cc-by-nd")]}
+
+    monkeypatch.setattr("foray.api.routes.destinations.inat.photos_for_observations", fake_photos)
+    body = {"ids": [1, 2, 3, 999999, 1]}  # obscured, uncached and duplicate ids are dropped
+    first = client.post("/api/observations/thumbnails", json=body)
+    assert first.status_code == 200
+    assert first.json() == {
+        "thumbnails": {
+            "1": {
+                "url": "https://static.inaturalist.org/photos/10/small.jpg",
+                "attribution": "(c) person 10",
+                "license_code": "cc-by-nc",
+            },
+            "2": None,  # only a no-derivatives photo: cached as "no photo"
+        }
+    }
+    assert calls == [[1, 2]]  # one lookup for the whole batch
+    assert client.post("/api/observations/thumbnails", json=body).json() == first.json()
+    assert calls == [[1, 2]]  # the repeat came from observation_thumbnails
+    # The per-pin endpoint now answers from the same cache.
+    assert client.get("/api/observations/1/thumbnail").json()["license_code"] == "cc-by-nc"
+    assert calls == [[1, 2]]
+
+
+def test_observation_thumbnails_batch_omits_ids_when_inat_is_unavailable(
+    client: TestClient, con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    con.execute("UPDATE observations SET obscured = FALSE WHERE id = 1")
+
+    def failing_photos(ids: list[int]) -> dict[int, list[dict]]:
+        raise inat.InatQuotaExceeded(60.0)
+
+    monkeypatch.setattr("foray.api.routes.destinations.inat.photos_for_observations", failing_photos)
+    response = client.post("/api/observations/thumbnails", json={"ids": [1]})
+    assert response.status_code == 200
+    assert response.json() == {"thumbnails": {}}  # left for the per-pin endpoint to retry
+
+
+def test_observation_thumbnails_batch_is_bounded(client: TestClient) -> None:
+    too_many = list(range(1, 302))
+    assert client.post("/api/observations/thumbnails", json={"ids": too_many}).status_code == 422

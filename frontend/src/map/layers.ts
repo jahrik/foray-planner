@@ -9,7 +9,7 @@ import { FORAGE_RAMP, forageTier } from "./forage";
 import { isRoughSurface } from "./trail-attrs";
 import { directionsLink } from "./directions";
 import { genusIconElement } from "../icons/genus-icons";
-import { thumbnailSlot } from "./observation-thumbnail";
+import { prefetchThumbnails, thumbnailSlot } from "./observation-thumbnail";
 import { buildPopup } from "./popup";
 import { regionRadiusKm, setFocused } from "./destinations";
 import {
@@ -348,6 +348,7 @@ export async function loadPreciseObservations(): Promise<void> {
     addPreciseMarker(marker, obs, () => precisePopup(obs));
   });
   commitPreciseMarkers();
+  void prefetchThumbnails(observations, focused);
 }
 
 // name/observed_on come from an external API (buildPopup sets them via textContent); the link is

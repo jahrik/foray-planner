@@ -25,12 +25,19 @@ from foray.api_models import (
     AlertRegion,
     CalendarBucket,
     ObservationThumbnail,
+    ObservationThumbnailRequest,
+    ObservationThumbnails,
     PreciseObservation,
     RecentObservation,
     RecentObservationsPage,
     RegionScore,
 )
-from foray.cache import get_observation_thumbnail, save_observation_thumbnail
+from foray.cache import (
+    get_observation_thumbnail,
+    get_observation_thumbnails,
+    precise_observation_ids,
+    save_observation_thumbnail,
+)
 from foray.sources import inat
 
 router = APIRouter()
@@ -257,21 +264,46 @@ def observation_thumbnail(
                 photos = inat.photos_for_observations([obs_id]).get(obs_id, [])
             except (requests.exceptions.RequestException, inat.InatQuotaExceeded):
                 raise HTTPException(503, "iNaturalist is unavailable - try again shortly") from None
-            photo = next(
-                (photo for photo in photos if photo.get("license_code") in inat.DISPLAYABLE_PHOTO_LICENSES),
-                None,
-            )
-            # iNat's API hands back the 75 px "square" size; "small" (240 px) stays sharp at the
-            # popup's size on a high-DPI screen.
-            thumbnail = (
-                {
-                    "url": str(photo["url"]).replace("/square.", "/small."),
-                    "attribution": photo.get("attribution") or "",
-                    "license_code": photo["license_code"],
-                }
-                if photo and photo.get("url")
-                else None
-            )
+            thumbnail = inat.pick_thumbnail(photos)
             save_observation_thumbnail(conn, obs_id, thumbnail)
     response.headers["Cache-Control"] = "public, max-age=86400"
     return ObservationThumbnail.model_validate(thumbnail) if thumbnail else None
+
+
+@router.post("/api/observations/thumbnails")
+def observation_thumbnails(
+    body: ObservationThumbnailRequest,
+    state: AppState = Depends(get_state),
+    pool: ConnectionPool = Depends(get_pool),
+) -> ObservationThumbnails:
+    """Warm and return popup photos for many precise observations at once (issue #449), so a
+    destination's pins already have theirs when one is hovered. Same rules as the per-pin
+    endpoint - only cached precise observations, fetched from iNat once and cached (the "none"
+    answer too) - but the missing ones are looked up together, ~200 per iNat request instead of
+    one each. An iNat failure just leaves the missing ids out of the result (the client falls
+    back to the per-pin endpoint), it doesn't fail the batch."""
+    with pool.connection() as conn:
+        precise = precise_observation_ids(conn, body.ids)
+        ids = [obs_id for obs_id in dict.fromkeys(body.ids) if obs_id in precise]
+        found = get_observation_thumbnails(conn, ids, _THUMBNAIL_MAX_AGE_DAYS)
+    missing = [obs_id for obs_id in ids if obs_id not in found]
+    if missing:
+        # Serialized so two overlapping requests for one circle don't both fetch the same
+        # observations: the second waits, then finds them cached. The DB connection is released
+        # while waiting on iNat.
+        with state.thumbnail_lock:
+            with pool.connection() as conn:
+                found = get_observation_thumbnails(conn, ids, _THUMBNAIL_MAX_AGE_DAYS)
+            missing = [obs_id for obs_id in ids if obs_id not in found]
+            if missing:
+                try:
+                    photos = inat.photos_for_observations(missing)
+                except (requests.exceptions.RequestException, inat.InatQuotaExceeded):
+                    photos = None
+                if photos is not None:
+                    with pool.connection() as conn:
+                        for obs_id in missing:
+                            thumbnail = inat.pick_thumbnail(photos.get(obs_id, []))
+                            save_observation_thumbnail(conn, obs_id, thumbnail)
+                            found[obs_id] = thumbnail
+    return ObservationThumbnails(thumbnails={str(obs_id): found[obs_id] for obs_id in ids if obs_id in found})
