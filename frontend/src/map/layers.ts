@@ -348,7 +348,7 @@ export async function loadPreciseObservations(): Promise<void> {
     addPreciseMarker(marker, obs, () => precisePopup(obs));
   });
   commitPreciseMarkers();
-  void prefetchThumbnails(observations, focused);
+  void prefetchThumbnails(observations, focused, isCurrent);
 }
 
 // name/observed_on come from an external API (buildPopup sets them via textContent); the link is

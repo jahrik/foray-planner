@@ -86,9 +86,10 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   one-colour path-only SVGs) fails `tsc` when a key has no art. `icons.html` is a dev-only review
   gallery. Precise observations also carry their own `taxon_name`/`taxon_common_name`, and
   `GET /api/observations/{id}/thumbnail` lazily caches one CC-licensed photo for a precise
-  observation's popup (`observation_thumbnails`, "none" cached too). `POST /api/observations/thumbnails` warms up to 300 of a
-  destination's nearest pins in one batched iNat lookup (the frontend calls it after the pins
-  load and seeds its per-pin memo), so most popups open with their photo already known.
+  observation's popup (`observation_thumbnails`, "none" cached too). `POST /api/observations/thumbnails` warms up to 300 pins per request in one batched iNat lookup;
+  the frontend sends every pin in a destination's circle, nearest first, one batch at a time
+  (stopping if the circle changes), and seeds its per-pin memo, so popups open with their photo
+  already known.
 - `src/foray/sources/camps.py` - developed-campground ingest from the Recreation.gov **RIDB API**
   (httpx, key from env `RIDB_API_KEY`). Pages `facilities?state=XX&full=true` for every state the
   home disk reaches, clips to the true radius with `haversine_km` (RIDB's point+radius search

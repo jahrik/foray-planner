@@ -23,7 +23,7 @@ export function fetchThumbnail(obsId: number): Promise<Thumbnail | null> {
 }
 
 /** Matches the server's per-request cap (`THUMBNAIL_BATCH_MAX`); a bigger batch is rejected. */
-const PREFETCH_MAX = 300;
+const BATCH_SIZE = 300;
 
 /** The `limit` pins nearest `center`, nearest first - the ones a visitor is most likely to open. */
 export function nearestFirst<Pin extends { id: number; lat: number; lng: number }>(
@@ -37,28 +37,59 @@ export function nearestFirst<Pin extends { id: number; lat: number; lng: number 
   return [...pins].sort((first, second) => distance(first) - distance(second)).slice(0, limit);
 }
 
-/** Warm the popup photos for a destination's pins in one batched request, so most are already
- * known when one is opened (the per-pin fetch is a 1+ s round trip to iNat on a cold cache).
- * Resolved ids seed the same per-observation memo `fetchThumbnail` uses; anything the server
- * could not resolve stays a normal on-demand lookup. Best effort - a failure changes nothing. */
+type Thumbnails = Record<string, Thumbnail | null>;
+
+// Batches from every prefetch loop go through this chain, one at a time. Picking a destination
+// right after another (or the auto-focus on load) starts a second loop while the first one's
+// request is still running, and the server answers a lookup that overlaps another with nothing
+// but what is cached - which would look like a failed batch and end the new loop immediately.
+let lastBatch: Promise<unknown> = Promise.resolve();
+
+/** POST one batch once the previous one has settled. Resolves null, without sending, when
+ * `isCurrent` turned false while it waited its turn. */
+function sendBatch(ids: number[], isCurrent: () => boolean): Promise<Thumbnails | null> {
+  const request = lastBatch
+    .catch(() => undefined)
+    .then(async () => {
+      if (!isCurrent()) return null;
+      const { thumbnails } = await postJson("/api/observations/thumbnails", { body: { ids } });
+      return thumbnails;
+    });
+  lastBatch = request.catch(() => undefined);
+  return request;
+}
+
+/** Warm the popup photos for every pin in a destination's circle, so they are already known when
+ * one is opened (the per-pin fetch is a 1+ s round trip to iNat on a cold cache). Pins go to the
+ * server in batches of `BATCH_SIZE`, nearest the centre first and one batch at a time (a
+ * destination can hold thousands, and the server only runs one lookup at once), so the pins a
+ * visitor is most likely to open are ready first. Resolved ids seed the same per-observation memo
+ * `fetchThumbnail` uses; anything the server could not resolve stays a normal on-demand lookup.
+ * Best effort: it stops quietly on a failed batch, on a batch that resolved nothing (iNat is
+ * unavailable or the server is busy - hammering it would not help), or once `isCurrent` says the
+ * circle on screen has changed. */
 export async function prefetchThumbnails(
   pins: { id: number; lat: number; lng: number }[],
   center: { lat: number; lng: number },
+  isCurrent: () => boolean = () => true,
 ): Promise<void> {
-  const wanted = nearestFirst(
-    pins.filter((pin) => !cache.has(pin.id)),
-    center,
-    PREFETCH_MAX,
-  ).map((pin) => pin.id);
-  if (wanted.length === 0) return;
-  try {
-    const { thumbnails } = await postJson("/api/observations/thumbnails", { body: { ids: wanted } });
+  const ordered = nearestFirst(pins, center, pins.length).map((pin) => pin.id);
+  for (let start = 0; start < ordered.length; start += BATCH_SIZE) {
+    if (!isCurrent()) return;
+    // Re-filter per batch: a popup opened meanwhile may already have looked its pin up.
+    const wanted = ordered.slice(start, start + BATCH_SIZE).filter((obsId) => !cache.has(obsId));
+    if (wanted.length === 0) continue;
+    let thumbnails: Thumbnails | null;
+    try {
+      thumbnails = await sendBatch(wanted, isCurrent);
+    } catch {
+      return; // Leave the rest to the per-pin lookup.
+    }
+    if (thumbnails === null || Object.keys(thumbnails).length === 0) return;
     for (const [key, thumbnail] of Object.entries(thumbnails)) {
       const obsId = Number(key);
       if (!cache.has(obsId)) cache.set(obsId, Promise.resolve(thumbnail));
     }
-  } catch {
-    // Leave the pins to the per-pin lookup.
   }
 }
 
