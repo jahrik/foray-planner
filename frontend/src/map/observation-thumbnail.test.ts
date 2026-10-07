@@ -79,16 +79,80 @@ describe("prefetchThumbnails", () => {
     expect(postJson).not.toHaveBeenCalled();
   });
 
-  it("asks for at most 300 ids, nearest first", async () => {
-    postJson.mockResolvedValue({ thumbnails: {} });
-    const pins = Array.from({ length: 350 }, (_, index) => ({
+  it("sends every pin in batches of 300, nearest first, one batch at a time", async () => {
+    let inFlight = 0;
+    let overlapped = false;
+    postJson.mockImplementation(async (_path: string, init: { body: { ids: number[] } }) => {
+      inFlight += 1;
+      overlapped ||= inFlight > 1;
+      await Promise.resolve();
+      inFlight -= 1;
+      return { thumbnails: Object.fromEntries(init.body.ids.map((obsId) => [String(obsId), null])) };
+    });
+    const pins = Array.from({ length: 650 }, (_, index) => ({
       id: 1000 + index,
       lat: 47.0 + index / 1000,
       lng: -122.0,
     }));
-    await prefetchThumbnails(pins.reverse(), center);
-    const ids: number[] = postJson.mock.calls[0]![1].body.ids;
-    expect(ids).toHaveLength(300);
-    expect(ids[0]).toBe(1000);
+    await prefetchThumbnails([...pins].reverse(), center);
+    const batches: number[][] = postJson.mock.calls.map((call) => call[1].body.ids);
+    expect(batches.map((ids) => ids.length)).toEqual([300, 300, 50]);
+    expect(batches.flat()).toEqual(pins.map((pin) => pin.id)); // all of them, nearest first
+    expect(overlapped).toBe(false);
+  });
+
+  it("stops when the circle on screen changes", async () => {
+    postJson.mockImplementation(async (_path: string, init: { body: { ids: number[] } }) => ({
+      thumbnails: Object.fromEntries(init.body.ids.map((obsId) => [String(obsId), null])),
+    }));
+    const pins = Array.from({ length: 650 }, (_, index) => ({
+      id: 5000 + index,
+      lat: 47.0 + index / 1000,
+      lng: -122.0,
+    }));
+    await prefetchThumbnails(pins, center, () => postJson.mock.calls.length < 1);
+    expect(postJson).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops after a batch the server could not resolve", async () => {
+    postJson.mockResolvedValue({ thumbnails: {} });
+    const pins = Array.from({ length: 650 }, (_, index) => ({
+      id: 9000 + index,
+      lat: 47.0 + index / 1000,
+      lng: -122.0,
+    }));
+    await prefetchThumbnails(pins, center);
+    expect(postJson).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("prefetchThumbnails across overlapping loops", () => {
+  const center = { lat: 47.0, lng: -122.0 };
+
+  it("runs a second circle's batches only after the first one's request settles", async () => {
+    let inFlight = 0;
+    let overlapped = false;
+    postJson.mockImplementation(async (_path: string, init: { body: { ids: number[] } }) => {
+      inFlight += 1;
+      overlapped ||= inFlight > 1;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return { thumbnails: Object.fromEntries(init.body.ids.map((obsId) => [String(obsId), null])) };
+    });
+    const circle = (firstId: number) =>
+      Array.from({ length: 400 }, (_, index) => ({
+        id: firstId + index,
+        lat: 47.0 + index / 1000,
+        lng: -122.0,
+      }));
+    let firstCurrent = true;
+    const first = prefetchThumbnails(circle(20000), center, () => firstCurrent);
+    firstCurrent = false; // the visitor picks another destination while the first batch is in flight
+    const second = prefetchThumbnails(circle(30000), center);
+    await Promise.all([first, second]);
+    expect(overlapped).toBe(false);
+    const sent: number[] = postJson.mock.calls.flatMap((call) => call[1].body.ids);
+    expect(sent.filter((obsId) => obsId < 30000)).toEqual([]); // the stale loop never got to send
+    expect(sent).toHaveLength(400); // the second loop covered its whole circle
   });
 });
