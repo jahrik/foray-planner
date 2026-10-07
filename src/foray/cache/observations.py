@@ -114,6 +114,34 @@ def get_observation_thumbnail(
     return True, ({"url": url, "attribution": attribution, "license_code": license_code} if url else None)
 
 
+def precise_observation_ids(con: psycopg.Connection, ids: Sequence[int]) -> set[int]:
+    """The subset of ``ids`` cached as precise (``obscured = FALSE``) observations."""
+    if not ids:
+        return set()
+    rows = con.execute("SELECT id FROM observations WHERE id = ANY(%s) AND obscured = FALSE", [list(ids)]).fetchall()
+    return {row[0] for row in rows}
+
+
+def get_observation_thumbnails(
+    con: psycopg.Connection, ids: Sequence[int], max_age_days: int
+) -> dict[int, dict[str, Any] | None]:
+    """Fresh cached thumbnails for ``ids``, keyed by observation id. An id missing from the result
+    needs a lookup; a ``None`` value means iNat had no displayable photo."""
+    if not ids:
+        return {}
+    rows = con.execute(
+        """
+        SELECT id, url, attribution, license_code FROM observation_thumbnails
+        WHERE id = ANY(%s) AND fetched_at > now() - make_interval(days => %s)
+        """,
+        [list(ids), max_age_days],
+    ).fetchall()
+    return {
+        obs_id: ({"url": url, "attribution": attribution, "license_code": license_code} if url else None)
+        for obs_id, url, attribution, license_code in rows
+    }
+
+
 def save_observation_thumbnail(con: psycopg.Connection, obs_id: int, thumbnail: dict[str, Any] | None) -> None:
     con.execute(
         """

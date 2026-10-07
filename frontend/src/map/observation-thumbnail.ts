@@ -3,7 +3,7 @@
 // nothing, and any failure just leaves the popup without a picture. Built from DOM nodes - the
 // URL and attribution come from an external API.
 
-import { getJson } from "../api/client";
+import { getJson, postJson } from "../api/client";
 import type { components } from "../api/schema";
 
 type Thumbnail = components["schemas"]["ObservationThumbnail"];
@@ -20,6 +20,46 @@ export function fetchThumbnail(obsId: number): Promise<Thumbnail | null> {
     cache.set(obsId, pending);
   }
   return pending;
+}
+
+/** Matches the server's per-request cap (`THUMBNAIL_BATCH_MAX`); a bigger batch is rejected. */
+const PREFETCH_MAX = 300;
+
+/** The `limit` pins nearest `center`, nearest first - the ones a visitor is most likely to open. */
+export function nearestFirst<Pin extends { id: number; lat: number; lng: number }>(
+  pins: Pin[],
+  center: { lat: number; lng: number },
+  limit: number,
+): Pin[] {
+  const lngScale = Math.cos((center.lat * Math.PI) / 180);
+  const distance = (pin: Pin): number =>
+    (pin.lat - center.lat) ** 2 + ((pin.lng - center.lng) * lngScale) ** 2;
+  return [...pins].sort((first, second) => distance(first) - distance(second)).slice(0, limit);
+}
+
+/** Warm the popup photos for a destination's pins in one batched request, so most are already
+ * known when one is opened (the per-pin fetch is a 1+ s round trip to iNat on a cold cache).
+ * Resolved ids seed the same per-observation memo `fetchThumbnail` uses; anything the server
+ * could not resolve stays a normal on-demand lookup. Best effort - a failure changes nothing. */
+export async function prefetchThumbnails(
+  pins: { id: number; lat: number; lng: number }[],
+  center: { lat: number; lng: number },
+): Promise<void> {
+  const wanted = nearestFirst(
+    pins.filter((pin) => !cache.has(pin.id)),
+    center,
+    PREFETCH_MAX,
+  ).map((pin) => pin.id);
+  if (wanted.length === 0) return;
+  try {
+    const { thumbnails } = await postJson("/api/observations/thumbnails", { body: { ids: wanted } });
+    for (const [key, thumbnail] of Object.entries(thumbnails)) {
+      const obsId = Number(key);
+      if (!cache.has(obsId)) cache.set(obsId, Promise.resolve(thumbnail));
+    }
+  } catch {
+    // Leave the pins to the per-pin lookup.
+  }
 }
 
 export function thumbnailFigure(thumbnail: Thumbnail): HTMLElement {

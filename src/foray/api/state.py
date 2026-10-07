@@ -39,3 +39,6 @@ class AppState:
     refresh_rate_limit: dict[str, float] = field(default_factory=dict)
     refresh_rate_limit_lock: threading.Lock = field(default_factory=threading.Lock)
     refresh_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Serializes the batch thumbnail prefetch's iNat lookups so two overlapping requests for the
+    # same circle don't fetch the same observations twice (the second finds them cached).
+    thumbnail_lock: threading.Lock = field(default_factory=threading.Lock)

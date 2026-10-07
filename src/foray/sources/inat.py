@@ -280,3 +280,20 @@ def photos_for_observations(ids: list[int]) -> dict[int, list[dict[str, Any]]]:
         if obs_photos:
             photos[obs["id"]] = obs_photos
     return photos
+
+
+def pick_thumbnail(photos: list[dict[str, Any]]) -> dict[str, str] | None:
+    """The first photo we may display (``DISPLAYABLE_PHOTO_LICENSES``) as the cached thumbnail
+    shape, or None when iNat has none.
+
+    iNat's API hands back the 75 px "square" size; "small" (240 px) stays sharp at the popup's
+    size on a high-DPI screen.
+    """
+    photo = next((photo for photo in photos if photo.get("license_code") in DISPLAYABLE_PHOTO_LICENSES), None)
+    if photo is None or not photo.get("url"):
+        return None
+    return {
+        "url": str(photo["url"]).replace("/square.", "/small."),
+        "attribution": photo.get("attribution") or "",
+        "license_code": photo["license_code"],
+    }

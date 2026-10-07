@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from foray.config import Home
 from foray.genus_icons import GenusIcon
@@ -209,6 +209,25 @@ class ObservationThumbnail(BaseModel):
     url: str
     attribution: str
     license_code: str
+
+
+# One batch covers a destination circle's nearest pins; more would let a single request fan out
+# into an unbounded number of iNat lookups.
+THUMBNAIL_BATCH_MAX = 300
+
+
+class ObservationThumbnailRequest(BaseModel):
+    """Observation ids whose popup photos the client wants warmed (issue #449)."""
+
+    ids: list[int] = Field(max_length=THUMBNAIL_BATCH_MAX)
+
+
+class ObservationThumbnails(BaseModel):
+    """Thumbnails by observation id (as a string key). A null value means iNat has no photo we may
+    display; an id that is absent was not resolved (not a cached precise observation, or the
+    lookup failed) and falls back to the per-pin endpoint."""
+
+    thumbnails: dict[str, ObservationThumbnail | None]
 
 
 class AlertHit(BaseModel):
