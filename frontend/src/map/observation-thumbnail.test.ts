@@ -132,10 +132,18 @@ describe("prefetchThumbnails across overlapping loops", () => {
   it("runs a second circle's batches only after the first one's request settles", async () => {
     let inFlight = 0;
     let overlapped = false;
+    let markStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => (markStarted = resolve));
+    let release!: () => void;
+    const firstMayFinish = new Promise<void>((resolve) => (release = resolve));
     postJson.mockImplementation(async (_path: string, init: { body: { ids: number[] } }) => {
       inFlight += 1;
       overlapped ||= inFlight > 1;
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (postJson.mock.calls.length === 1) {
+        markStarted();
+        await firstMayFinish; // hold the first loop's request in flight
+      }
+      await Promise.resolve();
       inFlight -= 1;
       return { thumbnails: Object.fromEntries(init.body.ids.map((obsId) => [String(obsId), null])) };
     });
@@ -147,12 +155,16 @@ describe("prefetchThumbnails across overlapping loops", () => {
       }));
     let firstCurrent = true;
     const first = prefetchThumbnails(circle(20000), center, () => firstCurrent);
-    firstCurrent = false; // the visitor picks another destination while the first batch is in flight
+    await firstStarted; // the first loop's request is now genuinely in flight
+    firstCurrent = false; // the visitor picks another destination
     const second = prefetchThumbnails(circle(30000), center);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(postJson).toHaveBeenCalledTimes(1); // the second loop is queued behind it, not sending
+    release();
     await Promise.all([first, second]);
     expect(overlapped).toBe(false);
     const sent: number[] = postJson.mock.calls.flatMap((call) => call[1].body.ids);
-    expect(sent.filter((obsId) => obsId < 30000)).toEqual([]); // the stale loop never got to send
-    expect(sent).toHaveLength(400); // the second loop covered its whole circle
+    expect(sent.filter((obsId) => obsId < 30000)).toHaveLength(300); // the stale loop sent only its in-flight batch
+    expect(sent.filter((obsId) => obsId >= 30000)).toHaveLength(400); // the second loop covered its whole circle
   });
 });
