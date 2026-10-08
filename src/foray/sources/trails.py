@@ -124,7 +124,9 @@ class _TagLookup(Protocol):
     """Anything tags can be read from by key - an Overpass element's ``tags`` dict, or a
     pyosmium ``TagList`` (the OSM bulk stager, which tests millions of ways without copying)."""
 
-    def get(self, key: str, /) -> Any: ...
+    def get(self, key: str, /) -> Any:
+        """The tag value for ``key``, or ``None`` when absent."""
+        ...
 
 
 def _is_road(tags: _TagLookup) -> bool:
@@ -659,6 +661,7 @@ def ingest_trails(
     def upsert_then_prune(db: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
         # The fresh rows can include the OSM twin of a USFS row already cached, so the prune runs
         # after the write too, not only before it (Copilot review, PR #441).
+        """Write the fetched rows, then prune OSM twins of Forest Service rows (the new rows can include one)."""
         count = upsert_trails(db, rows)
         prune_trail_duplicates(db, **bounds)
         return count

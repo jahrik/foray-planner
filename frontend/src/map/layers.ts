@@ -1,3 +1,7 @@
+// Data-driven map layers around the selected destination or home: campgrounds and dispersed sites, circle
+// trailheads, the land and fire vector sources, precise observations, and drawing a selected trail. Also
+// the readers for each Layers-pill checkbox (`campsOn`, `blmOn`, ...).
+
 import L from "leaflet";
 
 import { getJson } from "../api/client";

@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 def broadcast(state: AppState, msg: dict[str, Any]) -> None:
+    """Record ``msg`` as the latest progress and push it to every SSE listener, dropping the oldest queued message if a
+    listener is full."""
     state.last_progress = msg
     with state.listeners_lock:
         listener_queues = list(state.listeners)
@@ -41,6 +43,8 @@ def run_refresh(state: AppState, pool: ConnectionPool, base_cfg: Settings, home:
     # Refresh ingests around *this visitor's* home, not the env-configured default - a
     # per-request Settings with `.home` swapped in lets ingest()/camps.py/land.py/etc. stay
     # unchanged (they all just read `cfg.home` internally).
+    """Run a refresh of ``target`` (``all`` or one layer) around ``home`` in the calling thread, broadcasting progress
+    and recording any error, then release the refresh flags."""
     refresh_cfg = base_cfg.model_copy(update={"home": home})
     layers = REFRESH_LAYERS if target == "all" else (target,)
 

@@ -24,6 +24,8 @@ QualityGrade = Literal["research", "needs_id", "casual"]
 
 
 class Home(BaseModel):
+    """A home location: display name, coordinates and search radius."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str = "Home"
@@ -33,6 +35,8 @@ class Home(BaseModel):
 
 
 class Ingest(BaseModel):
+    """Observation-ingest settings: how far back to pull, the quality filter and the "recent" window."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     since_year: int = Field(ge=1900, le=2100, default=2015)
@@ -48,9 +52,9 @@ class Ingest(BaseModel):
 
 class Intervals(BaseModel):
     """Expected cadence (hours) for each scheduled job, so ``/healthz/data`` (issue #332) can
-    compute "past interval x2" freshness. Keep these in sync with ``scripts/scheduler.sh``'s
-    own ``FORAY_*_INTERVAL_HOURS`` defaults (a flat, separately-read set of env vars there -
-    the scheduler predates ``Settings`` nesting and isn't worth reshaping for this alone)."""
+    compute "past interval x2" freshness. These are **not** read from ``jobs.yaml`` (the scheduler's
+    own cadences): keep them in sync with the matching ``interval_hours`` there by hand, or a
+    healthy layer reads as stale (or a stale one as healthy). See docs/jobs.md."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -126,18 +130,24 @@ class Spaces(BaseModel):
 
     @property
     def configured(self) -> bool:
+        """Whether the access key, secret and bucket are all set."""
         return bool(self.access_key_id and self.secret_access_key and self.bucket)
 
     @property
     def endpoint_url(self) -> str:
+        """The S3 API endpoint for the configured region."""
         return f"https://{self.region}.digitaloceanspaces.com"
 
     @property
     def base_url(self) -> str:
+        """The public base URL objects are read through: ``public_url`` if set, else the bucket's own endpoint."""
         return self.public_url or f"https://{self.bucket}.{self.region}.digitaloceanspaces.com"
 
 
 class CoverageRegion(BaseModel):
+    """A named place to ingest: an iNaturalist ``place_id`` and an optional ``(west, south, east, north)`` box for the
+    land and trail ingests."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str
@@ -169,6 +179,9 @@ def coverage_envelope(regions: Iterable[CoverageRegion]) -> tuple[float, float, 
 
 
 class Settings(BaseSettings):
+    """All application settings, read from ``FORAY_*`` environment variables and a ``.env`` file (nested names join
+    with ``__``). See docs/configuration.md."""
+
     model_config = SettingsConfigDict(
         env_prefix="FORAY_",
         env_nested_delimiter="__",
@@ -245,16 +258,20 @@ class Settings(BaseSettings):
 
     @property
     def since_year(self) -> int:
+        """Shortcut for ``ingest.since_year``."""
         return self.ingest.since_year
 
     @property
     def quality_grade(self) -> QualityGrade:
+        """Shortcut for ``ingest.quality_grade``."""
         return self.ingest.quality_grade
 
     @property
     def recent_weeks(self) -> int:
+        """Shortcut for ``ingest.recent_weeks``."""
         return self.ingest.recent_weeks
 
     @property
     def region_sync_days(self) -> int:
+        """Shortcut for ``ingest.region_sync_days``."""
         return self.ingest.region_sync_days

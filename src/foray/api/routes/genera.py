@@ -48,6 +48,7 @@ def add_selected_genus(
     response: Response,
     pool: ConnectionPool = Depends(get_pool),
 ) -> StatusResponse:
+    """Add a genus to this device's target list (idempotent)."""
     device_id, is_new = resolve_device_id(request)
     if is_new:
         set_device_cookie(request, response, device_id)
@@ -63,6 +64,7 @@ def remove_selected_genus(
     response: Response,
     pool: ConnectionPool = Depends(get_pool),
 ) -> StatusResponse:
+    """Remove a genus from this device's target list (idempotent)."""
     device_id, is_new = resolve_device_id(request)
     if is_new:
         set_device_cookie(request, response, device_id)

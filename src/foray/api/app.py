@@ -111,6 +111,7 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        """Open the connection pool and apply the schema on startup; close the pool on shutdown."""
         pool.open()
         # Route handlers are sync `def`, so Starlette runs them in AnyIO's thread pool, whose
         # default capacity is 40 - four times the connection pool's `max_size`. Cap it just

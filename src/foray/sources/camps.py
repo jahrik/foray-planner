@@ -107,6 +107,7 @@ def _fee_range(fee: str | None) -> tuple[float | None, float | None]:
         # Context = the ~25 chars before the amount ("Senior discount $4") plus its trailing text
         # up to the next "$" / ";" / ". " ("$5 per extra vehicle"), so a neighbouring add-on
         # clause disqualifies only its own amount, not the site fee beside it.
+        """Whether the fee amount at ``match`` reads as the site's nightly rate rather than an add-on or discount."""
         head = text[max(0, match.start() - 25) : match.start()]
         tail = text[match.end() :]
         stops = [pos for pos in (tail.find("$"), tail.find(";"), tail.find(". ")) if pos != -1]

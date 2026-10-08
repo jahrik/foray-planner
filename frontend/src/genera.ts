@@ -1,3 +1,6 @@
+// The Genera pill: search the genus catalog, add and remove this device's target genera, and expose the
+// current selection to the rest of the client.
+
 import { genusIconElement, genusIconHtml } from "./icons/genus-icons";
 import { deleteJson, getJson, postJson } from "./api/client";
 import type { GenusResult } from "./api/types";

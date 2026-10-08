@@ -49,6 +49,8 @@ class _JsonFormatter(logging.Formatter):
     _RESERVED = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"message", "asctime"}
 
     def format(self, record: logging.LogRecord) -> str:
+        """Render one record as a JSON object (timestamp, level, logger, message, any ``extra`` fields and
+        ``exc_info``)."""
         payload: dict[str, object] = {
             "timestamp": dt.datetime.fromtimestamp(record.created, tz=dt.UTC).isoformat(),
             "level": record.levelname,

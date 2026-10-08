@@ -1,3 +1,6 @@
+// Click-to-inspect for roads on the vector basemap: finds the Protomaps road feature under a click (with a
+// zoom-scaled tolerance so a thin line is tappable) and opens a popup of its OSM tags.
+
 import L from "leaflet";
 import type { Map as MaplibreMap } from "maplibre-gl";
 

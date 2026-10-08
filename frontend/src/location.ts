@@ -1,3 +1,6 @@
+// The place-search box in the search bar: typeahead against /api/location/search, and choosing a result to
+// set the home. `initPlaceAutocomplete` is also reused by the plan form's Start and Destination fields.
+
 import { getJson } from "./api/client";
 import type { PlaceSuggestion } from "./api/types";
 import { initAutocomplete } from "./ui/autocomplete";

@@ -49,6 +49,7 @@ class Throttle:
         self._last_request_at = 0.0
 
     def wait(self, units: float = 1.0) -> None:
+        """Block until the interval since the last call has passed (scaled by ``units``), then record this call."""
         if self.min_interval <= 0:
             return
         with self._lock:
@@ -137,12 +138,15 @@ class HttpRangeReader(io.RawIOBase):
         self._size = int(client.head(url, follow_redirects=True).headers["content-length"])
 
     def readable(self) -> bool:
+        """Always true: the reader supports reads."""
         return True
 
     def seekable(self) -> bool:
+        """Always true: the reader supports ``seek``."""
         return True
 
     def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        """Move the read position within the remote object (no request is made until the next read)."""
         if whence == io.SEEK_SET:
             self._pos = offset
         elif whence == io.SEEK_CUR:
@@ -154,6 +158,7 @@ class HttpRangeReader(io.RawIOBase):
         return self._pos
 
     def tell(self) -> int:
+        """The current read position in bytes."""
         return self._pos
 
     def _get_range(self, start: int, end: int) -> httpx.Response:
@@ -188,6 +193,8 @@ class HttpRangeReader(io.RawIOBase):
         raise last_error
 
     def readinto(self, buffer: WriteableBuffer) -> int:
+        """Fill ``buffer`` from the current position with one HTTP range request, advancing the position; returns 0 at
+        the end."""
         buffer = memoryview(buffer)
         if self._pos >= self._size:
             return 0

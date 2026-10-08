@@ -16,6 +16,7 @@ router = APIRouter()
 def index() -> Any:
     # The SPA fetches /api/config on load, so no server-side templating is needed -
     # just hand back the built entry point.
+    """Serve the built single-page client (``index.html``), or a short hint if the bundle has not been built."""
     if (DIST / "index.html").is_file():
         return FileResponse(DIST / "index.html")
     return HTMLResponse(

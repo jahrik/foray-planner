@@ -20,6 +20,8 @@ def record_ingest(
     lng: float | None = None,
     radius_km: float | None = None,
 ) -> None:
+    """Record that the area or window named by ``key`` was fetched now (``row_count`` rows, optionally the home disk it
+    covered), replacing any earlier entry."""
     con.execute(
         """
         INSERT INTO ingest_log (key, fetched_at, row_count, lat, lng, radius_km)
@@ -89,6 +91,7 @@ def latest_successful_job_run(con: psycopg.Connection, job: str) -> dict[str, An
 
 
 def is_ingested(con: psycopg.Connection, key: str) -> bool:
+    """Whether ``key`` has an ``ingest_log`` entry, i.e. that area and window was already fetched."""
     row = con.execute("SELECT 1 FROM ingest_log WHERE key = %s", [key]).fetchone()
     return row is not None
 

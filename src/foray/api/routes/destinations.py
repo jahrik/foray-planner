@@ -65,6 +65,8 @@ def destinations(
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
 ) -> list[RegionScore]:
+    """Ranked destinations around the visitor's home for the chosen months and genera (see
+    ``scoring.rank_destinations``)."""
     require_idle(state)
     cfg = state.cfg
     device_id, is_new = resolve_device_id(request)
@@ -101,6 +103,7 @@ def calendar(
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
 ) -> dict[str, CalendarBucket]:
+    """The 12-month calendar for one region: total and per-genus record counts by month."""
     require_idle(state)
     device_id, is_new = resolve_device_id(request)
     if is_new:
@@ -128,6 +131,8 @@ def observation_photos(
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
 ) -> RecentObservationsPage:
+    """A page of a region's recent research-grade observations with their displayable Creative Commons photos, newest
+    first."""
     require_idle(state)
     cfg = state.cfg
     device_id, is_new = resolve_device_id(request)
@@ -171,6 +176,7 @@ def get_alerts(
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
 ) -> list[AlertRegion]:
+    """The "Active now" list: regions with observations of the selected genera in the trailing ``weeks``."""
     require_idle(state)
     cfg = state.cfg
     device_id, is_new = resolve_device_id(request)

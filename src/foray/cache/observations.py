@@ -143,6 +143,8 @@ def get_observation_thumbnails(
 
 
 def save_observation_thumbnail(con: psycopg.Connection, obs_id: int, thumbnail: dict[str, Any] | None) -> None:
+    """Cache one observation's popup photo, or ``None`` for "iNaturalist has none we may display" so it is not asked
+    again."""
     con.execute(
         """
         INSERT INTO observation_thumbnails (id, url, attribution, license_code, fetched_at)
@@ -187,6 +189,7 @@ def suspect_genus_taxon_ids(con: psycopg.Connection, ratio: float = 3.0) -> list
 
 
 def observation_ids_for_genus(con: psycopg.Connection, taxon_id: int) -> list[int]:
+    """Ids of every cached observation filed under a genus taxon id (what ``revalidate`` re-fetches)."""
     rows = con.execute("SELECT id FROM observations WHERE taxon_id = %s", [taxon_id]).fetchall()
     return [row[0] for row in rows]
 
@@ -233,6 +236,7 @@ def mark_revalidated(con: psycopg.Connection, ids: Sequence[int]) -> None:
 
 
 def observation_count(con: psycopg.Connection) -> int:
+    """Total rows in ``observations``."""
     row = con.execute("SELECT count(*) FROM observations").fetchone()
     return int(row[0]) if row else 0
 

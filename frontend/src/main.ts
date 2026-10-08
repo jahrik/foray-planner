@@ -1,3 +1,7 @@
+// Entry point. Loads /api/config, initializes preferences, the map, the mobile sheet, every control and the
+// filter pills (last, since it moves their DOM), starts geolocation without blocking first paint, then runs
+// the first destinations load. See docs/frontend.md for how the modules fit together.
+
 import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";

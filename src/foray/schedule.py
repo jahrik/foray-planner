@@ -1,8 +1,8 @@
 """The dev-loop scheduler (issue #332 PR 2): reads ``jobs.yaml``, the single manifest also used
 to generate the prod systemd timers (``infra/ansible/tasks/deploy/systemd_jobs.yml``), and runs
-each job on its own interval via ``foray job`` - the direct replacement for the old
-``scripts/scheduler.sh`` (a hand-maintained shell loop that drifted from prod's separately
-hand-maintained cron job list; see TODO.md's E1).
+each job on its own interval via ``foray job`` - the direct replacement for the
+retired ``scripts/scheduler.sh`` (a hand-maintained shell loop that drifted from prod's
+separately hand-maintained cron job list).
 
 Unlike the old script, this doesn't track ``*_last`` timestamps in memory - a restart used to
 mean every job looked overdue and fired at once. Instead each tick asks Postgres for the job's
@@ -36,6 +36,9 @@ Window = Literal["any", "night"]
 
 @dataclass(frozen=True)
 class JobSpec:
+    """One entry of ``jobs.yaml``: name, the ``foray`` command split into arguments, expected cadence, window (``any``
+    or ``night``) and whether it writes to Postgres."""
+
     name: str
     command: list[str]
     interval_hours: float
@@ -44,6 +47,7 @@ class JobSpec:
 
 
 def load_manifest(path: Path = _MANIFEST_PATH) -> list[JobSpec]:
+    """Read ``jobs.yaml`` (the repository root by default) into ``JobSpec`` entries."""
     data = yaml.safe_load(path.read_text())
     return [
         JobSpec(
@@ -89,6 +93,8 @@ def _in_night_window() -> bool:
 
 
 def run_scheduler(*, poll_seconds: int = 300) -> None:
+    """Run forever: every ``poll_seconds``, start each job that is due (and, for ``night`` jobs, inside the night
+    window) through ``foray job``."""
     manifest = load_manifest()
     logger.info("scheduler: loaded %d jobs from %s", len(manifest), _MANIFEST_PATH)
     while True:

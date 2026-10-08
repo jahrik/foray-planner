@@ -63,6 +63,9 @@ ELIGIBLE = (
 
 @dataclass
 class DemBackfillResult:
+    """Counts from one DEM backfill run: rows filled, rows with no DEM value, stalled batches, tiles by outcome and
+    rows still missing."""
+
     filled: int
     no_value: int
     stalled: int
@@ -80,6 +83,7 @@ class DemBackfillResult:
 
 
 def cache_dir() -> Path:
+    """The local directory for downloaded DEM tiles (``FORAY_DEM_CACHE``), created if missing."""
     path = Path(os.environ.get("FORAY_DEM_CACHE") or str(Path.home() / ".cache" / "foray" / "dem"))
     path.mkdir(parents=True, exist_ok=True)
     return path

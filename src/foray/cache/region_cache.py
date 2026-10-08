@@ -82,6 +82,7 @@ def load_region_places(con: psycopg.Connection, region_ids: list[str]) -> dict[s
 
 
 def save_region_place(con: psycopg.Connection, region_id: str, place_name: str | None) -> None:
+    """Cache a region's place name (``None`` is a real answer: nothing notable nearby). First write wins."""
     con.execute(
         "INSERT INTO region_places (region_id, place_name) VALUES (%s, %s) ON CONFLICT (region_id) DO NOTHING",
         [region_id, place_name],
@@ -114,6 +115,8 @@ def load_region_satellite(con: psycopg.Connection, cfg: Settings, region_id: str
 
 
 def save_region_satellite(con: psycopg.Connection, cfg: Settings, region_id: str, image: bytes, labels: bytes) -> None:
+    """Cache a region's aerial and label rasters: in object storage with URLs in the table when storage is configured,
+    else as bytes in Postgres. First write wins."""
     if cfg.spaces.configured:
         image_url = spaces.put_object(cfg.spaces, f"satellite/{region_id}/image.jpg", image, "image/jpeg", public=True)
         labels_url = spaces.put_object(

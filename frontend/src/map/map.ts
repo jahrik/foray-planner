@@ -1,3 +1,7 @@
+// The Leaflet map: init, theme-aware marker palette, the legend, attribution, precise-observation pins and
+// clusters, the home marker and the basemap mount. The destination circles themselves live in destinations.ts
+// and the camp / trail / land layers in layers.ts and poi-layers.ts.
+
 import L from "leaflet";
 import "leaflet.markercluster";
 

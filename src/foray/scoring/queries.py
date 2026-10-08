@@ -402,9 +402,12 @@ def trails_near(
     # trailhead) or the row's own (for a path), plus a route bonus, plus a log-scaled
     # foraging-density term.
     def lead_length(row: Sequence[Any]) -> float:
+        """A trail row's own length, or the length of the trail it leads to if it is a trailhead."""
         return row[12] if row[12] is not None else (row[8] or 0.0)
 
     def significant(row: Sequence[Any]) -> bool:
+        """Whether a row earns a place in a significant-only list: named, a route, or long enough (unnamed trailheads
+        never do)."""
         name, row_kind = row[1], row[2]
         named = name is not None and not name.endswith("(OSM)")
         if row_kind == "trailhead":
@@ -417,6 +420,7 @@ def trails_near(
         return named or row_kind == "route" or lead_length(row) >= _SIGNIFICANT_LENGTH_KM
 
     def relevance(row: Sequence[Any]) -> float:
+        """The ``sort=relevance`` score; roads weigh nearby records heavily and get a walk-in bonus."""
         row_kind = row[2]
         route_bonus = _ROUTE_RELEVANCE_BONUS if (row[13] or row_kind == "route") else 0.0
         if row_kind == "road":

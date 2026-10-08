@@ -1,3 +1,6 @@
+// Destination circles: the rank hierarchy (top 3 filled and numbered, next 7 rings, the rest dim dots),
+// snapping a selected circle to its true H3-cell footprint, dimming the others, and the opt-in aerial overlay.
+
 import L from "leaflet";
 
 import { state } from "../state";

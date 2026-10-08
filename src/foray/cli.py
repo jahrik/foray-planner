@@ -269,7 +269,7 @@ def revalidate_cmd(ctx: click.Context) -> None:
     """Re-check cached observations under genera whose cache count has drifted from iNat's
     live count - purges/reassigns rows misidentified into a homonymous non-fungal genus (e.g.
     fungal Olla vs. the ladybug genus Olla) that iNat corrected but this cache never saw.
-    Meant to run on a schedule (see scripts/scheduler.sh), not just once."""
+    Meant to run on a schedule (the weekly `revalidate` job in jobs.yaml), not just once."""
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
@@ -487,7 +487,8 @@ def stage_snapshot_cmd(ctx: click.Context, source: str | None, stage_all: bool) 
     Actions weekly workflow's job (`.github/workflows/bulk-load.yml`), kept off the droplet since
     a source snapshot (iNat GBIF DwC-A, RIDB, PAD-US, ...) can be tens of GB. `foray ingest-bulk`
     loads whatever's staged here into the database separately. `--all` stages whatever's
-    currently registered (`inat`, `ridb`, `usfs_trails`) without needing the source named here -
+    currently registered (`inat`, `ridb`, `usfs_trails`, `usfs_mvum`, `ravg`, `osm_trails`) without
+    needing the source named here -
     a newly-registered source is picked up automatically, nothing to keep in sync."""
     cfg = ctx.obj["cfg"]
     if stage_all:
@@ -522,7 +523,7 @@ def stage_snapshot_cmd(ctx: click.Context, source: str | None, stage_all: bool) 
 def ingest_bulk_cmd(ctx: click.Context, source: str) -> None:
     """Load the newest snapshot `stage-snapshot` staged for a bulk data `source` into Postgres
     if it's newer than what was last loaded (tracked in `meta`). A no-op if nothing new is
-    staged. Registered sources: `inat`, `ridb` (issue #334 PR 2); PR 3/#335 add more."""
+    staged. Registered sources: `inat`, `ridb`, `usfs_trails`, `usfs_mvum`, `ravg`, `osm_trails`."""
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
@@ -543,7 +544,7 @@ def ingest_bulk_cmd(ctx: click.Context, source: str) -> None:
 def refresh_precip_cmd(ctx: click.Context) -> None:
     """Refresh the recent-rainfall-per-destination layer (issue #226 Part 2): pull the trailing
     ~30 days from Open-Meteo's forecast API for every active region cell. Runs on its own
-    scheduler cadence (FORAY_PRECIP_INTERVAL_HOURS)."""
+    scheduler cadence (the daily `refresh-precip` job in jobs.yaml)."""
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
@@ -559,7 +560,7 @@ def fire_cmd(ctx: click.Context) -> None:
     """Refresh wildfire perimeters + recent burn scars (issue #227) from the NIFC ArcGIS
     services: active fires (replace semantics) and the last 3+current fire years of history.
     Burn-severity enrichment is a separate bulk source (`ingest-bulk ravg`, issue #335 PR 4), not
-    part of this refresh. Runs on its own scheduler cadence (FORAY_FIRE_INTERVAL_HOURS)."""
+    part of this refresh. Runs on its own scheduler cadence (the daily `fire` job in jobs.yaml)."""
     cfg = ctx.obj["cfg"]
     con = connect()
     try:
@@ -584,8 +585,8 @@ def fire_cmd(ctx: click.Context) -> None:
         "Keep resyncing batch after batch until every cached row has been live-checked at "
         "least once, instead of stopping after one batch. Meant for a deliberate catch-up run "
         "(e.g. right after finding a data-accuracy bug), not the normal recurring schedule - "
-        "that stays on scripts/scheduler.sh's small-batch/hourly pace so it doesn't compete "
-        "with other scheduled jobs for iNat's rate limit."
+        "that stays on the `resync` job's small-batch/hourly pace (jobs.yaml) so it doesn't "
+        "compete with other scheduled jobs for iNat's rate limit."
     ),
 )
 @click.pass_context
@@ -594,7 +595,7 @@ def resync_cmd(ctx: click.Context, batch_size: int, until_done: bool) -> None:
     that eventually trues up every column (including `obscured`, never set by the bulk
     historical import) and catches a misidentification too rare within its genus for
     `revalidate`'s ratio check to flag. Meant to run frequently in small batches on a schedule
-    (see scripts/scheduler.sh), grinding through the whole cache over time - or pass
+    (the hourly `resync` job in jobs.yaml), grinding through the whole cache over time - or pass
     --until-done for a one-off run that doesn't stop until the whole cache is caught up."""
     cfg = ctx.obj["cfg"]
     con = connect()

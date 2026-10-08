@@ -1,6 +1,6 @@
 """The `foray job` wrapper every scheduled command runs through (issue #332).
 
-``scripts/scheduler.sh`` (dev) and the prod cron path call ``foray job <name> -- <foray
+``foray scheduler`` (dev) and the prod systemd timers call ``foray job <name> -- <foray
 subcommand> [args...]`` instead of the bare subcommand directly. Each invocation:
 
 - takes a Postgres advisory lock keyed on ``name`` so an overlapping run (the previous one

@@ -22,6 +22,7 @@ def load_location(con: psycopg.Connection, device_id: str) -> dict[str, Any] | N
 def save_location(
     con: psycopg.Connection, *, device_id: str, name: str, lat: float, lng: float, radius_km: float
 ) -> None:
+    """Save (insert or replace) a device's home name, coordinates and search radius."""
     con.execute(
         """
         INSERT INTO app_location (device_id, name, lat, lng, radius_km)
@@ -72,6 +73,7 @@ def list_selected_genera(con: psycopg.Connection, device_id: str) -> list[dict[s
 
 
 def add_genus(con: psycopg.Connection, device_id: str, taxon_id: int) -> None:
+    """Add a genus to a device's target list; adding one already there is a no-op."""
     con.execute(
         "INSERT INTO app_genera (device_id, taxon_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
         [device_id, taxon_id],
@@ -79,4 +81,5 @@ def add_genus(con: psycopg.Connection, device_id: str, taxon_id: int) -> None:
 
 
 def remove_genus(con: psycopg.Connection, device_id: str, taxon_id: int) -> None:
+    """Remove a genus from a device's target list; removing one not there is a no-op."""
     con.execute("DELETE FROM app_genera WHERE device_id = %s AND taxon_id = %s", [device_id, taxon_id])

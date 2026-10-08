@@ -187,7 +187,7 @@ trails *args: db
 # Re-checks cached observations under genera whose cache count has drifted from iNat's live
 # count (see ingest.revalidate) - purges/reassigns rows misidentified into a homonymous
 # non-fungal genus (e.g. fungal Olla vs. the ladybug genus Olla). Meant to run on a recurring
-# schedule (scripts/scheduler.sh); this recipe is for running it on demand against local dev data.
+# schedule (the weekly `revalidate` job in jobs.yaml); this recipe is for running it on demand against local dev data.
 [doc('On-demand genus-drift revalidation against local dev data')]
 [group('data')]
 revalidate: db
@@ -197,7 +197,7 @@ revalidate: db
 # ingest.resync) - the only path that eventually trues up every column (including `obscured`,
 # never set by the bulk historical import) and catches a misidentification too rare within its
 # genus for `revalidate`'s ratio check to flag. Default: one on-demand batch, same shape
-# scripts/scheduler.sh runs hourly. Pass args for a deliberate catch-up run instead - e.g.
+# the `resync` job in jobs.yaml runs hourly. Pass args for a deliberate catch-up run instead - e.g.
 # `just resync "--until-done --batch-size 20000"` keeps going batch after batch until every
 # row has been live-checked at least once (long-running, rate-limited by iNat ~1 req/s; run in
 # the background) - use after finding a data-accuracy bug, not as a routine invocation.

@@ -24,141 +24,152 @@ More step-by-step guides, including tracking down a specific mushroom from trail
 ## What it does
 
 Foray Planner pulls real, research-grade observation records from
-[iNaturalist](https://www.inaturalist.org) - the world's largest nature-observation
-database - and turns years of accumulated field data into a single answer-first flow:
+[iNaturalist](https://www.inaturalist.org), the world's largest nature-observation
+database, and turns years of accumulated field data into a single answer-first flow:
 *given where you are, the season, and what you're hunting, where should you go?*
+
+It is built around four questions, in this order:
+
+1. **When and where are my target fungi active?** A ranked list of regions for the months you pick.
+2. **Where can I camp, ideally for free?** Campgrounds and dispersed sites closest to that activity.
+3. **Which trails put me closest to the mushrooms?** Trails and forest roads ranked by the finds along them.
+4. **How do I string several spots into a drive?** A shortlist that becomes a multi-stop trip.
+
+![The ranked destinations and the map: top spots, their genus chips and the finds inside the selected region](docs/tutorials/img/getting-started-06-selected.png)
 
 ### Where should I go this month?
 
-The default on load. Toggle one or more months and the map fills with hotspot markers
-ranked by historical fruiting activity for that time of year - the ranking updates
-automatically as you change months, radius, sort, or location. The panel leads with a
-one-sentence plain-language "why" for the top pick, then the **top three** as full
-cards; **"Show N more regions"** opens the rest of the ranked list in place.
+The default on load. The map fills with destination markers ranked by historical fruiting activity
+for the months you chose, and the ranking updates as you change months, radius, sort, genera or
+location. The panel shows the **top three** as full cards; **"Show N more regions"** opens the rest.
 
-Each card: rank + distance (the title backfills with a notable place name - national
-park/forest, protected area, or nearest settlement - once it's looked up), the "why"
-sentence (top genus + where the season sits for it, recent rain, a nearby-fire note,
-and a nearby trailhead / free camp when one is close), a score bar, a stat line
-(score, species count, recent-observation count, mean ground elevation, recent
-rainfall), genus chips linking to iNaturalist, and two actions: **Details** and
-**+ Plan**. The score is phenology-first, then nudged by nearby wildfire, burn
-scars, and how reachable the spot is (a close trailhead helps; nowhere to park or
-camp within range hurts).
+Each card shows its rank and distance (the title backfills with a notable place name once looked
+up), a plain-language **"why"** sentence (the top genus, where the season sits for it, recent
+rain, a nearby-fire note, and a close trailhead or free camp when there is one), a score bar,
+a stat line (score, species count, recent records, mean ground elevation, recent rainfall), genus
+chips linking to iNaturalist, and two actions: **Details** and **+ Plan**.
+
+The score is phenology-first, then nudged by nearby wildfire, burn scars (for morels) and how
+reachable the spot is. It summarizes *past iNaturalist records*, not a forecast; the exact
+formula is in [How destinations are ranked](docs/scoring.md).
 
 **Markers** read by rank rather than all looking alike:
 
-- **Top 3** - a filled rust circle with a permanent rank numeral
-- **Next 7** - a rust ring
-- **The rest** - a small dim moss-green dot
-- **Green** = target species were seen there in the last few weeks
-- **Purple ring** = the region you have selected
+- **Top 3**: a filled rust circle with a permanent rank numeral
+- **Next 7**: a rust ring
+- **The rest**: a small dim moss-green dot
+- **Green**: your selected genera were recorded there in the last few weeks
+- **Purple ring**: the region you have selected, snapped to its true footprint
 
-Selecting a card (or its marker) snaps that circle to its true real-world footprint,
-drops every other circle to a ring so the basemap stays readable, and drops
-verified-location observation pins (ochre spore-print) inside the footprint.
+Selecting a card snaps that circle to its real-world footprint, drops every other circle to a ring so
+the basemap stays readable, and drops verified-location observation pins inside it. A cluster badge
+shows the commonest genus's icon and a count; hover or tap it for a list of finds, each linking to
+iNaturalist, or open a single find for its photo, date and **Directions**.
 
 ### Details view
 
-**Details** on a card swaps the panel to a dedicated view with four tabs; **"Back to
-results"** returns to the list:
+**Details** on a card swaps the panel to a dedicated view with five tabs; **Back to results** returns
+to the list:
 
-- **Calendar** - a 12-month heatmap for that region: darker cells mean more
-  observations historically for that month. Good for planning weeks out: "is late
-  October really the right time here, or should I wait until November?"
-- **Photos** - thumbnails from the region's most recent observations. Only photos with
-  a redisplayable Creative Commons license show a thumbnail (with attribution);
-  everything else still lists with a link back to its iNat page.
-- **Trails** - trailheads near the hotspot, ranked by the trail they lead to (a named
-  route, its length, and how many target-genus finds hug the line) rather than raw
-  proximity. Selecting one draws the whole named trail on the map.
-- **Campgrounds** - nearby developed campgrounds from Recreation.gov, with a parsed
-  nightly fee range and whether they're reservable.
+| Tab | What it shows |
+|---|---|
+| **Calendar** | Which genera have been recorded here in each month, and how many. Good for "is late October really the right time, or should I wait until November?" |
+| **Photos** | Recent research-grade finds. Only Creative Commons photos show a thumbnail, with the photographer's credit. |
+| **Trails** | Trailheads, paths, forest roads and named routes, ranked by relevance (named routes, length, and how many finds of your target genus lie within 500 m of the line) rather than raw distance. Selecting one draws the whole trail, coloured by foraging density; a gated-but-walkable forest road is flagged *walk-in*. |
+| **Campgrounds** | Developed campgrounds (Recreation.gov) and reported sites (OpenStreetMap), free first, with a parsed nightly fee range and whether they are reservable. |
+| **Public land** | Who manages the ground nearby. Pick a parcel as a trip stop. |
 
-### Active now - what's been spotted recently?
+| Calendar | Trails |
+|---|---|
+| ![Calendar tab](docs/tutorials/img/region-details-03-calendar.png) | ![Trails tab](docs/tutorials/img/region-details-05-trails.png) |
 
-The **Sort** pill offers *Best overall* (the scored ranking), *Active now*, and
-*Nearest*. **Active now** switches the list to areas where target species were actually
-observed in the trailing few weeks - no historical averaging, just what's happening on
-the ground right now. Each chip links straight to the iNat observation and flags
-obscured (GPS-fuzzy) sightings.
+### Active now: what's been spotted recently?
+
+The **Sort** pill offers *Best overall* (the scored ranking), *Active now* and *Nearest*. **Active
+now** switches to areas where your genera were actually observed in the trailing few weeks: no
+historical averaging, just what has been found lately. Each chip links to the iNaturalist
+observation and flags obscured (location-fuzzed) sightings.
 
 ---
 
 ## Layers
 
-Every map overlay lives behind one **Layers** pill. Each is off by default; toggle it
-on and the map plots it for whichever region is currently focused (click a card, or fly
-to a stop on a planned route). Trails aren't here - they live inside a card's **Details
-&rarr; Trails** tab.
+Every map overlay lives behind one **Layers** pill. Land, fire and imagery apply to the whole map;
+campgrounds, dispersed sites and trailheads are drawn inside whichever destination you have
+selected.
 
-| Toggle | What it shows | Marker |
+| Layer | What it shows | Default |
 |---|---|---|
-| **Campgrounds** | Named campgrounds from Recreation.gov | Gold = free, Amber = fee/unknown |
-| **Dispersed** | Backcountry / dispersed campsites tagged in OpenStreetMap | Teal dot = reported site |
-| **Free only** | Filters both camping layers to free/no-fee options only | - |
-| **BLM / USFS / Tribal land** | Land ownership polygons shaded by agency | Ochre = BLM, Violet = USFS, Blue = Tribal land |
-| **Fire & burn scars** | Active wildfire perimeters/points + recent burn scars (NIFC/MTBS) | Red = active fire, Burnt orange = burn scar (dimmer with age) |
-| **Aerial imagery** | Fills the selected region's footprint with an Esri satellite image + a matching roads/labels overlay | - |
+| **Campgrounds** | Developed campgrounds from Recreation.gov, with camp-type icons | On |
+| **Dispersed** | Backcountry and dispersed sites tagged in OpenStreetMap | On |
+| **Free only** | Limits both camping layers to sites with an explicit no-fee signal | Off |
+| **Trailheads** | Trailhead signposts | On |
+| **BLM / USFS / Tribal land / State & other federal land** | Ownership shaded by agency | Off |
+| **Fire & burn scars** | Active wildfire perimeters and recent burn scars (NIFC, RAVG) | Off |
+| **Aerial imagery** | Fills the selected region with Esri satellite photos plus place labels | Off |
+| **Contour lines** | Elevation contours with labels over a hillshade | On |
+| **Satellite basemap** | Replaces the whole base map with satellite imagery | Off |
 
-**A note on dispersed camping:** the Dispersed layer shows only sites that someone
-has explicitly tagged as campable in OpenStreetMap. A tag is not a guarantee of
-legality or current access. Always check with the local BLM or Forest Service
-district office before camping somewhere unfamiliar. The ownership polygons show who
-manages the land; they are informational only.
+![Land ownership and wildfire layers](docs/tutorials/img/map-guide-08-land-fire.png)
+
+**A note on dispersed camping:** the Dispersed layer shows only sites that someone has tagged as
+campable in OpenStreetMap. A tag is not a guarantee of legality or current access. Ownership
+polygons show who manages the land and are informational only. Always check with the local BLM
+or Forest Service district office before camping somewhere unfamiliar.
+
+The [map guide](docs/tutorials/README.md#7-reading-the-map) walks through the legend, marker ranks,
+land, fire and aerial imagery with screenshots.
 
 ---
 
 ## Controls
 
-The floating shell over the map has a **search bar** (with a **⋮** menu for units,
-theme and text size), a row of **filter pills**, and the results panel.
+The floating shell over the map has a **search bar** (with a **⋮** menu), a row of **filter pills**,
+and the results panel.
 
 | Control | What it does |
 |---|---|
-| **Search bar** | Type a place name (`Coos Bay, OR`) or raw `lat,lng`. Scores destinations against cached data for that area. |
-| **Sort** pill | *Best overall* (scored), *Active now* (seen recently), or *Nearest*. |
-| **Radius** pill | Search radius presets (50/150/300/500 km) from the current location. |
-| **Months** pill | Toggle any combination of months. The current month is on by default; ranking updates automatically. |
-| **Genera** pill | Search the ~6,000-genus catalog and pin your targets; empty = everything nearby. |
-| **Layers** pill | All the map overlays (camping, land, fire, aerial) in one popover. |
-| **Refresh** (⟳ on the map) | Re-pulls the latest observations from iNaturalist for the current area. Runs in the background; a status line and progress bar show what's happening. |
-| **⋮ &rarr; Theme** | Switch between dark (the default) and light; the basemap follows - a quiet grey canvas in light, inverted OSM in dark. Remembered across visits. |
-| **⋮ &rarr; Units** | Kilometers or miles for every distance, elevation and rainfall figure. |
-| **⋮ &rarr; Text size** | Bumps font size across the whole panel for readability. |
+| **Search bar** | Type a place (`Coos Bay, OR`) or raw `lat,lng`. The **📍** button uses your device's location. Clicking the map also sets your location. |
+| **Sort** pill | *Best overall*, *Active now* or *Nearest*. |
+| **Radius** pill | Search radius presets (50, 150, 300, 500 km) from your location. |
+| **Months** pill | Any combination of months. The current month is the default. Hidden under *Active now*. |
+| **Genera** pill | Search the ~6,000-genus catalog and pin your targets. Empty means every fungus nearby. |
+| **Layers** pill | Every map overlay, above. |
+| **⟳** (on the map) | Re-pulls the latest iNaturalist observations for your area. Runs in the background with a progress bar. |
+| **⋮ > Units** | Miles (default) or kilometres for every distance, elevation and rainfall figure. |
+| **⋮ > Theme** | Dark (default) or light; the basemap follows. |
+| **⋮ > Text size** | Larger type across the whole panel. |
+
+Your location, selected genera and months are remembered, with no account: each browser gets an
+anonymous device id.
 
 ---
 
 ## Mobile
 
-On narrow screens the map goes full-screen and the panel becomes a draggable bottom
-sheet (collapsed / half / full) - drag the handle to expand it, Back collapses it
-instead of leaving the page. Desktop keeps the two-column layout with a slide-out dock.
+On narrow screens the map goes full-screen and the panel becomes a draggable bottom sheet
+(collapsed, half, full); drag the handle to expand it and Back collapses it instead of leaving the
+page. On desktop the results sit in a slide-out dock. You can add the site to your home screen to
+open it like an app.
+
+![The results sheet on a phone](docs/tutorials/img/mobile-02-sheet-open.png)
 
 ---
 
-## Plan a route - a start-to-destination trip
+## Plan a road trip
 
-Tap **+ Plan** on any card to add it to a route shortlist, then **"Plan a route"** on
-the bar at the bottom of the panel (`foray plan` and `GET /api/plan` do the same
-headless). It plans a trip from a **Start** (defaults to your current location) to a
-**Destination** - leave the destination blank and it auto-picks the best reachable
-region. Any regions you added with **+ Plan** are threaded in as required stops; the
-remaining slots fill with the top-scoring regions along the way, each with a nearby
-free camp (if required) and a nearby trail, ordered by progress. The route draws on
-the map and each stop lists its drive distance, camp, and trail; **Max stops**, **Max
-leg (km)**, and **Require free camp** tune it. Straight-line v1: legs follow the direct
-line between stops, not real roads - see [AGENTS.md](AGENTS.md) for why.
-See the [development guide](docs/development.md#cli-reference) for the CLI/API form.
+Tap **+ Plan** on any card to add it to a shortlist, then **Plan a route** on the bar at the bottom
+of the panel. You can set a **Start** (default: your location) and a **Destination** (blank
+auto-picks the best reachable region); shortlisted regions become required stops, and **Max stops**,
+**Max leg** and **Free camp** tune the rest. Each stop lists its drive distance, what is fruiting, a
+nearby camp and a trail, and warns about an active fire. In a region's **Details** you can pin a
+specific campground, trail or public-land parcel as that stop's exact point.
 
----
+![A planned route with its stops](docs/tutorials/img/plan-a-trip-03-route.png)
 
-## Target genera
-
-The app tracks the full Fungi genus catalog from iNaturalist (~6,000 genera) - search for
-any genus and add it to your device's target list, or leave the list empty to see everything
-nearby. Each species chip in the UI links directly to its iNaturalist page for photos, range
-maps, and community notes.
+Export it as **GPX** for any maps app, as JSON, or open it in **Google Maps**. Legs follow the
+straight line between stops, not real roads; see [AGENTS.md](AGENTS.md) for why. `foray plan` and
+`GET /api/plan` do the same headless.
 
 ---
 
@@ -167,35 +178,48 @@ maps, and community notes.
 ```bash
 uv tool install rust-just    # one-time: the `just` command runner
 just install && just db
-just ingest             # pull iNat observations for all coverage regions
-just start              # http://localhost:8000 (app + postgres)
-just scheduler          # optional: background ingest/refresh loop
+just ingest             # pull recent iNat observations nationwide (needs network)
+just start              # http://localhost:8000 (app + postgres + vector-tile server)
+just scheduler          # optional: the background job loop (jobs.yaml)
 ```
 
-Run `just check` before pushing (lint + type-check + tests). See the
-[development guide](docs/development.md) for full details and all `just` recipes.
+Run `just check` before pushing (lint, type-check and tests), and `just frontend` after touching
+`frontend/`. The [development guide](docs/development.md) has the details, and `just` with no
+arguments lists every recipe.
 
 ---
 
-## Docs
+## Documentation
 
-- [How to use Foray Planner](docs/tutorials/README.md) - illustrated walkthroughs: [getting started](docs/tutorials/README.md#1-getting-started), destination details, planning a road trip, mobile
-- [Development guide](docs/development.md) - setup, config, CLI, architecture, scoring formula, adding species, testing
-- [Data sources](docs/data-sources.md) - iNaturalist, RIDB, OSM/Overpass, ArcGIS BLM/USFS, Nominatim - licenses, rate limits, what's off-limits
-- [Deployment](docs/deployment.md) - Docker, Digital Ocean + Ansible + Cloudflare setup, scheduler, refresh patterns
+Start at the [documentation index](docs/README.md). Highlights:
+
+| If you want to... | Read |
+|---|---|
+| Use the app, with screenshots and animations | [How to use Foray Planner](docs/tutorials/README.md) |
+| Set up a dev environment, run tests, change the code | [Development guide](docs/development.md) |
+| Understand how the pieces fit | [Architecture](docs/architecture.md) |
+| Know exactly how a score is computed | [How destinations are ranked](docs/scoring.md) |
+| Call the HTTP API | [API reference](docs/api.md) |
+| Change the web client | [Frontend guide](docs/frontend.md) |
+| Run or add a scheduled job; read health checks and metrics | [Jobs and observability](docs/jobs.md) |
+| Find a command or an environment variable | [CLI](docs/cli.md), [Configuration](docs/configuration.md) |
+| See every external dataset, its licence and limits | [Data sources](docs/data-sources.md) |
+| Deploy to production | [Deployment](docs/deployment.md) |
 
 ---
 
 ## Attribution
 
-Observation data (c) [iNaturalist](https://www.inaturalist.org) contributors (CC-BY-NC).
-Observation photos carry their own per-photo license and attribution, shown under each
-thumbnail; only Creative Commons-licensed photos are displayed.
-Camping data (c) [OpenStreetMap](https://www.openstreetmap.org) contributors (ODbL) and
-[Recreation.gov](https://recreation.gov) RIDB API. Land boundaries via BLM and USFS
-ArcGIS services. Geocoding (c) OpenStreetMap / Nominatim. Elevation and rainfall via
-[Open-Meteo](https://open-meteo.com); wildfire perimeters and burn scars via NIFC/MTBS.
-Satellite imagery under a selected destination (c) [Esri](https://www.esri.com).
+Observation data (c) [iNaturalist](https://www.inaturalist.org) contributors (CC BY-NC); photos carry
+their own per-photo licence and attribution, shown under each thumbnail, and only Creative
+Commons-licensed photos are displayed. Map data (c) [OpenStreetMap](https://www.openstreetmap.org)
+contributors (ODbL) via [Protomaps](https://protomaps.com); trails and dispersed camping also from
+OpenStreetMap. Campgrounds from the [Recreation.gov](https://recreation.gov) RIDB API. Land
+boundaries, trails, forest roads and burn severity from the U.S. Forest Service, BLM and USGS;
+wildfire perimeters from NIFC. Geocoding (c) OpenStreetMap / Nominatim. Elevation from the
+Copernicus DEM and rainfall from ERA5, both via [Open-Meteo](https://open-meteo.com); terrain
+shading from Tilezen (USGS 3DEP and others). Satellite imagery (c) [Esri](https://www.esri.com).
+The complete, audited list with each provider's terms is in [Data sources](docs/data-sources.md#licences-and-attribution).
 
 ---
 

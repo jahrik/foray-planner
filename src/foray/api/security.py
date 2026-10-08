@@ -91,6 +91,7 @@ def is_https(request: Request) -> bool:
     # X-Forwarded-Proto to the client-facing scheme - trust that over the raw connection
     # scheme so this is accurate in prod. Falls back to the direct scheme for local dev
     # (no proxy in front), so behavior stays correct over plain http://localhost too.
+    """Whether the client-facing scheme is HTTPS, trusting ``X-Forwarded-Proto`` from the proxy in front."""
     return request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
 
 
@@ -99,6 +100,8 @@ def client_ip(request: Request) -> str:
     # CF-Connecting-IP is safe to trust - but only after confirming it's actually an IP,
     # since a misconfigured proxy or local dev could hand us arbitrary header junk that
     # would otherwise let the rate-limit dict grow unbounded and bypass per-IP limiting.
+    """The client's IP: ``CF-Connecting-IP`` when it parses as an address (the origin only accepts Cloudflare), else
+    the socket peer."""
     header = request.headers.get("cf-connecting-ip")
     if header:
         try:
@@ -122,6 +125,8 @@ def install_middleware(app: FastAPI, cfg: Settings | None = None) -> None:
 
     @app.middleware("http")
     async def limit_body_size(request: Request, call_next: Any) -> Response:
+        """Reject a request body over ``_MAX_BODY_BYTES`` with ``413``, checking ``Content-Length`` or counting
+        streamed bytes."""
         if request.method in ("POST", "PUT", "PATCH"):
             content_length = request.headers.get("content-length")
             if content_length is not None:
@@ -142,6 +147,7 @@ def install_middleware(app: FastAPI, cfg: Settings | None = None) -> None:
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Any) -> Response:
+        """Add the Content-Security-Policy and the other security headers to every response (HSTS only over HTTPS)."""
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = csp
         response.headers["X-Content-Type-Options"] = "nosniff"

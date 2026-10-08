@@ -1,3 +1,6 @@
+// The Refresh button and "set location" flows: start a background refresh (POST /api/refresh), follow its
+// progress over server-sent events, cancel it, and move home by place name or coordinates.
+
 import { deleteJson, openRefreshStream, postJson } from "./api/client";
 import type { LocationResponse } from "./api/types";
 import { cancelAutoLocate } from "./locate-ui";

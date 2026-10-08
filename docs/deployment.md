@@ -28,8 +28,10 @@ production.
 
 The container needs a reachable Postgres instance - connection info comes from the
 standard libpq env vars (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`), never a config
-file or a baked-in default. `foray.cache.SCHEMA` (tables) is applied automatically
-on startup, so there's no separate migration step.
+file or a baked-in default. The schema and its numbered migrations are applied
+automatically when the server starts, so a plain `docker run` needs no extra step. Production's CD
+additionally runs `foray migrate` once per deploy, before any container on the new image starts, so
+the API and the scheduled jobs never race a schema-changing migration.
 
 ```bash
 # Pull the latest image
@@ -60,17 +62,18 @@ described below (issue #338 PR 2).
 
 ## docker-compose stack (local dev)
 
-`just start` brings up two services:
+`just start` brings up three services:
 
 | Service | Role |
 |---|---|
-| `postgres` | Postgres 16, health-checked |
+| `postgres` | PostGIS on Postgres 17 plus the h3 extension (built from `infra/docker/postgres`), health-checked |
 | `app` | FastAPI server on port 8000 |
+| `martin` | Vector-tile server for the trails, land and fire layers (port 3000); the app proxies it same-origin |
 
 The **scheduler** is behind a docker-compose profile and only starts on demand:
 
 ```bash
-just scheduler          # starts the background ingest/refresh loop
+just scheduler          # starts the background job loop
 ```
 
 | Service | Role |
@@ -93,25 +96,12 @@ data and never triggers network calls. Data stays fresh via:
 
 The Ansible playbook generates one systemd service + timer per entry in `jobs.yaml`
 (`infra/ansible/tasks/deploy/systemd_jobs.yml`), each running a one-off container against the
-managed Postgres instance - same image, same DB, spins up, runs, exits:
+managed Postgres instance - same image, same DB, spins up, runs, exits.
 
-| Job | Command | Interval | Window |
-|---|---|---|---|
-| `foray-ingest` | `ingest --countries` | daily | night |
-| `foray-layers-land` | `refresh --with camps,land --all` | weekly | night |
-| `foray-ingest-bulk-osm-trails` | `ingest-bulk osm_trails` (diff load of the weekly Geofabrik snapshot) | daily | night |
-| `foray-dispersed-coverage` | `dispersed --all` | weekly | night |
-| `foray-genera` | `genera-refresh` | weekly | night |
-| `foray-revalidate` | `revalidate` | weekly | night |
-| `foray-resync` | `resync --batch-size 2000` | hourly | any |
-| `foray-elevation-backfill` | `backfill-elevation --limit 20000 --no-rebuild` (issue #36) | hourly | any |
-| `foray-elevation-backfill-dem` | `backfill-elevation-dem` (issue #334 PR 3) | daily | night |
-| `foray-precip-backfill` | `backfill-precip` (issue #226) | daily | any |
-| `foray-refresh-precip` | `refresh-precip` (issue #226) | daily | any |
-| `foray-fire` | `fire` (issue #227) | daily | any |
-| `foray-forage-backfill` | `backfill-forage --limit 20000` (issue #330) | every 6h | any |
-| `foray-ingest-bulk-inat` | `ingest-bulk inat` (issue #334 PR 2) | daily | night |
-| `foray-ingest-bulk-ridb` | `ingest-bulk ridb` (issue #334 PR 2) | daily | night |
+The complete list (eighteen jobs: observation ingest, the weekly layer refreshes, the daily bulk
+loads for iNaturalist, RIDB, Forest Service trails and roads, OSM trails and burn severity, the
+elevation, rain, fire and forage backfills, and the hourly cache re-check) lives in
+[jobs.md](jobs.md#the-jobs), mirroring `jobs.yaml`; this page only covers how they are deployed.
 
 `window: night` jobs (coverage-wide / heavy) only start inside a 02:00-05:00
 America/Los_Angeles window (`foray_night_window_*` in `infra/ansible/defaults/main.yml`);
@@ -159,8 +149,10 @@ self-contained and refreshes itself every 60s.
 
 **Option B - UI Refresh button**
 
-The "Refresh data" button in the UI triggers an in-process refresh for the current home radius.
-Runs in a background thread; progress streams via SSE.
+The **⟳** button on the map triggers an in-process refresh of the visitor's home radius (observations
+by default; `POST /api/refresh?target=` can also refresh camps, land, dispersed and trails). It runs
+in a background thread, one at a time, rate limited to once per five minutes per client IP, and
+progress streams over server-sent events. See [api.md](api.md#refreshing-data).
 
 **Option C - One-off CLI**
 
@@ -178,7 +170,7 @@ concurrently (Postgres MVCC handles read/write isolation).
 ## Changing location in production
 
 Use the UI's **Set location** bar. It posts to `/api/location`, which upserts the override into
-the `app_location` table (see `docs/development.md`) and immediately runs scoring against
+the `app_location` table (see [api.md](api.md#anonymous-device-identity)) and immediately runs scoring against
 existing cached data. No shell access or container restart needed. The override survives
 restarts.
 
@@ -189,15 +181,13 @@ on its next cycle.
 
 ## Environment variables
 
-| Variable | Required | Description |
-|---|---|---|
-| `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` | Yes | Postgres connection - read natively by `psycopg`/libpq, never a config file key. |
-| `RIDB_API_KEY` | No | Recreation.gov API key for campground ingest. Absent = camps step is a no-op. |
-| `FORAY_HOME__LAT` / `FORAY_HOME__LNG` / `FORAY_HOME__RADIUS_KM` | No | Default home location (overridden by `app_location` table if set via UI). |
-| `FORAY_COVERAGE` | No | JSON array of `{name, place_id}` for state-level ingest regions. Defaults to WA/OR/ID. |
-| `FORAY_INGEST_INTERVAL_HOURS` | No | Scheduler: hours between observation ingests (default: 24). |
-| `FORAY_LAYERS_INTERVAL_HOURS` | No | Scheduler: hours between layer refreshes (default: 168). |
-| `FORAY_MARTIN_URL` | No | Internal base URL of the martin trails vector-tile server (issue #336), e.g. `http://martin:3000`. Empty = the trails vector-tile source is disabled; the GeoJSON `/api/trails` API still works either way. Ansible sets this automatically for the prod martin container it deploys alongside the app - see below. |
+Every setting is documented in [configuration.md](configuration.md). What production sets, through
+`/opt/foray-planner/foray.env` rendered by Ansible from
+[`templates/foray.env.j2`](../infra/ansible/templates/foray.env.j2): the `PG*` connection to the
+managed cluster, `RIDB_API_KEY`, the default home (`FORAY_HOME__*`), `FORAY_BASEMAP_URL`,
+`FORAY_TERRAIN_URL`, `FORAY_MARTIN_URL` (the internal address of the martin container Ansible
+deploys beside the app) and, when a Spaces key is supplied, `FORAY_SPACES__*`. The API container and
+every scheduled-job container read the same file.
 
 Secrets go in the instance environment or a gitignored `.env` file locally.
 **Never commit them.**
@@ -364,8 +354,9 @@ These are GitHub UI / DigitalOcean steps that can't be made by a code change:
    ```bash
    ssh root@$FORAY_DROPLET_IP "cat >> /root/.ssh/authorized_keys" < foray_ci_deploy_key.pub
    ```
-2. In the repo's **Settings → Environments**, create an environment named `production` and add
-   at least one required reviewer. Optionally restrict deployment branches to `main`.
+2. In the repo's **Settings → Environments**, create an environment named `production`. Optionally
+   add required reviewers (which would make every deploy pause for approval; none are configured
+   today, see the "No approval gate" note above) and restrict deployment branches to `main`.
 3. Add these **environment-scoped** secrets on `production` (not repo-level secrets, so
    PR-triggered workflows from forks can't read them):
 
@@ -391,9 +382,9 @@ The Dockerfile uses a three-stage build:
 
 | Stage | Base | What it does |
 |---|---|---|
-| `frontend` | `node:22-slim` | `npm ci` + `npm run build` -> emits the Vite/TS bundle |
+| `frontend` | `node:26-slim` | `npm ci` + `npm run build` -> emits the Vite/TS bundle |
 | `builder` | `ghcr.io/astral-sh/uv:python3.13-bookworm-slim` | `uv sync --frozen --no-dev` -> self-contained `.venv` |
-| `runtime` | `python:3.13-slim-bookworm` | Copies app + venv + bundle; runs as non-root `foray` user |
+| `runtime` | `python:3.13-slim-bookworm` | Copies app + venv + bundle, adds `libexpat1` and `gdal-bin`; runs as non-root uid 1000 |
 
 No local volume - the database is Postgres, reached entirely via env vars.
 Port: `8000`.

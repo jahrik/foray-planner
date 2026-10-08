@@ -10,9 +10,9 @@ pattern (`copy_and_swap`) so a table is never read mid-load. Per-run key isolati
 atomic manifest write means a re-staged date, or two overlapping stage runs, can never produce a
 mixed/partial read - see `foray.spaces` for the mechanics.
 
-No source is registered yet - `STAGERS`/`LOADERS` are empty, and both CLI commands raise a
-clear error for any source name until #334 PR 2 / #335 add entries. The registry + generic
-helpers are what this PR actually ships.
+Registered sources (see ``STAGERS`` / ``LOADERS`` below): ``ridb``, ``inat``, ``usfs_trails``,
+``usfs_mvum``, ``ravg`` and ``osm_trails``. Adding a source is one stager and one loader here; the
+weekly staging workflow and the ``/healthz/data`` staleness check pick it up from the registry.
 """
 
 from __future__ import annotations
@@ -94,11 +94,13 @@ def _meta_key(source: str) -> str:
 
 
 def last_loaded_snapshot(con: psycopg.Connection, source: str) -> date | None:
+    """The snapshot date last loaded for ``source`` (from ``meta``), or ``None`` if it never has been."""
     row = con.execute("SELECT value FROM meta WHERE key = %s", [_meta_key(source)]).fetchone()
     return None if row is None else date.fromisoformat(row[0])
 
 
 def record_snapshot_loaded(con: psycopg.Connection, source: str, snapshot_date: date) -> None:
+    """Record ``snapshot_date`` as the newest snapshot loaded for ``source``."""
     con.execute(
         "INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
         [_meta_key(source), snapshot_date.isoformat()],

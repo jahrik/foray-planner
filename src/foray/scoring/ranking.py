@@ -354,6 +354,7 @@ def rank_destinations(
     generation = rank_cache.current_generation()
 
     def keep(clat: float, clng: float) -> tuple[bool, float]:
+        """Keep a candidate cell if it is within the radius of home; its distance is what the card shows."""
         dist = haversine_km(home_lat, home_lng, clat, clng)
         return dist <= radius_km, dist
 
@@ -418,6 +419,7 @@ def rank_destinations_corridor(
     total_km = haversine_km(start_lat, start_lng, dest_lat, dest_lng)
 
     def keep(clat: float, clng: float) -> tuple[bool, float]:
+        """Keep a candidate cell if it is within the corridor; its progress along the line replaces distance."""
         px, py = project_to_plane(start_lat, start_lng, clat, clng)
         t, offset_km = segment_progress_and_offset(px, py, dx, dy)
         # segment_progress_and_offset's degenerate-segment branch always returns t=0.0, which

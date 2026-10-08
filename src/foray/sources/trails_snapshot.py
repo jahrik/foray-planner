@@ -70,10 +70,12 @@ SNAPSHOT_SCHEMA = pa.schema(
 
 
 def geojson_to_wkb(geojson_text: str) -> bytes:
+    """GeoJSON text to WKB bytes, the compact geometry form stored in snapshots."""
     return shapely.to_wkb(shapely.from_geojson(geojson_text))
 
 
 def wkb_to_geojson(wkb_bytes: bytes) -> str:
+    """WKB bytes back to the GeoJSON text the ``trails`` table's insert trigger expects."""
     return shapely.to_geojson(shapely.from_wkb(bytes(wkb_bytes)), indent=None)
 
 

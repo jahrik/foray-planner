@@ -200,8 +200,12 @@ class Tutorial:
     started: bool = False
     steps: list[tuple[str, str]] = field(default_factory=list)
 
-    def caption(self, html: str, *, shot: str | None = None, hold: float = 2.2) -> None:
-        """Show a caption, optionally save it as a numbered guide screenshot, then hold."""
+    def caption(self, html: str, *, shot: str | None = None, hold: float = 2.2, bare: bool = False) -> None:
+        """Show a caption, optionally save it as a numbered guide screenshot, then hold.
+
+        `bare` hides the caption bar in the saved screenshot (the GIF still shows it), for steps
+        whose point is something the bar would cover, such as the map legend.
+        """
         if self.touch:
             self._wait_for_sheet()
         self.page.evaluate(OVERLAY_JS)
@@ -219,7 +223,8 @@ class Tutorial:
         if shot:
             name = f"{self.slug}-{len(self.steps) + 1:02d}-{shot}.png"
             # The cursor dot helps the GIF but would cover text in a still.
-            self.page.screenshot(path=self.img_dir / name, type="png", style="#tut-cursor { display: none; }")
+            hide = "#tut-cursor { display: none; }" + (" #tut-caption { visibility: hidden; }" if bare else "")
+            self.page.screenshot(path=self.img_dir / name, type="png", style=hide)
             self.steps.append((name, html))
         time.sleep(hold)
         self._collect_credits()  # a photo lookup can finish during the hold
@@ -779,6 +784,101 @@ def region_details(tut: Tutorial) -> None:
     tut.caption("<b>← Back</b> returns to the ranked list.", hold=2)
 
 
+def map_guide(tut: Tutorial) -> None:
+    """Read the map: the legend and marker ranks, the settings menu (units, theme, text size), and
+    the Layers pill's land, fire, aerial and satellite views."""
+    page = tut.page
+    tut.caption(
+        "The <b>legend</b> under the map names every marker you see.",
+        shot="legend",
+        bare=True,
+        hold=3,
+    )
+    tut.caption(
+        "<b>Numbered circles</b> are the top three destinations, <b>rings</b> the next seven, "
+        "small dots the rest. Green means seen in the last few weeks.",
+        shot="markers",
+        bare=True,
+        hold=3.4,
+    )
+    card = page.locator("#panel .rank").first
+    tut.click(card, pause=2.5)
+    tut.caption(
+        "Select a card: its circle snaps to its <b>true footprint</b> and every other circle drops to a ring.",
+        shot="selected",
+        bare=True,
+        hold=3,
+    )
+
+    tut.click(page.locator("#overflow-toggle"), pause=0.8)
+    tut.caption(
+        "The <b>⋮ menu</b> holds <b>Units</b>, <b>Theme</b> and <b>Text size</b>.",
+        shot="menu",
+        bare=True,
+        hold=2.8,
+    )
+    tut.click(page.locator("#theme-toggle"), pause=1.5)
+    tut.caption("<b>Theme</b>: a light map for daylight. Your choice is remembered.", shot="light", bare=True, hold=2.8)
+    tut.click(page.locator("#theme-toggle"), pause=1.2)
+    tut.click(page.locator("#text-size-toggle"), pause=1.0)
+    tut.caption("<b>Text size</b> makes the whole panel larger.", shot="large-text", bare=True, hold=2.8)
+    tut.click(page.locator("#text-size-toggle"), pause=0.8)
+    tut.click(page.locator("#units-toggle"), pause=0.8)
+    tut.caption("<b>Units</b> switch every distance, elevation and rainfall between miles and km.", hold=2.4)
+    tut.click(page.locator("#units-toggle"), pause=0.6)
+    page.keyboard.press("Escape")
+    time.sleep(0.5)
+
+    layers = page.locator("#pills .pill-wrap").nth(4).locator(".pill")
+    tut.click(layers)
+    tut.caption(
+        "The <b>Layers</b> pill groups every overlay: land, camping, fire and imagery.",
+        shot="layers",
+        bare=True,
+        hold=3,
+    )
+    for toggle in ("#show-land-usfs", "#show-land-blm", "#show-land-other", "#show-fire"):
+        tut.click(page.locator(f"label:has({toggle})"), pause=0.7)
+    page.keyboard.press("Escape")
+    time.sleep(3)
+    tut.caption(
+        "<b>Land ownership</b> is shaded by agency, and <b>wildfire</b> perimeters and burn scars are outlined.",
+        shot="land-fire",
+        bare=True,
+        hold=3.4,
+    )
+
+    tut.click(layers)
+    for toggle in ("#show-land-usfs", "#show-land-blm", "#show-land-other", "#show-fire", "#show-aerial"):
+        tut.click(page.locator(f"label:has({toggle})"), pause=0.7)
+    page.keyboard.press("Escape")
+    time.sleep(5)
+    # Zoom in on the selected circle so the imagery filling it is large enough to read.
+    overlay = page.locator("img.sat-circle-overlay").first.bounding_box()
+    if overlay:
+        page.mouse.move(overlay["x"] + overlay["width"] / 2, overlay["y"] + overlay["height"] / 2)
+        page.mouse.wheel(0, -120)
+        time.sleep(3)
+    tut.caption(
+        "<b>Aerial imagery</b> fills the selected destination with satellite photos and place labels.",
+        shot="aerial",
+        bare=True,
+        hold=3.4,
+    )
+
+    tut.click(layers)
+    tut.click(page.locator("label:has(#show-aerial)"), pause=0.7)
+    tut.click(page.locator("label:has(#show-satellite-basemap)"), pause=0.7)
+    page.keyboard.press("Escape")
+    time.sleep(5)
+    tut.caption(
+        "<b>Satellite basemap</b> swaps the whole map to imagery, with roads and trails drawn on top.",
+        shot="satellite",
+        bare=True,
+        hold=3.4,
+    )
+
+
 def plan_a_trip(tut: Tutorial) -> None:
     page = tut.page
     cards = page.locator("#panel .rank")
@@ -1196,6 +1296,7 @@ TUTORIALS: dict[str, tuple[Callable[[Tutorial], None], bool]] = {
     "track-down": (track_down, False),
     "region-details": (region_details, False),
     "plan-a-trip": (plan_a_trip, False),
+    "map-guide": (map_guide, False),
     "mobile": (mobile, True),
 }
 
