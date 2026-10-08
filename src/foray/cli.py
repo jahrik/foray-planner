@@ -383,6 +383,7 @@ def backfill_precip_cmd(ctx: click.Context, limit: int | None, rebuild: bool) ->
     try:
         updated = backfill_precip(con, h3_resolution=cfg.h3_resolution, max_cells=limit)
         click.echo(f"Enriched {updated} observations with antecedent rainfall.")
+        jobs.emit_rows(updated)
         if updated and rebuild and maybe_rebuild_phenology(con, cfg, updated):
             click.echo("Rebuilding phenology…")
     finally:
@@ -400,6 +401,7 @@ def backfill_forage_cmd(limit: int | None) -> None:
     try:
         updated = backfill_forage_obs(con, max_trails=limit)
         click.echo(f"Recomputed foraging density for {updated} trails.")
+        jobs.emit_rows(updated)
     finally:
         con.close()
 
@@ -550,6 +552,7 @@ def refresh_precip_cmd(ctx: click.Context) -> None:
     try:
         written = refresh_precipitation(con, cfg)
         click.echo(f"Refreshed recent rainfall for {written} regions.")
+        jobs.emit_rows(written)
     finally:
         con.close()
 

@@ -103,3 +103,24 @@ def test_acquire_writer_slot_waits_out_the_writer_cap(con: psycopg.Connection, m
     finally:
         con.execute("SELECT pg_advisory_unlock(hashtext(%s))", [jobs._writer_slot_key(0)])
         holder.close()
+
+
+@pytest.mark.parametrize(
+    ("command", "job"),
+    [
+        (["backfill-precip", "--limit", "1", "--no-rebuild"], "test-precip-rows"),
+        (["backfill-forage", "--limit", "1"], "test-forage-rows"),
+        (["refresh-precip"], "test-refresh-precip-rows"),
+    ],
+)
+def test_backfill_commands_report_their_row_count_so_drain_rate_can_be_computed(
+    con: psycopg.Connection, command: list[str], job: str
+) -> None:
+    """A job that never calls `emit_rows` leaves `job_runs.rows` NULL, and `/healthz/backlog`'s drain
+    rate (average of rows/duration over recent runs) is then `None` however much work it does."""
+    exit_code = jobs.run(job, command)
+
+    assert exit_code == 0
+    row = con.execute("SELECT rows FROM job_runs WHERE job = %s ORDER BY started_at DESC LIMIT 1", [job]).fetchone()
+    assert row is not None
+    assert row[0] == 0

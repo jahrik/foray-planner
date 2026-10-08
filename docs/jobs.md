@@ -145,13 +145,22 @@ monitor can poll them. Full response shapes are in [api.md](api.md#health-and-me
 | `GET /healthz/backlog` | How much elevation and rain backfill is outstanding, and how fast is it draining? Never fails. |
 | `GET /metrics` | Prometheus text exposition of the same data. |
 
-`/healthz/data` takes a layer's last success from `ingest_log` (observations, land, trails,
-dispersed, camps) or, for layers with no ingest marker, from the newest successful `job_runs` row
-(`fire`, `precip`). `fire` and `precip` report staleness but are **non-blocking**, and `camps` is
-omitted entirely when `RIDB_API_KEY` is unset, since an unconfigured optional source is not a
-freshness problem. When object storage is configured it adds a `bulk-stage:<source>` layer per
-registered bulk source, stale when the newest published snapshot is over 14 days old (twice the
+`/healthz/data` takes a layer's last success as the **newer of** its newest `ingest_log` entry and its
+job's newest successful `job_runs` row (observations: `ingest_log` only; land and camps:
+`layers-land`; dispersed: `dispersed-coverage`; trails: `ingest-bulk-osm-trails`; fire and precip:
+`fire` and `refresh-precip`). The job half matters because several ingests are *one-shot per query
+version*: once `land:coverage:v2` is logged, the weekly job runs, finds nothing to do and skips, so
+the log's timestamp never advances even though the pipeline is healthy. A job that keeps failing, or
+never runs, still reads as stale. `fire` and `precip` report staleness but are **non-blocking**, and
+`camps` is omitted entirely when `RIDB_API_KEY` is unset, since an unconfigured optional source is
+not a freshness problem. When object storage is configured it adds a `bulk-stage:<source>` layer
+per registered bulk source, stale when the newest published snapshot is over 14 days old (twice the
 weekly cadence) or none ever published.
+
+> **What "fresh" does and does not say.** For a one-shot layer it says the job is running, not that
+> the data was re-downloaded. Land ownership, for example, is re-pulled only when its source
+> version is bumped (`_LAND_SOURCES_VERSION` in `sources/land.py`); the weekly job otherwise just
+> confirms nothing changed.
 
 > **Keep two numbers in step.** The expected cadences `/healthz/data` compares against are
 > `Settings.intervals` (`FORAY_INTERVALS__INGEST_HOURS`, `LAYERS_HOURS`, `PRECIP_HOURS`,
@@ -169,7 +178,7 @@ restart):
 | `foray_job_runs_total{job,status}` | counter | `job_runs` rows by outcome |
 | `foray_job_http_429_total{job}` | counter | Rate-limit responses recorded for a job (currently always 0: no source wires its retries into the column yet) |
 | `foray_job_last_duration_seconds{job}` | gauge | Duration of the most recent successful run |
-| `foray_job_last_rows{job}` | gauge | Rows processed by the most recent successful run (only jobs that report it) |
+| `foray_job_last_rows{job}` | gauge | Rows processed by the most recent successful run (only jobs that report it: `ingest`, `revalidate`, `resync`, `genera-refresh` and the elevation, rain and forage jobs) |
 | `foray_backlog_depth{kind}` | gauge | Outstanding `backfill_queue` rows (`elevation`, `precip`) |
 | `foray_backlog_drain_rate_per_hour{kind}` | gauge | Rows per hour averaged over the last five successful runs |
 | `foray_layer_age_seconds{layer}` | gauge | Seconds since a layer's last success |
@@ -247,6 +256,7 @@ Removing a job is the reverse: delete the entry, and the next deploy stops and d
 | Symptom | Likely cause and fix |
 |---|---|
 | `/healthz/data` returns `503` | Read which layer is `stale`. Check `job_runs` for its job: repeated `error` rows mean the source failed (the logs say which); no rows at all means the timer is not running (`systemctl list-timers 'foray-*'`). |
+| `/healthz/backlog` shows `drain_rate_per_hour: null` | The job's runs recorded no row count, or none succeeded. Every backfill command calls `jobs.emit_rows`; a new one that does not will show `null` however much it does. |
 | A `night` job never starts in dev | It only fires 02:00 to 05:00 Pacific. Run it directly with `uv run foray job ...`. |
 | Jobs show `skipped` | The previous run of the same job is still going (expected for a long catch-up). If it is hung, find the process holding `pg_locks` for `hashtext('<job>')`. |
 | A job is stuck "waiting for a free writer slot" | Two other writer jobs are running (cap 2). It proceeds when one finishes; raise `FORAY_OBSERVABILITY__WRITER_CAP` only after watching database CPU and lock waits. |
