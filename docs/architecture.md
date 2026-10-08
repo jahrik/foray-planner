@@ -24,9 +24,9 @@ research-grade ones in Postgres, rolls them up into **how many records each genu
 month in each hexagonal cell of the map** (the *phenology* table), and ranks cells for the months
 and genera you pick. Around that sit layers answering the follow-up questions: which trails and
 forest roads lead there, where a campground or free dispersed site is, who manages the land, and
-whether a wildfire is near. A trip planner strings several cells into a drive. The app **never
-calls a third party while you use it** (with two small exceptions below); every dataset is
-ingested ahead of time by scheduled jobs.
+whether a wildfire is near. A trip planner strings several cells into a drive. Ranking and
+every map layer read **cached data**: each dataset is ingested ahead of time by scheduled jobs. A few
+small, server-side exceptions are listed below.
 
 ## System overview
 
@@ -62,14 +62,21 @@ flowchart LR
     bulk --> pg
     pg --> score --> api --> web
     pg --> martin --> api
-    web -. "basemap, terrain, photos" .-> ext["PMTiles CDN, AWS terrain,<br/>iNaturalist photos, Nominatim"]
+    web -. "basemap, terrain, photos" .-> ext["PMTiles CDN, AWS terrain,<br/>iNaturalist photo hosts"]
+    api -. "place search, popup photos,<br/>aerial imagery, satellite tiles" .-> live["Nominatim, iNaturalist, Esri"]
 ```
 
-Two deliberate exceptions to "no live third-party calls":
+Use of the app reads only cached data, with a few deliberate exceptions where the **server** calls a
+third party on a visitor's behalf (all throttled, and cached where the data allows):
 
-1. **Place search and place names** go through Nominatim (server-side, throttled, cached).
+1. **Place search and place names** go through Nominatim; names are cached forever per region.
 2. **The first time a map popup asks for a photo**, the server fetches one Creative Commons image
    from iNaturalist and caches the answer (including "none") in Postgres for 30 days.
+3. **Aerial imagery** for a destination is fetched from Esri's tile pyramid on a cache miss (the
+   scheduled backfill normally pre-fills it), and the **satellite basemap** proxies every tile
+   live from Esri, with a week of browser caching and no server-side store.
+4. **The Refresh button** (`POST /api/refresh`) runs a real ingest from iNaturalist and the layer
+   sources for the visitor's area, rate limited to one per five minutes per IP.
 
 The browser itself loads the vector basemap (a PMTiles archive on a CDN), terrain tiles and
 iNaturalist photos directly; the Content-Security-Policy in

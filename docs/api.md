@@ -250,7 +250,7 @@ All three take either `region_id`, or both `lat` and `lng` (otherwise `400`).
 
 Campsites near a point, free first and then nearest. Parameters: `radius_km` (default 40),
 `free_only` (default false), `limit`. Each row: `id`, `name`, `kind`, `source`
-(Recreation.gov or OpenStreetMap), `free` (`true` only on an explicit no-fee signal, otherwise
+(`ridb` for Recreation.gov, `osm` for OpenStreetMap), `free` (`true` only on an explicit no-fee signal, otherwise
 `null`; never guessed), `fee`, `fee_low` / `fee_high` (nightly range parsed from the fee text),
 `reservable`, `camp_type` (`tent`, `rv`, `mixed`, `backcountry`, `group`, `equestrian`, `cabin`,
 `pitch`), `pitch_count`, `distance_km` and `url` (the official page).

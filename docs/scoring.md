@@ -80,7 +80,7 @@ After the base ranking, two multiplicative adjusters run in this order. Each re-
 
 | Condition | Effect |
 |---|---|
-| An **active** fire perimeter or point within **25 km** of the region centre | score x **0.35** (you cannot forage in an active fire area) |
+| An **active** fire perimeter or point within **25 km** of the region centre | score x **0.35** (an active fire is a safety and access concern, so the region is demoted; the app does not say whether anything is closed) |
 | A **burn scar** within **30 km**, fire in the last 1 to 2 years, severity low, moderate or unknown, **and the device explicitly selected *Morchella*** | score x **1.6** (scar is year 1 or younger) or x **1.25** (year 2) |
 
 The morel boost is opt-in by design: with "All genera" selected it never applies, because burn
