@@ -144,7 +144,7 @@ def get_observation_thumbnails(
 
 def save_observation_thumbnail(con: psycopg.Connection, obs_id: int, thumbnail: dict[str, Any] | None) -> None:
     """Cache one observation's popup photo, or ``None`` for "iNaturalist has none we may display" so it is not asked
-    again."""
+    again until the cached answer ages out (the thumbnail routes re-check after 30 days)."""
     con.execute(
         """
         INSERT INTO observation_thumbnails (id, url, attribution, license_code, fetched_at)

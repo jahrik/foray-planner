@@ -227,7 +227,7 @@ reliably opens the OS chooser.
 `src/api/schema.ts` is **generated** from the backend's OpenAPI schema by `openapi-typescript`.
 `api/client.ts` wraps `openapi-fetch`: `getJson`, `postJson` and `deleteJson` throw an `ApiError`
 (with the server's `detail`) on a non-2xx response, and `openRefreshStream` is the typed
-server-sent-event reader. **Every call goes through it; there is no raw `fetch` anywhere.** Place
+server-sent-event reader. **Every call in the production app goes through it; there is no raw `fetch` there.** (The one exception is the dev-only icon gallery, `icons/gallery.ts`, which reads iNaturalist reference photos directly and is not part of the build.) Place
 search is `GET /api/location/search`, proxied by the server.
 
 `api/types.ts` re-exports schema types under domain names, so renaming a backend field is a
