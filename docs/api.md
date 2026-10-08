@@ -364,7 +364,7 @@ public request for `/metrics` (only the on-host metrics collector may scrape it)
 | Route | Purpose |
 |---|---|
 | `GET /healthz` | Liveness only. No database round trip, so a Postgres blip does not get the container killed. Returns `{"status": "ok"}`. |
-| `GET /healthz/data` | Freshness. One entry per data layer (`observations`, `land`, `trails`, `dispersed`, `camps` when `RIDB_API_KEY` is set, `fire`, `precip`, and a `bulk-stage:<source>` entry per staged bulk source when object storage is configured) with `last_success`, `interval_hours`, `stale` and `blocking`. `503` when any **blocking** layer is older than its interval times `FORAY_OBSERVABILITY__DATA_FRESHNESS_MULTIPLIER` (default 2). |
+| `GET /healthz/data` | Freshness. One entry per data layer (`observations`, `land`, `trails`, `dispersed`, `camps` when `RIDB_API_KEY` is set, `fire`, `precip`, and a `bulk-stage:<source>` entry per staged bulk source when object storage is configured) with `last_success`, `interval_hours`, `stale` and `blocking`. A layer's `last_success` is the newer of its newest ingest-log entry and its job's newest successful run. `503` when any **blocking** layer is older than its interval times `FORAY_OBSERVABILITY__DATA_FRESHNESS_MULTIPLIER` (default 2). |
 | `GET /healthz/backlog` | Queue depth and drain rate for the elevation and precipitation backfills. Informational; never `503`. |
 | `GET /metrics` | Prometheus text exposition: job run counts, durations, rows and rate-limit hits by job; backfill depth and drain rate; layer age and staleness. Queried from Postgres on every scrape. |
 

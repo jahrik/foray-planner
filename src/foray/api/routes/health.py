@@ -69,27 +69,42 @@ def healthz() -> StatusResponse:
     return StatusResponse(status="ok")
 
 
-# (layer name, ingest_log key prefix or None, job name for job_runs-backed layers, interval,
-# blocking). `intervals` on Settings carries the hour numbers; layers sharing a cadence
-# (land/trails/camps/dispersed all ride the weekly `refresh --with ... --all`) share
-# `layers_hours`. `blocking=False` layers still report their staleness but don't force a 503 -
-# fire/precip aren't scheduled in prod cron yet (#332 PR 2 adds them; flip to blocking once
-# they are). `camps` is dropped entirely, not just non-blocking, when RIDB_API_KEY is unset -
-# it's a documented-optional source (see sources/camps.py), so "never configured" isn't a
-# freshness problem to report at all.
+# (layer name, ingest_log key prefix or None, job name or None, interval, blocking). `intervals`
+# on Settings carries the hour numbers; layers sharing a cadence (land/trails/camps/dispersed all
+# ride the weekly layer jobs) share `layers_hours`. `blocking=False` layers still report their
+# staleness but don't force a 503 - fire/precip report it without paging. `camps` is dropped
+# entirely, not just non-blocking, when RIDB_API_KEY is unset - it's a documented-optional source
+# (see sources/camps.py), so "never configured" isn't a freshness problem to report at all.
+#
+# A layer's freshness is the newer of its newest `ingest_log` entry and its job's newest
+# successful `job_runs` row. The job matters for the layers whose ingest is one-shot per query
+# version (land, dispersed, the live camps crawl): once their versioned key is in `ingest_log`
+# the weekly job runs, finds nothing to do and skips, so the log's timestamp never advances even
+# though the pipeline is healthy. A job success is the proof that it ran; a failing or missing job
+# still shows up as stale.
 def _layer_specs(cfg: Settings) -> list[tuple[str, str | None, str | None, float, bool]]:
     intervals = cfg.intervals
     specs = [
         ("observations", "obs:fungi:", None, intervals.ingest_hours, True),
-        ("land", "land:", None, intervals.layers_hours, True),
-        ("trails", "trails:", None, intervals.layers_hours, True),
-        ("dispersed", "dispersed:", None, intervals.layers_hours, True),
+        ("land", "land:", "layers-land", intervals.layers_hours, True),
+        ("trails", "trails:", "ingest-bulk-osm-trails", intervals.layers_hours, True),
+        ("dispersed", "dispersed:", "dispersed-coverage", intervals.layers_hours, True),
         ("fire", None, "fire", intervals.fire_hours, False),
         ("precip", None, "refresh-precip", intervals.precip_hours, False),
     ]
     if os.getenv("RIDB_API_KEY"):
-        specs.insert(3, ("camps", "camps:", None, intervals.layers_hours, True))
+        specs.insert(3, ("camps", "camps:", "layers-land", intervals.layers_hours, True))
     return specs
+
+
+def _aware(moment: dt.datetime | None) -> dt.datetime | None:
+    """``moment`` as UTC-aware. The pool opens connections in autocommit with no explicit
+    session timezone, so a TIMESTAMPTZ column can come back naive (server-local) rather than
+    UTC-aware - normalize before comparing against ``now`` (always UTC-aware), or the
+    subtraction raises instead of just being wrong."""
+    if moment is not None and moment.tzinfo is None:
+        return moment.replace(tzinfo=dt.UTC)
+    return moment
 
 
 def compute_layer_freshness(cfg: Settings, conn: psycopg.Connection, now: dt.datetime) -> list[LayerFreshnessResponse]:
@@ -99,17 +114,13 @@ def compute_layer_freshness(cfg: Settings, conn: psycopg.Connection, now: dt.dat
     multiplier = cfg.observability.data_freshness_multiplier
     layers: list[LayerFreshnessResponse] = []
     for name, prefix, job, interval_hours, blocking in _layer_specs(cfg):
-        last_success = latest_ingest_at(conn, prefix) if prefix else None
-        if last_success is None and job:
+        last_success = _aware(latest_ingest_at(conn, prefix)) if prefix else None
+        if job:
             run = latest_successful_job_run(conn, job)
             if run is not None:
-                last_success = run["ended_at"] or run["started_at"]
-        # The pool opens connections in autocommit with no explicit session timezone, so a
-        # TIMESTAMPTZ column can come back naive (server-local) rather than UTC-aware -
-        # normalize before comparing against `now` (always UTC-aware) or the subtraction
-        # raises instead of just being wrong.
-        if last_success is not None and last_success.tzinfo is None:
-            last_success = last_success.replace(tzinfo=dt.UTC)
+                ran_at = _aware(run["ended_at"] or run["started_at"])
+                if last_success is None or (ran_at is not None and ran_at > last_success):
+                    last_success = ran_at
         stale = last_success is None or (now - last_success) > dt.timedelta(hours=interval_hours * multiplier)
         layers.append(
             LayerFreshnessResponse(

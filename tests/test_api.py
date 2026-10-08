@@ -1496,6 +1496,59 @@ def test_healthz_data_ok_when_every_layer_is_fresh(
     assert all(not layer["stale"] for layer in body["layers"])
 
 
+def _age_ingest_log(con: psycopg.Connection, key: str, days: int) -> None:
+    con.execute(
+        "INSERT INTO ingest_log (key, fetched_at, row_count) VALUES (%s, now() - make_interval(days => %s), 1)",
+        [key, days],
+    )
+
+
+def test_healthz_data_one_shot_layer_is_fresh_when_its_weekly_job_ran(
+    client: TestClient, con: psycopg.Connection
+) -> None:
+    """Land and dispersed ingests are one-shot per query version: the weekly job runs, finds its
+    versioned key already in ingest_log and skips, so the log's timestamp never advances. A recent
+    successful run of the job must count as the layer being current."""
+    _age_ingest_log(con, "land:coverage:v2", 60)
+    _age_ingest_log(con, "dispersed:place:1:v2", 60)
+    for job in ("layers-land", "dispersed-coverage"):
+        con.execute("INSERT INTO job_runs (job, started_at, ended_at, status) VALUES (%s, now(), now(), 'ok')", [job])
+
+    layers = {layer["layer"]: layer for layer in client.get("/healthz/data").json()["layers"]}
+
+    assert layers["land"]["stale"] is False
+    assert layers["dispersed"]["stale"] is False
+
+
+def test_healthz_data_one_shot_layer_stays_stale_when_its_job_only_failed(
+    client: TestClient, con: psycopg.Connection
+) -> None:
+    _age_ingest_log(con, "land:coverage:v2", 60)
+    con.execute(
+        "INSERT INTO job_runs (job, started_at, ended_at, status) VALUES ('layers-land', now(), now(), 'error')"
+    )
+
+    layers = {layer["layer"]: layer for layer in client.get("/healthz/data").json()["layers"]}
+
+    assert layers["land"]["stale"] is True
+
+
+def test_healthz_data_reports_the_newer_of_the_ingest_log_and_the_job_run(
+    client: TestClient, con: psycopg.Connection
+) -> None:
+    _age_ingest_log(con, "land:coverage:v2", 1)
+    con.execute(
+        "INSERT INTO job_runs (job, started_at, ended_at, status) "
+        "VALUES ('layers-land', now() - interval '10 days', now() - interval '10 days', 'ok')"
+    )
+
+    layers = {layer["layer"]: layer for layer in client.get("/healthz/data").json()["layers"]}
+
+    assert layers["land"]["stale"] is False
+    last_success = dt.datetime.fromisoformat(layers["land"]["last_success"])
+    assert dt.datetime.now(dt.UTC) - last_success < dt.timedelta(days=2)
+
+
 def test_healthz_data_omits_bulk_stage_layers_when_spaces_unconfigured(client: TestClient) -> None:
     # Spaces isn't configured in the `cfg` fixture (issue #357) - an unconfigured optional
     # dependency, matching the `camps`/`RIDB_API_KEY` pattern, not a freshness problem to report.
