@@ -180,6 +180,7 @@ def _stitched_crop(
     canvas = Image.new("RGBA", (len(tile_xs) * TILE_PX, len(tile_ys) * TILE_PX))
 
     def fetch_one(coords: tuple[int, int]) -> tuple[int, int, Image.Image]:
+        """Fetch one tile, returning its grid coordinates with the image so results can be placed on the canvas."""
         tile_x, tile_y = coords
         return tile_x, tile_y, _fetch_tile(url_template, zoom, tile_x, tile_y, client)
 
@@ -278,6 +279,7 @@ def backfill_region_satellite(
     failed = 0
 
     def fetch_one(row: tuple[str, float, float]) -> tuple[str, bytes, bytes] | None:
+        """Fetch and stitch one region's rasters; ``None`` (logged) if the fetch fails so the batch continues."""
         region_id, lat, lng = row
         try:
             image, labels = fetch_region_satellite(lat, lng, radius_m)

@@ -51,6 +51,8 @@ _PLACE_PRIORITY = (
 
 @dataclass(frozen=True)
 class Location:
+    """A resolved place: display name and coordinates."""
+
     name: str
     lat: float
     lng: float

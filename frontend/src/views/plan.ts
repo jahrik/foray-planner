@@ -1,3 +1,6 @@
+// The Plan view: the route form, the /api/plan request, the stop cards and route line, and the GPX, JSON and
+// Google Maps exports.
+
 import L from "leaflet";
 
 import { getJson } from "../api/client";

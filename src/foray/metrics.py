@@ -63,6 +63,7 @@ class ForayCollector(Collector):
         self._pool = pool
 
     def collect(self):
+        """Yield the job, backlog and layer-freshness metric families, each queried fresh from Postgres."""
         with self._pool.connection() as conn:
             yield from self._job_metrics(conn)
             yield from self._backlog_metrics(conn)

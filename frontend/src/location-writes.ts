@@ -1,3 +1,5 @@
+// The single ordered queue for saving the home location, so a slow write can never overwrite a later one.
+
 import { postJson } from "./api/client";
 import type { components } from "./api/schema";
 import type { LocationResponse } from "./api/types";

@@ -1,3 +1,6 @@
+// Loaders for the Details view's five tabs (Calendar, Photos, Trails, Campgrounds, Public land): each fetches
+// its endpoint once and renders rows, with the map side effects (trailheads, camps, selected trail) they need.
+
 import { genusIconHtml } from "../icons/genus-icons";
 import L from "leaflet";
 

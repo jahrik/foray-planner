@@ -110,6 +110,8 @@ def plan(
             raise HTTPException(422, f"pin kind {kind!r} must be 'camp', 'trail' or 'land'")
 
     def resolve_point(query: str) -> tuple[float, float]:
+        """Resolve a place name or ``lat,lng`` to coordinates, mapping lookup failures to ``404`` and geocoder outages
+        to ``502``."""
         try:
             location = geocode.resolve(query)
         except (LookupError, ValueError) as error:

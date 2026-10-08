@@ -20,6 +20,7 @@ def get_config(
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
 ) -> ConfigResponse:
+    """Per-visitor home plus the server's map, tile and refresh-state settings (see ``ConfigResponse``)."""
     cfg = state.cfg
     device_id, is_new = resolve_device_id(request)
     if is_new:

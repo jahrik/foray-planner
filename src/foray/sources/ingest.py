@@ -407,6 +407,7 @@ def refresh_precipitation(db: psycopg.Connection, cfg: Settings, *, client: http
     written = 0
 
     def flush() -> None:
+        """Write the buffered precipitation rows and reset the buffer."""
         nonlocal written, write_batch
         written += upsert_region_precip(db, write_batch)
         write_batch = []
@@ -718,8 +719,8 @@ def resync(
     abort_event: threading.Event | None = None,
 ) -> dict[str, int]:
     """Re-check one batch of the *whole* observations table against iNat, oldest/never-checked
-    first (``cache.stale_observation_ids``). Meant to run frequently with a small batch (see
-    ``scripts/scheduler.sh``'s ``FORAY_RESYNC_*`` settings) so it grinds through every cached row
+    first (``cache.stale_observation_ids``). Meant to run frequently with a small batch (the hourly
+    ``resync`` job in ``jobs.yaml``) so it grinds through every cached row
     over time without front-loading a multi-hour iNat pull onto one run.
 
     ``revalidate`` only targets genus taxon_ids whose cached-vs-live ratio trips (a genus that's

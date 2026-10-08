@@ -1,3 +1,6 @@
+// The Destinations view: fetch and sort the ranked list (or the Active-now list), render the hero cards and the
+// collapsible remainder, wire card selection to the map, and the Months pill.
+
 import type { LeafletMouseEvent } from "leaflet";
 
 import { getJson } from "../api/client";

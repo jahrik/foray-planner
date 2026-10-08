@@ -1,3 +1,6 @@
+// UI glue for device geolocation: the search bar's pin button, detecting that the user has started
+// interacting, and applying or merely offering a fix. The location logic itself is geolocate.ts.
+
 import { type Fix, haversineKm, Locator, saveFix, type Session, TRUSTED_ACCURACY_M } from "./geolocate";
 import { loadFire, loadLand } from "./map/layers";
 import { updateHome } from "./map/map";

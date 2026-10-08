@@ -14,6 +14,9 @@ from typing import Any
 
 @dataclass
 class SpeciesHit:
+    """One genus's contribution to a ranked region: records in the chosen months, records overall and the share
+    (``w_pheno``) that falls in season."""
+
     taxon_id: int
     name: str
     common_name: str | None
@@ -25,6 +28,9 @@ class SpeciesHit:
 
 @dataclass
 class RegionScore:
+    """A ranked region (a destination): score, contributing genera and card context. Mirrored by
+    ``api_models.RegionScore``."""
+
     region_id: str
     center_lat: float
     center_lng: float
@@ -63,6 +69,8 @@ CAMP_TYPES = frozenset({"tent", "rv", "mixed", "backcountry", "group", "equestri
 
 @dataclass
 class CampSite:
+    """A campground or reported campsite near a point. Mirrored by ``api_models.CampSite``."""
+
     id: str
     name: str
     kind: str
@@ -106,6 +114,8 @@ class FireNear:
 
 @dataclass
 class Trail:
+    """A trailhead, path, forest road or hiking route near a point. Mirrored by ``api_models.Trail``."""
+
     id: str
     name: str
     kind: str
@@ -217,6 +227,8 @@ class Stop:
 
 @dataclass
 class TripPlan:
+    """A planned trip: ordered stops and totals. Mirrored by ``api_models.TripPlan``."""
+
     start_lat: float
     start_lng: float
     destination_lat: float

@@ -2,7 +2,8 @@
 
 ## Purpose
 
-Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet + cron-based data refresh.
+Deploy foray-planner to Digital Ocean: managed Postgres cluster + Docker Droplet + systemd-timer data refresh (one timer per entry in the
+repo-root `jobs.yaml`).
 
 ## Key Variables
 

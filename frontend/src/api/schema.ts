@@ -11,7 +11,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Config */
+        /**
+         * Get Config
+         * @description Per-visitor home plus the server's map, tile and refresh-state settings (see ``ConfigResponse``).
+         */
         get: operations["get_config_api_config_get"];
         put?: never;
         post?: never;
@@ -70,9 +73,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Add Selected Genus */
+        /**
+         * Add Selected Genus
+         * @description Add a genus to this device's target list (idempotent).
+         */
         post: operations["add_selected_genus_api_genera__taxon_id__post"];
-        /** Remove Selected Genus */
+        /**
+         * Remove Selected Genus
+         * @description Remove a genus from this device's target list (idempotent).
+         */
         delete: operations["remove_selected_genus_api_genera__taxon_id__delete"];
         options?: never;
         head?: never;
@@ -199,7 +208,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Destinations */
+        /**
+         * Destinations
+         * @description Ranked destinations around the visitor's home for the chosen months and genera (see
+         *     ``scoring.rank_destinations``).
+         */
         get: operations["destinations_api_destinations_get"];
         put?: never;
         post?: never;
@@ -216,7 +229,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Calendar */
+        /**
+         * Calendar
+         * @description The 12-month calendar for one region: total and per-genus record counts by month.
+         */
         get: operations["calendar_api_calendar_get"];
         put?: never;
         post?: never;
@@ -233,7 +249,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Observation Photos */
+        /**
+         * Observation Photos
+         * @description A page of a region's recent research-grade observations with their displayable Creative Commons photos, newest
+         *     first.
+         */
         get: operations["observation_photos_api_observations_photos_get"];
         put?: never;
         post?: never;
@@ -250,7 +270,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Alerts */
+        /**
+         * Get Alerts
+         * @description The "Active now" list: regions with observations of the selected genera in the trailing ``weeks``.
+         */
         get: operations["get_alerts_api_alerts_get"];
         put?: never;
         post?: never;
@@ -638,7 +661,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Set Location */
+        /**
+         * Set Location
+         * @description Save this device's home and radius from a place name or coordinates. Never triggers an ingest.
+         */
         post: operations["set_location_api_location_post"];
         /**
          * Delete Location
@@ -683,9 +709,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Refresh */
+        /**
+         * Refresh
+         * @description Start a background refresh of ``target`` around the visitor's home (one at a time, rate limited by IP).
+         */
         post: operations["refresh_api_refresh_post"];
-        /** Cancel Refresh */
+        /**
+         * Cancel Refresh
+         * @description Ask the running refresh to stop at its next checkpoint and close its HTTP client.
+         */
         delete: operations["cancel_refresh_api_refresh_delete"];
         options?: never;
         head?: never;
@@ -699,7 +731,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Refresh Stream */
+        /**
+         * Refresh Stream
+         * @description Stream refresh progress as server-sent events until the refresh reports ``done`` or an ``error``.
+         */
         get: operations["refresh_stream_api_refresh_stream_get"];
         put?: never;
         post?: never;
@@ -716,7 +751,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Index */
+        /**
+         * Index
+         * @description Serve the built single-page client (``index.html``), or a short hint if the bundle has not been built.
+         */
         get: operations["index__get"];
         put?: never;
         post?: never;
@@ -730,7 +768,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AlertHit */
+        /**
+         * AlertHit
+         * @description One genus's recent sightings within an "Active now" region: count, latest date and the newest observation's
+         *     link.
+         */
         AlertHit: {
             /** Taxon Id */
             taxon_id: number;
@@ -755,7 +797,10 @@ export interface components {
             /** Obscured */
             obscured: boolean;
         };
-        /** AlertRegion */
+        /**
+         * AlertRegion
+         * @description A region with recent sightings (``GET /api/alerts``), with its recent rain and nearby fire.
+         */
         AlertRegion: {
             /** Region Id */
             region_id: string;
@@ -796,7 +841,10 @@ export interface components {
             /** Job */
             job: string;
         };
-        /** CalendarBucket */
+        /**
+         * CalendarBucket
+         * @description One month of a region's calendar: the total record count and the count per genus label.
+         */
         CalendarBucket: {
             /** Total */
             total: number;
@@ -812,7 +860,11 @@ export interface components {
                 [key: string]: "gilled" | "bolete" | "bracket" | "crust" | "coral" | "puffball" | "earthstar" | "cup" | "morel" | "tooth" | "vase" | "jelly" | "stinkhorn" | "leafy-lichen" | "shrubby-lichen" | "rust" | "generic" | "trametes" | "amanita" | "laetiporus" | "pleurotus" | "fomitopsis" | "cerioporus" | "ganoderma" | "lactarius" | "stereum" | "schizophyllum" | "mycena" | "suillus" | "cladonia" | "omphalotus" | "coprinus" | "flavoparmelia" | "cantharellus" | "hericium" | "desarmillaria" | "lobaria" | "hypomyces" | "chlorophyllum" | "russula" | "cortinarius" | "artomyces" | "apioperdon" | "entoloma" | "agaricus" | "leucocoprinus" | "morchella";
             };
         };
-        /** CampSite */
+        /**
+         * CampSite
+         * @description A campground or reported campsite near a point. ``free`` is true only on an explicit no-fee signal, never
+         *     guessed.
+         */
         CampSite: {
             /** Id */
             id: string;
@@ -848,7 +900,10 @@ export interface components {
              */
             pitch_count: number;
         };
-        /** ConfigResponse */
+        /**
+         * ConfigResponse
+         * @description ``GET /api/config``: the visitor's home plus server-side map and tile settings.
+         */
         ConfigResponse: {
             home: components["schemas"]["Home"];
             /** Region Radius Km */
@@ -895,7 +950,10 @@ export interface components {
              */
             fire_tiles_url: string;
         };
-        /** CoverageRegionResponse */
+        /**
+         * CoverageRegionResponse
+         * @description One configured coverage region with its latest observation ingest (``GET /api/coverage``).
+         */
         CoverageRegionResponse: {
             /** Name */
             name: string;
@@ -906,7 +964,10 @@ export interface components {
             /** Observations Ingested */
             observations_ingested: number;
         };
-        /** DataHealthResponse */
+        /**
+         * DataHealthResponse
+         * @description ``/healthz/data``: overall health plus each layer's freshness.
+         */
         DataHealthResponse: {
             /** Ok */
             ok: boolean;
@@ -971,7 +1032,10 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
-        /** Home */
+        /**
+         * Home
+         * @description A home location: display name, coordinates and search radius.
+         */
         Home: {
             /**
              * Name
@@ -1026,7 +1090,11 @@ export interface components {
             /** Blocking */
             blocking: boolean;
         };
-        /** LocationBody */
+        /**
+         * LocationBody
+         * @description Request body for ``POST /api/location``: either ``query`` (a place name) or both ``lat`` and ``lng``, plus an
+         *     optional display ``name`` and ``radius_km``.
+         */
         LocationBody: {
             /** Query */
             query?: string | null;
@@ -1039,11 +1107,17 @@ export interface components {
             /** Radius Km */
             radius_km?: number | null;
         };
-        /** LocationResponse */
+        /**
+         * LocationResponse
+         * @description A visitor's saved home, returned by ``POST /api/location``.
+         */
         LocationResponse: {
             home: components["schemas"]["Home"];
         };
-        /** ObservationPhoto */
+        /**
+         * ObservationPhoto
+         * @description A displayable Creative Commons photo with its licence code and the photographer's attribution.
+         */
         ObservationPhoto: {
             /** Url */
             url: string;
@@ -1096,7 +1170,10 @@ export interface components {
             /** Lng */
             lng: number;
         };
-        /** PreciseObservation */
+        /**
+         * PreciseObservation
+         * @description A verified-location (not obscured) observation drawn as a map pin.
+         */
         PreciseObservation: {
             /** Id */
             id: number;
@@ -1125,7 +1202,10 @@ export interface components {
             /** Taxon Common Name */
             taxon_common_name?: string | null;
         };
-        /** RecentObservation */
+        /**
+         * RecentObservation
+         * @description A recent observation in a region's Photos tab, with its displayable photos.
+         */
         RecentObservation: {
             /** Id */
             id: number;
@@ -1152,7 +1232,10 @@ export interface components {
             /** Photos */
             photos: components["schemas"]["ObservationPhoto"][];
         };
-        /** RecentObservationsPage */
+        /**
+         * RecentObservationsPage
+         * @description One page of ``RecentObservation`` rows plus whether a further page exists.
+         */
         RecentObservationsPage: {
             /** Observations */
             observations: components["schemas"]["RecentObservation"][];
@@ -1168,7 +1251,11 @@ export interface components {
             /** Place Name */
             place_name: string | null;
         };
-        /** RegionScore */
+        /**
+         * RegionScore
+         * @description One ranked destination: its H3 region, score, contributing genera and the context shown on its card (rain,
+         *     elevation, fire, access).
+         */
         RegionScore: {
             /** Region Id */
             region_id: string;
@@ -1241,12 +1328,18 @@ export interface components {
              */
             icon: "gilled" | "bolete" | "bracket" | "crust" | "coral" | "puffball" | "earthstar" | "cup" | "morel" | "tooth" | "vase" | "jelly" | "stinkhorn" | "leafy-lichen" | "shrubby-lichen" | "rust" | "generic" | "trametes" | "amanita" | "laetiporus" | "pleurotus" | "fomitopsis" | "cerioporus" | "ganoderma" | "lactarius" | "stereum" | "schizophyllum" | "mycena" | "suillus" | "cladonia" | "omphalotus" | "coprinus" | "flavoparmelia" | "cantharellus" | "hericium" | "desarmillaria" | "lobaria" | "hypomyces" | "chlorophyllum" | "russula" | "cortinarius" | "artomyces" | "apioperdon" | "entoloma" | "agaricus" | "leucocoprinus" | "morchella";
         };
-        /** StatusResponse */
+        /**
+         * StatusResponse
+         * @description A one-word outcome (``ok``, ``started``, ``added``, ``deleted``, ...) for routes with nothing else to return.
+         */
         StatusResponse: {
             /** Status */
             status: string;
         };
-        /** Stop */
+        /**
+         * Stop
+         * @description One planned stop: its region, distances along the route, the nearby camp and trail, fire warnings and any pin.
+         */
         Stop: {
             /** Order */
             order: number;
@@ -1283,7 +1376,10 @@ export interface components {
             fire_nearby: components["schemas"]["FireNear"][];
             pin?: components["schemas"]["StopPin"] | null;
         };
-        /** StopPin */
+        /**
+         * StopPin
+         * @description A campground, trail or public-land parcel the user pinned as a trip stop's exact point.
+         */
         StopPin: {
             /** Kind */
             kind: string;
@@ -1298,7 +1394,11 @@ export interface components {
             /** Lng */
             lng: number;
         };
-        /** Trail */
+        /**
+         * Trail
+         * @description A trailhead, path, forest road or hiking route near a point, with its distance, length, land owner and foraging
+         *     hint.
+         */
         Trail: {
             /** Id */
             id: string;
@@ -1340,13 +1440,20 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
-        /** TrailPath */
+        /**
+         * TrailPath
+         * @description The full geometry of one trail (``GET /api/trails/network``) and whether it is authoritative (real OSM topology)
+         *     or the nearest cached fallback.
+         */
         TrailPath: {
             trail: components["schemas"]["Trail"];
             /** Authoritative */
             authoritative: boolean;
         };
-        /** TripPlan */
+        /**
+         * TripPlan
+         * @description A planned trip (``GET /api/plan``): start, destination, ordered stops and totals. Distances are straight-line.
+         */
         TripPlan: {
             /** Start Lat */
             start_lat: number;

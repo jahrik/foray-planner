@@ -1,3 +1,7 @@
+// The one flat `state` object (map handles, scoping inputs, UI state), the unit-aware formatters (distance,
+// elevation, rain, GPS accuracy), the card annotation helpers (rain, fire) and small shared utilities
+// (`qs`, `setStatus`, `monthsParam`, `inatUrl`). Almost every module imports from here.
+
 import type L from "leaflet";
 
 import type { ApiError, Home, TripPlan } from "./api/types";

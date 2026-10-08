@@ -62,6 +62,7 @@ def resolve_device_id(request: Request) -> tuple[str, bool]:
 
 
 def set_device_cookie(request: Request, response: Response, device_id: str) -> None:
+    """Set the anonymous ``device_id`` cookie (HttpOnly, SameSite=Lax, one year; Secure over HTTPS) on ``response``."""
     response.set_cookie(
         _DEVICE_ID_COOKIE,
         device_id,
@@ -99,6 +100,8 @@ _REFRESH_RATE_LIMIT_SECONDS = 300.0
 
 
 def check_refresh_rate_limit(state: AppState, ip: str) -> None:
+    """Allow one refresh per client IP per ``_REFRESH_RATE_LIMIT_SECONDS``; raise ``429`` with ``Retry-After``
+    otherwise, and drop expired entries."""
     now = time.monotonic()
     limiter = state.refresh_rate_limit
     with state.refresh_rate_limit_lock:
@@ -116,6 +119,7 @@ def check_refresh_rate_limit(state: AppState, ip: str) -> None:
 
 
 def parse_months(months: str) -> list[int]:
+    """Parse a ``months`` query value into 1-12 ints (``400`` on bad input); an empty value means all twelve."""
     try:
         values = parse_month_list(months)
     except ValueError as error:
@@ -124,6 +128,8 @@ def parse_months(months: str) -> list[int]:
 
 
 def parse_species(species: str, conn: psycopg.Connection, device_id: str) -> list[int]:
+    """Parse a ``species`` query value: ``all`` (or empty) means the device's saved genera, otherwise comma-separated
+    taxon ids (``400`` on a non-integer)."""
     if species == "all" or not species:
         return resolve_genera(conn, device_id)
     try:

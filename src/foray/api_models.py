@@ -26,6 +26,8 @@ _FROM_DATACLASS = ConfigDict(from_attributes=True)
 
 
 class ConfigResponse(BaseModel):
+    """``GET /api/config``: the visitor's home plus server-side map and tile settings."""
+
     home: Home
     # Real-world radius (km) of one H3 region cell at the server's configured resolution
     # (issue #337) - precomputed server-side (foray.geo.h3_edge_length_km) rather than sending
@@ -68,6 +70,8 @@ class GenusResult(BaseModel):
 
 
 class CoverageRegionResponse(BaseModel):
+    """One configured coverage region with its latest observation ingest (``GET /api/coverage``)."""
+
     name: str
     place_id: int
     last_ingest: str | None
@@ -114,6 +118,9 @@ class FireNear(BaseModel):
 
 
 class RegionScore(BaseModel):
+    """One ranked destination: its H3 region, score, contributing genera and the context shown on its card (rain,
+    elevation, fire, access)."""
+
     model_config = _FROM_DATACLASS
 
     region_id: str
@@ -157,6 +164,8 @@ class RegionPlace(BaseModel):
 
 
 class CalendarBucket(BaseModel):
+    """One month of a region's calendar: the total record count and the count per genus label."""
+
     total: int
     species: dict[str, int]
     # Each ``species`` label's icon key (issue #449), keyed the same way.
@@ -164,12 +173,16 @@ class CalendarBucket(BaseModel):
 
 
 class ObservationPhoto(BaseModel):
+    """A displayable Creative Commons photo with its licence code and the photographer's attribution."""
+
     url: str
     license_code: str
     attribution: str
 
 
 class RecentObservation(BaseModel):
+    """A recent observation in a region's Photos tab, with its displayable photos."""
+
     id: int
     taxon_id: int
     name: str
@@ -183,11 +196,15 @@ class RecentObservation(BaseModel):
 
 
 class RecentObservationsPage(BaseModel):
+    """One page of ``RecentObservation`` rows plus whether a further page exists."""
+
     observations: list[RecentObservation]
     has_more: bool
 
 
 class PreciseObservation(BaseModel):
+    """A verified-location (not obscured) observation drawn as a map pin."""
+
     id: int
     taxon_id: int
     name: str
@@ -231,6 +248,9 @@ class ObservationThumbnails(BaseModel):
 
 
 class AlertHit(BaseModel):
+    """One genus's recent sightings within an "Active now" region: count, latest date and the newest observation's
+    link."""
+
     taxon_id: int
     name: str
     common_name: str | None
@@ -243,6 +263,8 @@ class AlertHit(BaseModel):
 
 
 class AlertRegion(BaseModel):
+    """A region with recent sightings (``GET /api/alerts``), with its recent rain and nearby fire."""
+
     region_id: str
     center_lat: float
     center_lng: float
@@ -262,6 +284,9 @@ CampType = Literal["tent", "rv", "mixed", "backcountry", "group", "equestrian", 
 
 
 class CampSite(BaseModel):
+    """A campground or reported campsite near a point. ``free`` is true only on an explicit no-fee signal, never
+    guessed."""
+
     model_config = _FROM_DATACLASS
 
     id: str
@@ -282,6 +307,9 @@ class CampSite(BaseModel):
 
 
 class Trail(BaseModel):
+    """A trailhead, path, forest road or hiking route near a point, with its distance, length, land owner and foraging
+    hint."""
+
     model_config = _FROM_DATACLASS
 
     id: str
@@ -306,6 +334,9 @@ class Trail(BaseModel):
 
 
 class TrailPath(BaseModel):
+    """The full geometry of one trail (``GET /api/trails/network``) and whether it is authoritative (real OSM topology)
+    or the nearest cached fallback."""
+
     model_config = _FROM_DATACLASS
 
     trail: Trail
@@ -325,6 +356,8 @@ class LandParcel(BaseModel):
 
 
 class StopPin(BaseModel):
+    """A campground, trail or public-land parcel the user pinned as a trip stop's exact point."""
+
     model_config = _FROM_DATACLASS
 
     kind: str
@@ -336,6 +369,8 @@ class StopPin(BaseModel):
 
 
 class Stop(BaseModel):
+    """One planned stop: its region, distances along the route, the nearby camp and trail, fire warnings and any pin."""
+
     model_config = _FROM_DATACLASS
 
     order: int
@@ -358,6 +393,8 @@ class Stop(BaseModel):
 
 
 class TripPlan(BaseModel):
+    """A planned trip (``GET /api/plan``): start, destination, ordered stops and totals. Distances are straight-line."""
+
     model_config = _FROM_DATACLASS
 
     start_lat: float
@@ -383,10 +420,14 @@ class PlaceSuggestion(BaseModel):
 
 
 class LocationResponse(BaseModel):
+    """A visitor's saved home, returned by ``POST /api/location``."""
+
     home: Home
 
 
 class StatusResponse(BaseModel):
+    """A one-word outcome (``ok``, ``started``, ``added``, ``deleted``, ...) for routes with nothing else to return."""
+
     status: str
 
 
@@ -401,6 +442,8 @@ class LayerFreshnessResponse(BaseModel):
 
 
 class DataHealthResponse(BaseModel):
+    """``/healthz/data``: overall health plus each layer's freshness."""
+
     ok: bool
     layers: list[LayerFreshnessResponse]
 

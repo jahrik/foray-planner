@@ -102,6 +102,7 @@ _MANIFEST_NAME = "_manifest.json"
 
 
 def new_run_id() -> str:
+    """A fresh unique id for one staging run, used as its private key prefix."""
     return uuid.uuid4().hex
 
 

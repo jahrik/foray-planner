@@ -280,7 +280,7 @@ CREATE TABLE IF NOT EXISTS precip_daily (
 );
 
 -- Recent-rainfall-per-destination layer (issue #226 Part 2). One row per active region cell,
--- refreshed on its own scheduler cadence (FORAY_PRECIP_INTERVAL_HOURS, default 24) from
+-- refreshed on its own scheduler cadence (the daily `refresh-precip` job, jobs.yaml) from
 -- Open-Meteo's forecast API (past_days). Trailing-window sums ending "today"; informational
 -- only, no scoring (deferred).
 CREATE TABLE IF NOT EXISTS precipitation (

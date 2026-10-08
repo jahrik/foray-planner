@@ -1,3 +1,6 @@
+// Markers for the Details view's Trails and Campgrounds tabs (trailhead signposts and camp icons) that light
+// up when their list row is selected.
+
 import L from "leaflet";
 
 import type { CampSite } from "../api/types";

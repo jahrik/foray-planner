@@ -114,6 +114,8 @@ def run_home_refresh(
     slices = _progress_slices(layers)
 
     def phase_cb(phase: str) -> ProgressFn | None:
+        """The progress callback for one phase, rescaled onto that phase's slice of the 0-100 bar, or ``None`` when
+        silent."""
         if progress_cb is None or phase not in slices:
             return None
         base, span = slices[phase]

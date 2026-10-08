@@ -23,6 +23,9 @@ router = APIRouter()
 
 
 class LocationBody(BaseModel):
+    """Request body for ``POST /api/location``: either ``query`` (a place name) or both ``lat`` and ``lng``, plus an
+    optional display ``name`` and ``radius_km``."""
+
     query: str | None = Field(default=None, max_length=200)
     lat: float | None = Field(default=None, ge=-90, le=90)
     lng: float | None = Field(default=None, ge=-180, le=180)
@@ -38,6 +41,7 @@ def set_location(
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
 ) -> LocationResponse:
+    """Save this device's home and radius from a place name or coordinates. Never triggers an ingest."""
     device_id, is_new = resolve_device_id(request)
     if is_new:
         set_device_cookie(request, response, device_id)

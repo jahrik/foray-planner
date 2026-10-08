@@ -40,6 +40,7 @@ def refresh(
     state: AppState = Depends(get_state),
     pool: ConnectionPool = Depends(get_pool),
 ) -> StatusResponse:
+    """Start a background refresh of ``target`` around the visitor's home (one at a time, rate limited by IP)."""
     if target not in REFRESH_TARGETS:
         raise HTTPException(400, f"unknown target '{target}'; valid: {sorted(REFRESH_TARGETS)}")
     # Check-and-set must be one atomic step, else two concurrent requests can both see
@@ -72,6 +73,7 @@ def refresh(
 
 @router.delete("/api/refresh")
 def cancel_refresh(state: AppState = Depends(get_state)) -> StatusResponse:
+    """Ask the running refresh to stop at its next checkpoint and close its HTTP client."""
     if state.refreshing:
         state.abort_event.set()
         if state.http_client is not None:
@@ -91,6 +93,7 @@ def cancel_refresh(state: AppState = Depends(get_state)) -> StatusResponse:
     },
 )
 async def refresh_stream(state: AppState = Depends(get_state)) -> StreamingResponse:
+    """Stream refresh progress as server-sent events until the refresh reports ``done`` or an ``error``."""
     listener_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=100)
     if state.last_progress:
         listener_queue.put_nowait(state.last_progress)
@@ -98,6 +101,7 @@ async def refresh_stream(state: AppState = Depends(get_state)) -> StreamingRespo
         state.listeners.append(listener_queue)
 
     async def event_generator():
+        """Yield each queued progress message as an SSE ``data:`` line, then unsubscribe the listener."""
         try:
             while True:
                 try:
