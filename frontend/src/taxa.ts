@@ -45,17 +45,19 @@ function rankTag(rank: string): string {
   return `<span class="taxon-rank">${escapeHtml(rank)}</span>`;
 }
 
+/** A picked taxon's chip. The label truncates on its own so a long species name can never push
+ * the remove button out of the chip's clipped box. */
+export function chipHtml(taxon: TaxonResult): string {
+  return `
+      <span class="chip removable" data-taxon-id="${taxon.taxon_id}">
+        <span class="chip-label">${genusIconHtml(taxon.icon)}${escapeHtml(displayName(taxon))}${rankTag(taxon.rank)}</span>
+        <button type="button" aria-label="Remove ${escapeHtml(taxon.name)}">×</button>
+      </span>`;
+}
+
 function renderChips(): void {
   const container = qs<HTMLDivElement>("#taxa-chips");
-  container.innerHTML = selected
-    .map(
-      (taxon) => `
-      <span class="chip removable" data-taxon-id="${taxon.taxon_id}">
-        ${genusIconHtml(taxon.icon)}${escapeHtml(displayName(taxon))}${rankTag(taxon.rank)}
-        <button type="button" aria-label="Remove ${escapeHtml(taxon.name)}">×</button>
-      </span>`,
-    )
-    .join("");
+  container.innerHTML = selected.map(chipHtml).join("");
   container.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
     const chip = button.closest<HTMLElement>("[data-taxon-id]")!;
     button.onclick = () => removeTaxon(Number(chip.dataset.taxonId));

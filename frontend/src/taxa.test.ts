@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaxonResult } from "./api/types";
-import { SEARCH_RANKS, suggestionLabel } from "./taxa";
+import { SEARCH_RANKS, chipHtml, suggestionLabel } from "./taxa";
 
 const taxon = (overrides: Partial<TaxonResult>): TaxonResult => ({
   taxon_id: 1,
@@ -38,5 +38,26 @@ describe("suggestionLabel", () => {
 describe("SEARCH_RANKS", () => {
   it("runs finest to coarsest, species through class", () => {
     expect([...SEARCH_RANKS]).toEqual(["species", "genus", "family", "order", "class"]);
+  });
+});
+
+describe("chipHtml", () => {
+  it("keeps the remove button outside the truncating label", () => {
+    const long: TaxonResult = {
+      taxon_id: 521711,
+      name: "Tricholoma murrillianum",
+      common_name: "Western Matsutake",
+      rank: "species",
+      icon: "gilled",
+      matched_name: null,
+    };
+    const host = document.createElement("div");
+    host.innerHTML = chipHtml(long);
+    const chip = host.querySelector<HTMLElement>(".chip.removable")!;
+    const button = chip.querySelector<HTMLButtonElement>("button")!;
+    expect(chip.dataset.taxonId).toBe("521711");
+    expect(button.getAttribute("aria-label")).toBe("Remove Tricholoma murrillianum");
+    expect(chip.querySelector(".chip-label")!.contains(button)).toBe(false);
+    expect(chip.querySelector(".chip-label")!.textContent).toContain("Tricholoma murrillianum");
   });
 });

@@ -817,7 +817,17 @@ a.chip:hover {
   align-items: center;
   gap: 4px;
 }
+/* The label truncates with an ellipsis so a long species name never pushes the remove button
+   out of the chip's clipped box. */
+.chip.removable .chip-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .chip.removable button {
+  flex: none;
   padding: 0;
   border: none;
   background: none;
