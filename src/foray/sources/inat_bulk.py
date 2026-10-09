@@ -269,6 +269,11 @@ def load_inat(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
     """
     if not taxa_count(con):
         raise RuntimeError("taxa catalog is empty - run `foray ingest-bulk taxa` (or `foray genera-refresh`) first")
+    # `ingest-bulk-taxa` and `ingest-bulk-inat` are independent systemd timers with randomized delay, so
+    # ordering can't be guaranteed there: refuse here until a taxonomy snapshot has loaded, or most
+    # species-identified rows would be skipped as unknown. The job just fails loudly and retries.
+    if con.execute("SELECT 1 FROM meta WHERE key = 'bulk_snapshot:taxa'").fetchone() is None:
+        raise RuntimeError("no taxa bulk snapshot loaded yet - run `foray ingest-bulk taxa` first")
     rollups = rollup_map(con)
     genus_by_name: dict[str, int] | None = None  # built only if an old snapshot (no taxon_id) turns up
     total = 0

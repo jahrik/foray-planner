@@ -88,17 +88,15 @@ def upsert_taxon_names(con: psycopg.Connection, rows: Iterable[tuple[int, str, s
     return len(batch)
 
 
-def mark_taxa_inactive(con: psycopg.Connection, scope_roots: Collection[int], keep_ids: Collection[int]) -> int:
-    """Flag every taxon under a scope root that is absent from ``keep_ids`` (the new snapshot) as
-    inactive - the export has no ``is_active`` column, so a taxon missing from it is the only
-    removal signal. Returns how many rows flipped."""
+def mark_taxa_inactive(con: psycopg.Connection, keep_ids: Collection[int]) -> int:
+    """Flag every active taxon absent from ``keep_ids`` (the new snapshot) as inactive - the export
+    has no ``is_active`` column, so a taxon missing from it is the only removal signal. The snapshot
+    is the complete catalog for the configured scope, so this also retires taxa left over from a
+    scope that was since narrowed (the live ingest and ``rollup_map`` then stop admitting them; the
+    cached observations are re-checked and purged by ``resync``). Returns how many rows flipped."""
     cur = con.execute(
-        """
-        UPDATE taxa SET is_active = FALSE
-        WHERE is_active AND NOT (taxon_id = ANY(%s))
-          AND (taxon_id = ANY(%s) OR ancestor_ids && %s::bigint[])
-        """,
-        [list(keep_ids), list(scope_roots), list(scope_roots)],
+        "UPDATE taxa SET is_active = FALSE WHERE is_active AND NOT (taxon_id = ANY(%s))",
+        [list(keep_ids)],
     )
     if cur.rowcount:
         bump_taxa_version(con)
@@ -295,6 +293,8 @@ def taxon_labels(con: psycopg.Connection, taxon_ids: Collection[int]) -> dict[in
             for ancestor in ancestors
             if ancestor in ancestor_ranks
         }
+        # A family / order / class target takes its own group's icon, so count itself among its ranks.
+        by_rank.setdefault(rank, name)
         genus_name = name if rank == GENUS_RANK else by_rank.get(GENUS_RANK, "")
         labels[taxon_id] = {
             "name": name,

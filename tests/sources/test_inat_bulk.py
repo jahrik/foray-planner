@@ -132,6 +132,7 @@ def test_iter_scope_us_rows_filters_kingdom_country_and_missing_coords() -> None
 
 
 def _seed_amanita(con: psycopg.Connection) -> None:
+    con.execute("INSERT INTO meta (key, value) VALUES ('bulk_snapshot:taxa', '2026-01-01') ON CONFLICT DO NOTHING")
     """Genus Amanita (48701) with a section between it and species Amanita muscaria (7001), plus a
     variety of it (7002) - the shape the rank-driven rollup has to step through."""
     upsert_taxa(
@@ -419,3 +420,15 @@ def test_load_inat_falls_back_to_genus_name_for_a_snapshot_staged_before_taxon_i
     load_inat(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
 
     assert con.execute("SELECT id, taxon_id, species_id FROM observations ORDER BY id").fetchall() == [(1, 48701, None)]
+
+
+def test_load_inat_refuses_until_a_taxa_snapshot_has_loaded(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The two bulk jobs are independent timers: an inat load that beat the first taxa load would skip
+    most species-identified rows as unknown, so it fails loudly and retries instead."""
+    upsert_taxa(con, [{"taxon_id": 48701, "name": "Amanita", "rank": "genus"}])
+    con.execute("DELETE FROM meta WHERE key = 'bulk_snapshot:taxa'")
+    monkeypatch.setattr(inat_bulk.spaces, "download_file", lambda cfg, key, dest: None)
+    with pytest.raises(RuntimeError, match="ingest-bulk taxa"):
+        load_inat(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")

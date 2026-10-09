@@ -222,7 +222,7 @@ def test_load_retires_scope_taxa_absent_from_the_snapshot_and_is_idempotent(
         con,
         [
             {"taxon_id": 31337, "name": "Retiredia", "rank": "genus", "ancestor_ids": [FUNGI]},
-            {"taxon_id": 424242, "name": "Elsewhere", "rank": "genus", "ancestor_ids": [1, 47158]},  # other scope
+            {"taxon_id": 424242, "name": "Elsewhere", "rank": "genus", "ancestor_ids": [1, 47158]},  # old scope
         ],
     )
     _stub_download(monkeypatch, _stage(monkeypatch))
@@ -230,10 +230,11 @@ def test_load_retires_scope_taxa_absent_from_the_snapshot_and_is_idempotent(
     for _ in range(2):  # the second pass changes nothing
         load_taxa(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
 
+    # The snapshot is the whole catalog for the scope: a leftover from a narrowed scope is retired too.
     active = dict(
         con.execute("SELECT taxon_id, is_active FROM taxa WHERE taxon_id IN (31337, 424242, %s)", [GENUS]).fetchall()
     )
-    assert active == {31337: False, 424242: True, GENUS: True}
+    assert active == {31337: False, 424242: False, GENUS: True}
     assert con.execute("SELECT count(*) FROM taxa").fetchone() == (10,)
     assert con.execute("SELECT count(*) FROM taxon_names").fetchone() == (4,)
 
