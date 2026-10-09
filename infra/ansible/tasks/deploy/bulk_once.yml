@@ -1,0 +1,37 @@
+# Manual/opt-in only - not part of foray:deploy. Loads the newest staged snapshot of one bulk
+# source (`.github/workflows/bulk-load.yml` stages them) now instead of waiting for that source's
+# nightly `ingest-bulk-<source>` job: starts the job's own systemd unit, so it runs exactly as
+# scheduled (job wrapper, writer cap, job_runs row, journal logs) and detached - this task
+# returns at once rather than holding an SSH session open for the load.
+#
+# Usage: `just ansible bulk-once <source>` (foray_bulk_source), e.g. taxa, inat, osm_trails. Order
+# matters where one source resolves through another: `taxa` must finish before `inat` starts.
+- name: Require a well-formed bulk source name
+  ansible.builtin.assert:
+    that:
+      - foray_bulk_source is defined
+      - foray_bulk_source is match('^[a-z0-9_]+$')
+    fail_msg: "Pass the source with -e foray_bulk_source=<name> (use `just ansible bulk-once <name>`)."
+
+- name: Work out the job's unit name (jobs.yaml names use hyphens, sources use underscores)
+  ansible.builtin.set_fact:
+    foray_bulk_once_unit: "foray-ingest-bulk-{{ foray_bulk_source | replace('_', '-') }}.service"
+
+- name: Fail fast if the job's unit isn't installed yet
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ foray_bulk_once_unit }}"
+  register: foray_bulk_once_stat
+
+- name: Require a deploy that installed the bulk job
+  ansible.builtin.fail:
+    msg: >-
+      {{ foray_bulk_once_unit }} not found - is '{{ foray_bulk_source }}' a source registered in
+      jobs.yaml as ingest-bulk-<source>? If it is, run `just ansible deploy` first (it generates
+      the job units from jobs.yaml).
+  when: not foray_bulk_once_stat.stat.exists
+
+- name: Start the bulk load now (detached)
+  ansible.builtin.systemd:
+    name: "{{ foray_bulk_once_unit }}"
+    state: started
+    no_block: true

@@ -111,8 +111,10 @@ backfill-geom-once: (_playbook "backfill-geom-once")
 [group('deploy-once')]
 resync-once: (_playbook "resync-once")
 
-# Manual/opt-in only - the nightly ingest-bulk-osm-trails job loads each new OSM snapshot on its
-# own; this starts that job now (detached) instead of waiting for the night window.
-[doc('Load the newest staged OSM trails snapshot now instead of waiting for the night job')]
+# Manual/opt-in only - each bulk source's nightly ingest-bulk-<source> job loads its newest staged
+# snapshot on its own; this starts that job now (detached) instead of waiting for the night
+# window. <source> is a registered bulk source (taxa, inat, ridb, osm_trails, ...). Where one
+# source resolves through another, wait for the first to finish: `taxa` before `inat`.
+[doc('Load the newest staged snapshot of one bulk source now instead of waiting for its night job')]
 [group('deploy-once')]
-trails-once: (_playbook "trails-once")
+bulk-once source: (_playbook "bulk-once" "-e foray_bulk_source=" + source)
