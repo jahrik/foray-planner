@@ -9,8 +9,8 @@ import type { components } from "./schema";
 export type Home = components["schemas"]["Home"];
 export type Config = components["schemas"]["ConfigResponse"];
 
-/** A genus catalog search hit / selection (`GET /api/genera`, `/api/genera/selected`). */
-export type GenusResult = components["schemas"]["GenusResult"];
+/** A taxon catalog search hit / selection of any rank (`GET /api/taxa/search`, `/api/taxa/selected`). */
+export type TaxonResult = components["schemas"]["TaxonResult"];
 
 /** A target-species contribution to a ranked region. */
 export type SpeciesHit = components["schemas"]["SpeciesHit"];

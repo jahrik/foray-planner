@@ -214,26 +214,9 @@ CREATE TABLE IF NOT EXISTS app_location (
     radius_km DOUBLE PRECISION NOT NULL
 );
 
--- Full genus catalog (issue #79): every Fungi genus on iNat, refreshed weekly by
--- `foray genera-refresh` (see foray.sources.inat.iter_fungi_genera). Replaces the old hardcoded
--- 21-genus seed list - `common_name` is NULL for most rows (only well-known genera have an
--- English common name on iNat), so callers must treat `name` (scientific) as the primary
--- label, not an optional fallback. The class / order / family columns (issue #449) are filled by
--- the same refresh; foray.genus_icons turns them into the genus's map/list icon at read time, so
--- a change to its tables applies on deploy. NULL until the first refresh after they landed.
-CREATE TABLE IF NOT EXISTS fungi_genera (
-    taxon_id            BIGINT PRIMARY KEY,
-    name                TEXT NOT NULL,
-    common_name         TEXT,
-    observations_count  INTEGER,
-    class_name          TEXT,
-    order_id            BIGINT,
-    order_name          TEXT,
-    family_id           BIGINT,
-    family_name         TEXT
-);
-
-CREATE INDEX IF NOT EXISTS ix_fungi_genera_name ON fungi_genera (name);
+-- The taxon catalog (`taxa`, `taxon_names`) and the per-device targets (`app_targets`) are
+-- created by migration 60 (issue #464), which also replaces the old genus-only `fungi_genera`
+-- table with a compatibility view over `taxa`.
 
 -- Destination-card place titling (issue #206): caches one reverse-geocode result per grid
 -- region forever - regions are a fixed grid (scoring.py's h3_resolution binning), so a region's
@@ -291,17 +274,6 @@ CREATE TABLE IF NOT EXISTS precipitation (
     updated_at    TIMESTAMPTZ
 );
 
--- Per-device genus selection (issue #79 Phase 2): which genera this device wants ranked,
--- keyed by the same anonymous device-id cookie as app_location - but many rows per device
--- (one per selected genus), not app_location's one row per device. A device with zero rows
--- here means "everything nearby" (no filter), not the old curated 21 - see api.py's
--- resolve_genera and scoring.py's taxon_id-filter handling for the empty-list case.
-CREATE TABLE IF NOT EXISTS app_genera (
-    device_id TEXT NOT NULL,
-    taxon_id  BIGINT NOT NULL,
-    PRIMARY KEY (device_id, taxon_id)
-);
-
 CREATE INDEX IF NOT EXISTS ix_observations_lat_lng ON observations (lat, lng);
 
 -- trails_near / camps_near now filter on the PostGIS `geom` GIST index (ix_trails_geom /
@@ -353,6 +325,10 @@ _SCHEMA_LOCK_KEY = 4915623
 # leaves the table with neither index (see apply_schema's loop below).
 _CONCURRENT_INDEXES: list[LiteralString | tuple[LiteralString, str]] = [
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_revalidated_at ON observations (revalidated_at)",
+    # issue #464: the species an observation was identified to; partial, since most rows are
+    # genus-only until the species backfill (ingest / resync / bulk load) reaches them.
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_observations_species_id ON observations (species_id) "
+    "WHERE species_id IS NOT NULL",
     # Supersedes the old non-partial ix_observations_taxon_observed: BINNED always filters
     # quality_grade = 'research' first, so the partial index is smaller and better matched.
     # Create the replacement first, drop the old one only after - a failed/cancelled build must
@@ -919,7 +895,7 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     (
         56,
         """
-        ALTER TABLE fungi_genera
+        ALTER TABLE IF EXISTS fungi_genera
             ADD COLUMN IF NOT EXISTS class_name TEXT,
             ADD COLUMN IF NOT EXISTS order_id BIGINT,
             ADD COLUMN IF NOT EXISTS order_name TEXT,
@@ -972,6 +948,103 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # `trail_duplicates.fingerprint`. NULL on a tombstone written before this column: it never
     # matches, so that row is released on its next load and folded again if it still qualifies.
     (59, "ALTER TABLE campsite_duplicates ADD COLUMN IF NOT EXISTS fingerprint TEXT"),
+    # issue #464: rank-agnostic taxa. `taxa` holds every rank (species to kingdom) in iNat's own
+    # shape - one row per taxon, a numeric `rank_level`, and an `ancestor_ids` path (root to
+    # parent) - and `taxon_names` the synonyms / common names search reads. `observations.
+    # species_id` is the species an observation was identified to (NULL for genus-only), next to
+    # the genus in `taxon_id`; it is nullable with no default (catalog-only on the big table) and
+    # fills through ingest / resync / the bulk loader, never a table-wide UPDATE here. `app_targets`
+    # replaces `app_genera` (a target may be any rank), seeded from it. The old genus-only
+    # `fungi_genera` table (Fungi-only by construction, hence the literal 47170 root below) is folded
+    # into `taxa` (genus rows, plus the order / family rows its denormalized columns name; the class
+    # rows arrive with the `taxa` bulk load or the next `genera-refresh`) and left behind as a view
+    # so a stale `:latest` cron image keeps working.
+    # All of it is ~8k rows: no heavy work at deploy time.
+    (
+        60,
+        """
+        CREATE TABLE IF NOT EXISTS taxa (
+            taxon_id           BIGINT PRIMARY KEY,
+            parent_id          BIGINT,
+            name               TEXT NOT NULL,
+            common_name        TEXT,
+            rank               TEXT NOT NULL,
+            rank_level         SMALLINT,
+            ancestor_ids       BIGINT[] NOT NULL DEFAULT '{}',
+            iconic_taxon_id    BIGINT,
+            is_active          BOOLEAN NOT NULL DEFAULT TRUE,
+            observations_count INTEGER,
+            refreshed_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS ix_taxa_ancestors ON taxa USING gin (ancestor_ids);
+        CREATE INDEX IF NOT EXISTS ix_taxa_rank_name ON taxa (rank, name);
+        CREATE INDEX IF NOT EXISTS ix_taxa_name_trgm ON taxa USING gin (lower(name) gin_trgm_ops);
+        CREATE TABLE IF NOT EXISTS taxon_names (
+            taxon_id BIGINT NOT NULL,
+            name     TEXT NOT NULL,
+            lexicon  TEXT NOT NULL DEFAULT '',
+            is_valid BOOLEAN NOT NULL DEFAULT TRUE,
+            PRIMARY KEY (taxon_id, name, lexicon)
+        );
+        CREATE INDEX IF NOT EXISTS ix_taxon_names_trgm ON taxon_names USING gin (lower(name) gin_trgm_ops);
+        ALTER TABLE observations ADD COLUMN IF NOT EXISTS species_id BIGINT;
+        -- Materialized by build_phenology next to `phenology` (the same shape, keyed by species);
+        -- created empty here so a species target reads cleanly before the first rebuild.
+        CREATE TABLE IF NOT EXISTS phenology_species (
+            region_id  TEXT,
+            center_lat DOUBLE PRECISION,
+            center_lng DOUBLE PRECISION,
+            taxon_id   BIGINT,
+            month      SMALLINT,
+            cnt        BIGINT
+        );
+        CREATE TABLE IF NOT EXISTS app_targets (
+            device_id TEXT NOT NULL,
+            taxon_id  BIGINT NOT NULL,
+            PRIMARY KEY (device_id, taxon_id)
+        );
+        DO $$
+        BEGIN
+            IF to_regclass('app_genera') IS NOT NULL THEN
+                INSERT INTO app_targets (device_id, taxon_id)
+                SELECT device_id, taxon_id FROM app_genera ON CONFLICT DO NOTHING;
+            END IF;
+            IF EXISTS (SELECT 1 FROM pg_class WHERE oid = to_regclass('fungi_genera') AND relkind = 'r') THEN
+                INSERT INTO taxa (taxon_id, parent_id, name, rank, rank_level, ancestor_ids,
+                                  iconic_taxon_id)
+                SELECT DISTINCT ON (order_id) order_id, 47170, order_name, 'order', 40, ARRAY[47170::bigint], 47170
+                FROM fungi_genera WHERE order_id IS NOT NULL AND order_name IS NOT NULL
+                ON CONFLICT DO NOTHING;
+                INSERT INTO taxa (taxon_id, parent_id, name, rank, rank_level, ancestor_ids,
+                                  iconic_taxon_id)
+                SELECT DISTINCT ON (family_id) family_id, COALESCE(order_id, 47170), family_name, 'family', 30,
+                       array_remove(ARRAY[47170::bigint, order_id], NULL), 47170
+                FROM fungi_genera WHERE family_id IS NOT NULL AND family_name IS NOT NULL
+                ON CONFLICT DO NOTHING;
+                INSERT INTO taxa (taxon_id, parent_id, name, common_name, rank, rank_level,
+                                  ancestor_ids, iconic_taxon_id, observations_count)
+                SELECT taxon_id, COALESCE(family_id, order_id, 47170), name, common_name, 'genus', 20,
+                       array_remove(ARRAY[47170::bigint, order_id, family_id], NULL), 47170, observations_count
+                FROM fungi_genera
+                ON CONFLICT DO NOTHING;
+                DROP TABLE fungi_genera;
+            END IF;
+        END $$;
+        CREATE OR REPLACE VIEW fungi_genera AS
+        SELECT g.taxon_id, g.name, g.common_name, g.observations_count,
+               (SELECT a.name FROM taxa a WHERE a.taxon_id = ANY(g.ancestor_ids)
+                  AND a.rank = 'class' LIMIT 1) AS class_name,
+               (SELECT a.taxon_id FROM taxa a WHERE a.taxon_id = ANY(g.ancestor_ids)
+                  AND a.rank = 'order' LIMIT 1) AS order_id,
+               (SELECT a.name FROM taxa a WHERE a.taxon_id = ANY(g.ancestor_ids)
+                  AND a.rank = 'order' LIMIT 1) AS order_name,
+               (SELECT a.taxon_id FROM taxa a WHERE a.taxon_id = ANY(g.ancestor_ids)
+                  AND a.rank = 'family' LIMIT 1) AS family_id,
+               (SELECT a.name FROM taxa a WHERE a.taxon_id = ANY(g.ancestor_ids)
+                  AND a.rank = 'family' LIMIT 1) AS family_name
+        FROM taxa g WHERE g.rank = 'genus' AND g.is_active AND 47170 = ANY(g.ancestor_ids)
+        """,
+    ),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]

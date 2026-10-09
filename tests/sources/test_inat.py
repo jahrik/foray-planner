@@ -10,12 +10,11 @@ from pyrate_limiter.exceptions import BucketFullException
 
 from foray.sources.inat import (
     _RATE_LIMIT_ATTEMPTS,
-    FUNGI_TAXON_ID,
+    CATALOG_RANKS,
     InatQuotaExceeded,
     _with_retries,
-    iter_fungi_genera,
-    iter_fungi_ranks,
     iter_observations,
+    iter_taxa,
 )
 
 
@@ -27,42 +26,42 @@ def _obs_page(ids: list[int]) -> dict:
     return {"results": [{"id": obs_id, "observed_on": "2024-05-15"} for obs_id in ids]}
 
 
-def test_iter_fungi_genera_walks_id_above_pages() -> None:
+def test_iter_taxa_walks_id_above_pages() -> None:
     with patch("foray.sources.inat.get_taxa") as mock_get_taxa, patch("foray.sources.inat._PAGE_SIZE", 2):
         mock_get_taxa.side_effect = [
             _page([1, 2]),
             _page([3]),
         ]
-        results = list(iter_fungi_genera())
+        results = list(iter_taxa([47170]))
 
     assert [r["id"] for r in results] == [1, 2, 3]
     assert mock_get_taxa.call_count == 2
     first_kwargs = mock_get_taxa.call_args_list[0].kwargs
-    assert first_kwargs["taxon_id"] == FUNGI_TAXON_ID
-    assert first_kwargs["rank"] == "genus"
+    assert first_kwargs["taxon_id"] == [47170]
+    assert first_kwargs["rank"] == list(CATALOG_RANKS)
     assert first_kwargs["id_above"] == 0
     second_kwargs = mock_get_taxa.call_args_list[1].kwargs
     assert second_kwargs["id_above"] == 2
 
 
-def test_iter_fungi_genera_empty_result_stops_immediately() -> None:
+def test_iter_taxa_empty_result_stops_immediately() -> None:
     with patch("foray.sources.inat.get_taxa") as mock_get_taxa:
         mock_get_taxa.return_value = {"results": []}
-        results = list(iter_fungi_genera())
+        results = list(iter_taxa([47170]))
 
     assert results == []
     mock_get_taxa.assert_called_once()
 
 
-def test_iter_fungi_ranks_asks_for_class_order_and_family() -> None:
+def test_iter_taxa_queries_every_scope_root_and_the_requested_ranks() -> None:
     with patch("foray.sources.inat.get_taxa") as mock_get_taxa:
         mock_get_taxa.return_value = {"results": [{"id": 47350, "name": "Cantharellales", "rank": "order"}]}
-        results = list(iter_fungi_ranks())
+        results = list(iter_taxa([47170, 47126], ("order", "family")))
 
     assert [r["name"] for r in results] == ["Cantharellales"]
     kwargs = mock_get_taxa.call_args.kwargs
-    assert kwargs["taxon_id"] == FUNGI_TAXON_ID
-    assert kwargs["rank"] == ["class", "order", "family"]
+    assert kwargs["taxon_id"] == [47170, 47126]
+    assert kwargs["rank"] == ["order", "family"]
 
 
 def test_iter_observations_walks_id_above_pages_by_point_radius() -> None:

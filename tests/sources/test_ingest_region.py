@@ -10,7 +10,7 @@ import psycopg
 import pytest
 from click.testing import CliRunner
 
-from foray.cache import upsert_fungi_genera
+from foray.cache import upsert_taxa
 from foray.cli import cli
 from foray.config import CoverageRegion, Settings
 from foray.sources.inat import iter_observations
@@ -33,10 +33,10 @@ def env_with_coverage(con: psycopg.Connection, monkeypatch):
         "FORAY_COVERAGE",
         json.dumps([{"name": "Washington", "place_id": 46}, {"name": "Oregon", "place_id": 30}]),
     )
-    upsert_fungi_genera(con, [{"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels"}])
+    upsert_taxa(con, [{"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels", "rank": "genus"}])
 
 
-FUNGI_ICONIC_TAXON_ID = 47170  # foray.sources.inat.FUNGI_TAXON_ID doubles as Fungi's iconic_taxon_id
+SCOPE_ROOT = 47170  # the default scope root (Fungi): every in-scope observation's lineage runs through it
 
 
 def _fake_obs(
@@ -45,11 +45,10 @@ def _fake_obs(
     *,
     rank: str = "genus",
     ancestor_ids: list[int] | None = None,
-    iconic_taxon_id: int = FUNGI_ICONIC_TAXON_ID,
 ) -> dict:
     """A fake iNat observation - ``taxon`` carries the ancestry ingest.py's genus resolver
-    reads (see foray.sources.ingest._resolve_genus_taxon_id): rank=="genus" uses taxon.id directly,
-    otherwise the resolver looks for a known genus id in ancestor_ids."""
+    reads (see foray.taxa.Resolver): it must run through a scope root, and rolls up to the
+    genus-rank taxon on that lineage."""
     return {
         "id": obs_id,
         "geojson": {"coordinates": [-122.3, 47.6]},
@@ -59,8 +58,7 @@ def _fake_obs(
         "taxon": {
             "id": taxon_id,
             "rank": rank,
-            "ancestor_ids": ancestor_ids or [taxon_id],
-            "iconic_taxon_id": iconic_taxon_id,
+            "ancestor_ids": ancestor_ids or [SCOPE_ROOT, taxon_id],
         },
     }
 
@@ -193,7 +191,7 @@ def test_cli_ingest_all_regions_no_coverage(con, monkeypatch) -> None:
     monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
     monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
     monkeypatch.setenv("FORAY_COVERAGE", "[]")
-    upsert_fungi_genera(con, [{"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels"}])
+    upsert_taxa(con, [{"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels", "rank": "genus"}])
 
     runner = CliRunner()
     result = runner.invoke(cli, ["ingest", "--all-regions"])
@@ -256,7 +254,7 @@ def test_cli_refresh_all_mushrooms_requires_countries(con, monkeypatch) -> None:
     monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
     monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
     monkeypatch.setenv("FORAY_COUNTRIES", "[]")
-    upsert_fungi_genera(con, [{"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels"}])
+    upsert_taxa(con, [{"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels", "rank": "genus"}])
 
     runner = CliRunner()
     result = runner.invoke(cli, ["refresh", "--with", "mushrooms", "--all"])

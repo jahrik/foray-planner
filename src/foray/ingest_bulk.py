@@ -10,7 +10,7 @@ pattern (`copy_and_swap`) so a table is never read mid-load. Per-run key isolati
 atomic manifest write means a re-staged date, or two overlapping stage runs, can never produce a
 mixed/partial read - see `foray.spaces` for the mechanics.
 
-Registered sources (see ``STAGERS`` / ``LOADERS`` below): ``ridb``, ``inat``, ``usfs_trails``,
+Registered sources (see ``STAGERS`` / ``LOADERS`` below): ``ridb``, ``taxa``, ``inat``, ``usfs_trails``,
 ``usfs_mvum``, ``ravg`` and ``osm_trails``. Adding a source is one stager and one loader here; the
 weekly staging workflow and the ``/healthz/data`` staleness check pick it up from the registry.
 """
@@ -25,7 +25,7 @@ from typing import LiteralString
 import psycopg
 
 from foray.config import Settings
-from foray.sources import camps, inat_bulk, osm_trails, ravg, usfs_mvum, usfs_trails
+from foray.sources import camps, inat_bulk, osm_trails, ravg, taxa_bulk, usfs_mvum, usfs_trails
 from foray.spaces import (
     list_snapshot_dates,
     new_run_id,
@@ -49,6 +49,7 @@ Loader = Callable[[psycopg.Connection, Settings, date, str], None]
 
 STAGERS: dict[str, Stager] = {
     "ridb": camps.stage_ridb,
+    "taxa": taxa_bulk.stage_taxa,
     "inat": inat_bulk.stage_inat,
     "usfs_trails": usfs_trails.stage_usfs_trails,
     "usfs_mvum": usfs_mvum.stage_usfs_mvum,
@@ -57,6 +58,7 @@ STAGERS: dict[str, Stager] = {
 }
 LOADERS: dict[str, Loader] = {
     "ridb": camps.load_ridb,
+    "taxa": taxa_bulk.load_taxa,
     "inat": inat_bulk.load_inat,
     "usfs_trails": usfs_trails.load_usfs_trails,
     "usfs_mvum": usfs_mvum.load_usfs_mvum,

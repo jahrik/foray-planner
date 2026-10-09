@@ -45,7 +45,7 @@ out. Select several months to plan a longer trip.
 
 ![The Months picker](img/getting-started-03-months.png)
 
-**4. Pick target genera.** **All genera** ranks every fungus. To focus, open the pill, search
+**4. Pick your targets.** **All taxa** ranks every fungus. To focus, open the pill, search
 for a genus (for example *Cantharellus*, chanterelles) and pick it. Add as many as you like;
 remove one with its ✕. Your picks are remembered on this device.
 
@@ -82,7 +82,7 @@ the actual iNaturalist finds behind the ranking.
 
 ![Best spot walkthrough](best-spot.gif)
 
-**1. Leave the defaults.** With **All genera** and **Sort: Best overall**, the #1 card has the
+**1. Leave the defaults.** With **All taxa** and **Sort: Best overall**, the #1 card has the
 strongest overall score for your chosen months. The score blends how much of each genus's
 season falls in those months, how many records and how many genera, how recent they are, and
 adjustments for active fire and trail/camp access. The card's first line says why: the top

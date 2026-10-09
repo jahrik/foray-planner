@@ -24,7 +24,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/genera": {
+    "/api/taxa/search": {
         parameters: {
             query?: never;
             header?: never;
@@ -32,10 +32,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Genera
-         * @description Genus catalog search (issue #79) - empty query returns the most-observed genera.
+         * Search Taxa Route
+         * @description Taxon search by scientific name, common name or synonym, optionally within one rank (species
+         *     to kingdom). An empty query returns the most-observed taxa of ``rank`` (genera by default).
          */
-        get: operations["get_genera_api_genera_get"];
+        get: operations["search_taxa_route_api_taxa_search_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -44,7 +45,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/genera/selected": {
+    "/api/taxa/selected": {
         parameters: {
             query?: never;
             header?: never;
@@ -52,10 +53,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Selected Genera
-         * @description This device's selected genera (issue #79 Phase 2) - empty means "everything nearby".
+         * Get Selected Taxa
+         * @description This device's picked targets - empty means "everything nearby".
          */
-        get: operations["get_selected_genera_api_genera_selected_get"];
+        get: operations["get_selected_taxa_api_taxa_selected_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -64,7 +65,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/genera/{taxon_id}": {
+    "/api/taxa/{taxon_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -74,15 +75,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Add Selected Genus
-         * @description Add a genus to this device's target list (idempotent).
+         * Add Selected Taxon
+         * @description Add a taxon to this device's target list (idempotent). 404 for an id the catalog does not know
+         *     or whose rank is not searchable (species to kingdom - a section or variety is not a target), so a
+         *     typo cannot silently narrow every ranking to nothing.
          */
-        post: operations["add_selected_genus_api_genera__taxon_id__post"];
+        post: operations["add_selected_taxon_api_taxa__taxon_id__post"];
         /**
-         * Remove Selected Genus
-         * @description Remove a genus from this device's target list (idempotent).
+         * Remove Selected Taxon
+         * @description Remove a taxon from this device's target list (idempotent).
          */
-        delete: operations["remove_selected_genus_api_genera__taxon_id__delete"];
+        delete: operations["remove_selected_taxon_api_taxa__taxon_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1006,27 +1009,6 @@ export interface components {
             /** Incident Url */
             incident_url: string | null;
         };
-        /**
-         * GenusResult
-         * @description A genus catalog search hit (issue #79).
-         *
-         *     ``common_name`` is optional - most of the ~6,018 Fungi genera lack an English common name
-         *     on iNat, so ``name`` (scientific) is the primary label, not a fallback.
-         */
-        GenusResult: {
-            /** Taxon Id */
-            taxon_id: number;
-            /** Name */
-            name: string;
-            /** Common Name */
-            common_name: string | null;
-            /**
-             * Icon
-             * @default generic
-             * @enum {string}
-             */
-            icon: "gilled" | "bolete" | "bracket" | "crust" | "coral" | "puffball" | "earthstar" | "cup" | "morel" | "tooth" | "vase" | "jelly" | "stinkhorn" | "leafy-lichen" | "shrubby-lichen" | "rust" | "generic" | "trametes" | "amanita" | "laetiporus" | "pleurotus" | "fomitopsis" | "cerioporus" | "ganoderma" | "lactarius" | "stereum" | "schizophyllum" | "mycena" | "suillus" | "cladonia" | "omphalotus" | "coprinus" | "flavoparmelia" | "cantharellus" | "hericium" | "desarmillaria" | "lobaria" | "hypomyces" | "chlorophyllum" | "russula" | "cortinarius" | "artomyces" | "apioperdon" | "entoloma" | "agaricus" | "leucocoprinus" | "morchella";
-        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1395,6 +1377,32 @@ export interface components {
             lng: number;
         };
         /**
+         * TaxonResult
+         * @description A taxon catalog search hit or a device's picked target (issues #79, #464), of any rank.
+         *
+         *     ``common_name`` is optional - most taxa lack an English common name on iNat, so ``name``
+         *     (scientific) is the primary label. ``matched_name`` is the synonym / vernacular name a search
+         *     matched when it was not the scientific name.
+         */
+        TaxonResult: {
+            /** Taxon Id */
+            taxon_id: number;
+            /** Name */
+            name: string;
+            /** Common Name */
+            common_name: string | null;
+            /** Rank */
+            rank: string;
+            /**
+             * Icon
+             * @default generic
+             * @enum {string}
+             */
+            icon: "gilled" | "bolete" | "bracket" | "crust" | "coral" | "puffball" | "earthstar" | "cup" | "morel" | "tooth" | "vase" | "jelly" | "stinkhorn" | "leafy-lichen" | "shrubby-lichen" | "rust" | "generic" | "trametes" | "amanita" | "laetiporus" | "pleurotus" | "fomitopsis" | "cerioporus" | "ganoderma" | "lactarius" | "stereum" | "schizophyllum" | "mycena" | "suillus" | "cladonia" | "omphalotus" | "coprinus" | "flavoparmelia" | "cantharellus" | "hericium" | "desarmillaria" | "lobaria" | "hypomyces" | "chlorophyllum" | "russula" | "cortinarius" | "artomyces" | "apioperdon" | "entoloma" | "agaricus" | "leucocoprinus" | "morchella";
+            /** Matched Name */
+            matched_name?: string | null;
+        };
+        /**
          * Trail
          * @description A trailhead, path, forest road or hiking route near a point, with its distance, length, land owner and foraging
          *     hint.
@@ -1522,10 +1530,11 @@ export interface operations {
             };
         };
     };
-    get_genera_api_genera_get: {
+    search_taxa_route_api_taxa_search_get: {
         parameters: {
             query?: {
                 q?: string;
+                rank?: ("species" | "genus" | "family" | "order" | "class" | "phylum" | "kingdom") | null;
             };
             header?: never;
             path?: never;
@@ -1539,7 +1548,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GenusResult"][];
+                    "application/json": components["schemas"]["TaxonResult"][];
                 };
             };
             /** @description Validation Error */
@@ -1553,7 +1562,7 @@ export interface operations {
             };
         };
     };
-    get_selected_genera_api_genera_selected_get: {
+    get_selected_taxa_api_taxa_selected_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -1568,12 +1577,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GenusResult"][];
+                    "application/json": components["schemas"]["TaxonResult"][];
                 };
             };
         };
     };
-    add_selected_genus_api_genera__taxon_id__post: {
+    add_selected_taxon_api_taxa__taxon_id__post: {
         parameters: {
             query?: never;
             header?: never;
@@ -1604,7 +1613,7 @@ export interface operations {
             };
         };
     };
-    remove_selected_genus_api_genera__taxon_id__delete: {
+    remove_selected_taxon_api_taxa__taxon_id__delete: {
         parameters: {
             query?: never;
             header?: never;

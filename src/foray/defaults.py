@@ -76,3 +76,12 @@ COVERAGE = [
     {"name": "Wisconsin", "place_id": 32, "bbox": (-92.8871, 42.4935, -86.2495, 47.3098)},
     {"name": "Wyoming", "place_id": 15, "bbox": (-111.0546, 40.9979, -104.0532, 45.001)},
 ]
+
+# The taxonomy scope (issue #464): the root taxon ids whose descendants the app ingests, catalogs and
+# ranks. iNat's Fungi (47170) today; trees would be curated orders / families / genera inside Plantae
+# added here (no single "tree" taxon). Override with ``FORAY_SCOPE_ROOTS``.
+SCOPE_ROOTS: tuple[int, ...] = (47170,)
+# Kingdom *names* the bulk observation stager pre-filters on (the export carries lineage names, not
+# ids, and the stager has no database). Every scope root must sit inside one of these; the loader
+# then applies the exact scope-root test through ``taxa``. Override with ``FORAY_SCOPE_KINGDOMS``.
+SCOPE_KINGDOMS: tuple[str, ...] = ("Fungi",)

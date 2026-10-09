@@ -55,18 +55,25 @@ class ConfigResponse(BaseModel):
     fire_tiles_url: str = ""
 
 
-class GenusResult(BaseModel):
-    """A genus catalog search hit (issue #79).
+TaxonRank = Literal["species", "genus", "family", "order", "class", "phylum", "kingdom"]
 
-    ``common_name`` is optional - most of the ~6,018 Fungi genera lack an English common name
-    on iNat, so ``name`` (scientific) is the primary label, not a fallback.
+
+class TaxonResult(BaseModel):
+    """A taxon catalog search hit or a device's picked target (issues #79, #464), of any rank.
+
+    ``common_name`` is optional - most taxa lack an English common name on iNat, so ``name``
+    (scientific) is the primary label. ``matched_name`` is the synonym / vernacular name a search
+    matched when it was not the scientific name.
     """
 
     taxon_id: int
     name: str
     common_name: str | None
-    # Map / list icon key (issue #449): a bespoke genus key or its shape group.
+    rank: str
+    # Map / list icon key (issue #449): a bespoke genus key or its shape group (a species wears its
+    # genus's; a family / order / class its group's).
     icon: GenusIcon = "generic"
+    matched_name: str | None = None
 
 
 class CoverageRegionResponse(BaseModel):

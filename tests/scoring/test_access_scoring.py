@@ -21,7 +21,7 @@ LAT, LNG = 44.0, -121.0
 def _seed(con: psycopg.Connection) -> None:
     with con.cursor() as cur:
         cur.execute(
-            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            "INSERT INTO taxa (taxon_id, name, common_name, rank) VALUES (%s, %s, %s, 'genus')",
             [BOLETUS, "Boletus", "Porcini"],
         )
         cur.executemany(

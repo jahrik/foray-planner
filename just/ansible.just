@@ -73,9 +73,9 @@ deploy: (_playbook "deploy")
 cron: (_playbook "cron")
 
 # Manual/opt-in only - the foray-genera cron job already keeps the catalog fresh on a schedule.
-# Use this to warm fungi_genera immediately on a fresh droplet (depends on the env file that
+# Use this to warm the taxa catalog immediately on a fresh droplet (depends on the env file that
 # `deploy` renders). Run this *before* `ingest-once` - ingest fails fast if the catalog is empty.
-[doc('Warm fungi_genera on a fresh droplet now instead of waiting for cron')]
+[doc('Warm the taxa catalog on a fresh droplet now instead of waiting for cron')]
 [group('deploy-once')]
 genera-once: (_playbook "genera-once")
 

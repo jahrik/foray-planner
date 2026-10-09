@@ -22,14 +22,47 @@ Contents: [the three primitives](#the-three-primitives) |
 ## The three primitives
 
 Everything is built from the `phenology` table: a count of research-grade observations for every
-(region, genus, month). A *region* is an H3 hexagon, see
+(region, genus, month), and its species-level twin `phenology_species` (region, species, month)
+for species targets. A *region* is an H3 hexagon, see
 [architecture.md](architecture.md#regions-and-the-h3-grid).
 
 | Primitive | Definition | Reads as |
 |---|---|---|
 | `w_pheno` | for one genus in one region: records in your chosen months / that genus's records in all twelve months | "Is it in season here?" 0 to 1 |
 | abundance | `log1p(month_count)` | "Does it show up reliably?" Log-scaled so a 5,000-record genus does not drown a 50-record one |
-| recency | records in the trailing `recent_weeks` (default 4) for the selected genera | "Is something being found right now?" |
+| recency | records in the trailing `recent_weeks` (default 4) for the picked targets | "Is something being found right now?" |
+
+## Targets at any rank
+
+A target is any taxon from species up to class (the Taxa pill searches by scientific name, common
+name or synonym). Every read first **expands** the picks into `(genus ids, species ids,
+covers-all)` (`cache.taxa.expand_targets`, cached per request on the catalog version):
+
+| Pick | Expands to | Reads |
+|---|---|---|
+| nothing, or a scope root (Fungi) | covers everything: no filter | `phenology` |
+| a **species** | that species | `phenology_species`, `observations.species_id` |
+| a **genus** | that genus | `phenology`, `observations.taxon_id` |
+| a family, order, class, ... | every active genus beneath it (a GIN `ancestor_ids` lookup) | `phenology`, summed |
+| an id the catalog does not know | itself, as a genus - the meaning of a bare id before taxa existed | `phenology` |
+
+Genus and species picks can be mixed: their phenology rows are unioned and grouped by id (genus
+and species ids never collide, both being iNaturalist taxon ids). A species whose genus, or any
+group above it, is also picked is dropped, since the genus rows already count it. Large expansions
+(an order's hundreds of genera) are passed as one `= ANY(%s)` array, not inlined into the SQL.
+
+**A genus-only identification counts toward its genus and everything above it, never toward a
+species.** `observations.taxon_id` stays the genus (the hot key every table is indexed on) and
+`species_id` is the species an identification reached, `NULL` for a genus-only record. A
+subspecies, variety, form or hybrid rolls up to its species; the rollup walks the lineage by rank,
+so a section sharing its genus's name, or a subgenus between species and genus, cannot be mistaken
+for either. The invariant the tests pin: a genus's species rows plus its genus-only rows equal its
+genus total.
+
+The card for a species target names the species (wearing its genus's icon); "Active now" groups a
+picked species' records under the species, everything else under its genus. Trend, access and fire
+adjustments work on whichever ids the card carries, so they follow the target unchanged. The
+*Morchella* burn-scar boost applies when the genus, or any species in it, is targeted.
 
 ## The score
 
@@ -64,8 +97,9 @@ Region B has a single genus with 100 of its 150 records in season and nothing re
 `0.667 x log1p(100) = 3.08`. A wins, because it has two genera in season and live activity, even
 though B's one genus is individually stronger.
 
-**Selecting genera** restricts every sum to those genera. With none selected the filter is off and
-every fungus counts. The Genera pill is therefore the biggest lever on what the list means.
+**Selecting targets** restricts every sum to those taxa. With none selected the filter is off and
+every fungus counts. The Taxa pill is therefore the biggest lever on what the list means; what a
+target can be is described next.
 
 **Which months?** The Months pill defaults to the current month. Choosing several months widens
 `month_count`, so a long window flattens the seasonality that makes the score informative.

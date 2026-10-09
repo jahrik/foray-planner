@@ -403,7 +403,7 @@ async function runActiveNow({ reuseCache = false }: { reuseCache?: boolean }): P
   const panel = qs("#panel");
   if (!regions.length) {
     panel.innerHTML =
-      "<p class='hint'>No target species seen in the trailing window yet. Widen your genera, or switch the sort back to Best overall.</p>";
+      "<p class='hint'>No target species seen in the trailing window yet. Widen your targets, or switch the sort back to Best overall.</p>";
     setStatus("");
     return;
   }

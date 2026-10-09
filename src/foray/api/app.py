@@ -24,13 +24,13 @@ from foray.api.routes import (
     config,
     coverage,
     destinations,
-    genera,
     health,
     index,
     layers,
     location,
     plan,
     refresh,
+    taxa,
     tiles,
 )
 from foray.api.security import install_middleware
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # Registered in the order their paths should appear in the OpenAPI schema (drift-checked).
 _ROUTERS = (
     config.router,
-    genera.router,
+    taxa.router,
     coverage.router,
     health.router,
     destinations.router,

@@ -11,7 +11,7 @@ import pytest
 from click.testing import CliRunner
 
 import foray.cli as cli_module
-from foray.cache import search_fungi_genera
+from foray.cache import search_taxa
 from foray.cli import cli
 
 
@@ -58,40 +58,56 @@ def calls(monkeypatch):
 
 
 def test_genera_refresh_upserts_catalog(con: psycopg.Connection, env_config, monkeypatch) -> None:
-    fake_ranks = [
-        {"id": 50814, "name": "Agaricomycetes", "rank": "class"},
-        {"id": 47350, "name": "Cantharellales", "rank": "order"},
-        {"id": 48423, "name": "Hydnaceae", "rank": "family"},
-    ]
-    fake_genera = [
+    fake_taxa = [
+        {"id": 47170, "name": "Fungi", "rank": "kingdom", "parent_id": 48222, "ancestor_ids": [48222, 47170]},
+        {"id": 50814, "name": "Agaricomycetes", "rank": "class", "parent_id": 47170, "ancestor_ids": [47170, 50814]},
+        {
+            "id": 47350,
+            "name": "Cantharellales",
+            "rank": "order",
+            "parent_id": 50814,
+            "ancestor_ids": [47170, 50814, 47350],
+        },
+        {
+            "id": 48423,
+            "name": "Hydnaceae",
+            "rank": "family",
+            "parent_id": 47350,
+            "ancestor_ids": [47170, 50814, 47350, 48423],
+        },
         {
             "id": 47348,
             "name": "Cantharellus",
+            "rank": "genus",
+            "parent_id": 48423,
             "preferred_common_name": "Chanterelles",
             "observations_count": 90000,
-            "ancestor_ids": [48460, 47170, 50814, 47350, 48423, 47348],
+            "iconic_taxon_id": 47170,
+            "ancestor_ids": [47170, 50814, 47350, 48423, 47348],
         },
-        {"id": 999999, "name": "Obscurella", "observations_count": 3},  # no common name, no ancestry
-        {"id": 47390, "name": "Hydnum", "ancestor_ids": [50814, 47350, 48423, 47390]},
+        {"id": 999999, "name": "Obscurella", "rank": "genus", "observations_count": 3},  # no names, no ancestry
+        {"id": 47390, "name": "Hydnum", "rank": "genus", "ancestor_ids": [47170, 50814, 47350, 48423, 47390]},
     ]
-    monkeypatch.setattr(cli_module, "iter_fungi_genera", lambda: iter(fake_genera))
-    monkeypatch.setattr(cli_module, "iter_fungi_ranks", lambda: iter(fake_ranks))
+    requested: list[object] = []
+    monkeypatch.setattr(cli_module, "iter_taxa", lambda roots: requested.append(roots) or iter(fake_taxa))
 
     runner = CliRunner()
     result = runner.invoke(cli, ["genera-refresh"])
 
     assert result.exit_code == 0, result.output
-    assert "Cached 3 Fungi genera." in result.output
+    assert requested == [[47170]]  # the configured scope roots
+    assert "Cached 7 genus-and-above taxa." in result.output
     rows = con.execute(
-        "SELECT taxon_id, name, common_name, class_name, order_id, order_name, family_id, family_name"
-        " FROM fungi_genera ORDER BY taxon_id"
+        "SELECT taxon_id, name, rank, common_name, parent_id, ancestor_ids, observations_count"
+        " FROM taxa ORDER BY taxon_id"
     ).fetchall()
-    assert rows == [
-        (47348, "Cantharellus", "Chanterelles", "Agaricomycetes", 47350, "Cantharellales", 48423, "Hydnaceae"),
-        (47390, "Hydnum", None, "Agaricomycetes", 47350, "Cantharellales", 48423, "Hydnaceae"),
-        (999999, "Obscurella", None, None, None, None, None, None),
-    ]
-    icons = {hit["name"]: hit["icon"] for hit in search_fungi_genera(con, "")}
+    assert (47348, "Cantharellus", "genus", "Chanterelles", 48423, [47170, 50814, 47350, 48423], 90000) in rows
+    assert (999999, "Obscurella", "genus", None, None, [], 3) in rows
+    # The genus's class / order / family come from its lineage, and the compatibility view agrees.
+    assert con.execute(
+        "SELECT class_name, order_name, family_name FROM fungi_genera WHERE taxon_id = 47348"
+    ).fetchone() == ("Agaricomycetes", "Cantharellales", "Hydnaceae")
+    icons = {hit["name"]: hit["icon"] for hit in search_taxa(con, "", limit=50)}
     assert icons == {"Cantharellus": "cantharellus", "Hydnum": "tooth", "Obscurella": "generic"}
 
 

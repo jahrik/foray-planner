@@ -15,17 +15,16 @@ from foray.cache import (
     prune_duplicate_campsites_tiled,
     prune_duplicate_trailheads_tiled,
     upgrade_legacy_pitches,
-    upsert_fungi_genera,
+    upsert_taxa,
 )
 from foray.config import Settings
-from foray.genus_icons import catalog_rows
 from foray.logging_config import setup_logging
 from foray.refresh import REFRESH_LAYERS, parse_month_list, run_home_refresh
-from foray.scoring import build_phenology, plan_route
+from foray.scoring import build_phenology, plan_route, rank_cache
 from foray.sources import elevation_dem, fire, geocode, satellite
 from foray.sources.camps import ingest_campgrounds, ingest_campgrounds_coverage
 from foray.sources.dispersed import ingest_dispersed, ingest_dispersed_coverage
-from foray.sources.inat import InatQuotaExceeded, iter_fungi_genera, iter_fungi_ranks
+from foray.sources.inat import InatQuotaExceeded, iter_taxa
 from foray.sources.ingest import (
     backfill_elevations,
     backfill_precip,
@@ -37,6 +36,7 @@ from foray.sources.ingest import (
 )
 from foray.sources.land import ingest_public_land, ingest_public_land_coverage
 from foray.sources.trails import backfill_forage_obs, ingest_trails, ingest_trails_region
+from foray.taxa import taxa_rows
 
 
 @click.group()
@@ -656,12 +656,16 @@ def resync_cmd(ctx: click.Context, batch_size: int, until_done: bool) -> None:
 
 @cli.command("genera-refresh")
 def genera_refresh_cmd() -> None:
-    """Refresh the full Fungi genus catalog from iNat (issue #79's search/selection catalog)."""
+    """Top up the taxon catalog from iNat's API: every genus under the scope roots (with its
+    observation count - what ``revalidate`` keys on) and the ranks above it. Species and synonyms
+    come from ``foray ingest-bulk taxa``."""
+    cfg = Settings()
     con = connect()
     try:
-        rows = catalog_rows(iter_fungi_genera(), iter_fungi_ranks())
-        upsert_fungi_genera(con, rows)
-        click.echo(f"Cached {len(rows)} Fungi genera.")
+        rows = taxa_rows(iter_taxa(cfg.scope_roots))
+        upsert_taxa(con, rows)
+        rank_cache.invalidate()
+        click.echo(f"Cached {len(rows)} genus-and-above taxa.")
         jobs.emit_rows(len(rows))
     finally:
         con.close()

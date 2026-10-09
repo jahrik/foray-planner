@@ -16,8 +16,8 @@ from psycopg_pool import ConnectionPool
 
 from foray.api.security import is_https
 from foray.api.state import AppState
-from foray.cache import load_genera as db_load_genera
 from foray.cache import load_location as db_load_location
+from foray.cache import load_targets as db_load_targets
 from foray.config import Home, Settings
 from foray.geo import grid_cell_center
 from foray.refresh import parse_month_list
@@ -85,7 +85,7 @@ def resolve_genera(conn: psycopg.Connection, device_id: str) -> list[int]:
     Empty means "everything nearby" (no filter), not the old curated 21 - see
     ``scoring``'s ``_taxon_filter`` for how that's honored in SQL.
     """
-    return db_load_genera(conn, device_id)
+    return db_load_targets(conn, device_id)
 
 
 def require_idle(state: AppState) -> None:

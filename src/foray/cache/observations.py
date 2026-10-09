@@ -39,8 +39,11 @@ def upsert_observations(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]
         "obscured",
         "taxon_name",
         "taxon_common_name",
+        "species_id",
     )
-    return copy_upsert(con, "observations", columns, _pad(rows, len(columns)), coalesce=set(columns) - {"id"})
+    return copy_upsert(
+        con, "observations", columns, _pad(rows, len(columns)), coalesce=set(columns) - {"id", "species_id"}
+    )
 
 
 def insert_observations_if_missing(con: psycopg.Connection, rows: Sequence[tuple[Any, ...]]) -> int:
@@ -64,13 +67,15 @@ def insert_observations_if_missing(con: psycopg.Connection, rows: Sequence[tuple
         "obscured",
         "taxon_name",
         "taxon_common_name",
+        "species_id",
     )
     return copy_insert_ignore(con, "observations", columns, _pad(rows, len(columns)))
 
 
 def _pad(rows: Sequence[tuple[Any, ...]], width: int) -> list[tuple[Any, ...]]:
     """Right-pad shorter tuples with NULL, so a caller that predates the trailing columns (the
-    taxon names, issue #449) still lines up; the upsert's COALESCE then keeps any stored value."""
+    taxon names, issue #449; ``species_id``, issue #464) still lines up; the upsert's COALESCE then
+    keeps any stored value."""
     return [row + (None,) * (width - len(row)) for row in rows]
 
 
@@ -92,6 +97,27 @@ def fill_missing_taxon_names(con: psycopg.Connection, names: Sequence[tuple[int,
             WHERE o.id = v.id AND o.taxon_name IS NULL AND v.name <> ''
             """,
             [[obs_id for obs_id, _ in names], [name for _, name in names]],
+        )
+        return cur.rowcount
+
+
+def fill_missing_species_ids(con: psycopg.Connection, pairs: Sequence[tuple[int, int]]) -> int:
+    """Set ``species_id`` on cached rows that don't have one yet, from ``(id, species_id)`` pairs.
+
+    The bulk loader is insert-only, so the ~2M rows cached before issue #464 would otherwise get
+    their species only from the slow ``resync`` grind. Touches only NULL rows (a re-run is a no-op)
+    and only by primary key, so it stays a bounded, per-chunk write. Returns rows updated.
+    """
+    if not pairs:
+        return 0
+    with con.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE observations AS o SET species_id = v.species_id
+            FROM unnest(%s::bigint[], %s::bigint[]) AS v(id, species_id)
+            WHERE o.id = v.id AND o.species_id IS NULL
+            """,
+            [[obs_id for obs_id, _ in pairs], [species_id for _, species_id in pairs]],
         )
         return cur.rowcount
 
@@ -163,7 +189,7 @@ def save_observation_thumbnail(con: psycopg.Connection, obs_id: int, thumbnail: 
 
 def suspect_genus_taxon_ids(con: psycopg.Connection, ratio: float = 3.0) -> list[int]:
     """Genus taxon_ids whose cached observation count has drifted implausibly far above iNat's
-    own live count for that genus (``fungi_genera.observations_count``, refreshed weekly by
+    own live count for that genus (``taxa.observations_count``, refreshed weekly by
     ``foray genera-refresh`` - no iNat call needed here, this is DB-only).
 
     This is the fingerprint of a cross-kingdom name homonym: a fungal genus taxon_id that
@@ -179,9 +205,9 @@ def suspect_genus_taxon_ids(con: psycopg.Connection, ratio: float = 3.0) -> list
         """
         SELECT o.taxon_id
         FROM observations o
-        JOIN fungi_genera g ON g.taxon_id = o.taxon_id
+        JOIN taxa g ON g.taxon_id = o.taxon_id AND g.rank = 'genus' AND g.observations_count IS NOT NULL
         GROUP BY o.taxon_id, g.observations_count
-        HAVING count(*) > %s * COALESCE(g.observations_count, 0)
+        HAVING count(*) > %s * g.observations_count
         """,
         [ratio],
     ).fetchall()

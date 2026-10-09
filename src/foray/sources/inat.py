@@ -26,10 +26,6 @@ from foray.sources.http import USER_AGENT
 # without a thumbnail.
 DISPLAYABLE_PHOTO_LICENSES = frozenset({"cc0", "cc-by", "cc-by-sa", "cc-by-nc", "cc-by-nc-sa"})
 
-# iNat's Fungi kingdom taxon id - root of the full genus catalog (issue #79), replacing the
-# old hardcoded 21-genus seed list.
-FUNGI_TAXON_ID = 47170
-
 # iNat's geoprivacy obscuration snaps a coordinate to a fixed-size grid cell, which produces a
 # distinctive positional_accuracy/coordinate_uncertainty_m value - empirically this band,
 # measured against foray-planner's cache (2026-07-21): 98.3% precise (4,441 true / 75 false)
@@ -145,7 +141,7 @@ def _iter_id_above(fetch_page: Callable[[int], dict[str, Any]]) -> Iterator[dict
     ~10k deep-paging cap. ``fetch_page(id_above)`` runs one request; iteration stops on an
     empty or short (< ``_PAGE_SIZE``) page. Each page is retried by ``_with_retries``.
 
-    Shared by ``iter_observations`` (``/v1/observations``) and ``iter_fungi_genera``
+    Shared by ``iter_observations`` (``/v1/observations``) and ``iter_taxa``
     (``/v1/taxa``) - the loop is identical, only the endpoint call differs.
     """
     id_above = 0
@@ -218,37 +214,37 @@ def iter_observations(
     )
 
 
-def iter_fungi_genera() -> Iterator[dict[str, Any]]:
-    """Yield every genus-rank taxon under Fungi - the full catalog behind genus search/#79.
+# Every rank above species the catalog tops up from the API (`foray genera-refresh`): genus for its
+# observation count, the ranks above it for the lineage a family / order / class target expands
+# through. Species come from the taxonomy bulk export (`foray ingest-bulk taxa`), not the API.
+CATALOG_RANKS = (
+    "kingdom",
+    "phylum",
+    "subphylum",
+    "class",
+    "subclass",
+    "order",
+    "suborder",
+    "superfamily",
+    "family",
+    "subfamily",
+    "tribe",
+    "genus",
+)
+
+
+def iter_taxa(roots: list[int], ranks: tuple[str, ...] = CATALOG_RANKS) -> Iterator[dict[str, Any]]:
+    """Yield every ``ranks``-rank taxon at or under the scope ``roots`` - the catalog behind
+    taxon search (issues #79, #464).
 
     Same ``id_above`` deep-paging idiom as ``iter_observations`` (verified live: ``/v1/taxa``
-    accepts it too). ~6,018 results as of 2026-07 - well past a single page, so this always
-    walks more than one request.
+    accepts it too); ~6,000 genera plus ~1,500 higher ranks under Fungi as of 2026-10, well past a
+    single page, so this always walks more than one request.
     """
     return _iter_id_above(
         lambda id_above: get_taxa(
-            taxon_id=FUNGI_TAXON_ID,
-            rank="genus",
-            per_page=_PAGE_SIZE,
-            order_by="id",
-            order="asc",
-            id_above=id_above,
-            user_agent=USER_AGENT,
-        )
-    )
-
-
-def iter_fungi_ranks() -> Iterator[dict[str, Any]]:
-    """Yield every class, order and family under Fungi (~1,400 taxa as of 2026-10).
-
-    ``/v1/taxa`` gives each genus only its ``ancestor_ids``, not the ancestors' names, so
-    ``foray genera-refresh`` looks those ids up here to give each genus its class / order /
-    family - the taxonomy behind its map icon (issue #449, ``foray.genus_icons``).
-    """
-    return _iter_id_above(
-        lambda id_above: get_taxa(
-            taxon_id=FUNGI_TAXON_ID,
-            rank=["class", "order", "family"],
+            taxon_id=roots,
+            rank=list(ranks),
             per_page=_PAGE_SIZE,
             order_by="id",
             order="asc",

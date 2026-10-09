@@ -133,7 +133,7 @@ and the results panel.
 | **Sort** pill | *Best overall*, *Active now* or *Nearest*. |
 | **Radius** pill | Search radius presets (50, 150, 300, 500 km) from your location. |
 | **Months** pill | Any combination of months. The current month is the default. Hidden under *Active now*. |
-| **Genera** pill | Search the ~6,000-genus catalog and pin your targets. Empty means every fungus nearby. |
+| **Taxa** pill | Search any rank - a species, genus, family, order or class, by scientific name, common name or synonym - and pin your targets. Empty means every fungus nearby. |
 | **Layers** pill | Every map overlay, above. |
 | **⟳** (on the map) | Re-pulls the latest iNaturalist observations for your area. Runs in the background with a progress bar. |
 | **⋮ > Units** | Miles (default) or kilometres for every distance, elevation and rainfall figure. |

@@ -25,6 +25,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from foray.cache.taxa import Targets
     from foray.scoring.models import RegionScore
 
 # Keep in sync with Settings.observability.ranking_cache_ttl_seconds' default (foray.config).
@@ -112,7 +113,7 @@ def invalidate() -> None:
 def radial_key(
     *,
     months: tuple[int, ...],
-    taxon_ids: tuple[int, ...],
+    targets: Targets,
     home_lat: float,
     home_lng: float,
     radius_km: float,
@@ -129,7 +130,7 @@ def radial_key(
     return (
         "radial",
         months,
-        taxon_ids,
+        targets,
         home_lat,
         home_lng,
         radius_km,
@@ -141,7 +142,7 @@ def radial_key(
 def corridor_key(
     *,
     months: tuple[int, ...],
-    taxon_ids: tuple[int, ...],
+    targets: Targets,
     start_lat: float,
     start_lng: float,
     dest_lat: float,
@@ -154,7 +155,7 @@ def corridor_key(
     return (
         "corridor",
         months,
-        taxon_ids,
+        targets,
         start_lat,
         start_lng,
         dest_lat,

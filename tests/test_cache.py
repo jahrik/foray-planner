@@ -10,7 +10,7 @@ import pytest
 from foray.cache import (
     SCHEMA_VERSION,
     _schema_is_current,
-    add_genus,
+    add_target,
     apply_schema,
     backfill_queue_depth,
     connection,
@@ -19,7 +19,7 @@ from foray.cache import (
     delete_observations,
     dequeue_backfill_batch,
     forget_ingest,
-    genus_taxon_ids,
+    genus_name_ids,
     insert_observations_if_missing,
     is_ingested,
     job_run_drain_rate,
@@ -27,11 +27,11 @@ from foray.cache import (
     latest_job_run,
     latest_obs_date,
     latest_successful_job_run,
-    list_selected_genera,
-    load_genera,
+    list_selected_targets,
     load_region_place,
     load_region_places,
     load_region_satellite,
+    load_targets,
     mark_revalidated,
     maybe_rebuild_phenology,
     observation_ids_for_genus,
@@ -41,17 +41,17 @@ from foray.cache import (
     record_ingest,
     record_job_run,
     refresh_backfill_queue,
-    remove_genus,
+    remove_target,
     save_region_place,
     save_region_satellite,
-    search_fungi_genera,
+    search_taxa,
     set_observation_elevations,
     stale_observation_ids,
     suspect_genus_taxon_ids,
     upsert_campsites,
-    upsert_fungi_genera,
     upsert_observations,
     upsert_rows,
+    upsert_taxa,
 )
 from foray.config import Observability, Settings, Spaces
 from foray.geo import haversine_km
@@ -146,11 +146,11 @@ def test_reupsert_preserves_lat_lng_when_new_value_is_null(con: psycopg.Connecti
 
 
 def test_suspect_genus_taxon_ids_flags_cached_count_far_above_live_count(con: psycopg.Connection) -> None:
-    upsert_fungi_genera(
+    upsert_taxa(
         con,
         [
-            {"taxon_id": 1, "name": "Olla", "common_name": None, "observations_count": 2},
-            {"taxon_id": 2, "name": "Cantharellus", "common_name": None, "observations_count": 90000},
+            {"taxon_id": 1, "name": "Olla", "common_name": None, "observations_count": 2, "rank": "genus"},
+            {"taxon_id": 2, "name": "Cantharellus", "common_name": None, "observations_count": 90000, "rank": "genus"},
         ],
     )
     # 10 cached rows under a genus iNat says has only 2 observations total - suspect (10 > 3*2).
@@ -164,7 +164,7 @@ def test_suspect_genus_taxon_ids_flags_cached_count_far_above_live_count(con: ps
 
 
 def test_suspect_genus_taxon_ids_flags_zero_live_count(con: psycopg.Connection) -> None:
-    upsert_fungi_genera(con, [{"taxon_id": 1, "name": "Ghost", "common_name": None, "observations_count": 0}])
+    upsert_taxa(con, [{"taxon_id": 1, "name": "Ghost", "common_name": None, "observations_count": 0, "rank": "genus"}])
     _insert(con, (1, 1, *_ROW[2:]))
 
     assert suspect_genus_taxon_ids(con) == [1]
@@ -202,6 +202,15 @@ def test_stale_observation_ids_prefers_never_checked_then_oldest(con: psycopg.Co
     assert sorted(stale_observation_ids(con, limit=10)) == [1, 2, 3]
 
 
+def test_suspect_genus_taxon_ids_ignores_genera_without_a_live_count(con: psycopg.Connection) -> None:
+    """The taxonomy export carries no observation count: until genera-refresh fills it, a NULL count
+    is "unknown", not "zero" - otherwise every genus with a cached row would look misidentified."""
+    upsert_taxa(con, [{"taxon_id": 1, "name": "Uncounted", "rank": "genus"}])
+    _insert(con, (1, 1, *_ROW[2:]))
+
+    assert suspect_genus_taxon_ids(con) == []
+
+
 def test_stale_observation_ids_respects_limit(con: psycopg.Connection) -> None:
     for obs_id in range(5):
         _insert(con, (obs_id, 111, *_ROW[2:]))
@@ -227,114 +236,141 @@ def test_mark_revalidated_stamps_timestamp(con: psycopg.Connection) -> None:
 
 
 _GENERA = [
-    {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "observations_count": 90000},
-    {"taxon_id": 47165, "name": "Entoloma", "common_name": "Pinkgills", "observations_count": 40000},
-    {"taxon_id": 999999, "name": "Obscurella", "common_name": None, "observations_count": 3},
+    {
+        "taxon_id": 47348,
+        "name": "Cantharellus",
+        "common_name": "Chanterelles",
+        "observations_count": 90000,
+        "rank": "genus",
+    },
+    {"taxon_id": 47165, "name": "Entoloma", "common_name": "Pinkgills", "observations_count": 40000, "rank": "genus"},
+    {"taxon_id": 999999, "name": "Obscurella", "common_name": None, "observations_count": 3, "rank": "genus"},
 ]
 
 
-def test_search_fungi_genera_matches_scientific_or_common_name(con: psycopg.Connection) -> None:
-    upsert_fungi_genera(con, _GENERA)
+def test_search_taxa_matches_scientific_or_common_name(con: psycopg.Connection) -> None:
+    upsert_taxa(con, _GENERA)
 
-    by_scientific = search_fungi_genera(con, "cantharell")
+    by_scientific = search_taxa(con, "cantharell")
     assert [hit["taxon_id"] for hit in by_scientific] == [47348]
 
-    by_common = search_fungi_genera(con, "pinkgill")
+    by_common = search_taxa(con, "pinkgill")
     assert [hit["taxon_id"] for hit in by_common] == [47165]
 
 
-def test_search_fungi_genera_empty_query_ranks_by_observation_count(con: psycopg.Connection) -> None:
-    upsert_fungi_genera(con, _GENERA)
+def test_search_taxa_empty_query_ranks_genera_by_observation_count(con: psycopg.Connection) -> None:
+    upsert_taxa(con, _GENERA)
 
-    hits = search_fungi_genera(con, "")
+    hits = search_taxa(con, "")
     assert [hit["taxon_id"] for hit in hits] == [47348, 47165, 999999]
 
 
-def test_search_fungi_genera_common_name_is_optional(con: psycopg.Connection) -> None:
-    upsert_fungi_genera(con, _GENERA)
+def test_search_taxa_common_name_is_optional(con: psycopg.Connection) -> None:
+    upsert_taxa(con, _GENERA)
 
-    hits = search_fungi_genera(con, "obscurella")
-    assert hits == [{"taxon_id": 999999, "name": "Obscurella", "common_name": None, "icon": "generic"}]
+    hits = search_taxa(con, "obscurella")
+    assert hits == [
+        {
+            "taxon_id": 999999,
+            "name": "Obscurella",
+            "common_name": None,
+            "rank": "genus",
+            "icon": "generic",
+            "matched_name": None,
+        }
+    ]
 
 
-def test_upsert_fungi_genera_reupsert_updates_in_place(con: psycopg.Connection) -> None:
-    upsert_fungi_genera(con, [{"taxon_id": 1, "name": "Foo", "common_name": None, "observations_count": 1}])
-    upsert_fungi_genera(con, [{"taxon_id": 1, "name": "Foo", "common_name": "Foos", "observations_count": 2}])
+def test_upsert_taxa_reupsert_updates_in_place(con: psycopg.Connection) -> None:
+    upsert_taxa(con, [{"taxon_id": 1, "name": "Foo", "common_name": None, "observations_count": 1, "rank": "genus"}])
+    upsert_taxa(con, [{"taxon_id": 1, "name": "Foo", "common_name": "Foos", "observations_count": 2, "rank": "genus"}])
 
-    row = con.execute("SELECT common_name, observations_count FROM fungi_genera WHERE taxon_id = 1").fetchone()
+    row = con.execute("SELECT common_name, observations_count FROM taxa WHERE taxon_id = 1").fetchone()
     assert row == ("Foos", 2)
 
 
-def test_genus_taxon_ids_maps_full_catalog(con: psycopg.Connection) -> None:
-    upsert_fungi_genera(con, _GENERA)
+def test_upsert_taxa_null_never_blanks_a_stored_count_or_name(con: psycopg.Connection) -> None:
+    """The taxonomy export carries neither an observation count nor most English names: loading it
+    must not erase what the API refresh stored."""
+    upsert_taxa(con, [{"taxon_id": 1, "name": "Foo", "common_name": "Foos", "observations_count": 9, "rank": "genus"}])
+    upsert_taxa(con, [{"taxon_id": 1, "name": "Foo", "rank": "genus", "ancestor_ids": [47170]}])
 
-    assert genus_taxon_ids(con) == {
-        "Cantharellus": 47348,
-        "Entoloma": 47165,
-        "Obscurella": 999999,
-    }
+    row = con.execute("SELECT common_name, observations_count, ancestor_ids FROM taxa WHERE taxon_id = 1").fetchone()
+    assert row == ("Foos", 9, [47170])
 
 
-def test_genus_taxon_ids_rejects_duplicate_names(con: psycopg.Connection) -> None:
-    # `name` has no uniqueness constraint - a duplicate must raise, not silently drop one
-    # of the two taxon_ids from the map.
-    upsert_fungi_genera(
+def test_genus_name_ids_maps_genus_rank_names_and_drops_ambiguous_ones(con: psycopg.Connection) -> None:
+    upsert_taxa(
         con,
         [
-            {"taxon_id": 1, "name": "Amanita", "common_name": None, "observations_count": 1},
-            {"taxon_id": 2, "name": "Amanita", "common_name": None, "observations_count": 1},
+            *_GENERA,
+            # A same-named section is not a genus; two genera sharing a name are dropped, not guessed.
+            {"taxon_id": 5, "name": "Cantharellus", "rank": "section"},
+            {"taxon_id": 6, "name": "Amanita", "rank": "genus"},
+            {"taxon_id": 7, "name": "Amanita", "rank": "genus"},
         ],
     )
 
-    with pytest.raises(ValueError, match="duplicate name"):
-        genus_taxon_ids(con)
+    assert genus_name_ids(con) == {"Cantharellus": 47348, "Entoloma": 47165, "Obscurella": 999999}
 
 
-def test_load_genera_empty_for_fresh_device(con: psycopg.Connection) -> None:
-    assert load_genera(con, "device-a") == []
+def test_load_targets_empty_for_fresh_device(con: psycopg.Connection) -> None:
+    assert load_targets(con, "device-a") == []
 
 
-def test_add_and_load_genera_is_scoped_per_device(con: psycopg.Connection) -> None:
-    add_genus(con, "device-a", 47348)
-    add_genus(con, "device-a", 47165)
-    add_genus(con, "device-b", 999999)
+def test_add_and_load_targets_is_scoped_per_device(con: psycopg.Connection) -> None:
+    add_target(con, "device-a", 47348)
+    add_target(con, "device-a", 47165)
+    add_target(con, "device-b", 999999)
 
-    assert sorted(load_genera(con, "device-a")) == [47165, 47348]
-    assert load_genera(con, "device-b") == [999999]
-
-
-def test_add_genus_is_idempotent(con: psycopg.Connection) -> None:
-    add_genus(con, "device-a", 47348)
-    add_genus(con, "device-a", 47348)
-
-    assert load_genera(con, "device-a") == [47348]
+    assert sorted(load_targets(con, "device-a")) == [47165, 47348]
+    assert load_targets(con, "device-b") == [999999]
 
 
-def test_remove_genus(con: psycopg.Connection) -> None:
-    add_genus(con, "device-a", 47348)
-    add_genus(con, "device-a", 47165)
+def test_add_target_is_idempotent(con: psycopg.Connection) -> None:
+    add_target(con, "device-a", 47348)
+    add_target(con, "device-a", 47348)
 
-    remove_genus(con, "device-a", 47348)
-
-    assert load_genera(con, "device-a") == [47165]
+    assert load_targets(con, "device-a") == [47348]
 
 
-def test_list_selected_genera_joins_catalog_names(con: psycopg.Connection) -> None:
-    upsert_fungi_genera(
+def test_remove_target(con: psycopg.Connection) -> None:
+    add_target(con, "device-a", 47348)
+    add_target(con, "device-a", 47165)
+
+    remove_target(con, "device-a", 47348)
+
+    assert load_targets(con, "device-a") == [47165]
+
+
+def test_list_selected_targets_joins_catalog_names(con: psycopg.Connection) -> None:
+    upsert_taxa(
         con,
         [
-            {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "observations_count": 90000},
-            {"taxon_id": 999999, "name": "Obscurella", "common_name": None, "observations_count": 3},
+            {
+                "taxon_id": 47348,
+                "name": "Cantharellus",
+                "common_name": "Chanterelles",
+                "observations_count": 90000,
+                "rank": "genus",
+            },
+            {"taxon_id": 999999, "name": "Obscurella", "common_name": None, "observations_count": 3, "rank": "genus"},
         ],
     )
-    add_genus(con, "device-a", 47348)
-    add_genus(con, "device-a", 999999)
+    add_target(con, "device-a", 47348)
+    add_target(con, "device-a", 999999)
 
-    hits = list_selected_genera(con, "device-a")
+    hits = list_selected_targets(con, "device-a")
 
     assert hits == [
-        {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "icon": "cantharellus"},
-        {"taxon_id": 999999, "name": "Obscurella", "common_name": None, "icon": "generic"},
+        {
+            "taxon_id": 47348,
+            "name": "Cantharellus",
+            "common_name": "Chanterelles",
+            "rank": "genus",
+            "icon": "cantharellus",
+        },
+        {"taxon_id": 999999, "name": "Obscurella", "common_name": None, "rank": "genus", "icon": "generic"},
     ]
 
 

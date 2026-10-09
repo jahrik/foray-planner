@@ -1,5 +1,5 @@
 // Shared typeahead widget backing the header place-search (location.ts), the plan-tab
-// Start/Destination fields (main.ts), and the genus picker (genera.ts). Each of those wraps the
+// Start/Destination fields (main.ts), and the taxon picker (taxa.ts). Each of those wraps the
 // same <input> + <ul class="suggestions"> pair with identical behaviour: a debounced fetch, a
 // filtered result list, Arrow/Enter/Escape keyboard nav, and a 150ms blur-close (long enough for
 // a suggestion's mousedown to land first). All per-widget state lives in the closure below, so
@@ -18,7 +18,7 @@ export interface AutocompleteConfig<T> {
   decorate?: (item: T) => Node | null;
   /** A suggestion was chosen (click or Enter). */
   onPick: (item: T) => void;
-  /** Drop items before they're shown (e.g. genera already selected). Applied wherever the
+  /** Drop items before they're shown (e.g. taxa already selected). Applied wherever the
    * result list is read, so keyboard nav indexes the same filtered set. */
   filter?: (item: T) => boolean;
   /** Runs synchronously on every keystroke, before the debounce and min-length checks - a hook
@@ -26,7 +26,7 @@ export interface AutocompleteConfig<T> {
    * place search moved server-side (issue #145); kept for callers that need it. */
   onInput?: () => void;
   /** Form submitted with non-empty text and no suggestion picked: called with the trimmed
-   * text. Omit to only preventDefault (the genus picker has no free-text path). */
+   * text. Omit to only preventDefault (the taxon picker has no free-text path). */
   onSubmitText?: (text: string) => void;
   /** Characters required before a fetch fires. Default 2. */
   minChars?: number;

@@ -24,7 +24,7 @@ THIS_YEAR = dt.date.today().year
 def _seed(con: psycopg.Connection) -> None:
     with con.cursor() as cur:
         cur.executemany(
-            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            "INSERT INTO taxa (taxon_id, name, common_name, rank) VALUES (%s, %s, %s, 'genus')",
             [(MORCHELLA, "Morchella", "Morels"), (OTHER, "Cantharellus", "Chanterelles")],
         )
         cur.executemany(

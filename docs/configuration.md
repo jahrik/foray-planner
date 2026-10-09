@@ -46,6 +46,8 @@ defaults; see [api.md](api.md#anonymous-device-identity).
 | `FORAY_INGEST__RECENT_WEEKS` | `4` | The trailing window behind "Active now" and the recency boost. |
 | `FORAY_INGEST__REGION_SYNC_DAYS` | `30` | How far back a coverage-region ingest looks even on its first run. Deep history comes from the bulk load, not this path. |
 | `FORAY_COVERAGE` | all 50 US states | JSON list of `{name, place_id, bbox}`. `place_id` is the iNaturalist place; `bbox` is `[west, south, east, north]`, used by the land and trail ingests. Alaska's box is clamped at -180 to avoid crossing the antimeridian. |
+| `FORAY_SCOPE_ROOTS` | `[47170]` (Fungi) | JSON list of the root taxon ids whose descendants are ingested, cataloged and ranked. Ingest, the bulk loaders and `revalidate` test "still under a scope root" instead of "still Fungi". A root need not be a kingdom: curated orders or families inside one work too (how trees would be added). |
+| `FORAY_SCOPE_KINGDOMS` | `["Fungi"]` | JSON list of kingdom **names** the bulk observation stager pre-filters on (the export carries lineage names, and the stager has no database). Every scope root must sit inside one of them; the loader then applies the exact root test through `taxa`. |
 | `FORAY_COUNTRIES` | United States | JSON list of `{name, place_id}`; one observation query per country, which is what the daily job runs. Adding a country is one more entry, no code change. |
 | `RIDB_API_KEY` | unset | Recreation.gov key. Without it the live campground ingest is a no-op (the bulk RIDB export needs no key). Also hides the `camps` layer from `/healthz/data`. |
 | `FORAY_OVERPASS_URLS` | public mirrors | Comma-separated Overpass endpoints, tried in order. |

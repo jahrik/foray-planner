@@ -10,7 +10,7 @@ import httpx
 import psycopg
 import pytest
 
-from foray.cache import upsert_fungi_genera
+from foray.cache import upsert_taxa
 from foray.config import Settings
 from foray.sources.ingest import backfill_elevations, ingest
 
@@ -26,17 +26,17 @@ def cfg_with_home(con: psycopg.Connection, monkeypatch) -> Settings:
     monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
     monkeypatch.setenv("FORAY_INGEST__SINCE_YEAR", "2015")
     monkeypatch.setenv("FORAY_INGEST__QUALITY_GRADE", "research")
-    upsert_fungi_genera(
+    upsert_taxa(
         con,
         [
-            {"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels"},
-            {"taxon_id": CHANTERELLE, "name": "Cantharellus", "common_name": "Chanterelles"},
+            {"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels", "rank": "genus"},
+            {"taxon_id": CHANTERELLE, "name": "Cantharellus", "common_name": "Chanterelles", "rank": "genus"},
         ],
     )
     return Settings()
 
 
-FUNGI_ICONIC_TAXON_ID = 47170  # foray.sources.inat.FUNGI_TAXON_ID doubles as Fungi's iconic_taxon_id
+SCOPE_ROOT = 47170  # the default scope root (Fungi): every in-scope observation's lineage runs through it
 
 
 def _fake_obs(
@@ -45,7 +45,6 @@ def _fake_obs(
     *,
     rank: str = "genus",
     ancestor_ids: list[int] | None = None,
-    iconic_taxon_id: int = FUNGI_ICONIC_TAXON_ID,
 ) -> dict:
     return {
         "id": obs_id,
@@ -56,14 +55,13 @@ def _fake_obs(
         "taxon": {
             "id": taxon_id,
             "rank": rank,
-            "ancestor_ids": ancestor_ids or [taxon_id],
-            "iconic_taxon_id": iconic_taxon_id,
+            "ancestor_ids": ancestor_ids or [SCOPE_ROOT, taxon_id],
         },
     }
 
 
-def test_ingest_queries_whole_fungi_kingdom(con: psycopg.Connection, cfg_with_home: Settings) -> None:
-    """A single taxon_id=FUNGI_TAXON_ID query, not one call per genus."""
+def test_ingest_queries_the_scope_roots(con: psycopg.Connection, cfg_with_home: Settings) -> None:
+    """A single query over the configured scope roots, not one call per genus."""
     with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter([_fake_obs(1, MOREL), _fake_obs(2, CHANTERELLE)])
         counts = ingest(cfg_with_home, con)
@@ -71,7 +69,7 @@ def test_ingest_queries_whole_fungi_kingdom(con: psycopg.Connection, cfg_with_ho
     assert counts == {MOREL: 1, CHANTERELLE: 1}
     mock_iter.assert_called_once()
     call_kwargs = mock_iter.call_args.kwargs
-    assert call_kwargs["taxon_id"] == 47170  # foray.sources.inat.FUNGI_TAXON_ID
+    assert call_kwargs["taxon_id"] == [47170]  # Settings.scope_roots default
     assert call_kwargs["lat"] == 47.6
     assert call_kwargs["radius_km"] == 200
 
@@ -167,9 +165,9 @@ def test_ingest_resolves_genus_from_species_rank_ancestry(con: psycopg.Connectio
         counts = ingest(cfg_with_home, con)
 
     assert counts == {MOREL: 1}
-    row = con.execute("SELECT taxon_id FROM observations WHERE id = 1").fetchone()
+    row = con.execute("SELECT taxon_id, species_id FROM observations WHERE id = 1").fetchone()
     assert row is not None
-    assert row[0] == MOREL
+    assert row == (MOREL, species_taxon_id)  # genus is the hot key; the species rides alongside
 
 
 def test_ingest_skips_observations_with_no_known_genus_ancestor(
@@ -187,17 +185,15 @@ def test_ingest_skips_observations_with_no_known_genus_ancestor(
     assert row[0] == 1
 
 
-def test_ingest_skips_observations_whose_iconic_taxon_is_not_fungi(
-    con: psycopg.Connection, cfg_with_home: Settings
-) -> None:
-    """Ancestor-membership alone isn't sufficient: a handful of fungal genus names are homonyms
-    of established animal genera (fungal Olla vs. the ladybug genus, etc) - a genus taxon_id
-    match must not admit an observation whose iconic_taxon_id isn't actually Fungi."""
+def test_ingest_skips_observations_outside_the_scope_roots(con: psycopg.Connection, cfg_with_home: Settings) -> None:
+    """A handful of fungal genus names are homonyms of established animal genera (fungal Olla vs.
+    the ladybug genus, etc): the animal has its own taxon id and a lineage that never runs through a
+    scope root, so it is not admitted even though its name matches a cataloged genus."""
     with patch("foray.sources.ingest.iter_observations") as mock_iter:
         mock_iter.return_value = iter(
             [
                 _fake_obs(1, MOREL),
-                _fake_obs(2, MOREL, iconic_taxon_id=47158),  # 47158 = Insecta
+                _fake_obs(2, 424242, ancestor_ids=[1, 47158, 424242]),  # an Insecta genus
             ]
         )
         counts = ingest(cfg_with_home, con)
@@ -276,7 +272,7 @@ def test_ingest_incremental_overlaps_with_country_scoped_coverage(
 
 
 def test_ingest_fails_fast_on_empty_catalog(con: psycopg.Connection, monkeypatch) -> None:
-    """A never-refreshed/misconfigured fungi_genera catalog must abort loudly, not silently
+    """A never-refreshed/misconfigured taxa catalog must abort loudly, not silently
     ingest only already-genus-rank observations while dropping every finer-rank one."""
     monkeypatch.setenv("FORAY_HOME__LAT", "47.6")
     monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
@@ -324,7 +320,7 @@ def test_to_row_keeps_the_observations_own_identification() -> None:
         "quality_grade": "research",
         "taxon": {"name": "Morchella importuna", "preferred_common_name": "Landscape Morel"},
     }
-    row = _to_row(obs, 56830)
+    row = _to_row(obs, 56830, 1062674)
     assert row is not None
     assert row[1] == 56830
-    assert row[-2:] == ("Morchella importuna", "Landscape Morel")
+    assert row[-3:] == ("Morchella importuna", "Landscape Morel", 1062674)

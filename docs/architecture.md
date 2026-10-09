@@ -163,8 +163,11 @@ applies it; see [Migrations](#migrations).
 |---|---|
 | `observations` | Cached iNaturalist records: id, taxon, lat/lng, date, `quality_grade`, `obscured`, place, URI, `elevation_m`, antecedent rain, `geom` |
 | `observation_thumbnails` | One cached Creative Commons photo (or "none") per precise observation |
-| `fungi_genera` | The Fungi genus catalog (about 6,000 rows) with taxonomy used for icons |
-| `phenology` | **Materialized.** Count per (region, taxon, month) |
+| `taxa` | The taxon catalog, every rank from species to kingdom, in iNaturalist's own shape: `parent_id`, `rank` / `rank_level`, an `ancestor_ids` path (GIN-indexed), `observations_count`, `is_active` |
+| `taxon_names` | Synonyms and vernacular names (every language) that search matches against |
+| `fungi_genera` | A **view** over `taxa` (genus rows, with class / order / family names) kept so a stale cron image keeps working; to be dropped in a later cleanup |
+| `phenology` | **Materialized.** Count per (region, genus, month) |
+| `phenology_species` | **Materialized** in the same pass. Count per (region, species, month), only from observations identified to species |
 | `regions` | **Materialized.** Per-cell centre, mean elevation, mean rain, observation and taxa counts |
 | `campsites` | Developed campgrounds (RIDB) and OSM-reported dispersed sites, with `camp_type` and `free` |
 | `campsite_duplicates` | Tombstones so a folded duplicate is not re-inserted |
@@ -177,11 +180,11 @@ applies it; see [Migrations](#migrations).
 | `ingest_log` | Which area/window was fetched and when (coverage tracking, freshness) |
 | `job_runs` | One row per scheduled-job attempt: status, duration, rows |
 | `backfill_queue` | Activity-weighted queue for the elevation and rain backfills |
-| `app_location`, `app_genera` | Per-device saved home and selected genera |
+| `app_location`, `app_targets` | Per-device saved home and picked targets (a taxon of any rank) |
 | `meta` | Small key/value state (loaded bulk-snapshot dates, phenology-rebuild counters) |
 
 The whole database is rebuildable by re-running the ingest jobs **except `app_location` and
-`app_genera`**, which are visitor-authored. In production they live on the managed cluster; nothing
+`app_targets`**, which are visitor-authored. In production they live on the managed cluster; nothing
 in this repository backs them up beyond the provider's own policy (see
 [deployment.md](deployment.md)).
 
@@ -300,7 +303,7 @@ sequenceDiagram
     participant C as rank_cache
     participant PG as Postgres
     B->>A: GET /api/destinations?months=10
-    A->>A: resolve device_id cookie, saved home, selected genera
+    A->>A: resolve device_id cookie, saved home, picked targets
     A->>C: lookup (months, genera, centre, radius, resolution)
     alt cache hit (TTL 10 min)
         C-->>A: ranked regions
@@ -323,7 +326,7 @@ sequenceDiagram
   cleared on every phenology rebuild and on writes to trails, camps, land and fire. It is a plain
   module-level dict **because `foray serve` runs a single uvicorn process**; running several
   workers would need a shared cache or cross-process invalidation.
-- **No accounts.** A visitor is an opaque `device_id` cookie. Saved home and selected genera hang
+- **No accounts.** A visitor is an opaque `device_id` cookie. Saved home and picked targets hang
   off it. See [api.md](api.md#anonymous-device-identity).
 - **Refresh.** `POST /api/refresh` runs the same `run_home_refresh` the CLI uses in a background
   thread and streams progress over server-sent events.

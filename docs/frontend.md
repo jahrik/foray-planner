@@ -65,7 +65,7 @@ frontend/
     ui/                 pills, popovers, cards, autocomplete, "why" sentence, loading bar
     icons/              genus and campground icon art + lookups
     geolocate.ts, locate-ui.ts   device location
-    location.ts, location-writes.ts, refresh.ts, genera.ts   search, saved home, refresh stream, genus picker
+    location.ts, location-writes.ts, refresh.ts, taxa.ts   search, saved home, refresh stream, taxon picker
 ```
 
 ### Module guide
@@ -81,9 +81,9 @@ frontend/
 | | `ui/why.ts` | The plain-language line leading each card, built only from the destinations payload. |
 | Details | `views/details.ts`, `views/destination-tabs.ts` | The Details view and its five lazy tabs: Calendar, Photos, Trails, Campgrounds, Public land. |
 | Trip | `views/shortlist.ts`, `views/plan.ts`, `views/plan-points.ts`, `views/stop-pin.ts` | The "+ Plan" shortlist, the route form and render, GPX/JSON export, and pinning an exact stop. |
-| Shell | `ui/pills.ts`, `ui/pill.ts` | The Sort / Radius / Months / Genera / Layers row and its popover primitive. |
+| Shell | `ui/pills.ts`, `ui/pill.ts` | The Sort / Radius / Months / Taxa / Layers row and its popover primitive. |
 | | `ui/ui-prefs.ts` | The units, theme and text-size toggles in the `⋮` menu. |
-| | `ui/autocomplete.ts`, `location.ts`, `genera.ts` | Typeahead for place search and the genus picker. |
+| | `ui/autocomplete.ts`, `location.ts`, `taxa.ts` | Typeahead for place search and the taxon picker (a rank filter above it narrows the search). |
 | Map | `map/map.ts` | Leaflet init, marker palette, legend, theme switching, precise-pin clustering. |
 | | `map/destinations.ts` | Destination circles: the rank hierarchy, snapping to true footprint, the aerial overlay. |
 | | `map/basemap*.ts` | The MapLibre GL vector basemap and its trails, land, fire, terrain, roads and satellite layers. |
@@ -96,7 +96,7 @@ frontend/
 
 ## How the screen is wired
 
-`index.html` is a static skeleton. Most controls (radius presets, month grid, genus search, layer
+`index.html` is a static skeleton. Most controls (radius presets, month grid, taxon search, layer
 checkboxes) sit in a hidden `#pill-sources` block; `initPills()` then **moves** each into its
 pill's popover. That ordering is why `initPills()` runs last in `main.ts`: every module that
 wires those controls has already found them by id.
@@ -129,7 +129,7 @@ sites stay `state.foo` while the shape stays legible:
   `regionRadiusKm`, tile URLs and `recentWeeks`.
 - `UiState`: `view` (`destinations` or `plan`), `sort`, `units` and the last plan payload.
 
-Server-side per-device state (the saved home, the selected genera) is not stored here; it is
+Server-side per-device state (the saved home, the picked targets) is not stored here; it is
 fetched from the API and cached in the module that owns it.
 
 `localStorage` keys, all read through `prefs.ts`: `foray-theme` (default **dark**),

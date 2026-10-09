@@ -43,7 +43,7 @@ FROM python:3.13-slim-bookworm AS runtime
 
 # No local volume needed: the DB is Postgres, reached via the standard PGHOST/PGPORT/PGUSER/
 # PGPASSWORD/PGDATABASE env vars (never baked into the image). No fixed target-genus list
-# either (issue #79 Phase 4) - the full Fungi catalog lives in Postgres (fungi_genera).
+# either (issue #79 Phase 4) - the taxon catalog lives in Postgres (taxa).
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     FORAY_HOME__RADIUS_KM=400

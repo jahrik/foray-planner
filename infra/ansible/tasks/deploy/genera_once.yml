@@ -1,10 +1,10 @@
 ---
 # Manual/opt-in only - not part of foray:deploy. The weekly foray-genera cron job
 # (tasks/deploy/cron.yml) already keeps the catalog fresh on a schedule; this exists to warm
-# fungi_genera immediately on a fresh droplet instead of waiting for the next cron run - both
+# the taxa catalog immediately on a fresh droplet instead of waiting for the next cron run - both
 # `foray:ingest-once` and the nightly ingest cron fail fast if the catalog is empty (issue
-# #79 Phase 4: ingest resolves every observation's genus by intersecting against the known
-# catalog, so there's nothing to resolve against until this has run at least once).
+# #79 Phase 4 / #464: ingest resolves every observation's genus by rolling its taxon up through the
+# `taxa` catalog, so there's nothing to resolve against until this has run at least once).
 - name: Check for the deploy-rendered env file
   ansible.builtin.stat:
     path: /opt/foray-planner/foray.env

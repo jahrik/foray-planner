@@ -18,8 +18,8 @@ from foray.api import create_app
 from foray.cache import (
     prune_duplicate_campsites_tiled,
     upsert_campsites,
-    upsert_fungi_genera,
     upsert_public_land,
+    upsert_taxa,
     upsert_trails,
 )
 from foray.config import Home, Settings
@@ -38,12 +38,12 @@ HOME_LAT, HOME_LNG = 47.6, -122.3
 
 @pytest.fixture
 def cfg(con: psycopg.Connection) -> Settings:
-    upsert_fungi_genera(
+    upsert_taxa(
         con,
         [
-            {"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels"},
-            {"taxon_id": CHANT, "name": "Cantharellus", "common_name": "Chanterelles", "icon": "cantharellus"},
-            {"taxon_id": BOLET, "name": "Boletus", "common_name": "King Boletes"},
+            {"taxon_id": MOREL, "name": "Morchella", "common_name": "Morels", "rank": "genus"},
+            {"taxon_id": CHANT, "name": "Cantharellus", "common_name": "Chanterelles", "rank": "genus"},
+            {"taxon_id": BOLET, "name": "Boletus", "common_name": "King Boletes", "rank": "genus"},
         ],
     )
     rows = (
@@ -193,16 +193,22 @@ def test_security_headers_csp_terrain_only_still_adds_worker_and_blob() -> None:
     assert "protomaps.github.io" not in csp
 
 
-def test_get_genera_searches_by_scientific_or_common_name(client: TestClient, con: psycopg.Connection) -> None:
-    upsert_fungi_genera(
+def test_taxa_search_matches_scientific_or_common_name(client: TestClient, con: psycopg.Connection) -> None:
+    upsert_taxa(
         con,
         [
-            {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "observations_count": 90000},
-            {"taxon_id": 999999, "name": "Obscurella", "common_name": None, "observations_count": 3},
+            {
+                "taxon_id": 47348,
+                "name": "Cantharellus",
+                "common_name": "Chanterelles",
+                "observations_count": 90000,
+                "rank": "genus",
+            },
+            {"taxon_id": 999999, "name": "Obscurella", "common_name": None, "observations_count": 3, "rank": "genus"},
         ],
     )
 
-    response = client.get("/api/genera", params={"q": "chanterelle"})
+    response = client.get("/api/taxa/search", params={"q": "chanterelle"})
     assert response.status_code == 200
     # The `client` fixture's own `cfg` fixture also seeds a taxon_id=CHANT "Cantharellus"/
     # "Chanterelles" genus into the shared catalog, so this scientific/common-name search
@@ -212,53 +218,118 @@ def test_get_genera_searches_by_scientific_or_common_name(client: TestClient, co
         "taxon_id": 47348,
         "name": "Cantharellus",
         "common_name": "Chanterelles",
+        "rank": "genus",
         "icon": "cantharellus",
+        "matched_name": None,
     } in response.json()
 
-    no_common_name = client.get("/api/genera", params={"q": "obscurella"})
-    assert no_common_name.json() == [{"taxon_id": 999999, "name": "Obscurella", "common_name": None, "icon": "generic"}]
+    no_common_name = client.get("/api/taxa/search", params={"q": "obscurella"})
+    assert no_common_name.json() == [
+        {
+            "taxon_id": 999999,
+            "name": "Obscurella",
+            "common_name": None,
+            "rank": "genus",
+            "icon": "generic",
+            "matched_name": None,
+        }
+    ]
 
 
-def test_selected_genera_empty_for_fresh_device(client: TestClient) -> None:
+def test_taxa_search_by_rank_and_synonym(client: TestClient, con: psycopg.Connection) -> None:
+    """Issue #464: species, family, order and class are searchable, a synonym finds its taxon and is
+    reported as the matched name, and ``rank`` narrows the search."""
+    upsert_taxa(
+        con,
+        [
+            {"taxon_id": 50814, "name": "Agaricomycetes", "rank": "class"},
+            {"taxon_id": 47350, "name": "Cantharellales", "rank": "order", "ancestor_ids": [50814]},
+            {"taxon_id": 48423, "name": "Cantharellaceae", "rank": "family", "ancestor_ids": [50814, 47350]},
+            {"taxon_id": 55555, "name": "Cantharellus formosus", "rank": "species", "ancestor_ids": [47348]},
+        ],
+    )
+    con.execute(
+        "INSERT INTO taxon_names (taxon_id, name, lexicon) VALUES (55555, 'Pacific golden chanterelle', 'English'),"
+        " (55555, 'Cantharellus cibarius var. formosus', 'Synonym')"
+    )
+
+    by_rank = {
+        rank: [hit["name"] for hit in client.get("/api/taxa/search", params={"q": "cantharell", "rank": rank}).json()]
+        for rank in ("species", "family", "order", "class")
+    }
+    assert by_rank == {
+        "species": ["Cantharellus formosus"],
+        "family": ["Cantharellaceae"],
+        "order": ["Cantharellales"],
+        "class": [],
+    }
+
+    synonym = client.get("/api/taxa/search", params={"q": "golden chanterelle", "rank": "species"}).json()
+    assert [(hit["name"], hit["matched_name"]) for hit in synonym] == [
+        ("Cantharellus formosus", "Pacific golden chanterelle")
+    ]
+    assert client.get("/api/taxa/search", params={"q": "x", "rank": "tribe"}).status_code == 422
+
+
+def test_selected_taxa_empty_for_fresh_device(client: TestClient) -> None:
     client.cookies.set("device_id", "device-genera-fresh0000")
-    response = client.get("/api/genera/selected")
+    response = client.get("/api/taxa/selected")
     assert response.status_code == 200
     assert response.json() == []
 
 
-def test_add_and_remove_selected_genus_round_trip(client: TestClient, con: psycopg.Connection) -> None:
-    upsert_fungi_genera(
-        con, [{"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "icon": "cantharellus"}]
-    )
+def test_add_and_remove_selected_taxon_round_trip(client: TestClient, con: psycopg.Connection) -> None:
+    upsert_taxa(con, [{"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "rank": "genus"}])
     client.cookies.set("device_id", "device-genera-roundtrip")
 
-    added = client.post("/api/genera/47348")
+    added = client.post("/api/taxa/47348")
     assert added.status_code == 200
     assert added.json() == {"status": "added"}
 
-    selected = client.get("/api/genera/selected")
+    selected = client.get("/api/taxa/selected")
     assert selected.json() == [
-        {"taxon_id": 47348, "name": "Cantharellus", "common_name": "Chanterelles", "icon": "cantharellus"}
+        {
+            "taxon_id": 47348,
+            "name": "Cantharellus",
+            "common_name": "Chanterelles",
+            "rank": "genus",
+            "icon": "cantharellus",
+            "matched_name": None,
+        }
     ]
 
-    removed = client.delete("/api/genera/47348")
+    removed = client.delete("/api/taxa/47348")
     assert removed.status_code == 200
     assert removed.json() == {"status": "removed"}
-    assert client.get("/api/genera/selected").json() == []
+    assert client.get("/api/taxa/selected").json() == []
 
 
-def test_selected_genera_is_scoped_per_device(client: TestClient) -> None:
+def test_adding_an_unknown_taxon_is_a_404(client: TestClient) -> None:
+    """A typo'd id must not silently narrow every ranking to nothing."""
+    client.cookies.set("device_id", "device-genera-unknown00")
+    assert client.post("/api/taxa/424242").status_code == 404
+    assert client.get("/api/taxa/selected").json() == []
+
+
+def test_adding_an_unsearchable_rank_is_a_404(client: TestClient, con: psycopg.Connection) -> None:
+    """A section or variety is not a target: it would expand to nothing and blank every ranking."""
+    upsert_taxa(con, [{"taxon_id": 9001, "name": "Amanita", "rank": "section"}])
+    client.cookies.set("device_id", "device-genera-section00")
+    assert client.post("/api/taxa/9001").status_code == 404
+
+
+def test_selected_taxa_is_scoped_per_device(client: TestClient) -> None:
     client.cookies.set("device_id", "device-genera-aaaaaaaaaa")
-    client.post("/api/genera/47348")
+    client.post(f"/api/taxa/{CHANT}")
 
     client.cookies.set("device_id", "device-genera-bbbbbbbbbb")
-    assert client.get("/api/genera/selected").json() == []
+    assert client.get("/api/taxa/selected").json() == []
 
 
 def test_destinations_defaults_to_selected_genera(client: TestClient) -> None:
     """The 'all' default now means this device's picks, or everything if none are picked."""
     client.cookies.set("device_id", "device-genera-filter000")
-    client.post(f"/api/genera/{CHANT}")
+    client.post(f"/api/taxa/{CHANT}")
 
     response = client.get("/api/destinations", params={"months": "7"})
     assert response.status_code == 200

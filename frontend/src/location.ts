@@ -11,7 +11,7 @@ import { qs } from "./state";
 // the browser calling Nominatim directly - the server owns the one User-Agent/rate-limit policy,
 // and precise coordinates a user types never leave for a third party from the client. The
 // autocomplete widget's own `generation` guard drops stale responses, so no client-side abort
-// is needed (matches genera.ts).
+// is needed (matches taxa.ts).
 async function fetchSuggestions(query: string): Promise<PlaceSuggestion[]> {
   try {
     return await getJson("/api/location/search", { query: { q: query } });

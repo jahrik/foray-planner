@@ -37,7 +37,7 @@ Conventions that hold for nearly every command:
 | `foray ingest --region NAME` | One named coverage region (a state, from `FORAY_COVERAGE`). |
 | `foray ingest --all-regions` | Every coverage region, one at a time. |
 | `foray ingest --countries` | One query per configured country. This is what the daily `ingest` job and `just ingest` run; it avoids double-counting near state borders. |
-| `foray genera-refresh` | Sync the Fungi genus catalog (and its taxonomy) from iNaturalist into `fungi_genera`. Run once on a fresh database; weekly after that. |
+| `foray genera-refresh` | Top up the taxon catalog (`taxa`) from the iNaturalist API: every genus under the scope roots with its observation count (what `revalidate` keys on) and the ranks above it (kingdom to family). Species and synonyms come from `foray ingest-bulk taxa` instead. Run once on a fresh database; weekly after that. |
 
 Each pull is recorded in the ingest log, so an area and window already covered is skipped. History
 beyond the incremental window arrives through the bulk path, below.

@@ -197,7 +197,7 @@ export function fireBadges(fires: readonly FireBadge[] | undefined): string {
 }
 
 // Presentation hook fired whenever a scoping input that a filter pill's label reflects changes
-// (home/radius, units, months, genera, layers). ui/pills.ts registers refreshPills() here so
+// (home/radius, units, months, taxa, layers). ui/pills.ts registers refreshPills() here so
 // the pill row stays in sync without map.ts / ui-prefs.ts importing the pill module (which
 // would cycle through map/sheet). No-op until initPills() runs.
 export let onScopeChange: () => void = () => {};
@@ -229,9 +229,9 @@ export const inatUrl = (taxonId: number): string => `https://www.inaturalist.org
 export const observationUrl = (observationId: number): string =>
   `https://www.inaturalist.org/observations/${observationId}`;
 
-/** Scientific name, with the common name parenthesized when the genus has one on iNat (same
- * format as genera.ts's search results) - most of the ~6,018-genus catalog lacks an English
- * common name, so the scientific name is always the primary, reliable label. */
+/** Scientific name, with the common name parenthesized when the taxon has one on iNat (same
+ * format as taxa.ts's search results) - most of the catalog lacks an English common name, so the
+ * scientific name is always the primary, reliable label. */
 export const displayName = (entry: { name: string; common_name?: string | null }): string =>
   entry.common_name ? `${entry.name} (${entry.common_name})` : entry.name;
 

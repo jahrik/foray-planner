@@ -17,7 +17,8 @@ from typing import Any, Literal, LiteralString, cast
 
 import psycopg
 
-from foray.cache import region_precip
+from foray.cache import Targets, region_precip
+from foray.cache.taxa import as_targets
 from foray.geo import bbox_around, haversine_km
 from foray.scoring._sql import (
     ACCESS_SEARCH_KM,
@@ -26,8 +27,9 @@ from foray.scoring._sql import (
     CENTER_LNG,
     GEOG_POINT,
     genus_name_map,
+    phenology_source,
     sql_in,
-    taxon_filter,
+    target_filter,
     unknown_genus,
 )
 from foray.scoring.models import CAMP_TYPES, CampSite, FireNear, LandParcel, StopPin, Trail
@@ -257,7 +259,7 @@ def trails_near(
     limit: int | None = None,
     sort: TrailSort = "nearest",
     significant_only: bool = False,
-    taxon_ids: list[int] | None = None,
+    taxon_ids: Sequence[int] | Targets | None = None,
     with_camp_distance: bool = True,
     with_geometry: bool = True,
     distinct_names: bool = True,
@@ -348,18 +350,20 @@ def trails_near(
     # handful of obs near each trail with *every* obs of the genus (18k for Cantharellus), once
     # per candidate trail - ~1.7 ms x up to 500 trails, which pushed /api/trails past the
     # request statement_timeout on prod. The geom index alone is selective enough here.
-    if sort == "relevance" and taxon_ids:
+    relevance_targets = as_targets(con, taxon_ids) if taxon_ids else None
+    if sort == "relevance" and relevance_targets is not None and not relevance_targets.covers_all:
+        target_sql, target_params = target_filter(relevance_targets, "(o.taxon_id + 0)", "(o.species_id + 0)")
         obs_join: LiteralString = cast(
             LiteralString,
             f"""
         LEFT JOIN LATERAL (
             SELECT count(*) AS n FROM observations o
             WHERE o.geom IS NOT NULL AND ST_DWithin(o.geom, t.geom, {_OBS_RELEVANCE_RADIUS_M})
-              AND o.quality_grade = 'research' AND {taxon_filter(taxon_ids, "(o.taxon_id + 0)")}
+              AND o.quality_grade = 'research' AND {target_sql}
         ) obs ON true""",
         )
         obs_select: LiteralString = "obs.n"
-        params.extend(taxon_ids)
+        params.extend(target_params)
     else:
         obs_join = ""
         obs_select = "0::bigint"
@@ -891,7 +895,9 @@ def nearest_trail(con: psycopg.Connection, *, lat: float, lng: float, max_km: fl
     return _base_trail(row, distance_km=row[10], camp_distance_km=None, forage_obs=row[11])
 
 
-def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[int]) -> dict[int, dict[str, Any]]:
+def place_calendar(
+    con: psycopg.Connection, *, region_id: str, taxon_ids: Sequence[int] | Targets
+) -> dict[int, dict[str, Any]]:
     """12-month activity for a region: total count + per-species breakdown per month.
 
     ``total`` always reflects every matching row, but the breakdown itself is capped to the
@@ -900,15 +906,16 @@ def place_calendar(con: psycopg.Connection, *, region_id: str, taxon_ids: list[i
     breakdown would both bloat the response and key `dict[str, int]` by display name, where
     two genera sharing the same label would silently overwrite each other.
     """
+    source, source_params = phenology_source(as_targets(con, taxon_ids))
     rows = con.execute(
         cast(
             LiteralString,
             f"""
-            SELECT month, taxon_id, cnt FROM phenology
-            WHERE region_id = %s AND {taxon_filter(taxon_ids)}
+            SELECT month, taxon_id, cnt FROM ({source}) p
+            WHERE region_id = %s
             """,
         ),
-        [region_id, *taxon_ids],
+        [*source_params, region_id],
     ).fetchall()
     genera = genus_name_map(con, {row[1] for row in rows})
     calendar: dict[int, dict[str, Any]] = {month: {"total": 0, "species": {}, "icons": {}} for month in range(1, 13)}
@@ -946,7 +953,7 @@ def recent_observations(
     con: psycopg.Connection,
     *,
     region_id: str,
-    taxon_ids: list[int],
+    taxon_ids: Sequence[int] | Targets,
     h3_resolution: int,
     months: list[int],
     weeks: int | None = None,
@@ -963,6 +970,7 @@ def recent_observations(
     ``weeks`` swaps the month filter for the trailing window (see ``_time_window``).
     """
     time_filter, time_params = _time_window(months, weeks)
+    target_sql, target_params = target_filter(as_targets(con, taxon_ids), "o.taxon_id", "o.species_id")
     binned = BINNED.format(resolution=h3_resolution)
     rows = con.execute(
         cast(
@@ -970,12 +978,12 @@ def recent_observations(
             f"""
             SELECT o.id, o.taxon_id, o.observed_on, o.place_guess, o.uri, o.obscured
             FROM ({binned}) o
-            WHERE o.region_id = %s AND {taxon_filter(taxon_ids, "o.taxon_id")} AND {time_filter}
+            WHERE o.region_id = %s AND {target_sql} AND {time_filter}
             ORDER BY o.observed_on DESC, o.id DESC
             LIMIT %s OFFSET %s
             """,
         ),
-        [region_id, *taxon_ids, *time_params, limit + 1, offset],
+        [region_id, *target_params, *time_params, limit + 1, offset],
     ).fetchall()
     has_more = len(rows) > limit
     rows = rows[:limit]
@@ -1002,7 +1010,7 @@ def recent_observations(
 def alerts(
     con: psycopg.Connection,
     *,
-    taxon_ids: list[int],
+    taxon_ids: Sequence[int] | Targets,
     home_lat: float,
     home_lng: float,
     radius_km: float,
@@ -1011,6 +1019,15 @@ def alerts(
 ) -> list[dict[str, Any]]:
     """Regions with fresh (trailing ``weeks``) observations of target species - 'fruiting now'."""
     cutoff = (dt.date.today() - dt.timedelta(weeks=weeks)).isoformat()
+    targets = as_targets(con, taxon_ids)
+    target_sql, target_params = target_filter(targets)
+    # Group a species target's observations under the species, everything else under its genus -
+    # so the list names what was picked (issue #464).
+    group_id, group_params = (
+        ("CASE WHEN species_id = ANY(%s) THEN species_id ELSE taxon_id END", [list(targets.species_ids)])
+        if targets.species_ids and not targets.covers_all
+        else ("taxon_id", [])
+    )
     binned = BINNED.format(resolution=h3_resolution)
     # Centers computed once per region_id across every matching taxon (not per region+taxon
     # below) - a region with several target species shouldn't get a decoy-shifted center just
@@ -1024,11 +1041,11 @@ def alerts(
                 f"""
                 SELECT region_id, {CENTER_LAT} AS center_lat, {CENTER_LNG} AS center_lng
                 FROM ({binned})
-                WHERE observed_on >= %s AND {taxon_filter(taxon_ids)}
+                WHERE observed_on >= %s AND {target_sql}
                 GROUP BY region_id
                 """,
             ),
-            [cutoff, *taxon_ids],
+            [cutoff, *target_params],
         ).fetchall()
     }
     rows = con.execute(
@@ -1036,17 +1053,17 @@ def alerts(
             LiteralString,
             f"""
             SELECT region_id,
-                   taxon_id, count(*) AS cnt,
+                   {group_id} AS group_id, count(*) AS cnt,
                    max(observed_on) AS last_seen,
                    (array_agg(place_guess ORDER BY observed_on DESC))[1] AS place_guess,
                    (array_agg(uri ORDER BY observed_on DESC))[1] AS uri,
                    (array_agg(obscured ORDER BY observed_on DESC))[1] AS obscured
             FROM ({binned})
-            WHERE observed_on >= %s AND {taxon_filter(taxon_ids)}
-            GROUP BY region_id, taxon_id
+            WHERE observed_on >= %s AND {target_sql}
+            GROUP BY region_id, group_id
             """,
         ),
-        [cutoff, *taxon_ids],
+        [*group_params, cutoff, *target_params],
     ).fetchall()
     genera = genus_name_map(con, {row[1] for row in rows})
 
@@ -1105,7 +1122,7 @@ def alerts(
 def precise_observations(
     con: psycopg.Connection,
     *,
-    taxon_ids: list[int],
+    taxon_ids: Sequence[int] | Targets,
     lat: float,
     lng: float,
     radius_km: float,
@@ -1132,6 +1149,7 @@ def precise_observations(
     one (issue #312).
     """
     time_filter, time_params = _time_window(months, weeks)
+    target_sql, target_params = target_filter(as_targets(con, taxon_ids), "o.taxon_id", "o.species_id")
     rows = con.execute(
         cast(
             LiteralString,
@@ -1141,11 +1159,11 @@ def precise_observations(
             FROM observations o, pt
             WHERE o.quality_grade = 'research' AND o.obscured = FALSE
               AND o.geom IS NOT NULL AND ST_DWithin(o.geom, pt.g, %s)
-              AND {taxon_filter(taxon_ids)} AND {time_filter}
+              AND {target_sql} AND {time_filter}
             ORDER BY o.observed_on DESC
             """,
         ),
-        [lng, lat, radius_km * 1000.0, *taxon_ids, *time_params],
+        [lng, lat, radius_km * 1000.0, *target_params, *time_params],
     ).fetchall()
     genera = genus_name_map(con, {row[1] for row in rows})
 
