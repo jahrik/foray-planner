@@ -459,9 +459,9 @@ def getting_started(tut: Tutorial) -> None:
 
     genera = page.locator("#pills .pill-wrap").nth(3).locator(".pill")
     tut.click(genera)
-    tut.caption("<b>Genera</b>: narrow the ranking to the mushrooms you're after.")
-    tut.type_slowly(page.locator("#genus"), "Cantharellus")
-    suggestion = page.locator("#genus-suggestions li").first
+    tut.caption("<b>Taxa</b>: narrow the ranking to the mushrooms you're after.")
+    tut.type_slowly(page.locator("#taxon"), "Cantharellus")
+    suggestion = page.locator("#taxon-suggestions li").first
     suggestion.wait_for(timeout=15_000)
     tut.click(suggestion, pause=1.0)
     tut.caption("Chanterelles added. Add as many genera as you like.", shot="genera")
@@ -627,7 +627,7 @@ def best_spot(tut: Tutorial) -> None:
     card = page.locator("#panel .rank").first
     tut.point(card.locator(".why"))
     tut.caption(
-        "With <b>All genera</b> and <b>Best overall</b>, #1 has the strongest score for this month.",
+        "With <b>All taxa</b> and <b>Best overall</b>, #1 has the strongest score for this month.",
         shot="ranked",
         hold=3.2,
     )
@@ -669,8 +669,8 @@ def track_down(tut: Tutorial) -> None:
     )
     genera = page.locator("#pills .pill-wrap").nth(3).locator(".pill")
     tut.click(genera)
-    tut.type_slowly(page.locator("#genus"), "Cantharellus")
-    suggestion = page.locator("#genus-suggestions li").first
+    tut.type_slowly(page.locator("#taxon"), "Cantharellus")
+    suggestion = page.locator("#taxon-suggestions li").first
     suggestion.wait_for(timeout=15_000)
     tut.click(suggestion, pause=1.0)
     page.keyboard.press("Escape")
@@ -678,7 +678,7 @@ def track_down(tut: Tutorial) -> None:
     card = page.locator("#panel .rank").first
     tut.point(card.locator(".why"))
     tut.caption(
-        "<b>1. Pick your target</b> under Genera. The list now ranks spots for chanterelles only.",
+        "<b>1. Pick your target</b> under Taxa. The list now ranks spots for chanterelles only.",
         shot="target",
         hold=3.2,
     )
@@ -1167,7 +1167,7 @@ def best_spot_phone(tut: Tutorial) -> None:
     card = page.locator("#panel .rank").first
     tut.point(card.locator(".why"))
     tut.caption(
-        "With <b>All genera</b> and <b>Best overall</b>, #1 has the strongest score for this month.",
+        "With <b>All taxa</b> and <b>Best overall</b>, #1 has the strongest score for this month.",
         shot="ranked",
         hold=3.2,
     )
@@ -1211,8 +1211,8 @@ def track_down_phone(tut: Tutorial) -> None:
     )
     genera = page.locator("#pills .pill-wrap").nth(3).locator(".pill")
     tut.click(genera)
-    tut.type_slowly(page.locator("#genus"), REEL_TARGET)
-    suggestion = page.locator("#genus-suggestions li").first
+    tut.type_slowly(page.locator("#taxon"), REEL_TARGET)
+    suggestion = page.locator("#taxon-suggestions li").first
     suggestion.wait_for(timeout=15_000)
     tut.click(suggestion, pause=1.0)
     page.keyboard.press("Escape")
@@ -1221,7 +1221,7 @@ def track_down_phone(tut: Tutorial) -> None:
     card = page.locator("#panel .rank").first
     tut.point(card.locator(".why"))
     tut.caption(
-        f"<b>1. Pick your target</b> under Genera. The list now ranks spots for {REEL_TARGET} only.",
+        f"<b>1. Pick your target</b> under Taxa. The list now ranks spots for {REEL_TARGET} only.",
         shot="target",
         hold=3.2,
     )
@@ -1350,9 +1350,9 @@ def getting_started_phone(tut: Tutorial) -> None:
 
     genera = page.locator("#pills .pill-wrap").nth(3).locator(".pill")
     tut.click(genera)
-    tut.caption("<b>Genera</b>: narrow the ranking to the mushrooms you're after.")
-    tut.type_slowly(page.locator("#genus"), REEL_TARGET)
-    suggestion = page.locator("#genus-suggestions li").first
+    tut.caption("<b>Taxa</b>: narrow the ranking to the mushrooms you're after.")
+    tut.type_slowly(page.locator("#taxon"), REEL_TARGET)
+    suggestion = page.locator("#taxon-suggestions li").first
     suggestion.wait_for(timeout=15_000)
     tut.click(suggestion, pause=1.0)
     tut.caption(f"<b>{REEL_TARGET}</b> added. Add as many genera as you like.", shot="genera")

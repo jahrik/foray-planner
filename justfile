@@ -131,7 +131,7 @@ clean:
 ingest: db
     docker compose run --rm app foray ingest --countries
 
-# Refresh the fungi_genera catalog from iNat.
+# Top up the taxon catalog (genera and the ranks above them) from iNat's API.
 [group('data')]
 genera-refresh: db
     docker compose run --rm app foray genera-refresh

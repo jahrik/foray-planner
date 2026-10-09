@@ -1,5 +1,5 @@
 """Per-device (anonymous cookie) preferences: the "Set location" override and selected
-genus filter (issue #79 Phase 2)."""
+target taxa (issues #79, #464)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 import psycopg
 
-from foray.genus_icons import genus_icon
+from foray.cache.taxa import taxon_labels
 
 
 def load_location(con: psycopg.Connection, device_id: str) -> dict[str, Any] | None:
@@ -42,44 +42,30 @@ def delete_location(con: psycopg.Connection, device_id: str) -> None:
     con.execute("DELETE FROM app_location WHERE device_id = %s", [device_id])
 
 
-def load_genera(con: psycopg.Connection, device_id: str) -> list[int]:
-    """This device's selected genus taxon_ids. Empty means "everything nearby", not "none"."""
-    rows = con.execute("SELECT taxon_id FROM app_genera WHERE device_id = %s", [device_id]).fetchall()
+def load_targets(con: psycopg.Connection, device_id: str) -> list[int]:
+    """This device's picked target taxon ids (any rank). Empty means "everything nearby", not "none"."""
+    rows = con.execute("SELECT taxon_id FROM app_targets WHERE device_id = %s", [device_id]).fetchall()
     return [row[0] for row in rows]
 
 
-def list_selected_genera(con: psycopg.Connection, device_id: str) -> list[dict[str, Any]]:
-    """This device's selected genera with their catalog names, for chip display."""
-    rows = con.execute(
-        """
-        SELECT fungi_genera.taxon_id, fungi_genera.name, fungi_genera.common_name,
-               fungi_genera.family_name, fungi_genera.order_name, fungi_genera.class_name
-        FROM app_genera
-        JOIN fungi_genera ON fungi_genera.taxon_id = app_genera.taxon_id
-        WHERE app_genera.device_id = %s
-        ORDER BY fungi_genera.name
-        """,
-        [device_id],
-    ).fetchall()
-    return [
-        {
-            "taxon_id": taxon_id,
-            "name": name,
-            "common_name": common_name,
-            "icon": genus_icon(name, family, order, class_name),
-        }
-        for taxon_id, name, common_name, family, order, class_name in rows
-    ]
+def list_selected_targets(con: psycopg.Connection, device_id: str) -> list[dict[str, Any]]:
+    """This device's picked targets with their catalog names, for chip display."""
+    ids = load_targets(con, device_id)
+    labels = taxon_labels(con, ids)
+    return sorted(
+        ({"taxon_id": taxon_id, **labels[taxon_id]} for taxon_id in ids if taxon_id in labels),
+        key=lambda target: target["name"],
+    )
 
 
-def add_genus(con: psycopg.Connection, device_id: str, taxon_id: int) -> None:
-    """Add a genus to a device's target list; adding one already there is a no-op."""
+def add_target(con: psycopg.Connection, device_id: str, taxon_id: int) -> None:
+    """Add a taxon (any rank) to a device's target list; adding one already there is a no-op."""
     con.execute(
-        "INSERT INTO app_genera (device_id, taxon_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+        "INSERT INTO app_targets (device_id, taxon_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
         [device_id, taxon_id],
     )
 
 
-def remove_genus(con: psycopg.Connection, device_id: str, taxon_id: int) -> None:
-    """Remove a genus from a device's target list; removing one not there is a no-op."""
-    con.execute("DELETE FROM app_genera WHERE device_id = %s AND taxon_id = %s", [device_id, taxon_id])
+def remove_target(con: psycopg.Connection, device_id: str, taxon_id: int) -> None:
+    """Remove a taxon from a device's target list; removing one not there is a no-op."""
+    con.execute("DELETE FROM app_targets WHERE device_id = %s AND taxon_id = %s", [device_id, taxon_id])

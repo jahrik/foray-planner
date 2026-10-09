@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import psycopg
 
+from foray.cache import Targets
 from foray.geo import (
     grid_cell_center,
     h3_edge_length_km,
@@ -21,7 +24,7 @@ def plan_route(
     con: psycopg.Connection,
     *,
     months: list[int],
-    taxon_ids: list[int],
+    taxon_ids: Sequence[int] | Targets,
     h3_resolution: int,
     start_lat: float,
     start_lng: float,

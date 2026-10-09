@@ -119,6 +119,16 @@ jobs:
   # it never overwrites a row either already has - but it's still coverage-wide-sized write
   # volume, the same class as `layers-land`/`dispersed-coverage` below, not `any`'s "light,
   # externally-paced" jobs).
+  # The taxon catalog (issue #464): iNat's weekly taxonomy export, every rank species to kingdom
+  # plus synonyms / common names. Must be loaded before `ingest-bulk-inat`, which resolves each
+  # observation's `taxonID` through `taxa` (an empty catalog fails that loader loudly). Writes
+  # only the ~75k-row `taxa` / `taxon_names` tables, so the same `night` + writer class as below.
+  - name: ingest-bulk-taxa
+    command: ingest-bulk taxa
+    interval_hours: 24
+    window: night
+    writer: true
+
   - name: ingest-bulk-inat
     command: ingest-bulk inat
     interval_hours: 24

@@ -20,8 +20,8 @@ import psycopg
 
 from foray.cache import (
     cached_precip,
+    cached_taxon_ranks,
     delete_observations,
-    known_genus_taxon_ids,
     latest_obs_date,
     latest_obs_date_by_place,
     mark_revalidated,
@@ -43,7 +43,8 @@ from foray.config import CoverageRegion, Settings
 from foray.defaults import H3_RESOLUTION as _DEFAULT_H3_RESOLUTION
 from foray.geo import grid_cell, grid_cell_center
 from foray.sources import elevation, precip
-from foray.sources.inat import FUNGI_TAXON_ID, fetch_observations, iter_observations
+from foray.sources.inat import fetch_observations, iter_observations
+from foray.taxa import Resolver
 
 logger = logging.getLogger(__name__)
 
@@ -107,47 +108,18 @@ def _observed_date(obs: dict[str, Any]) -> dt.date | None:
     return None
 
 
-def _resolve_genus_taxon_id(obs: dict[str, Any], known_genus_ids: set[int]) -> int | None:
-    """Resolve the genus-rank taxon_id an observation belongs to.
-
-    ``taxon.ancestor_ids`` is a flat kingdom->self int list (verified live against
-    ``/v1/observations``, 2026-07-19) - no extra per-observation API call needed. Falls back
-    to the observation's own taxon id when it's already genus-rank; returns ``None`` when no
-    ancestor matches a known catalog genus (subfamily-rank-or-coarser IDs - see the ~110/2.67M
-    count noted when this was designed).
-
-    Belt-and-suspenders check: ``iconic_taxon_id`` (already in every response, no extra call)
-    must actually be Fungi. Ancestor-membership alone isn't sufficient - a handful of fungal
-    genus names are homonyms of established animal genera (fungal *Olla* vs. the ladybug genus,
-    etc, see ``ingest.revalidate``), so a match on genus taxon_id doesn't guarantee the
-    observation is really fungal *right now*. This won't catch a homonym-genus observation that
-    gets re-identified to the animal *after* ingest (nothing here re-checks old rows - that's
-    what ``revalidate`` is for), but it stops anything already wrong at ingest time from ever
-    landing in the cache in the first place.
-    """
-    taxon = obs.get("taxon") or {}
-    if taxon.get("iconic_taxon_id") != FUNGI_TAXON_ID:
-        return None
-    if taxon.get("rank") == "genus":
-        return taxon.get("id")
-    for ancestor_id in taxon.get("ancestor_ids") or []:
-        if ancestor_id in known_genus_ids:
-            return ancestor_id
-    return None
-
-
-def _load_known_genus_ids(db: psycopg.Connection) -> set[int]:
-    """The genus-ancestry resolver's membership set - fails fast on an empty catalog rather
-    than silently ingesting only already-genus-rank observations and skipping every finer-rank
-    one (a misconfigured/never-refreshed fungi_genera would otherwise look like a working but
+def _load_resolver(db: psycopg.Connection, cfg: Settings) -> Resolver:
+    """The observation resolver (``foray.taxa.Resolver``) over the cached ``taxa`` - fails fast on
+    an empty catalog rather than silently ingesting only already-genus-rank observations and
+    skipping every finer-rank one (a never-loaded ``taxa`` would otherwise look like a working but
     quietly-partial ingest)."""
-    known_genus_ids = known_genus_taxon_ids(db)
-    if not known_genus_ids:
-        raise RuntimeError("fungi_genera catalog is empty - run `foray genera-refresh` first.")
-    return known_genus_ids
+    ranks = cached_taxon_ranks(db)
+    if not ranks:
+        raise RuntimeError("taxa catalog is empty - run `foray genera-refresh` (or `foray ingest-bulk taxa`) first.")
+    return Resolver(ranks, cfg.scope_roots)
 
 
-def _to_row(obs: dict[str, Any], genus_taxon_id: int) -> tuple[Any, ...] | None:
+def _to_row(obs: dict[str, Any], genus_taxon_id: int, species_id: int | None = None) -> tuple[Any, ...] | None:
     lat, lng = _coords(obs)
     day = _observed_date(obs)
     if lat is None or lng is None or day is None:
@@ -166,13 +138,14 @@ def _to_row(obs: dict[str, Any], genus_taxon_id: int) -> tuple[Any, ...] | None:
         obs.get("obscured"),
         (obs.get("taxon") or {}).get("name"),
         (obs.get("taxon") or {}).get("preferred_common_name"),
+        species_id,
     )
 
 
 def _consume_observations(
     db: psycopg.Connection,
     obs_iter: Any,
-    known_genus_ids: set[int],
+    resolver: Resolver,
     *,
     log_label: str,
     progress_label: str,
@@ -206,11 +179,12 @@ def _consume_observations(
                 f"{progress_label} ({scanned:,} so far)",
                 min(90.0, scanned / _PROGRESS_ROWS_ESTIMATE * 90.0),
             )
-        genus_taxon_id = _resolve_genus_taxon_id(obs, known_genus_ids)
-        if genus_taxon_id is None:
+        rollup = resolver.resolve(obs)
+        if rollup is None or rollup.genus_id is None:
             skipped_no_genus += 1
             continue
-        row = _to_row(obs, genus_taxon_id)
+        genus_taxon_id = rollup.genus_id
+        row = _to_row(obs, genus_taxon_id, rollup.species_id)
         if row is None:
             continue
         chunk.append(row)
@@ -446,7 +420,7 @@ def ingest(
     abort_event: threading.Event | None = None,
 ) -> dict[int, int]:
     """Pull every Fungi observation within the home radius. Returns {genus_taxon_id: rows}."""
-    known_genus_ids = _load_known_genus_ids(db)
+    resolver = _load_resolver(db, cfg)
     start_date = f"{cfg.since_year}-01-01"
     end_date = dt.date.today().isoformat()
     home = cfg.home
@@ -481,7 +455,7 @@ def ingest(
     counts, skipped_no_genus, cancelled = _consume_observations(
         db,
         iter_observations(
-            taxon_id=FUNGI_TAXON_ID,
+            taxon_id=cfg.scope_roots,
             lat=home.lat,
             lng=home.lng,
             radius_km=home.radius_km,
@@ -489,7 +463,7 @@ def ingest(
             d2=end_date,
             quality_grade=cfg.quality_grade,
         ),
-        known_genus_ids,
+        resolver,
         log_label="ingest",
         progress_label="Fetching Fungi observations…",
         progress_cb=progress_cb,
@@ -534,7 +508,7 @@ def ingest_region(
     to a full since_year backfill on first run is what repeatedly crashed the droplet with
     ENOSPC before this was capped.
     """
-    known_genus_ids = _load_known_genus_ids(db)
+    resolver = _load_resolver(db, cfg)
     recent_cutoff = (dt.date.today() - dt.timedelta(days=cfg.region_sync_days)).isoformat()
     end_date = dt.date.today().isoformat()
 
@@ -556,13 +530,13 @@ def ingest_region(
     counts, skipped_no_genus, cancelled = _consume_observations(
         db,
         iter_observations(
-            taxon_id=FUNGI_TAXON_ID,
+            taxon_id=cfg.scope_roots,
             place_id=region.place_id,
             d1=window_start,
             d2=end_date,
             quality_grade=cfg.quality_grade,
         ),
-        known_genus_ids,
+        resolver,
         log_label="ingest_region",
         progress_label=f"Fetching Fungi observations ({region.name})…",
         progress_cb=progress_cb,
@@ -589,7 +563,7 @@ def ingest_region(
 
 def _recheck_ids(
     db: psycopg.Connection,
-    known_genus_ids: set[int],
+    resolver: Resolver,
     ids: list[int],
     prev_taxon_id: dict[int, int],
     abort_event: threading.Event | None = None,
@@ -622,14 +596,14 @@ def _recheck_ids(
             break
         obs_id = obs["id"]
         seen_ids.add(obs_id)
-        # _resolve_genus_taxon_id already checks iconic_taxon_id == Fungi internally (see its
-        # docstring) - None covers both "not Fungi at all" and "no known genus ancestor", so a
-        # single check here is enough; no separate iconic_taxon_id check needed.
-        new_genus = _resolve_genus_taxon_id(obs, known_genus_ids)
-        if new_genus is None:
+        # The resolver checks the live lineage against the scope roots, so None covers both "no
+        # longer in scope" and "no known genus ancestor" - a single check, no separate kingdom test.
+        rollup = resolver.resolve(obs)
+        if rollup is None or rollup.genus_id is None:
             purge_ids.append(obs_id)
             continue
-        row = _to_row(obs, new_genus)
+        new_genus = rollup.genus_id
+        row = _to_row(obs, new_genus, rollup.species_id)
         if row is None:
             # iNat now returns this id but without usable coords/date (e.g. location withheld) -
             # keeping the old cached lat/lng around would be stale precision, not a fix.
@@ -672,7 +646,7 @@ def revalidate(
     found 19 such genera, ~24k affected rows out of 1.97M, as of 2026-07-20).
 
     ``cache.suspect_genus_taxon_ids`` finds genus taxon_ids to check without any iNat call (it
-    compares our cached-row count to ``fungi_genera.observations_count``, already kept fresh by
+    compares our cached-row count to ``taxa.observations_count``, already kept fresh by
     the weekly ``foray genera-refresh``), so the recurring cost here stays proportional to the
     size of the problem, not the whole cache. Only cached observations under a flagged genus
     get re-fetched from iNat. This only catches a genus that's *almost entirely* misidentified
@@ -684,7 +658,7 @@ def revalidate(
     same genus but gets its lat/lng/observed_on/positional_accuracy refreshed is written back
     too (via the same ``upsert_observations`` call) but isn't counted as a reassignment.
     """
-    known_genus_ids = _load_known_genus_ids(db)
+    resolver = _load_resolver(db, cfg)
     suspects = suspect_genus_taxon_ids(db)
     stats: dict[int, dict[str, int]] = {}
     for position, genus_taxon_id in enumerate(suspects):
@@ -699,7 +673,7 @@ def revalidate(
                 f"Revalidating genus {genus_taxon_id} ({len(ids)} cached observations)…",
                 90.0 * (position + 1) / max(len(suspects), 1),
             )
-        result = _recheck_ids(db, known_genus_ids, ids, dict.fromkeys(ids, genus_taxon_id), abort_event)
+        result = _recheck_ids(db, resolver, ids, dict.fromkeys(ids, genus_taxon_id), abort_event)
         stats[genus_taxon_id] = result
         logger.info(
             "revalidate: genus %d - %d checked, %d purged (no longer Fungi), %d reassigned",
@@ -734,14 +708,14 @@ def resync(
     """
     if abort_event and abort_event.is_set():
         return {"checked": 0, "purged": 0, "reassigned": 0}
-    known_genus_ids = _load_known_genus_ids(db)
+    resolver = _load_resolver(db, cfg)
     ids = stale_observation_ids(db, batch_size)
     if not ids:
         return {"checked": 0, "purged": 0, "reassigned": 0}
     if progress_cb:
         progress_cb(f"Resyncing {len(ids)} cached observations against iNat…", 10.0)
     prev_taxon_id = observation_taxon_ids(db, ids)
-    result = _recheck_ids(db, known_genus_ids, ids, prev_taxon_id, abort_event)
+    result = _recheck_ids(db, resolver, ids, prev_taxon_id, abort_event)
     logger.info(
         "resync: %d checked, %d purged (no longer Fungi/geolocatable), %d reassigned",
         result["checked"],

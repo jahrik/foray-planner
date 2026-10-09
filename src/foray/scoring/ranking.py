@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any, LiteralString, cast
 
 import psycopg
 
-from foray.cache import region_precip
+from foray.cache import Targets, region_precip
+from foray.cache.taxa import as_targets
 from foray.geo import (
     bbox_around_segment,
     bbox_center_radius,
@@ -31,7 +32,7 @@ from foray.geo import (
     segment_progress_and_offset,
 )
 from foray.scoring import rank_cache
-from foray.scoring._sql import genus_name_map, sql_in, taxon_filter, unknown_genus
+from foray.scoring._sql import genus_name_map, phenology_source, sql_in, unknown_genus
 from foray.scoring.models import FireNear, RegionScore, SpeciesHit
 from foray.scoring.queries import fire_near, region_access
 from foray.scoring.regions import recent_counts, region_elevations, region_precip_obs
@@ -62,7 +63,7 @@ def _rank_candidates(
     con: psycopg.Connection,
     *,
     months: list[int],
-    taxon_ids: list[int],
+    targets: Targets,
     h3_resolution: int,
     recent_weeks: int,
     region_ids: list[str],
@@ -85,6 +86,7 @@ def _rank_candidates(
     """
     if not region_ids:
         return []
+    source, source_params = phenology_source(targets)
     # Per (region, taxon): observations in the target months vs. all months, scoped to the
     # candidate cells so the double GROUP BY runs over ~hundreds of rows, not the whole table.
     rows = con.execute(
@@ -96,14 +98,14 @@ def _rank_candidates(
                        (sum(center_lat * cnt) / sum(cnt))::double precision AS center_lat,
                        (sum(center_lng * cnt) / sum(cnt))::double precision AS center_lng,
                        sum(cnt)::bigint AS total_cnt
-                FROM phenology
-                WHERE {taxon_filter(taxon_ids)} AND region_id = ANY(%s)
+                FROM ({source}) p
+                WHERE region_id = ANY(%s)
                 GROUP BY region_id, taxon_id
             ),
             win AS (
                 SELECT region_id, taxon_id, sum(cnt)::bigint AS month_cnt
-                FROM phenology
-                WHERE {taxon_filter(taxon_ids)} AND region_id = ANY(%s)
+                FROM ({source}) p
+                WHERE region_id = ANY(%s)
                       AND month IN ({sql_in(months)})
                 GROUP BY region_id, taxon_id
             )
@@ -113,7 +115,7 @@ def _rank_candidates(
             WHERE COALESCE(win.month_cnt, 0) > 0
             """,
         ),
-        [*taxon_ids, region_ids, *taxon_ids, region_ids, *months],
+        [*source_params, region_ids, *source_params, region_ids, *months],
     ).fetchall()
 
     # Month-by-month histogram per (region, genus), for the phenology-trend label (issue #301).
@@ -124,12 +126,12 @@ def _rank_candidates(
             LiteralString,
             f"""
             SELECT region_id, taxon_id, month, sum(cnt)::bigint
-            FROM phenology
-            WHERE {taxon_filter(taxon_ids)} AND region_id = ANY(%s)
+            FROM ({source}) p
+            WHERE region_id = ANY(%s)
             GROUP BY region_id, taxon_id, month
             """,
         ),
-        [*taxon_ids, region_ids],
+        [*source_params, region_ids],
     ).fetchall()
     for region_id, taxon_id, month, cnt in month_rows:
         monthly.setdefault((region_id, taxon_id), {})[month] = cnt
@@ -141,7 +143,7 @@ def _rank_candidates(
         lng=recent_center[1],
         radius_km=recent_radius_km,
         h3_resolution=h3_resolution,
-        taxon_ids=taxon_ids,
+        targets=targets,
         weeks=recent_weeks,
     )
 
@@ -203,17 +205,29 @@ def _rank_candidates(
     return results
 
 
-def _morchella_targeted(con: psycopg.Connection, taxon_ids: list[int]) -> bool:
-    """True when the device has explicitly selected genus *Morchella* (issue #227's burn-scar
-    boost is opt-in - mirrors how `/api/trees` scopes to selected ECM genera). An empty
-    ``taxon_ids`` ("everything nearby") is not an explicit selection, so it does not qualify."""
-    if not taxon_ids:
+def _morchella_targeted(con: psycopg.Connection, targets: Targets) -> bool:
+    """True when the device has explicitly targeted genus *Morchella* - the genus itself, or a
+    species in it (issue #227's burn-scar boost is opt-in - mirrors how `/api/trees` scopes to
+    selected ECM genera). A pick that covers the whole scope ("everything nearby") is not an
+    explicit selection, so it does not qualify."""
+    if targets.covers_all:
         return False
-    row = con.execute("SELECT taxon_id FROM fungi_genera WHERE lower(name) = 'morchella'").fetchone()
-    return row is not None and row[0] in taxon_ids
+    row = con.execute("SELECT taxon_id FROM taxa WHERE rank = 'genus' AND lower(name) = 'morchella'").fetchone()
+    if row is None:
+        return False
+    morchella_id = row[0]
+    if morchella_id in targets.genus_ids:
+        return True
+    if not targets.species_ids:
+        return False
+    under = con.execute(
+        "SELECT 1 FROM taxa WHERE taxon_id = ANY(%s) AND %s = ANY(ancestor_ids) LIMIT 1",
+        [list(targets.species_ids), morchella_id],
+    ).fetchone()
+    return under is not None
 
 
-def _apply_fire(con: psycopg.Connection, results: list[RegionScore], *, taxon_ids: list[int]) -> None:
+def _apply_fire(con: psycopg.Connection, results: list[RegionScore], *, targets: Targets) -> None:
     """Fold the fire signals (issue #227) into an already-ranked region list, in place:
 
     * a **penalty** on any region with an active perimeter within ``FIRE_PENALTY_RADIUS_KM``
@@ -237,7 +251,7 @@ def _apply_fire(con: psycopg.Connection, results: list[RegionScore], *, taxon_id
     )
     if not fires:
         return
-    boost_ok = _morchella_targeted(con, taxon_ids)
+    boost_ok = _morchella_targeted(con, targets)
     for region in results:
         nearby: list[FireNear] = []
         penalty = False
@@ -320,7 +334,7 @@ def rank_destinations(
     con: psycopg.Connection,
     *,
     months: list[int],
-    taxon_ids: list[int],
+    taxon_ids: Sequence[int] | Targets,
     home_lat: float,
     home_lng: float,
     radius_km: float,
@@ -337,9 +351,10 @@ def rank_destinations(
     skips all of this module's SQL entirely until the TTL lapses or a phenology rebuild busts
     the cache.
     """
+    targets = as_targets(con, taxon_ids)
     key = rank_cache.radial_key(
         months=tuple(months),
-        taxon_ids=tuple(taxon_ids),
+        targets=targets,
         home_lat=home_lat,
         home_lng=home_lng,
         radius_km=radius_km,
@@ -362,7 +377,7 @@ def rank_destinations(
     results = _rank_candidates(
         con,
         months=months,
-        taxon_ids=taxon_ids,
+        targets=targets,
         h3_resolution=h3_resolution,
         recent_weeks=recent_weeks,
         region_ids=region_ids,
@@ -370,7 +385,7 @@ def rank_destinations(
         recent_radius_km=radius_km,
         keep=keep,
     )
-    _apply_fire(con, results, taxon_ids=taxon_ids)
+    _apply_fire(con, results, targets=targets)
     _apply_access(con, results)
     rank_cache.put(key, results, generation)
     return results
@@ -380,7 +395,7 @@ def rank_destinations_corridor(
     con: psycopg.Connection,
     *,
     months: list[int],
-    taxon_ids: list[int],
+    taxon_ids: Sequence[int] | Targets,
     start_lat: float,
     start_lng: float,
     dest_lat: float,
@@ -399,9 +414,10 @@ def rank_destinations_corridor(
 
     Cached in-process the same way as ``rank_destinations`` - see its docstring.
     """
+    targets = as_targets(con, taxon_ids)
     key = rank_cache.corridor_key(
         months=tuple(months),
-        taxon_ids=tuple(taxon_ids),
+        targets=targets,
         start_lat=start_lat,
         start_lng=start_lng,
         dest_lat=dest_lat,
@@ -439,7 +455,7 @@ def rank_destinations_corridor(
     results = _rank_candidates(
         con,
         months=months,
-        taxon_ids=taxon_ids,
+        targets=targets,
         h3_resolution=h3_resolution,
         recent_weeks=recent_weeks,
         region_ids=region_ids,
@@ -447,7 +463,7 @@ def rank_destinations_corridor(
         recent_radius_km=recent_radius_km,
         keep=keep,
     )
-    _apply_fire(con, results, taxon_ids=taxon_ids)
+    _apply_fire(con, results, targets=targets)
     _apply_access(con, results)
     rank_cache.put(key, results, generation)
     return results

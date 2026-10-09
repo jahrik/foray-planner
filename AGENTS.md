@@ -34,13 +34,15 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   `CoverageRegion` models. All config comes from env vars (prefix `FORAY_`, nested
   delimiter `__`) or `.env` file. The runtime location override lives in Postgres
   (`app_location` table, `foray.cache.load_location`/`save_location`), not a file. There's no
-  fixed target-genus list (issue #79) - the full Fungi catalog lives in `fungi_genera`
-  (refreshed via `foray genera-refresh`), and each device picks its own targets in
-  `app_genera`.
+  fixed target list (issues #79, #464) - the taxon catalog lives in `taxa` (see below), and each
+  device picks its own targets, a taxon of **any rank** (species to class), in `app_targets`.
+  `scope_roots` (`FORAY_SCOPE_ROOTS`, default Fungi 47170) is the one place the taxonomic scope is
+  named: ingest, the bulk loaders and `revalidate` test "still under a scope root", and
+  `scope_kingdoms` is the bulk stager's name-based pre-filter (it has no DB).
 - `src/foray/defaults.py` - built-in home location and coverage regions (WA/OR/ID).
   Overridden via `FORAY_COVERAGE` env var.
-- `src/foray/sources/inat.py` - throttled pyinaturalist wrapper (observations, fungi-genera
-  catalog, photos). Descriptive User-Agent; deep-paginates via `id_above`; `_with_retries`
+- `src/foray/sources/inat.py` - throttled pyinaturalist wrapper (observations, the genus-and-above
+  catalog top-up `iter_taxa`, photos). Descriptive User-Agent; deep-paginates via `id_above`; `_with_retries`
   backs off on transient network errors so one blip doesn't abort a long ingest.
 - `src/foray/sources/geocode.py` - resolve a place name (OpenStreetMap Nominatim) or raw `lat,lng`
   to coordinates: `resolve` (one hit), `suggest` (typeahead list, backs
@@ -61,15 +63,16 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   fetch -> upsert -> record) behind the four home-radius area ingests (campgrounds, dispersed,
   land, trails). A new area source is a fetch function + an upsert function.
 - `src/foray/sources/ingest.py` - pulls per seed taxon within the home radius or by coverage region
-  (`place_id`). Tags each obs with the **seed** taxon_id (not leaf species) so phenology is
-  per foraging target. `ingest` / `ingest_region` share `_consume_observations` (scan ->
-  resolve genus -> chunked upsert, 5000 rows, with progress + abort) for bounded memory.
+  (`place_id`), querying the configured scope roots. Tags each obs with its **genus** taxon_id
+  (the hot key) and, when identified that far, its `species_id`, both from `taxa.Resolver`.
+  `ingest` / `ingest_region` share `_consume_observations` (scan -> resolve genus + species ->
+  chunked upsert, 5000 rows, with progress + abort) for bounded memory.
   `revalidate()` is a separate, recurring re-check pass: a handful of fungal genus names are
   homonyms of common animal genera (fungal *Olla* vs. the ladybug genus, etc), so observations
   occasionally get cached under the wrong (non-fungal) taxon_id and never self-correct since
   `ingest`/`ingest_region` only ever revisit a narrow incremental overlap window. It targets
   only genus taxon_ids flagged by `cache.suspect_genus_taxon_ids` (cached-count vs.
-  `fungi_genera.observations_count`, DB-only, no iNat call) and re-fetches just those cached
+  `taxa.observations_count`, DB-only, no iNat call) and re-fetches just those cached
   observations to purge/reassign anything no longer Fungi. `resync()` is the slower complement:
   a whole-table grind, one small batch per call, oldest/never-live-checked first
   (`cache.stale_observation_ids`, driven by the `revalidated_at` column both functions stamp via
@@ -77,10 +80,29 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   every row, including `obscured` (never set by the bulk historical import) and
   misidentifications too rare within their genus for `revalidate`'s ratio to flag. Both share
   the actual re-check/purge/reassign logic (`_recheck_ids`).
+- `src/foray/taxa.py` - the pure, rank-driven taxonomy helpers (issue #464), no database:
+  `RANK_LEVELS`, `build_ancestor_ids` (the taxonomy export has parent refs only; tolerates dangling
+  parents and cycles), `rollup_for` / `Resolver` (an identification -> `(genus_id, species_id)` by
+  walking the lineage **by rank**, never by name or nearest parent - a section can share its genus's
+  name, and subgenus / section / complex sit between species and genus; infraspecific ranks roll up
+  to the species), `ids_under_scope`, `taxa_rows`, `iconic_taxon_id`. `Resolver.resolve` is the live
+  ingest's "still under a scope root and has a genus" test, replacing the old Fungi iconic check.
+- `src/foray/cache/taxa.py` - the catalog and target expansion. `taxa` holds every rank in iNat's
+  shape (`parent_id`, `rank` / `rank_level`, `ancestor_ids BIGINT[]` GIN-indexed, `is_active`,
+  `observations_count`); `taxon_names` holds synonyms and vernacular names for search. `upsert_taxa`
+  (NULL never blanks a stored name or count), `mark_taxa_inactive`, `rollup_map`, `search_taxa`
+  (exact > prefix > substring, then observation count; a synonym hit reports `matched_name`),
+  `taxon_labels` (name, common name, rank, icon; a species wears its genus's icon), and
+  `expand_targets` / `as_targets` -> `Targets(genus_ids, species_ids, covers_all)`, cached per
+  request on the `taxa_version` meta key. `fungi_genera` survives only as a **view** over `taxa`
+  (migration 60) so a stale `:latest` cron image keeps working; do not write to it.
+- `src/foray/sources/taxa_bulk.py` - the `taxa` bulk source: iNat's weekly taxonomy DwC-A, staged by
+  GitHub Actions (kingdom-name filter, rebuilt `ancestor_ids`, scoped to the roots plus their own
+  ancestors) and loaded on the droplet by `foray ingest-bulk taxa`. It must load before `inat`.
 - `src/foray/genus_icons.py` - the genus icon vocabulary (issue #449): 17 morphological shape
   groups (not taxonomic ranks) plus 30 bespoke genus icons. A genus's group comes from the most
   specific override (genus, family, order, class, generic), resolved at read time from the
-  `class_name`/`order_name`/`family_name` columns `genera-refresh` stores on `fungi_genera`. The
+  genus's lineage in `taxa` (`cache.taxa.taxon_labels`). The
   `icon` field on every genus payload is a `GenusIcon` Literal, so `schema.ts` carries the union
   and the frontend's `src/icons/genus-icons.ts` (art in `icons/shapes/` and `icons/genera/`,
   one-colour path-only SVGs) fails `tsc` when a key has no art. `icons.html` is a dev-only review
@@ -195,19 +217,21 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
     `PINNABLE_LAND_AGENCIES` (federal/state public-land managers) are offered; tribal, military
     and city land stays map-only.
   - `_sql.py` - the SQL fragments shared by the three query modules (grid binning
-    `BINNED`, the decoy-aware center expressions, the `taxon_id` / `IN (...)` helpers,
-    `genus_name_map`).
+    `BINNED`, the decoy-aware center expressions, `target_filter` / `phenology_source` - the
+    observation and phenology filters for a `Targets` expansion - and `genus_name_map`, the
+    label lookup for a genus or species id). The public scoring functions take `taxon_ids`
+    (picked ids of any rank) or an already-expanded `Targets`.
 - `src/foray/api/` - FastAPI package (was one `api.py`; issue #242 Part 1e). `/api/{config,
-  genera,destinations,calendar,alerts,camps,land,trails,plan,location,refresh,coverage}` + `/`
+  taxa,destinations,calendar,alerts,camps,land,trails,plan,location,refresh,coverage}` + `/`
   (serves the built client). Search is **read-only** against cached data. `set_location` does not
   trigger refresh. A `psycopg_pool.ConnectionPool` opened/closed via FastAPI `lifespan`; `refresh`
   runs in a background thread with SSE progress.
   - `app.py` - `create_app()`: builds the `FastAPI`, opens the pool + `AppState` onto `app.state`,
     registers the routers in OpenAPI-schema order (`foray openapi` output is drift-checked).
-  - `routes/*.py` - one `APIRouter` per domain (`config`, `genera`, `coverage`, `destinations`,
+  - `routes/*.py` - one `APIRouter` per domain (`config`, `taxa`, `coverage`, `destinations`,
     `layers`, `plan`, `location`, `refresh`, `index`).
   - `deps.py` - shared request helpers as module functions: `get_pool` / `get_state` accessors,
-    anonymous device-id resolution, `resolve_home` / `resolve_genera`, `parse_months` /
+    anonymous device-id resolution, `resolve_home` / `resolve_genera` (the device's picked ids), `parse_months` /
     `parse_species`, `region_center`, rate limiting.
   - `state.py` - the `AppState` dataclass. `security.py` - CSP + security headers + body-size cap.
     `refresh_runner.py` - the API-side wrapper around `run_home_refresh`: background thread,
@@ -259,7 +283,11 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
     UiState` (Leaflet handles / scoping inputs / display prefs). `View` is `"destinations" |
     "plan"`. Plus `qs()` / `setStatus()` / the scope-change hook and small formatters.
   - `src/prefs.ts` - the `localStorage`-persisted prefs (theme / units / text-size / months).
-    Selected genera are server-side instead (`app_genera` via `/api/genera/{taxon_id}`).
+    Picked targets are server-side instead (`app_targets` via `/api/taxa/{taxon_id}`).
+  - `src/taxa.ts` - the Taxa pill's picker (issue #464): rank chips (any / species / genus / family /
+    order / class) above a typeahead on `GET /api/taxa/search`, a suggestion naming the synonym it
+    matched, and removable chips for the device's picks (`/api/taxa/{taxon_id}`). `selectedTaxa()`
+    feeds the pill label.
   - `src/views/views.ts` - the ranked-list flow. `runDestinations()` fetches `/api/destinations`
     and, when `state.sort === "active"`, delegates to `runActiveNow()` (the old "Fruiting now"
     tab: fetches `/api/alerts`, same card shell). `buildResultCard` (in `ui/card-dom.ts`) is the
@@ -284,7 +312,7 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   - `src/ui/why.ts` - `whySentence`: the plain-language line leading each card, synthesised from
     the `/api/destinations` payload alone (top genus + its `pheno_trend` phrase, in-window record
     count, recent-rain state, a burn-scar / active-fire clause when relevant) - no extra fetch.
-  - `src/ui/pills.ts` - the filter-pill row: **Sort / Radius / Months / Genera / Layers** (5
+  - `src/ui/pills.ts` - the filter-pill row: **Sort / Radius / Months / Taxa / Layers** (5
     pills; issue #301 folded the 8 old land/camp/fire/aerial toggles into one "Layers" popover).
     `src/ui/pill.ts` is the popover primitive. `src/ui/ui-prefs.ts` wires the search-bar `⋮`
     menu (units / theme / text-size). `src/ui/card-select.ts` / `card-dom.ts` / `lazy-panel.ts`
@@ -522,9 +550,11 @@ just frontend
   recent rain per region cell (`ingest.refresh_precipitation` / `foray refresh-precip`, forecast
   API) - flushed in batches and skips cells refreshed in the last ~20h so a long / restarted run
   resumes. Informational only, no scoring - same posture as elevation.
-- Target genera aren't configured in code - `foray genera-refresh` keeps the full catalog
-  synced, `foray ingest` pulls every Fungi observation and resolves each one's own genus from
-  its taxon ancestry, and users pick their targets in the search UI (per-device, `app_genera`).
+- Targets aren't configured in code - `foray genera-refresh` and `foray ingest-bulk taxa` keep the
+  catalog synced, `foray ingest` pulls every in-scope observation and rolls each one's own
+  identification up to its genus (and species) by rank, and users pick their targets of any rank in
+  the search UI (per-device, `app_targets`). A genus-only identification counts toward its genus and
+  above, never toward a species.
 - Droplet CPU/memory/disk alerting (issue #84 - a past ENOSPC incident went unnoticed until the
   app broke) is provisioned as code: `infra/ansible/tasks/provision/monitoring.yml` creates DO
   monitoring alert policies via `digitalocean.cloud.monitoring_alert_policy`, opt-in behind the

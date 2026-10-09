@@ -200,12 +200,18 @@
         <button type="button" data-km="500" aria-label="Set search radius to 500 kilometers">500 km</button>
       </div>
       <div id="months" class="months"></div>
-      <div id="genus-field">
-        <form id="genusform" autocomplete="off">
-          <input id="genus" type="text" placeholder="Search genus (e.g. Cantharellus)…" autocomplete="off" />
-          <ul id="genus-suggestions" class="loc-suggestions"></ul>
+      <div id="taxa-field">
+        <div id="taxa-ranks" class="rank-chips" role="group" aria-label="Taxon rank"></div>
+        <form id="taxaform" autocomplete="off">
+          <input
+            id="taxon"
+            type="text"
+            placeholder="Search a species, genus, family… (e.g. morel)"
+            autocomplete="off"
+          />
+          <ul id="taxon-suggestions" class="loc-suggestions"></ul>
         </form>
-        <div id="genus-chips" class="chips"></div>
+        <div id="taxa-chips" class="chips"></div>
       </div>
       <!-- One "Layers" popover holds every map overlay toggle (issue #301: 8 pills -> 3).
            initLayerToggles() still wires each checkbox by id; the ids and groups are unchanged,

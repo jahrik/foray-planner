@@ -1204,13 +1204,42 @@ a.chip:hover {
   cursor: pointer;
 }
 
-#genus-field {
+#taxa-field {
   min-width: 200px;
 }
-#genus-field form {
+/* Rank filter above the taxon search (issue #464): one toggle per rank, "Any" first. */
+.rank-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.rank-chips button {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: var(--text-label);
+  cursor: pointer;
+}
+.rank-chips button[aria-pressed="true"] {
+  background: var(--rust);
+  border-color: var(--rust);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+/* The rank tag after a taxon's name in the suggestion list and on a picked chip. */
+.taxon-rank {
+  margin-left: 6px;
+  font-size: var(--text-label);
+  opacity: 0.7;
+  text-transform: capitalize;
+}
+#taxa-field form {
   position: relative;
 }
-#genus-field input {
+#taxa-field input {
   width: 100%;
   padding: 5px 10px;
   border-radius: 6px;

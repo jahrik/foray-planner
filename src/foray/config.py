@@ -7,6 +7,7 @@ Defaults for species and coverage are built into the app via ``foray.defaults``.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Iterable
 from typing import Literal
 
@@ -19,6 +20,8 @@ from foray.defaults import H3_RESOLUTION as _DEFAULT_H3_RESOLUTION
 from foray.defaults import HOME_LAT as _DEFAULT_HOME_LAT
 from foray.defaults import HOME_LNG as _DEFAULT_HOME_LNG
 from foray.defaults import HOME_RADIUS_KM as _DEFAULT_HOME_RADIUS_KM
+from foray.defaults import SCOPE_KINGDOMS as _DEFAULT_SCOPE_KINGDOMS
+from foray.defaults import SCOPE_ROOTS as _DEFAULT_SCOPE_ROOTS
 
 QualityGrade = Literal["research", "needs_id", "casual"]
 
@@ -199,6 +202,12 @@ class Settings(BaseSettings):
     # edge already leaves headroom far past any realistic resolution choice while keeping that
     # enumeration bounded.
     h3_resolution: int = Field(ge=0, le=9, default=_DEFAULT_H3_RESOLUTION)
+    # Taxonomy scope (issue #464): root taxon ids whose descendants are ingested / cataloged /
+    # ranked (JSON list in FORAY_SCOPE_ROOTS), and the kingdom names the bulk stager pre-filters on
+    # (it has no database). Ingest, the bulk loaders and `revalidate` test "still under a scope
+    # root" rather than "still Fungi".
+    scope_roots: list[int] = Field(default_factory=lambda: list(_DEFAULT_SCOPE_ROOTS), min_length=1)
+    scope_kingdoms: list[str] = Field(default_factory=lambda: list(_DEFAULT_SCOPE_KINGDOMS), min_length=1)
     # URL of the Protomaps PMTiles vector basemap archive (a self-hosted US extract on DO Spaces
     # + CDN, built + uploaded by the `foray:build-basemap-once` Ansible task - see
     # docs/data-sources.md). The map has no raster fallback, so empty means no base layer.
@@ -275,3 +284,13 @@ class Settings(BaseSettings):
     def region_sync_days(self) -> int:
         """Shortcut for ``ingest.region_sync_days``."""
         return self.ingest.region_sync_days
+
+
+@functools.cache
+def scope_roots() -> tuple[int, ...]:
+    """The configured scope roots, read once per process (``FORAY_SCOPE_ROOTS`` / the default).
+
+    For the scoring layer, which has no ``Settings`` plumbed through it but needs to know whether a
+    picked taxon covers the whole scope. Tests that change the env clear it with
+    ``scope_roots.cache_clear()``."""
+    return tuple(Settings().scope_roots)

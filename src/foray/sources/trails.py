@@ -1103,7 +1103,7 @@ _FORAGE_BACKFILL_BATCH = 20000
 
 # Only line kinds get a count - a trailhead is a point, and a selected trailhead row draws its
 # *connected* trail line(s), so a 500 m-of-the-node count would mislabel that line. Trailheads
-# keep forage_obs NULL -> tier 0 -> the default line colour. The ``fungi_genera`` guard is
+# keep forage_obs NULL -> tier 0 -> the default line colour. The ``taxa`` genus guard is
 # belt-and-braces: ``sources.ingest`` already drops any observation it can't resolve to a
 # catalog genus, but the homonym-leak machinery (issue #242) means "is a catalog genus" is the
 # honest bar for "counts as a fungi find".
@@ -1120,7 +1120,7 @@ _FORAGE_BACKFILL_SQL = """
             WHERE o.geom IS NOT NULL
               AND o.quality_grade = 'research'
               AND NOT COALESCE(o.obscured, false)
-              AND o.taxon_id IN (SELECT taxon_id FROM fungi_genera)
+              AND o.taxon_id IN (SELECT taxon_id FROM taxa WHERE rank = 'genus')
               AND ST_DWithin(o.geom, t.geom, %s)
         ),
         forage_obs_at = now()

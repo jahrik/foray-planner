@@ -614,7 +614,7 @@ def test_trails_near_obs_density_lifts_a_trail_through_a_hotspot(con: psycopg.Co
     assert all(path is not None for path in paths)
     upsert_trails(con, [path for path in paths if path is not None])
     with con.cursor() as cur:
-        cur.execute("INSERT INTO fungi_genera (taxon_id, name) VALUES (48701, 'Boletus')")
+        cur.execute("INSERT INTO taxa (taxon_id, name, rank) VALUES (48701, 'Boletus', 'genus')")
         cur.executemany(
             "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade)"
             " VALUES (%s, 48701, %s, %s, '2022-09-15', 9, 'research')",
@@ -625,6 +625,18 @@ def test_trails_near_obs_density_lifts_a_trail_through_a_hotspot(con: psycopg.Co
     assert [t.name for t in with_genus[:2]] == ["Popular", "Quiet"]
     no_genus = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, sort="relevance")
     assert [t.name for t in no_genus[:2]] == ["Quiet", "Popular"]  # equal prominence -> nearer first
+
+    # A species target counts only observations identified to that species (issue #464).
+    with con.cursor() as cur:
+        cur.execute(
+            "INSERT INTO taxa (taxon_id, name, rank, ancestor_ids)"
+            " VALUES (99001, 'Boletus edulis', 'species', '{48701}')"
+        )
+        cur.execute("UPDATE observations SET species_id = 99001")
+    by_species = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, sort="relevance", taxon_ids=[99001])
+    assert [t.name for t in by_species[:2]] == ["Popular", "Quiet"]
+    other_species = trails_near(con, lat=HOME_LAT, lng=HOME_LNG, radius_km=50.0, sort="relevance", taxon_ids=[99002])
+    assert [t.name for t in other_species[:2]] == ["Quiet", "Popular"]  # no finds of that species anywhere
 
 
 def test_trails_near_road_relevance_ranks_obs_density_over_length(con: psycopg.Connection) -> None:
@@ -650,7 +662,7 @@ def test_trails_near_road_relevance_ranks_obs_density_over_length(con: psycopg.C
     assert long_empty is not None and short_hot is not None
     upsert_trails(con, [long_empty, short_hot])
     with con.cursor() as cur:
-        cur.execute("INSERT INTO fungi_genera (taxon_id, name) VALUES (48701, 'Boletus')")
+        cur.execute("INSERT INTO taxa (taxon_id, name, rank) VALUES (48701, 'Boletus', 'genus')")
         cur.executemany(
             "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade)"
             " VALUES (%s, 48701, %s, %s, '2022-09-15', 9, 'research')",
@@ -1000,7 +1012,7 @@ def test_backfill_forage_obs_counts_research_grade_fungi_hugging_the_line(con: p
         con, [("osm:node/9", "Loop TH", "trailhead", "osm", "u", 47.605, -122.30, th_point, None, None, None)]
     )
     with con.cursor() as cur:
-        cur.execute("INSERT INTO fungi_genera (taxon_id, name) VALUES (48701, 'Boletus')")
+        cur.execute("INSERT INTO taxa (taxon_id, name, rank) VALUES (48701, 'Boletus', 'genus')")
         cur.executemany(
             "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade, obscured)"
             " VALUES (%s, %s, %s, %s, '2022-09-15', 9, %s, %s)",

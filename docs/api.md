@@ -30,10 +30,10 @@ opaque id is the key for the visitor's two pieces of saved state:
 | State | Table | Routes |
 |---|---|---|
 | Saved home + search radius | `app_location` | `POST` / `DELETE /api/location` |
-| Selected target genera | `app_genera` | `/api/genera/selected`, `POST` / `DELETE /api/genera/{taxon_id}` |
+| Selected targets (a taxon of any rank) | `app_targets` | `/api/taxa/selected`, `POST` / `DELETE /api/taxa/{taxon_id}` |
 
 A client that does not keep cookies (a script, `curl`) starts as a new visitor on every request:
-it sees the server's default home and an empty genus selection (which means "everything nearby").
+it sees the server's default home and an empty target selection (which means "everything nearby").
 Pass `species` and explicit `lat` / `lng` parameters instead of relying on saved state.
 
 ### Shared query parameters
@@ -144,21 +144,36 @@ Typeahead place search, proxied to OpenStreetMap Nominatim so the browser never 
 Returns `[{"name", "lat", "lng"}]`; an empty array for a blank query or any geocoder failure, so
 autocomplete degrades quietly.
 
-### `GET /api/genera?q=...`
+### `GET /api/taxa/search?q=...&rank=...`
 
-Search the Fungi genus catalog (about 6,000 genera). An empty `q` returns the most-observed
-genera. Each hit: `{"taxon_id", "name", "common_name", "icon"}`. `common_name` is usually `null`
-(most genera have no English name on iNaturalist); `icon` is the key of the icon drawn on the map
-and cards (see [frontend.md](frontend.md#genus-icons)).
+Search the taxon catalog by scientific name, common name or synonym: the Fungi species (about
+62,000), genera, families, orders and classes, plus any other scope the deployment is configured
+for. `rank` (optional) narrows to one of `species`, `genus`, `family`, `order`, `class`, `phylum`
+or `kingdom`; an unknown rank is a `422`. Results are ranked exact name, then prefix, then
+substring, then by iNaturalist's observation count (kept for genera and above; species are
+ordered by name among equals). An empty `q` returns the most-observed taxa of `rank` (genera by
+default).
 
-### `GET /api/genera/selected`
+Each hit: `{"taxon_id", "name", "common_name", "rank", "icon", "matched_name"}`. `common_name` is
+usually `null` for genera and above. `matched_name` is the synonym or vernacular name the search
+matched when that was not the scientific name, so "morel" can find *Morchella* and an old
+synonym finds its current taxon. `icon` is the key of the icon drawn on the map and cards (see
+[frontend.md](frontend.md#genus-icons)); a species wears its genus's, and a family, order or
+class the shape group it falls in.
 
-This device's selected target genera, same shape as above. Empty means "everything nearby".
+### `GET /api/taxa/selected`
 
-### `POST /api/genera/{taxon_id}` and `DELETE /api/genera/{taxon_id}`
+This device's picked targets, same shape as above. Empty means "everything nearby".
 
-Add or remove one genus from the device's selection. Return `{"status": "added"}` /
-`{"status": "removed"}`. Both are idempotent.
+### `POST /api/taxa/{taxon_id}` and `DELETE /api/taxa/{taxon_id}`
+
+Add or remove one target (any rank) from the device's selection. Return `{"status": "added"}` /
+`{"status": "removed"}`. Both are idempotent; adding an id the catalog does not know is a `404`,
+so a mistyped id cannot narrow every ranking to nothing.
+
+The picked ids drive every ranking, calendar, "active now" and pin read (`species=all`, the
+default, means this device's picks). A `species=` query value of comma-separated ids overrides
+them, with the same any-rank meaning. See [scoring.md](scoring.md#targets-at-any-rank).
 
 ### `GET /api/coverage`
 

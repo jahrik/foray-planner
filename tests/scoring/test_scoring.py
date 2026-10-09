@@ -7,6 +7,8 @@ import datetime as dt
 import psycopg
 import pytest
 
+from foray.cache import upsert_taxa
+from foray.cache.taxa import as_targets
 from foray.geo import grid_cell, haversine_km
 from foray.scoring import (
     alerts,
@@ -31,7 +33,7 @@ OCT_LAT, OCT_LNG = 44.0, -121.0
 def _seed(con: psycopg.Connection) -> None:
     with con.cursor() as cur:
         cur.executemany(
-            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            "INSERT INTO taxa (taxon_id, name, common_name, rank) VALUES (%s, %s, %s, 'genus')",
             [
                 (MOREL, "Morchella", "Morels"),
                 (CHANTERELLE, "Cantharellus", "Chanterelles"),
@@ -130,7 +132,7 @@ def test_non_research_grade_excluded_from_scoring(con: psycopg.Connection) -> No
     casual_taxon = 333
     with con.cursor() as cur:
         cur.execute(
-            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            "INSERT INTO taxa (taxon_id, name, common_name, rank) VALUES (%s, %s, %s, 'genus')",
             (casual_taxon, "Amanita", "Amanitas"),
         )
         cur.executemany(
@@ -177,7 +179,7 @@ def test_place_calendar_caps_species_breakdown_when_unfiltered(con: psycopg.Conn
     extra_taxa = [(1000 + i, f"Genus{i}", f"Common{i}") for i in range(20)]
     with con.cursor() as cur:
         cur.executemany(
-            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            "INSERT INTO taxa (taxon_id, name, common_name, rank) VALUES (%s, %s, %s, 'genus')",
             extra_taxa,
         )
         cur.executemany(
@@ -208,7 +210,7 @@ def test_place_calendar_disambiguates_duplicate_display_names(con: psycopg.Conne
     dup_a, dup_b = 2001, 2002
     with con.cursor() as cur:
         cur.executemany(
-            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            "INSERT INTO taxa (taxon_id, name, common_name, rank) VALUES (%s, %s, %s, 'genus')",
             [(dup_a, "Amanitopsis", None), (dup_b, "Amanitopsis", None)],
         )
         cur.executemany(
@@ -264,7 +266,7 @@ def test_recent_counts_is_scoped_to_the_radius(con: psycopg.Connection) -> None:
         )
 
     counts = recent_counts(
-        con, lat=near_lat, lng=near_lng, radius_km=100, h3_resolution=RES, taxon_ids=[MOREL], weeks=4
+        con, lat=near_lat, lng=near_lng, radius_km=100, h3_resolution=RES, targets=as_targets(con, [MOREL]), weeks=4
     )
     near_id = grid_cell(near_lat, near_lng, RES).cell_id
     far_id = grid_cell(far_lat, far_lng, RES).cell_id
@@ -399,7 +401,7 @@ def test_alerts_center_excludes_obscured_decoy(con: psycopg.Connection) -> None:
     today = dt.date.today()
     with con.cursor() as cur:
         cur.executemany(
-            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            "INSERT INTO taxa (taxon_id, name, common_name, rank) VALUES (%s, %s, %s, 'genus')",
             [(taxon_id, "Testomyces", "Test fungus")],
         )
         cur.execute(
@@ -439,7 +441,7 @@ def test_alerts_center_excludes_obscured_decoy_across_taxa(con: psycopg.Connecti
     today = dt.date.today()
     with con.cursor() as cur:
         cur.executemany(
-            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)",
+            "INSERT INTO taxa (taxon_id, name, common_name, rank) VALUES (%s, %s, %s, 'genus')",
             [(precise_taxon, "Preciseomyces", None), (obscured_taxon, "Obscuromyces", None)],
         )
         cur.execute(
@@ -596,12 +598,19 @@ def test_build_phenology_recovers_from_a_stray_staging_table(con: psycopg.Connec
 def test_genus_icon_follows_stored_taxonomy(con: psycopg.Connection) -> None:
     """A genus without bespoke art takes its shape group from the taxonomy genera-refresh
     stored (issue #449); before that refresh it shows the generic icon."""
-    con.execute("INSERT INTO fungi_genera (taxon_id, name) VALUES (333, 'Hydnum')")
-    con.execute("INSERT INTO fungi_genera (taxon_id, name) VALUES (444, 'Craterellus')")
+    con.execute("INSERT INTO taxa (taxon_id, name, rank) VALUES (333, 'Hydnum', 'genus')")
+    con.execute("INSERT INTO taxa (taxon_id, name, rank) VALUES (444, 'Craterellus', 'genus')")
     assert genus_name_map(con, [444])[444].icon == "generic"
-    con.execute(
-        "UPDATE fungi_genera SET class_name = 'Agaricomycetes', order_name = 'Cantharellales',"
-        " family_name = 'Hydnaceae' WHERE taxon_id IN (333, 444)"
+    # The genus's family / order / class come from its lineage in `taxa`.
+    upsert_taxa(
+        con,
+        [
+            {"taxon_id": 5, "name": "Agaricomycetes", "rank": "class"},
+            {"taxon_id": 6, "name": "Cantharellales", "rank": "order", "ancestor_ids": [5]},
+            {"taxon_id": 7, "name": "Hydnaceae", "rank": "family", "ancestor_ids": [5, 6]},
+            {"taxon_id": 333, "name": "Hydnum", "rank": "genus", "ancestor_ids": [5, 6, 7]},
+            {"taxon_id": 444, "name": "Craterellus", "rank": "genus", "ancestor_ids": [5, 6, 7]},
+        ],
     )
     labels = genus_name_map(con, [333, 444])
     assert (labels[333].icon, labels[444].icon) == ("tooth", "vase")

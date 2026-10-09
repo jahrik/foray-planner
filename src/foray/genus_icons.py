@@ -17,16 +17,15 @@ not a source: none of its data ships here. Some deliberate differences remain wh
 structural categories don't match the field look: chanterelles stay ``vase`` (its "agaricoid,
 gills"), bird's nests stay ``cup`` (its "gasteroid"), tar spots stay ``rust`` (its "apothecium").
 
-``foray genera-refresh`` stores each genus's class / order / family on ``fungi_genera``
-(``catalog_rows``); reads resolve the icon from them with ``genus_icon``, so a change to these
+the taxon catalog (``taxa``) carries each genus's lineage; its class / order / family names
+are read from it, and reads resolve the icon from them with ``genus_icon``, so a change to these
 tables applies on the next deploy without a refresh. The API sends the key and the client draws
 the matching SVG.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Any, Literal, cast, get_args
+from typing import Literal, cast, get_args
 
 IconGroup = Literal[
     "gilled",
@@ -375,39 +374,3 @@ def genus_icon(genus: str, family: str | None, order: str | None, class_name: st
     if key in BESPOKE_GENERA:
         return cast(GenusIcon, key)
     return icon_group(genus, family, order, class_name)
-
-
-def catalog_rows(genera: Iterable[dict[str, Any]], ranks: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """``fungi_genera`` rows from iNat ``/v1/taxa`` records (``foray genera-refresh``).
-
-    ``genera`` are the genus records (``inat.iter_fungi_genera``); ``ranks`` the class / order /
-    family records (``inat.iter_fungi_ranks``) that name each genus's ``ancestor_ids``. An
-    ancestor missing from ``ranks`` (iNat added it between the two listings) just leaves that
-    rank NULL - the icon then resolves from the ranks it does have.
-    """
-    by_id = {rank["id"]: rank for rank in ranks}
-    rows = []
-    for genus in genera:
-        ancestry = {
-            by_id[ancestor_id]["rank"]: by_id[ancestor_id]
-            for ancestor_id in genus.get("ancestor_ids") or ()
-            if ancestor_id in by_id
-        }
-        class_taxon, order, family = ancestry.get("class"), ancestry.get("order"), ancestry.get("family")
-        class_name = class_taxon["name"] if class_taxon else None
-        order_name = order["name"] if order else None
-        family_name = family["name"] if family else None
-        rows.append(
-            {
-                "taxon_id": genus["id"],
-                "name": genus["name"],
-                "common_name": genus.get("preferred_common_name"),
-                "observations_count": genus.get("observations_count"),
-                "class_name": class_name,
-                "order_id": order["id"] if order else None,
-                "order_name": order_name,
-                "family_id": family["id"] if family else None,
-                "family_name": family_name,
-            }
-        )
-    return rows

@@ -41,8 +41,8 @@ just scheduler              # optional: the background job loop (see jobs.md)
 For a useful local dataset, either let it run for a while, load history with the bulk path
 (`just bulk-stage inat` and `just bulk-load inat`, which need object-storage credentials, see
 [configuration.md](configuration.md)), or ingest just your area:
-`docker compose run --rm app foray ingest` (the home radius) then `just genera-refresh`. The Genera
-pill needs the genus catalog, so run `just genera-refresh` once.
+`docker compose run --rm app foray ingest` (the home radius) then `just genera-refresh`. The Taxa
+pill needs the taxon catalog, so run `just genera-refresh` once (genera and the ranks above them). Species and synonym search come from the taxonomy export, `ingest-bulk taxa`, which needs the object-storage credentials like the other bulk sources.
 
 The `justfile` exports `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` (defaulting to the compose
 database) and the nvm Node path, so you never set them by hand. `just` with no arguments lists every

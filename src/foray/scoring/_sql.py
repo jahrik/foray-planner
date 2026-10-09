@@ -13,7 +13,7 @@ from typing import NamedTuple
 
 import psycopg
 
-from foray.genus_icons import genus_icon
+from foray.cache.taxa import Targets, taxon_labels
 
 # The "research-grade only" invariant (see AGENTS.md) is enforced here, centrally, rather
 # than trusted from the iNat API query param it started as (inat.py) - any row that lands in
@@ -40,7 +40,7 @@ from foray.genus_icons import genus_icon
 # (`cache._BACKFILL_ELIGIBLE`).
 BINNED = """
 SELECT
-    o.id, o.taxon_id, o.lat, o.lng, o.observed_on, o.month, o.quality_grade,
+    o.id, o.taxon_id, o.species_id, o.lat, o.lng, o.observed_on, o.month, o.quality_grade,
     o.obscured, o.place_guess, o.uri, o.elevation_m, o.precip_7d_mm, o.precip_30d_mm,
     h3_lat_lng_to_cell(POINT(o.lng, o.lat), {resolution})::text AS region_id
 FROM observations o
@@ -82,13 +82,53 @@ def sql_in(ids: list[int]) -> str:
     return ",".join("%s" for _ in ids) if ids else "NULL"
 
 
-def taxon_filter(taxon_ids: list[int], column: str = "taxon_id") -> str:
-    """SQL condition for a ``taxon_id`` restriction. An empty list means "no genera selected"
-    (issue #79 Phase 2) - unlike ``sql_in()``, that must mean "no filter" (``TRUE``, match
-    every taxon), not "match nothing", so a fresh device with no selection sees everything
-    nearby instead of an empty result.
+def target_filter(
+    targets: Targets, column: str = "taxon_id", species_column: str = "species_id"
+) -> tuple[str, list[list[int]]]:
+    """``(sql, params)`` restricting observation rows to the targets (issue #464): genus targets
+    match ``column`` (the genus ``taxon_id``), species targets match ``species_column``. Covering
+    the whole scope (an empty selection, or a pick of a scope root) is ``TRUE`` - "everything
+    nearby", unlike an empty id list, which would match nothing. Targets that expanded to no ids
+    (a family with no cached genera) are ``FALSE``. One ``= ANY(%s)`` array param per kind, so a
+    large expansion (an order's hundreds of genera) is not inlined into the statement.
     """
-    return f"{column} IN ({sql_in(taxon_ids)})" if taxon_ids else "TRUE"
+    if targets.covers_all:
+        return "TRUE", []
+    parts: list[str] = []
+    params: list[list[int]] = []
+    if targets.genus_ids:
+        parts.append(f"{column} = ANY(%s)")
+        params.append(list(targets.genus_ids))
+    if targets.species_ids:
+        parts.append(f"{species_column} = ANY(%s)")
+        params.append(list(targets.species_ids))
+    if not parts:
+        return "FALSE", []
+    return "(" + " OR ".join(parts) + ")", params
+
+
+_PHENOLOGY_COLUMNS = "region_id, center_lat, center_lng, taxon_id, month, cnt"
+
+
+def phenology_source(targets: Targets) -> tuple[str, list[list[int]]]:
+    """``(sql, params)`` for a subquery over the materialized phenology of the targets, with the
+    columns ``region_id, center_lat, center_lng, taxon_id, month, cnt``: genus targets read
+    ``phenology``, species targets ``phenology_species`` (``taxon_id`` is then the species id), and
+    both together are unioned. Genus and species ids never collide (both are iNat taxon ids), so the
+    caller can group by ``taxon_id`` across the mix."""
+    if targets.covers_all:
+        return f"SELECT {_PHENOLOGY_COLUMNS} FROM phenology", []
+    selects: list[str] = []
+    params: list[list[int]] = []
+    if targets.genus_ids:
+        selects.append(f"SELECT {_PHENOLOGY_COLUMNS} FROM phenology WHERE taxon_id = ANY(%s)")
+        params.append(list(targets.genus_ids))
+    if targets.species_ids:
+        selects.append(f"SELECT {_PHENOLOGY_COLUMNS} FROM phenology_species WHERE taxon_id = ANY(%s)")
+        params.append(list(targets.species_ids))
+    if not selects:
+        return f"SELECT {_PHENOLOGY_COLUMNS} FROM phenology WHERE FALSE", []
+    return " UNION ALL ".join(selects), params
 
 
 class GenusLabel(NamedTuple):
@@ -106,25 +146,14 @@ def unknown_genus(taxon_id: int) -> GenusLabel:
 
 
 def genus_name_map(con: psycopg.Connection, taxon_ids: Collection[int]) -> dict[int, GenusLabel]:
-    """taxon_id -> ``GenusLabel`` for the given taxon_ids only.
+    """taxon_id -> ``GenusLabel`` for the given ids (a genus, or - for species targets - a species,
+    which wears its genus's icon).
 
-    ``name`` is the primary display label (every ~6,018-genus catalog row has one);
-    ``common_name`` is optional secondary enrichment - most genera outside the old curated
-    21 lack an English common name on iNat (see fungi_genera's schema comment). Scoped to
-    ``taxon_ids`` (rather than the full catalog) since callers only ever look up the handful
-    of taxa present in their own result rows - fetching all ~6,018 rows on every request
-    doesn't scale as the catalog grows.
+    ``name`` is the primary display label; ``common_name`` is optional enrichment (most taxa lack an
+    English one on iNat). Scoped to ``taxon_ids`` since callers only look up the handful of taxa in
+    their own result rows.
     """
-    if not taxon_ids:
-        return {}
-    rows = con.execute(
-        """
-        SELECT taxon_id, name, common_name, family_name, order_name, class_name
-        FROM fungi_genera WHERE taxon_id = ANY(%s)
-        """,
-        [list(taxon_ids)],
-    ).fetchall()
     return {
-        taxon_id: GenusLabel(name, common_name, genus_icon(name, family, order, class_name))
-        for taxon_id, name, common_name, family, order, class_name in rows
+        taxon_id: GenusLabel(label["name"], label["common_name"], label["icon"])
+        for taxon_id, label in taxon_labels(con, taxon_ids).items()
     }

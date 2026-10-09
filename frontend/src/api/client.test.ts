@@ -48,8 +48,8 @@ describe("postJson / deleteJson", () => {
   it("substitutes a path param into the request URL", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(null, 200));
     vi.stubGlobal("fetch", fetchMock);
-    await deleteJson("/api/genera/{taxon_id}", { params: { path: { taxon_id: 47348 } } });
-    expect(requestedUrl(fetchMock)).toContain("/api/genera/47348");
+    await deleteJson("/api/taxa/{taxon_id}", { params: { path: { taxon_id: 47348 } } });
+    expect(requestedUrl(fetchMock)).toContain("/api/taxa/47348");
   });
 });
 

@@ -530,16 +530,40 @@ checking the issue's own text first - see AGENTS.md's Conventions section.
     `static.inaturalist.org`'s CDN partway through a scan (issue found 2026-09-14); iNaturalist's
     own docs say large downloads should go through GBIF instead of this file, and a single GET is
     the same access pattern the retired manual `curl -L` workflow used, which never tripped it -
-    see `inat_bulk`'s module docstring for the full writeup. Filtered to `kingdom == "Fungi"` +
-    `countryCode == "US"` rows at stage time (no DB needed there); the loader resolves each row's
-    genus name to our catalog's genus-level `taxon_id` (`fungi_genera`) and upserts into
-    `observations`, exactly like the live `ingest`/`ingest_region` path. Replaces the old manual
+    see `inat_bulk`'s module docstring for the full writeup. Filtered to the scope kingdoms
+    (`FORAY_SCOPE_KINGDOMS`, `Fungi` by default) + `countryCode == "US"` rows at stage time (no DB
+    needed there), keeping each row's own `taxonID` and `taxonRank` (issue #464). The loader
+    resolves that `taxonID` through `taxa` by rank - the genus ancestor into `observations.taxon_id`,
+    the species ancestor (if identified to species or finer) into `species_id` - and inserts rows
+    not already cached; an id missing from `taxa` is counted and skipped. It also fills `species_id`
+    on already-cached rows that lack one, so the ~2M rows cached before the column existed pick it
+    up over the weekly loads. `taxa` must load first (`ingest-bulk taxa`). A snapshot staged before
+    this change has no `taxonID`: the loader matches the genus *name* against `taxa` until the next
+    weekly stage replaces it. Replaces the old manual
     `just bulk-download`/`bulk-filter`/`bulk-load` + `scripts/inat_dwca_filter.py` /
     `load_inat_bulk.py` pair and the one-off `infra/ansible/tasks/deploy/bulk_load_once.yml`
     task - use `just bulk-stage inat` / `just bulk-load inat` (or the scheduled
     `ingest-bulk-inat` job) instead. Chosen over the AWS Open Data dump
     (`inaturalist-open-data`) because that dump only carries `observation_uuid`, never the
     numeric `id` this project's schema keys `observations` on (re-verified live 2026-09-14).
+  - **`taxa`** (`foray.sources.taxa_bulk`, issue #464) - the taxon catalog, from iNaturalist's
+    weekly taxonomy export (`inaturalist.org/taxa/inaturalist-taxonomy.dwca.zip`, ~80 MB, 1.4M
+    taxa of which ~74k are Fungi). `taxa.csv` carries every taxon with its parent as a URL and the
+    kingdom-to-genus *names*, but **no ancestor ids**, so the stager rebuilds each taxon's
+    `ancestor_ids` by walking the parent chain (`foray.taxa.build_ancestor_ids`; about 15 parent
+    references dangle file-wide, so a broken chain keeps what it has and a taxon that never reaches
+    a scope root is left out, logged). The export also lists ranks between species and genus
+    (section, subgenus, subsection, complex, variety, form, hybrid); a section can share a genus's
+    name (the *Morchella* section vs. the genus), so every rollup walks the chain **by rank**, never
+    by name or nearest parent. The stager keeps the scope kingdoms' taxa under a scope root plus
+    the ancestors of those roots, and the `VernacularNames-<language>.csv` files (~1,200, every
+    language; 27% of Fungi taxa have a name) for those taxa as `taxon_names`; English search is
+    primary but synonyms and other languages match too. The export has no `observations_count`,
+    `is_active` or `iconic_taxon_id`: counts keep coming from `foray genera-refresh` (they drive
+    `revalidate`), the iconic group is derived from the lineage, and a scope taxon missing from a
+    newer snapshot is marked `is_active = false` (iNat retired or merged it; `resync` heals the
+    cached rows). The loader never overwrites a stored `common_name` or `observations_count` with
+    NULL, and gives taxa still lacking an English name the first one the export has.
   - **`ridb`** (`foray.sources.camps`) - RIDB's full CSV export
     (`ridb.recreation.gov/downloads/RIDBFullExport_V1_CSV.zip`, public, no API key, refreshed
     at least daily), filtered to camping facilities and upserted into `campsites`, then pruned

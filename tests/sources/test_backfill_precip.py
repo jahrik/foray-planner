@@ -24,7 +24,8 @@ LAT, LNG = 45.1, -122.1
 def _seed_obs(con: psycopg.Connection, rows: list[tuple]) -> None:
     with con.cursor() as cur:
         cur.execute(
-            "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)", (GENUS, "Boletus", "Boletes")
+            "INSERT INTO taxa (taxon_id, name, common_name, rank) VALUES (%s, %s, %s, 'genus')",
+            (GENUS, "Boletus", "Boletes"),
         )
         cur.executemany(
             "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade, obscured)"

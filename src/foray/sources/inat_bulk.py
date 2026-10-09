@@ -34,16 +34,18 @@ the numeric id directly (its ``id`` field, DwC ``occurrenceID`` - column 0, veri
 live streamed read), so it's the only bulk source with a schema this table can load without a
 much larger re-keying migration.
 
-**Why kingdom, not the ``fungi_genera`` catalog:** the old filter script matched each row's
-``genus`` name against a preloaded catalog (needing a live DB connection at filter time,
-before any row was even known to be Fungi). The DwC-A dump carries ``kingdom`` directly (field
+**Why a kingdom name, not the ``taxa`` catalog, in the stager:** the old filter script matched each
+row's ``genus`` name against a preloaded catalog (needing a live DB connection at filter time,
+before any row was even known to be in scope). The DwC-A dump carries ``kingdom`` directly (field
 32, confirmed against the archive's own ``meta.xml``), so the *stager* (which runs with no DB -
-GitHub Actions, not the droplet) filters on ``kingdom == "Fungi"`` instead - broader than a
-genus whitelist (catches genera not yet in the catalog too) and self-contained. Resolving each
-surviving row's ``genus`` name to *our* genus-level ``taxon_id`` (what ``observations.taxon_id``
-actually stores - see ``foray.sources.ingest``'s module docstring) still needs
-``fungi_genera``, so that lookup moves to the *loader* (``load_inat``), which does have a
-connection; a row whose genus isn't cataloged yet is skipped, same as the old script.
+GitHub Actions, not the droplet) pre-filters on ``Settings.scope_kingdoms`` - broader than a genus
+whitelist and self-contained - and also stages each row's own ``taxonID`` (field 29) and
+``taxonRank`` (field 31). The *loader* (``load_inat``), which has a connection, then resolves that
+``taxonID`` through ``taxa`` (issue #464): the genus ancestor goes into ``observations.taxon_id``,
+the species ancestor (if identified that far) into ``species_id``, and a row whose taxon is not
+cataloged is counted and skipped. ``taxa`` must therefore load first (``ingest-bulk taxa``).
+Snapshots staged before #464 lack ``taxon_id``; those rows fall back to matching the ``genus``
+*name* against ``taxa`` until the next weekly stage replaces the snapshot.
 """
 
 from __future__ import annotations
@@ -64,11 +66,14 @@ from stream_unzip import stream_unzip
 
 from foray import spaces
 from foray.cache import (
+    fill_missing_species_ids,
     fill_missing_taxon_names,
-    genus_taxon_ids,
+    genus_name_ids,
     insert_observations_if_missing,
     maybe_rebuild_phenology,
     record_ingest,
+    rollup_map,
+    taxa_count,
 )
 from foray.config import Settings
 from foray.sources.http import USER_AGENT
@@ -88,7 +93,9 @@ _COL_LAT = 20
 _COL_LNG = 21
 _COL_COORD_UNCERTAINTY = 22
 _COL_COUNTRY_CODE = 24
+_COL_TAXON_ID = 29  # the observation's own identification's iNat taxon id (issue #464)
 _COL_SCIENTIFIC_NAME = 30  # the observation's own identification, e.g. "Amanita muscaria" (issue #449)
+_COL_TAXON_RANK = 31
 _COL_KINGDOM = 32
 _COL_GENUS = 37
 
@@ -118,13 +125,15 @@ _SNAPSHOT_SCHEMA = pa.schema(
         ("event_date", pa.string()),
         ("coordinate_uncertainty_m", pa.string()),
         ("scientific_name", pa.string()),
+        ("taxon_id", pa.int64()),  # issue #464; absent from snapshots staged before it
+        ("taxon_rank", pa.string()),
     ]
 )
 
 _DWCA_ENTRY_BYTES = DWCA_ENTRY.encode()
 
 
-def _iter_csv_lines(byte_chunks: Iterator[bytes]) -> Iterator[str]:
+def iter_csv_lines(byte_chunks: Iterator[bytes]) -> Iterator[str]:
     """Decode a stream of byte chunks (which can split a multi-byte UTF-8 character across a
     chunk boundary) into complete text lines. errors="replace": a single bad byte in a ~29 GB
     archive we don't control shouldn't abort a run that's otherwise streamed cleanly (same guard
@@ -144,11 +153,11 @@ def _iter_csv_lines(byte_chunks: Iterator[bytes]) -> Iterator[str]:
         yield buffer
 
 
-def iter_fungi_us_rows(client: httpx.Client) -> Iterator[dict[str, Any]]:
+def iter_scope_us_rows(client: httpx.Client, kingdoms: frozenset[str]) -> Iterator[dict[str, Any]]:
     """Stream ``observations.csv`` out of the live DwC-A archive, yielding one dict per
-    Fungi-kingdom, US, coordinate-bearing row: ``{id, genus, lat, lng, event_date,
-    coordinate_uncertainty_m}``. Never materializes the archive or the full CSV on disk - one
-    continuous GET, parsed forward-only via ``stream_unzip`` (see this module's docstring for
+    in-scope-kingdom, US, coordinate-bearing row: ``{id, genus, lat, lng, event_date,
+    coordinate_uncertainty_m, scientific_name, taxon_id, taxon_rank}``. Never materializes the archive or
+    the full CSV on disk - one continuous GET, parsed forward-only via ``stream_unzip`` (see this module's docstring for
     why, over the old HttpRangeReader-based range reads)."""
     with client.stream("GET", DWCA_URL) as response:
         response.raise_for_status()
@@ -158,7 +167,7 @@ def iter_fungi_us_rows(client: httpx.Client) -> Iterator[dict[str, Any]]:
                 for _ in unzipped_chunks:  # stream_unzip requires every entry's chunks drained
                     pass
                 continue
-            reader = csv.reader(_iter_csv_lines(unzipped_chunks))
+            reader = csv.reader(iter_csv_lines(unzipped_chunks))
             header = next(reader)
             expected_len = len(header)
             scanned = kept = 0
@@ -166,7 +175,7 @@ def iter_fungi_us_rows(client: httpx.Client) -> Iterator[dict[str, Any]]:
                 scanned += 1
                 if len(row) != expected_len:
                     continue  # malformed/truncated row - skip rather than abort a multi-hour scan
-                if row[_COL_KINGDOM] != "Fungi" or row[_COL_COUNTRY_CODE] != "US":
+                if row[_COL_KINGDOM] not in kingdoms or row[_COL_COUNTRY_CODE] != "US":
                     continue
                 lat, lng = row[_COL_LAT], row[_COL_LNG]
                 if not lat or not lng:
@@ -180,10 +189,12 @@ def iter_fungi_us_rows(client: httpx.Client) -> Iterator[dict[str, Any]]:
                     "event_date": row[_COL_EVENT_DATE] or None,
                     "coordinate_uncertainty_m": row[_COL_COORD_UNCERTAINTY] or None,
                     "scientific_name": row[_COL_SCIENTIFIC_NAME] or None,
+                    "taxon_id": int(row[_COL_TAXON_ID]) if row[_COL_TAXON_ID].isdigit() else None,
+                    "taxon_rank": row[_COL_TAXON_RANK] or None,
                 }
                 if kept % 100_000 == 0:
-                    logger.info("inat_bulk: scanned %d rows, kept %d Fungi/US so far", scanned, kept)
-            logger.info("inat_bulk: scan done - %d rows scanned, %d Fungi/US kept", scanned, kept)
+                    logger.info("inat_bulk: scanned %d rows, kept %d in-scope/US so far", scanned, kept)
+            logger.info("inat_bulk: scan done - %d rows scanned, %d in-scope/US kept", scanned, kept)
             return  # observations.csv is the last entry in the archive - nothing left to drain
 
 
@@ -192,7 +203,7 @@ _STAGE_RETRY_DELAY_SECONDS = 30.0
 
 
 def stage_inat(cfg: Settings, snapshot_date: date, run_id: str) -> None:
-    """Stager: stream-filter the live DwC-A dump to Fungi/US rows and upload as a Parquet file
+    """Stager: stream-filter the live DwC-A dump to in-scope-kingdom/US rows and upload as a Parquet file
     under this run's Space prefix. No DB connection - see this module's docstring for why
     genus->taxon_id resolution happens in ``load_inat`` instead. Runs in GitHub Actions.
 
@@ -217,7 +228,7 @@ def stage_inat(cfg: Settings, snapshot_date: date, run_id: str) -> None:
                     snapshot_date,
                     run_id,
                     _SNAPSHOT_FILENAME,
-                    iter_fungi_us_rows(client),
+                    iter_scope_us_rows(client, frozenset(cfg.scope_kingdoms)),
                     _SNAPSHOT_SCHEMA,
                 )
                 break
@@ -231,7 +242,7 @@ def stage_inat(cfg: Settings, snapshot_date: date, run_id: str) -> None:
                     exc_info=True,
                 )
                 time.sleep(_STAGE_RETRY_DELAY_SECONDS)
-    logger.info("inat_bulk: staged %d Fungi/US observations from the DwC-A export", kept)
+    logger.info("inat_bulk: staged %d in-scope/US observations from the DwC-A export", kept)
 
 
 def _parse_date(event_date: str | None) -> dt.date | None:
@@ -256,11 +267,13 @@ def load_inat(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
     also triggers the debounced phenology rebuild (``cache.maybe_rebuild_phenology``) since
     nothing else does after a bulk load this size.
     """
-    genera = genus_taxon_ids(con)
-    if not genera:
-        raise RuntimeError("fungi_genera catalog is empty - run `foray genera-refresh` first")
+    if not taxa_count(con):
+        raise RuntimeError("taxa catalog is empty - run `foray ingest-bulk taxa` (or `foray genera-refresh`) first")
+    rollups = rollup_map(con)
+    genus_by_name: dict[str, int] | None = None  # built only if an old snapshot (no taxon_id) turns up
     total = 0
     named = 0
+    species_filled = 0
     skipped_unknown_genus = 0
     skipped_no_date = 0
     max_date: dt.date | None = None
@@ -269,8 +282,16 @@ def load_inat(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
     ):
         chunk: list[tuple[Any, ...]] = []
         names: list[tuple[int, str]] = []
+        species: list[tuple[int, int]] = []
         for rec in batch:
-            taxon_id = genera.get(rec["genus"])
+            obs_taxon_id = rec.get("taxon_id")  # absent from snapshots staged before issue #464
+            if obs_taxon_id is not None:
+                rollup = rollups.get(obs_taxon_id)
+                taxon_id, species_id = (rollup.genus_id, rollup.species_id) if rollup else (None, None)
+            else:
+                if genus_by_name is None:
+                    genus_by_name = genus_name_ids(con)
+                taxon_id, species_id = genus_by_name.get(rec["genus"]), None
             if taxon_id is None:
                 skipped_unknown_genus += 1
                 continue
@@ -296,8 +317,11 @@ def load_inat(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
                     obscured,
                     rec.get("scientific_name"),  # absent from snapshots staged before issue #449
                     None,  # taxon_common_name: the DwC-A carries none; live ingest / resync fill it
+                    species_id,
                 )
             )
+            if species_id is not None:
+                species.append((rec["id"], species_id))
             if rec.get("scientific_name"):
                 names.append((rec["id"], rec["scientific_name"]))
             if max_date is None or day > max_date:
@@ -306,13 +330,17 @@ def load_inat(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
             insert_observations_if_missing(con, chunk)
             # Name rows this loader seeded before taxon_name existed (insert-only above won't).
             named += fill_missing_taxon_names(con, names)
+            # Same for the species an already-cached row was identified to (issue #464).
+            species_filled += fill_missing_species_ids(con, species)
             total += len(chunk)
     logger.info(
-        "inat_bulk: loaded %d observations (%d unknown genus, %d no date), named %d existing rows",
+        "inat_bulk: loaded %d observations (%d unknown taxon, %d no date), named %d and species-tagged %d "
+        "existing rows",
         total,
         skipped_unknown_genus,
         skipped_no_date,
         named,
+        species_filled,
     )
     if max_date is not None:
         ingest_key = f"obs:fungi:place:{_PLACE_ID_US}:{_SINCE_YEAR_FLOOR}:{max_date.isoformat()}"

@@ -11,7 +11,6 @@ from foray.genus_icons import (
     GENUS_GROUPS,
     ICON_GROUPS,
     ORDER_GROUPS,
-    catalog_rows,
     genus_icon,
     icon_group,
 )
@@ -100,29 +99,3 @@ def test_bespoke_keys_are_lowercase_and_never_shadow_a_group() -> None:
 def test_genus_icon_prefers_bespoke_over_group() -> None:
     assert genus_icon("Morchella", "Morchellaceae", "Pezizales", "Pezizomycetes") == "morchella"
     assert genus_icon("Verpa", "Morchellaceae", "Pezizales", "Pezizomycetes") == "morel"
-
-
-def test_catalog_rows_names_each_rank_from_ancestor_ids() -> None:
-    ranks = [
-        {"id": 1, "name": "Pezizomycetes", "rank": "class"},
-        {"id": 2, "name": "Pezizales", "rank": "order"},
-        {"id": 3, "name": "Morchellaceae", "rank": "family"},
-    ]
-    genera = [
-        {"id": 10, "name": "Verpa", "ancestor_ids": [47170, 1, 2, 3, 10], "observations_count": 5},
-        # An ancestor iNat added between the two listings: unknown ids are skipped, not fatal.
-        {"id": 11, "name": "Newgenus", "ancestor_ids": [1, 2, 999, 11]},
-    ]
-    rows = catalog_rows(genera, ranks)
-    assert rows[0] == {
-        "taxon_id": 10,
-        "name": "Verpa",
-        "common_name": None,
-        "observations_count": 5,
-        "class_name": "Pezizomycetes",
-        "order_id": 2,
-        "order_name": "Pezizales",
-        "family_id": 3,
-        "family_name": "Morchellaceae",
-    }
-    assert (rows[1]["order_name"], rows[1]["family_name"]) == ("Pezizales", None)

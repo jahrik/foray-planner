@@ -1,12 +1,12 @@
 // The Google-Maps-style filter-pill row (issue #297). Builds one pill per map filter, moving
 // the existing control DOM into each pill's popover (not rebuilding it) so the modules that
-// wire those controls - initRadiusPresets, initMonths, initGenusSelection, initLayerToggles -
+// wire those controls - initRadiusPresets, initMonths, initTaxaSelection, initLayerToggles -
 // keep working unchanged. Pill labels re-render from the same backing state via the
 // state.onScopeChange hook, which those handlers already trigger (through updateHome for
-// home/radius/units, and explicitly for months / genera / layers).
+// home/radius/units, and explicitly for months / taxa / layers).
 
 import { createPill, type Pill } from "./pill";
-import { selectedGenera } from "../genera";
+import { selectedTaxa } from "../taxa";
 import { dist, MONTHS, qs, setScopeChangeHook, state, type View } from "../state";
 import { SORT_LABEL } from "../views/sort";
 
@@ -29,10 +29,10 @@ function monthsLabel(): string {
   return `${count} months`;
 }
 
-function generaLabel(): string {
-  const genera = selectedGenera();
-  if (genera.length === 0) return "All genera";
-  const [first, ...rest] = genera;
+function taxaLabel(): string {
+  const taxa = selectedTaxa();
+  if (taxa.length === 0) return "All taxa";
+  const [first, ...rest] = taxa;
   return rest.length ? `${first!.name} +${rest.length}` : first!.name;
 }
 
@@ -76,11 +76,11 @@ export function initPills(): void {
     active: () => state.months.size > 0 && state.months.size < 12,
   });
 
-  const generaPill = createPill({
+  const taxaPill = createPill({
     label: "",
-    render: generaLabel,
-    popover: qs("#genus-field"),
-    active: () => selectedGenera().length > 0,
+    render: taxaLabel,
+    popover: qs("#taxa-field"),
+    active: () => selectedTaxa().length > 0,
   });
 
   // Every map-overlay toggle now lives behind one "Layers" pill (issue #301: 8 pills -> 3).
@@ -110,7 +110,7 @@ export function initPills(): void {
     active: () => layerIds.some((id) => isChecked(id)),
   });
 
-  pills = [sortPill, radiusPill, monthsPill, generaPill, layersPill];
+  pills = [sortPill, radiusPill, monthsPill, taxaPill, layersPill];
   pills.forEach((pill) => row.appendChild(pill.el));
 
   // A layer checkbox lives inside a pill popover now, so its own change handler (initLayerToggles)

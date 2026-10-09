@@ -24,6 +24,7 @@ import psycopg
 import pytest
 
 from foray.cache import connect
+from foray.cache.taxa import clear_expansion_cache
 from foray.scoring import rank_cache
 
 _TABLES = (
@@ -33,8 +34,9 @@ _TABLES = (
     "trails",
     "ingest_log",
     "app_location",
-    "fungi_genera",
-    "app_genera",
+    "taxa",
+    "taxon_names",
+    "app_targets",
     "region_places",
     "region_satellite",
     "precip_daily",
@@ -70,6 +72,7 @@ def _pg_session() -> Iterator[psycopg.Connection]:
 def con(_pg_session: psycopg.Connection) -> psycopg.Connection:
     """A truncated-clean connection to the shared test Postgres, schema already applied."""
     _pg_session.execute("DROP TABLE IF EXISTS phenology")
+    _pg_session.execute("DROP TABLE IF EXISTS phenology_species")
     _pg_session.execute("DROP TABLE IF EXISTS regions")
     _pg_session.execute(f"TRUNCATE {', '.join(_TABLES)} RESTART IDENTITY CASCADE")
     # `public_land_parts` truncates with `public_land` (FK cascade), but its "built" flag lives in
@@ -80,6 +83,9 @@ def con(_pg_session: psycopg.Connection) -> psycopg.Connection:
     # constants (common across this suite) could read a previous test's cached result off the
     # now-truncated table instead of hitting Postgres.
     rank_cache.invalidate()
+    # Target expansions are cached per taxa version, and tests that INSERT into `taxa` directly do
+    # not bump it.
+    clear_expansion_cache()
     return _pg_session
 
 

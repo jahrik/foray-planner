@@ -62,7 +62,7 @@ export async function getJson<Path extends PathsWithMethod<paths, "get">>(
 
 // POST and DELETE take a single `init` object passed through to openapi-fetch: `body` for the
 // routes with a request body (`/api/location`), `params` for the ones that key off a path
-// segment or query string (`/api/genera/{taxon_id}`, `/api/refresh?target=`). Each half is
+// segment or query string (`/api/taxa/{taxon_id}`, `/api/refresh?target=`). Each half is
 // required or optional exactly as the schema says (`body` required iff the op has one;
 // `params` required iff it has a required path/query), and the `init` arg itself drops to
 // optional only when neither half is required (`deleteJson("/api/refresh")`).

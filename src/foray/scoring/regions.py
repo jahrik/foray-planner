@@ -13,8 +13,9 @@ from typing import LiteralString, cast
 
 import psycopg
 
+from foray.cache.taxa import Targets
 from foray.scoring import rank_cache
-from foray.scoring._sql import BINNED, CENTER_LAT, CENTER_LNG, GEOG_POINT, taxon_filter
+from foray.scoring._sql import BINNED, CENTER_LAT, CENTER_LNG, GEOG_POINT, target_filter
 
 # Mean ground elevation for a region (issue #36), over the observations that have one - obscured
 # rows are excluded (their point is iNat's decoy, so its elevation is meaningless) unless every
@@ -64,7 +65,7 @@ def build_phenology(con: psycopg.Connection, h3_resolution: int) -> None:
 def _build_phenology_locked(con: psycopg.Connection, h3_resolution: int) -> None:
     binned = BINNED.format(resolution=h3_resolution)
     # A previous crash between the CREATE and the cutover can leave staging tables behind.
-    con.execute("DROP TABLE IF EXISTS phenology_new, regions_new, observations_scoring_new")
+    con.execute("DROP TABLE IF EXISTS phenology_new, phenology_species_new, regions_new, observations_scoring_new")
     # issue #333 PR 2: `binned` used to be inlined into *both* CREATE TABLE statements below,
     # so Postgres re-scanned + re-filtered + re-binned the whole `observations` table twice per
     # rebuild for identical work. Materializing it once as `observations_scoring` (persisted,
@@ -74,6 +75,11 @@ def _build_phenology_locked(con: psycopg.Connection, h3_resolution: int) -> None
     # one scan feeding both aggregates.
     con.execute(cast(LiteralString, f"CREATE TABLE observations_scoring_new AS {binned}"))
     con.execute("CREATE INDEX ix_obs_scoring_region_new ON observations_scoring_new (region_id, taxon_id, month)")
+    # Partial: only species-identified rows feed `phenology_species`, a minority of the table until
+    # the species backfill reaches the rest.
+    con.execute(
+        "CREATE INDEX ix_obs_scoring_species_new ON observations_scoring_new (species_id) WHERE species_id IS NOT NULL"
+    )
     con.execute("ANALYZE observations_scoring_new")
     con.execute(
         cast(
@@ -86,6 +92,25 @@ def _build_phenology_locked(con: psycopg.Connection, h3_resolution: int) -> None
                    taxon_id, month, count(*) AS cnt
             FROM observations_scoring_new
             GROUP BY region_id, taxon_id, month
+            """,
+        )
+    )
+    # issue #464: the same roll-up keyed by species, from the same `observations_scoring_new`
+    # pass. Only rows identified to species (`species_id IS NOT NULL`) - a genus-only observation
+    # counts toward its genus (above) and never a species. Reads the partial index below, so it is
+    # a scan of the species-bearing subset, not a second pass over every row.
+    con.execute(
+        cast(
+            LiteralString,
+            f"""
+            CREATE TABLE phenology_species_new AS
+            SELECT region_id,
+                   {CENTER_LAT} AS center_lat,
+                   {CENTER_LNG} AS center_lng,
+                   species_id AS taxon_id, month, count(*) AS cnt
+            FROM observations_scoring_new
+            WHERE species_id IS NOT NULL
+            GROUP BY region_id, species_id, month
             """,
         )
     )
@@ -120,25 +145,34 @@ def _build_phenology_locked(con: psycopg.Connection, h3_resolution: int) -> None
         "INCLUDE (month, cnt, center_lat, center_lng)"
     )
     con.execute("CREATE INDEX ix_phenology_region_new ON phenology_new (region_id)")
+    con.execute(
+        "CREATE INDEX ix_phenology_species_new ON phenology_species_new (region_id, taxon_id) "
+        "INCLUDE (month, cnt, center_lat, center_lng)"
+    )
     # _rank_candidates joins `regions` back by region_id to attach each card's mean elevation.
     con.execute("CREATE INDEX ix_regions_region_new ON regions_new (region_id)")
     # Fresh tables have no planner statistics until autovacuum gets to them - without this,
     # requests right after the swap could still get seq-scan plans despite the indexes above.
     # ANALYZE now so the fresh stats ride along with the rename.
     con.execute("ANALYZE phenology_new")
+    con.execute("ANALYZE phenology_species_new")
     con.execute("ANALYZE regions_new")
     # Cutover: readers block only here. DROP ... IF EXISTS covers the first-ever build.
     with con.transaction():
         con.execute("DROP TABLE IF EXISTS phenology")
+        con.execute("DROP TABLE IF EXISTS phenology_species")
         con.execute("DROP TABLE IF EXISTS regions")
         con.execute("DROP TABLE IF EXISTS observations_scoring")
         con.execute("ALTER TABLE phenology_new RENAME TO phenology")
+        con.execute("ALTER TABLE phenology_species_new RENAME TO phenology_species")
         con.execute("ALTER TABLE regions_new RENAME TO regions")
         con.execute("ALTER TABLE observations_scoring_new RENAME TO observations_scoring")
         con.execute("ALTER INDEX ix_phenology_taxon_region_new RENAME TO ix_phenology_taxon_region")
         con.execute("ALTER INDEX ix_phenology_region_new RENAME TO ix_phenology_region")
+        con.execute("ALTER INDEX ix_phenology_species_new RENAME TO ix_phenology_species")
         con.execute("ALTER INDEX ix_regions_region_new RENAME TO ix_regions_region")
         con.execute("ALTER INDEX ix_obs_scoring_region_new RENAME TO ix_obs_scoring_region")
+        con.execute("ALTER INDEX ix_obs_scoring_species_new RENAME TO ix_obs_scoring_species")
     # issue #333 PR 2: the swap just replaced both tables' backing files - shared_buffers has
     # nothing cached for them until normal traffic reads it back in page by page. pg_prewarm
     # (migration 44) pulls the new tables straight into cache so the first requests after a
@@ -146,7 +180,7 @@ def _build_phenology_locked(con: psycopg.Connection, h3_resolution: int) -> None
     # hasn't been installed yet (a fresh CI/dev Postgres a migration hasn't reached, or a
     # managed-PG surface that hasn't allowlisted it) degrades to "no prewarm" rather than
     # breaking the rebuild - mirrors region_elevations' degrade-gracefully style above.
-    for table in ("phenology", "regions"):
+    for table in ("phenology", "phenology_species", "regions"):
         try:
             con.execute("SELECT pg_prewarm(%s)", [table])
         except psycopg.errors.UndefinedFunction:
@@ -203,7 +237,7 @@ def recent_counts(
     lng: float,
     radius_km: float,
     h3_resolution: int,
-    taxon_ids: list[int],
+    targets: Targets,
     weeks: int,
 ) -> dict[str, int]:
     """``region_id -> count`` of research-grade target-taxon observations in the trailing
@@ -216,7 +250,8 @@ def recent_counts(
     """
     cutoff = (dt.date.today() - dt.timedelta(weeks=weeks)).isoformat()
     region_id = f"h3_lat_lng_to_cell(POINT(o.lng, o.lat), {h3_resolution})::text"
-    # cast: the query is a fixed template + `taxon_filter()`'s placeholder-count text and
+    target_sql, target_params = target_filter(targets, "o.taxon_id", "o.species_id")
+    # cast: the query is a fixed template + `target_filter()`'s placeholder text and
     # `h3_resolution` (a config int, never user data); psycopg's LiteralString typing can't
     # verify that statically.
     rows = con.execute(
@@ -228,10 +263,10 @@ def recent_counts(
             FROM observations o, pt
             WHERE o.quality_grade = 'research'
               AND o.geom IS NOT NULL AND ST_DWithin(o.geom, pt.g, %s)
-              AND o.observed_on >= %s AND {taxon_filter(taxon_ids, "o.taxon_id")}
+              AND o.observed_on >= %s AND {target_sql}
             GROUP BY 1
             """,
         ),
-        [lng, lat, radius_km * 1000.0, cutoff, *taxon_ids],
+        [lng, lat, radius_km * 1000.0, cutoff, *target_params],
     ).fetchall()
     return dict(rows)

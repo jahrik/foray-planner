@@ -37,7 +37,8 @@ def _region_id(lat: float, lng: float, resolution: int = CELL) -> str:
 @pytest.fixture(autouse=True)
 def _seed(con: psycopg.Connection) -> None:
     con.execute(
-        "INSERT INTO fungi_genera (taxon_id, name, common_name) VALUES (%s, %s, %s)", (MOREL, "Morchella", "Morels")
+        "INSERT INTO taxa (taxon_id, name, common_name, rank) VALUES (%s, %s, %s, 'genus')",
+        (MOREL, "Morchella", "Morels"),
     )
 
     rows: list[tuple] = []

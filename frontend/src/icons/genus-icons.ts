@@ -12,7 +12,7 @@
 
 import type { components } from "../api/schema";
 
-export type GenusIcon = components["schemas"]["GenusResult"]["icon"];
+export type GenusIcon = components["schemas"]["TaxonResult"]["icon"];
 
 // Every key the API can send, in the order the review gallery shows them (groups first). The
 // `Exclude` check below fails `tsc` if the API grows a key this list (and so the art) misses.

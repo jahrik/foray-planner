@@ -15,14 +15,14 @@ import pyarrow.parquet as pq
 import pytest
 
 from foray import spaces
-from foray.cache import upsert_rows
+from foray.cache import upsert_taxa
 from foray.config import Settings, Spaces
 from foray.sources import inat_bulk
 from foray.sources.http import HttpRangeReader
 from foray.sources.inat_bulk import (
     DWCA_ENTRY,
     _parse_date,
-    iter_fungi_us_rows,
+    iter_scope_us_rows,
     load_inat,
     stage_inat,
 )
@@ -38,6 +38,8 @@ _HEADER[20] = "decimalLatitude"
 _HEADER[21] = "decimalLongitude"
 _HEADER[22] = "coordinateUncertaintyInMeters"
 _HEADER[24] = "countryCode"
+_HEADER[29] = "taxonID"
+_HEADER[31] = "taxonRank"
 _HEADER[32] = "kingdom"
 _HEADER[37] = "genus"
 
@@ -52,6 +54,8 @@ def _dwca_row(
     genus: str = "Amanita",
     event_date: str = "2026-06-01",
     uncertainty: str = "",
+    taxon_id: str = "",
+    taxon_rank: str = "",
 ) -> list[str]:
     row = [""] * 48
     row[0] = str(obs_id)
@@ -60,6 +64,8 @@ def _dwca_row(
     row[21] = lng
     row[22] = uncertainty
     row[24] = country
+    row[29] = taxon_id
+    row[31] = taxon_rank
     row[32] = kingdom
     row[37] = genus
     return row
@@ -82,7 +88,7 @@ _RealClient = httpx.Client  # captured before any test patches `httpx.Client` gl
 def _mock_client(zip_bytes: bytes) -> httpx.Client:
     # Serves both access patterns: HEAD+Range (foray.sources.http.HttpRangeReader, still used by
     # camps.py's RIDB stager and exercised below against this same fixture) and a plain GET with
-    # no Range header (inat_bulk.iter_fungi_us_rows' single continuous stream, see this module's
+    # no Range header (inat_bulk.iter_scope_us_rows' single continuous stream, see this module's
     # docstring for why it moved off range reads).
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "HEAD":
@@ -108,20 +114,41 @@ def test_http_range_reader_reassembles_full_content_via_zipfile() -> None:
             assert zf.read(DWCA_ENTRY).decode().splitlines()[0].split(",")[0] == "id"
 
 
-def test_iter_fungi_us_rows_filters_kingdom_country_and_missing_coords() -> None:
+def test_iter_scope_us_rows_filters_kingdom_country_and_missing_coords() -> None:
     zip_bytes = _dwca_zip(
         [
-            _dwca_row(1, kingdom="Fungi", country="US"),  # kept
+            _dwca_row(1, kingdom="Fungi", country="US", taxon_id="7001", taxon_rank="species"),  # kept
             _dwca_row(2, kingdom="Animalia", country="US"),  # wrong kingdom
             _dwca_row(3, kingdom="Fungi", country="CA"),  # wrong country
             _dwca_row(4, kingdom="Fungi", country="US", lat="", lng=""),  # no coords
         ]
     )
     with _mock_client(zip_bytes) as client:
-        rows = list(iter_fungi_us_rows(client))
+        rows = list(iter_scope_us_rows(client, frozenset({"Fungi"})))
     assert [row["id"] for row in rows] == [1]
     assert rows[0]["genus"] == "Amanita"
     assert rows[0]["lat"] == 47.6
+    assert (rows[0]["taxon_id"], rows[0]["taxon_rank"]) == (7001, "species")  # issue #464: staged for the loader
+
+
+def _seed_amanita(con: psycopg.Connection) -> None:
+    """Genus Amanita (48701) with a section between it and species Amanita muscaria (7001), plus a
+    variety of it (7002) - the shape the rank-driven rollup has to step through."""
+    upsert_taxa(
+        con,
+        [
+            {"taxon_id": 47170, "name": "Fungi", "rank": "kingdom"},
+            {"taxon_id": 48701, "name": "Amanita", "rank": "genus", "ancestor_ids": [47170]},
+            {"taxon_id": 9001, "name": "Amanita", "rank": "section", "ancestor_ids": [47170, 48701]},
+            {"taxon_id": 7001, "name": "Amanita muscaria", "rank": "species", "ancestor_ids": [47170, 48701, 9001]},
+            {
+                "taxon_id": 7002,
+                "name": "Amanita muscaria var. alba",
+                "rank": "variety",
+                "ancestor_ids": [47170, 48701, 9001, 7001],
+            },
+        ],
+    )
 
 
 def _write_parquet_bytes(rows: list[dict], schema: pa.Schema) -> bytes:
@@ -199,7 +226,7 @@ def test_stage_inat_raises_after_exhausting_all_attempts(monkeypatch: pytest.Mon
 def test_load_inat_resolves_genus_and_upserts_observations(
     con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    upsert_rows(con, "fungi_genera", ("taxon_id", "name"), [(48701, "Amanita")], conflict="taxon_id")
+    _seed_amanita(con)
     payload_rows = [
         {
             "id": 1,
@@ -242,7 +269,7 @@ def test_load_inat_names_new_rows_and_fills_existing_unnamed_ones(
     """Issue #449: the loader stores each row's own identification, and - since it is otherwise
     insert-only - also names rows it seeded before the column existed, without overwriting a
     name a live ingest already set."""
-    upsert_rows(con, "fungi_genera", ("taxon_id", "name"), [(48701, "Amanita")], conflict="taxon_id")
+    _seed_amanita(con)
     con.execute(
         "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade)"
         " VALUES (5, 48701, 47.6, -122.3, '2026-05-01', 5, 'research')"
@@ -279,7 +306,7 @@ def test_load_inat_names_new_rows_and_fills_existing_unnamed_ones(
 def test_load_inat_triggers_phenology_rebuild_over_threshold(
     con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    upsert_rows(con, "fungi_genera", ("taxon_id", "name"), [(48701, "Amanita")], conflict="taxon_id")
+    _seed_amanita(con)
     payload_rows = [
         {
             "id": 1,
@@ -302,7 +329,93 @@ def test_load_inat_triggers_phenology_rebuild_over_threshold(
     assert rebuilt == [1]
 
 
-def test_load_inat_raises_when_genus_catalog_empty(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_inat_raises_when_taxa_catalog_empty(con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(inat_bulk.spaces, "download_file", lambda cfg, key, dest: None)
-    with pytest.raises(RuntimeError, match="fungi_genera"):
+    with pytest.raises(RuntimeError, match="taxa catalog is empty"):
         load_inat(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
+
+
+_NEW_BASE = {"lat": 47.6, "lng": -122.3, "event_date": "2026-06-01", "coordinate_uncertainty_m": None}
+
+
+def _stub_snapshot(monkeypatch: pytest.MonkeyPatch, rows: list[dict], schema: pa.Schema) -> None:
+    payload = _write_parquet_bytes(rows, schema)
+    monkeypatch.setattr(inat_bulk.spaces, "download_file", lambda cfg, key, dest: Path(dest).write_bytes(payload))
+
+
+def test_load_inat_resolves_by_taxon_id_to_genus_and_species(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #464: the observation's own taxonID rolls up by rank - species and its variety land on
+    the species (stepping over the same-named section), a genus-only ID has no species, an unknown
+    ID is skipped."""
+    _seed_amanita(con)
+    rows = [
+        {"id": 1, "genus": "Amanita", **_NEW_BASE, "taxon_id": 7001, "taxon_rank": "species"},
+        {"id": 2, "genus": "Amanita", **_NEW_BASE, "taxon_id": 7002, "taxon_rank": "variety"},
+        {"id": 3, "genus": "Amanita", **_NEW_BASE, "taxon_id": 48701, "taxon_rank": "genus"},
+        {"id": 4, "genus": "Amanita", **_NEW_BASE, "taxon_id": 424242, "taxon_rank": "species"},  # uncataloged
+        {"id": 5, "genus": "Amanita", **_NEW_BASE, "taxon_id": 47170, "taxon_rank": "kingdom"},  # above genus
+    ]
+    _stub_snapshot(monkeypatch, rows, inat_bulk._SNAPSHOT_SCHEMA)
+
+    load_inat(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
+
+    assert con.execute("SELECT id, taxon_id, species_id FROM observations ORDER BY id").fetchall() == [
+        (1, 48701, 7001),
+        (2, 48701, 7001),
+        (3, 48701, None),
+    ]
+
+
+def test_load_inat_fills_species_on_rows_cached_before_the_column(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The loader is insert-only, so rows seeded before ``species_id`` existed get it filled in
+    from the snapshot - and a row that already has a species is left alone."""
+    _seed_amanita(con)
+    con.execute(
+        "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade)"
+        " VALUES (5, 48701, 47.6, -122.3, '2026-05-01', 5, 'research')"
+    )
+    con.execute(
+        "INSERT INTO observations (id, taxon_id, species_id, lat, lng, observed_on, month, quality_grade)"
+        " VALUES (6, 48701, 123, 47.6, -122.3, '2026-05-01', 5, 'research')"
+    )
+    rows = [
+        {"id": 5, "genus": "Amanita", **_NEW_BASE, "taxon_id": 7001, "taxon_rank": "species"},
+        {"id": 6, "genus": "Amanita", **_NEW_BASE, "taxon_id": 7001, "taxon_rank": "species"},
+    ]
+    _stub_snapshot(monkeypatch, rows, inat_bulk._SNAPSHOT_SCHEMA)
+
+    load_inat(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
+
+    assert con.execute("SELECT id, species_id FROM observations ORDER BY id").fetchall() == [(5, 7001), (6, 123)]
+
+
+def test_load_inat_falls_back_to_genus_name_for_a_snapshot_staged_before_taxon_id(
+    con: psycopg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Snapshots staged before issue #464 have no ``taxon_id`` column: match the genus name against
+    ``taxa`` (no species) until the next weekly stage replaces the snapshot."""
+    _seed_amanita(con)
+    old_schema = pa.schema(
+        [
+            ("id", pa.int64()),
+            ("genus", pa.string()),
+            ("lat", pa.float64()),
+            ("lng", pa.float64()),
+            ("event_date", pa.string()),
+            ("coordinate_uncertainty_m", pa.string()),
+            ("scientific_name", pa.string()),
+        ]
+    )
+    rows = [
+        {"id": 1, "genus": "Amanita", **_NEW_BASE, "scientific_name": "Amanita muscaria"},
+        {"id": 2, "genus": "Nonexistentia", **_NEW_BASE, "scientific_name": None},
+    ]
+    _stub_snapshot(monkeypatch, rows, old_schema)
+
+    load_inat(con, Settings(spaces=_SPACES_CFG), date(2026, 1, 1), "run1")
+
+    assert con.execute("SELECT id, taxon_id, species_id FROM observations ORDER BY id").fetchall() == [(1, 48701, None)]

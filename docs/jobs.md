@@ -42,7 +42,7 @@ Each entry:
 | `ingest` | `ingest --countries` | 24 h | night | New iNaturalist observations for the whole country, incrementally (30-day cap on how far back a run looks) |
 | `layers-land` | `refresh --with camps,land --all` | 168 h | night | RIDB campgrounds and BLM/USFS/PAD-US/tribal ownership, coverage-wide |
 | `dispersed-coverage` | `dispersed --all` | 168 h | night | OSM-reported dispersed camping, coverage-wide |
-| `genera` | `genera-refresh` | 168 h | night | The Fungi genus catalog and its taxonomy (drives the Genera pill and the icons) |
+| `genera` | `genera-refresh` | 168 h | night | Genera and the ranks above them, with iNaturalist's observation counts (drives `revalidate` and the genus icons) |
 | `revalidate` | `revalidate` | 168 h | night | Purges or reassigns observations misfiled under a same-named animal genus |
 | `resync` | `resync --batch-size 2000` | 1 h | any | A rolling re-check of the whole observation cache against iNaturalist, oldest first |
 | `elevation-backfill` | `backfill-elevation --limit 20000 --no-rebuild` | 1 h | any | Elevation via Open-Meteo; now a safety net for rows the DEM job cannot reach |
@@ -51,6 +51,7 @@ Each entry:
 | `refresh-precip` | `refresh-precip` | 24 h | any | Recent rain for every active destination cell |
 | `fire` | `fire` | 24 h | any | Active wildfire perimeters (replace semantics) and recent burn scars |
 | `forage-backfill` | `backfill-forage --limit 20000` | 6 h | any | Per-trail count of fungi records near the line (`trails.forage_obs`) |
+| `ingest-bulk-taxa` | `ingest-bulk taxa` | 24 h | night | Loads the newest staged taxonomy export: every rank from species up, plus synonyms and vernacular names (drives the Taxa pill's search). **Must precede `ingest-bulk-inat`**, which resolves each observation's taxon through it |
 | `ingest-bulk-inat` | `ingest-bulk inat` | 24 h | night | Loads the newest staged iNaturalist export (a no-op most days) |
 | `ingest-bulk-ridb` | `ingest-bulk ridb` | 24 h | night | Loads the newest staged RIDB export |
 | `ingest-bulk-usfs-trails` | `ingest-bulk usfs_trails` | 24 h | night | Forest Service trail network (diff load) |

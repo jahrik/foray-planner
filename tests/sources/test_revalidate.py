@@ -9,7 +9,7 @@ from unittest.mock import patch
 import psycopg
 import pytest
 
-from foray.cache import upsert_fungi_genera, upsert_observations
+from foray.cache import upsert_observations, upsert_taxa
 from foray.config import Settings
 from foray.sources.ingest import resync, revalidate
 
@@ -37,17 +37,18 @@ def cfg_with_home(con: psycopg.Connection, monkeypatch) -> Settings:
     monkeypatch.setenv("FORAY_HOME__LAT", "47.6")
     monkeypatch.setenv("FORAY_HOME__LNG", "-122.3")
     monkeypatch.setenv("FORAY_HOME__RADIUS_KM", "200")
-    upsert_fungi_genera(
+    upsert_taxa(
         con,
         [
             # iNat says this "fungal" genus has 0 observations right now - any cached row makes
             # it a suspect (see cache.suspect_genus_taxon_ids).
-            {"taxon_id": OLLA_FUNGUS, "name": "Olla", "common_name": None, "observations_count": 0},
+            {"taxon_id": OLLA_FUNGUS, "name": "Olla", "common_name": None, "observations_count": 0, "rank": "genus"},
             {
                 "taxon_id": CANTHARELLUS,
                 "name": "Cantharellus",
                 "common_name": "Chanterelles",
                 "observations_count": 90000,
+                "rank": "genus",
             },
         ],
     )
@@ -59,6 +60,9 @@ def _cached_row(obs_id: int, taxon_id: int = OLLA_FUNGUS) -> tuple:
 
 
 def _live_obs(obs_id: int, *, iconic_taxon_id: int, taxon_id: int, rank: str = "genus", ancestor_ids=None) -> dict:
+    """``iconic_taxon_id`` stands in for "which group iNat says it is now": the lineage runs through
+    the Fungi scope root when it is 47170, through some other group (Insecta, ...) otherwise."""
+    root = 47170 if iconic_taxon_id == 47170 else 1
     return {
         "id": obs_id,
         "geojson": {"coordinates": [-122.3, 47.6]},
@@ -68,7 +72,7 @@ def _live_obs(obs_id: int, *, iconic_taxon_id: int, taxon_id: int, rank: str = "
         "taxon": {
             "id": taxon_id,
             "rank": rank,
-            "ancestor_ids": ancestor_ids or [taxon_id],
+            "ancestor_ids": ancestor_ids or [root, taxon_id],
             "iconic_taxon_id": iconic_taxon_id,
         },
     }

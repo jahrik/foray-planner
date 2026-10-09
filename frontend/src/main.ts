@@ -13,7 +13,7 @@ import "./style.css";
 import { getJson } from "./api/client";
 import { postLocation } from "./location-writes";
 import type { LocationResponse } from "./api/types";
-import { initGenusSelection } from "./genera";
+import { initTaxaSelection } from "./taxa";
 import { initLayerToggles } from "./ui/layer-toggles";
 import { loadFire, loadLand } from "./map/layers";
 import { initLocationAutocomplete, initPlaceAutocomplete } from "./location";
@@ -194,11 +194,11 @@ async function main(): Promise<void> {
   };
   initLayerToggles();
   initLocationAutocomplete();
-  initGenusSelection(() => {
+  initTaxaSelection(() => {
     refreshCurrentView();
     onScopeChange();
   });
-  // Build the filter-pill row last: it moves the radius / months / genus / layer control DOM
+  // Build the filter-pill row last: it moves the radius / months / taxon / layer control DOM
   // into each pill's popover, so every module that wires those controls has run first.
   initPills();
 
