@@ -299,15 +299,15 @@
         - "foray:backfill-geom-once"
         - never
 
-    - name: Include one-off bulk source load task
+    - name: Include one-off bulk source load task (prod counterpart of `just bulk-load`)
       ansible.builtin.include_tasks:
-        file: tasks/deploy/bulk_once.yml
+        file: tasks/deploy/bulk_load.yml
         apply:
           tags:
-            - "foray:bulk-once"
+            - "foray:bulk-load"
             - never
       tags:
-        - "foray:bulk-once"
+        - "foray:bulk-load"
         - never
 
   handlers:

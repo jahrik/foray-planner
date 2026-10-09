@@ -129,7 +129,7 @@ Ansible renders one service and one timer per manifest entry:
 The window and jitter settings are `foray_night_window_*` and
 `foray_job_randomized_delay_sec` in `infra/ansible/defaults/main.yml`.
 
-To load a freshly staged bulk snapshot before its night window, `just ansible bulk-once <source>` starts that
+To load a freshly staged bulk snapshot before its night window, `just ansible bulk-load <source>` starts that
 source's own unit (`foray-ingest-bulk-<source>.service`) now, detached. Let `taxa` finish before starting `inat`.
 
 ---

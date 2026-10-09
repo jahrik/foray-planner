@@ -117,4 +117,4 @@ resync-once: (_playbook "resync-once")
 # source resolves through another, wait for the first to finish: `taxa` before `inat`.
 [doc('Load the newest staged snapshot of one bulk source now instead of waiting for its night job')]
 [group('deploy-once')]
-bulk-once source: (_playbook "bulk-once" "-e foray_bulk_source=" + source)
+bulk-load source: (_playbook "bulk-load" "-e foray_bulk_source=" + source)
