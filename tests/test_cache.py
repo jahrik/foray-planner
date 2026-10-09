@@ -1166,3 +1166,19 @@ def test_maybe_rebuild_phenology_noop_for_zero_new_rows(con: psycopg.Connection)
 
     assert maybe_rebuild_phenology(con, cfg, 0) is False
     assert con.execute("SELECT value FROM meta WHERE key = 'phenology_pending_rows'").fetchone() is None
+
+
+def test_a_group_target_takes_its_own_groups_icon(con: psycopg.Connection) -> None:
+    """Lycoperdaceae is in FAMILY_GROUPS as ``puffball``: the family target itself must resolve to it, not only
+    genera beneath it."""
+    upsert_taxa(
+        con,
+        [
+            {"taxon_id": 7, "name": "Lycoperdaceae", "rank": "family"},
+            {"taxon_id": 8, "name": "Cantharellales", "rank": "order"},
+        ],
+    )
+    from foray.cache import taxon_labels
+
+    labels = taxon_labels(con, [7, 8])
+    assert labels[7]["icon"] == "puffball"

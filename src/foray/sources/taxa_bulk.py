@@ -12,7 +12,7 @@ snapshot is the only removal signal, and the iconic group is derived from the li
 
 The stager has no database, so it narrows to the scope by the export's *kingdom name* column
 (``Settings.scope_kingdoms``) and keeps every taxon under a scope root plus the ancestors of those
-roots; the loader's ``mark_taxa_inactive`` then applies the exact root test. Ranks between species
+roots; the loader's ``mark_taxa_inactive`` then retires everything the snapshot does not list. Ranks between species
 and genus (section, subgenus, subsection, complex) are staged as the taxa they are: a section can
 share a genus's name (the *Morchella* section vs. the genus), which is why :mod:`foray.taxa` walks
 the chain by rank and never by name.
@@ -178,7 +178,8 @@ def load_taxa(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
 
     Additive and idempotent: a taxon's ``observations_count`` and API-sourced ``common_name`` are
     never overwritten (the export has neither). A scope taxon absent from the snapshot goes
-    ``is_active = false`` (iNat retired / merged it; ``resync`` heals the cached rows)."""
+    ``is_active = false`` (iNat retired / merged it, or the scope was narrowed; ``resync`` heals the
+    cached rows)."""
     loaded: set[int] = set()
     total = 0
     for batch in spaces.read_snapshot_parquet(
@@ -214,7 +215,7 @@ def load_taxa(con: psycopg.Connection, cfg: Settings, snapshot_date: date, run_i
     # A fresh bulk load leaves the planner without statistics: the first searches would seq-scan.
     con.execute("ANALYZE taxa")
     con.execute("ANALYZE taxon_names")
-    retired = mark_taxa_inactive(con, cfg.scope_roots, loaded) if loaded else 0
+    retired = mark_taxa_inactive(con, loaded) if loaded else 0
     bump_taxa_version(con)
     # Cached target expansions / ranked results were built from the previous catalog.
     rank_cache.invalidate()

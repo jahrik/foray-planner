@@ -24,7 +24,7 @@ import { setLocationLatLng, startRefresh } from "./refresh";
 import { collapseIfOpen, currentDetent, initSheet, snapTo } from "./map/sheet";
 import { errorDetail, onScopeChange, qs, setStatus, state } from "./state";
 import { initTextSize, initTheme, initUnits } from "./ui/ui-prefs";
-import { initPills, syncPillsForView } from "./ui/pills";
+import { initPills, refreshPills, syncPillsForView } from "./ui/pills";
 import { OPEN_EVENT } from "./ui/pill";
 import { refreshCurrentView } from "./views/view-run";
 import { initMonths, runDestinations } from "./views/views";
@@ -194,10 +194,11 @@ async function main(): Promise<void> {
   };
   initLayerToggles();
   initLocationAutocomplete();
-  initTaxaSelection(() => {
+  // The saved picks arrive after initPills() has rendered, so refresh the pill label once they land.
+  void initTaxaSelection(() => {
     refreshCurrentView();
     onScopeChange();
-  });
+  }).then(refreshPills);
   // Build the filter-pill row last: it moves the radius / months / taxon / layer control DOM
   // into each pill's popover, so every module that wires those controls has run first.
   initPills();
