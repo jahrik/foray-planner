@@ -16,7 +16,7 @@ transactions) - callers that need atomicity across statements (e.g.
 from __future__ import annotations
 
 import logging
-from collections.abc import Collection, Iterator, Sequence
+from collections.abc import Collection, Generator, Sequence
 from contextlib import contextmanager
 from typing import Any, LiteralString
 
@@ -1065,7 +1065,7 @@ def connect(conninfo: str = "") -> psycopg.Connection:
 
 
 @contextmanager
-def connection(con: psycopg.Connection | None = None) -> Iterator[psycopg.Connection]:
+def connection(con: psycopg.Connection | None = None) -> Generator[psycopg.Connection]:
     """Yield a usable connection, closing it on exit only if this opened it.
 
     Collapses the ``own_con = con is None`` / ``try: ... finally: if own_con: db.close()``
