@@ -13,7 +13,7 @@ dependencies = [
     # longer re-exports the BucketFullException 0.21.0 imports).
     "pyinaturalist>=0.21.1,<1.0",
     "psycopg[binary,pool]>=3.3.6,<4.0",
-    "fastapi>=0.142.1,<1.0",
+    "fastapi>=0.142.2,<1.0",
     # Pulled in transitively by starlette; declared explicitly because api/app.py imports it
     # directly to cap the sync-handler thread pool to the DB pool size.
     "anyio>=4.15.1,<5.0",
@@ -33,7 +33,7 @@ dependencies = [
     # leftover: every job in jobs.yaml runs via the same `foray_app_image` the web server uses
     # (infra/ansible/templates/foray-job.service.j2 - `docker run ... {{ foray_app_image }}
     # foray job ...`), so there's no separate CLI-only image to move this out of.
-    "rasterio>=1.4,<2.0",
+    "rasterio>=1.5.2,<2.0",
     # sources/satellite.py stitches Esri XYZ map tiles into one raster per destination.
     "pillow>=12.3.0,<13.0",
     "sentry-sdk>=2.71.0",
@@ -42,7 +42,7 @@ dependencies = [
     "pyyaml>=6.0,<7.0",
     # spaces.py: S3-compatible client for DO Spaces (issue #334 PR 1) - region_satellite's
     # rasters and the bulk-snapshot staging path.
-    "boto3>=1.43.105,<2.0",
+    "boto3>=1.43.108,<2.0",
     # ingest_bulk.py's future loaders (issue #334 PR 3, #335) query staged Parquet/GPKG
     # snapshots directly rather than loading them into Python first.
     "duckdb>=1.5.6,<2.0",
@@ -84,8 +84,8 @@ dev = [
     "pre-commit>=4.6.2,<5.0",
     "pytest>=8.3,<10.0",
     "pytest-cov>=6.0,<8.0",
-    "ruff>=0.16.9,<1.0",
-    "ty>=0.0.84,<1.0",
+    "ruff>=0.16.10,<1.0",
+    "ty>=0.0.85,<1.0",
     "vulture>=2.14,<3.0",
 ]
 
