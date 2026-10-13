@@ -10,10 +10,10 @@ describe("forageTier", () => {
 
   it("bands the count into few / some / many", () => {
     expect(forageTier(0)).toBe(1);
-    expect(forageTier(11)).toBe(1);
-    expect(forageTier(12)).toBe(2);
-    expect(forageTier(39)).toBe(2);
-    expect(forageTier(40)).toBe(3);
+    expect(forageTier(1)).toBe(1);
+    expect(forageTier(2)).toBe(2);
+    expect(forageTier(4)).toBe(2);
+    expect(forageTier(5)).toBe(3);
     expect(forageTier(500)).toBe(3);
   });
 
