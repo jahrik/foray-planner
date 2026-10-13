@@ -1049,7 +1049,8 @@ def test_backfill_forage_obs_counts_research_grade_fungi_hugging_the_line(con: p
     orphan = get_trail(con, "osm:node/8")
     assert orphan is not None and orphan.forage_obs is None
     # oldest-first rotation: a capped pass re-times only the stalest row
-    assert backfill_forage_obs(con, max_trails=1) == 2  # one trailhead + the one stalest line row
+    # one cap across both passes: 2 = one trailhead + one line row, never more
+    assert backfill_forage_obs(con, max_trails=2) == 2
 
 
 def test_listed_trails_get_a_live_forage_count_before_the_backfill_reaches_them(con: psycopg.Connection) -> None:
@@ -1064,6 +1065,36 @@ def test_listed_trails_get_a_live_forage_count_before_the_backfill_reaches_them(
     assert stored is not None and stored.forage_obs is None  # never backfilled
     listed = trails_near(con, lat=47.605, lng=-122.30, radius_km=5.0)
     assert [trail.forage_obs for trail in listed] == [1]
+
+
+def test_changing_a_trailheads_links_resets_its_derived_route(con: psycopg.Connection) -> None:
+    upsert_trails(
+        con,
+        [
+            _named_way(1, "Ridge", [(47.600, -122.30), (47.610, -122.30)]),
+            (
+                "osm:node/9",
+                "TH",
+                "trailhead",
+                "osm",
+                "u",
+                47.600,
+                -122.30,
+                '{"type":"Point","coordinates":[-122.30,47.600]}',
+                ["osm:way/1"],
+                None,
+                None,
+            ),
+        ],
+    )
+    backfill_forage_obs(con)
+    with con.cursor() as cur:
+        cur.execute("SELECT route_ids IS NOT NULL, forage_obs_at IS NOT NULL FROM trails WHERE id = 'osm:node/9'")
+        assert cur.fetchone() == (True, True)
+        cur.execute("UPDATE trails SET connects = ARRAY['osm:way/2'] WHERE id = 'osm:node/9'")
+        cur.execute("SELECT route_ids IS NULL, forage_obs_at IS NULL FROM trails WHERE id = 'osm:node/9'")
+        assert cur.fetchone() == (True, True)
+        cur.execute("UPDATE trails SET connects = connects WHERE id = 'osm:node/9'")  # unchanged: no reset
 
 
 def test_trailhead_forage_counts_the_whole_route_not_the_node(con: psycopg.Connection) -> None:

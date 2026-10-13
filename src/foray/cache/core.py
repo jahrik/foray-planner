@@ -1050,6 +1050,27 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
     # counts the observations along it; the ranking reads it so a trailhead is scored on the trail it
     # leads along, not the 500 m around its node. A nullable ADD COLUMN: no heavy work at deploy.
     (61, "ALTER TABLE trails ADD COLUMN IF NOT EXISTS route_ids TEXT[]"),
+    # `route_ids` is derived from `connects`, and `connects` is rewritten by several writers (the
+    # ingest upsert, the bulk diff loader, duplicate pruning's remap). Whenever the links change,
+    # drop the derived route and its count so readers fall back to the fresh `connects` and the
+    # backfill rebuilds both on its next visit - no writer has to remember to do it.
+    (
+        62,
+        """
+        CREATE OR REPLACE FUNCTION foray_trails_reset_route() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            IF NEW.connects IS DISTINCT FROM OLD.connects THEN
+                NEW.route_ids := NULL;
+                NEW.forage_obs_at := NULL;
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+        CREATE OR REPLACE TRIGGER trg_trails_reset_route BEFORE UPDATE OF connects ON trails
+            FOR EACH ROW EXECUTE FUNCTION foray_trails_reset_route()
+        """,
+    ),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]
