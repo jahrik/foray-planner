@@ -291,7 +291,7 @@ Geometry is omitted from this list on purpose. Selecting a row fetches
 
 Row fields include `length_km`, `attrs` (surface, access and other kept OSM tags), `walk_in`
 (a road gated to vehicles but walkable), `land_agency` / `land_unit` (who manages the ground it
-crosses), `forage_obs` (research-grade fungi records within about 500 m of the line, a hint rather
+crosses), `forage_obs` (research-grade fungi records within about 500 m of the line, or of a trailhead's whole route, a hint rather
 than a score) and `camp_distance_km`.
 
 ### `GET /api/land`

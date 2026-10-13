@@ -50,7 +50,7 @@ Each entry:
 | `precip-backfill` | `backfill-precip` | 24 h | any | Antecedent rain (7 and 30 days before each observation), from ERA5 |
 | `refresh-precip` | `refresh-precip` | 24 h | any | Recent rain for every active destination cell |
 | `fire` | `fire` | 24 h | any | Active wildfire perimeters (replace semantics) and recent burn scars |
-| `forage-backfill` | `backfill-forage --limit 20000` | 6 h | any | Per-trail count of fungi records near the line (`trails.forage_obs`) |
+| `forage-backfill` | `backfill-forage --limit 20000` | 6 h | any | Per-trail count of fungi records near the line, or along a trailhead's route (`trails.forage_obs`) |
 | `ingest-bulk-taxa` | `ingest-bulk taxa` | 24 h | night | Loads the newest staged taxonomy export: every rank from species up, plus synonyms and vernacular names (drives the Taxa pill's search). **Must precede `ingest-bulk-inat`**, which resolves each observation's taxon through it |
 | `ingest-bulk-inat` | `ingest-bulk inat` | 24 h | night | Loads the newest staged iNaturalist export (a no-op most days) |
 | `ingest-bulk-ridb` | `ingest-bulk ridb` | 24 h | night | Loads the newest staged RIDB export |

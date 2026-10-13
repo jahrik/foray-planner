@@ -275,7 +275,10 @@ export async function loadTrailheadsInto(
     // plain count, and only the busiest rows get the visual lift.
     if (trailhead.forage_obs != null && trailhead.forage_obs > 0) {
       button.textContent += ` · ${trailhead.forage_obs} nearby`;
-      button.title = [button.title, `${trailhead.forage_obs} research-grade fungi records within ~500 m`]
+      button.title = [
+        button.title,
+        `${trailhead.forage_obs} research-grade fungi records within ~500 m of the route`,
+      ]
         .filter(Boolean)
         .join(" · ");
       if (trailhead.forage_obs >= FORAGE_HI_THRESHOLD) button.classList.add("forage-hi");

@@ -1045,6 +1045,11 @@ _MIGRATIONS: list[tuple[int, LiteralString]] = [
         FROM taxa g WHERE g.rank = 'genus' AND g.is_active AND 47170 = ANY(g.ancestor_ids)
         """,
     ),
+    # A trailhead's whole route: `connects` (the ways its node touches) plus everything
+    # `scoring.follow_trail_network` walks on to. Written by `backfill_forage_obs`, which also
+    # counts the observations along it; the ranking reads it so a trailhead is scored on the trail it
+    # leads along, not the 500 m around its node. A nullable ADD COLUMN: no heavy work at deploy.
+    (61, "ALTER TABLE trails ADD COLUMN IF NOT EXISTS route_ids TEXT[]"),
 ]
 
 _MIGRATION_VERSIONS = [version for version, _ in _MIGRATIONS]

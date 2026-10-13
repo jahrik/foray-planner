@@ -182,9 +182,12 @@ relevance = length_km
           + 2.5 x log1p(target-genus records within 500 m of the line)
 ```
 
-A trailhead takes its length and route flag from the trails it connects to (the `connects` list
-computed at ingest by snapping each trailhead onto trail lines within 35 m), because "Trailhead
-(OSM) - 16 mi" says nothing; the trail it opens does.
+A trailhead takes its length, route flag and observation count from the whole route it leads
+along, because "Trailhead (OSM) - 16 mi" says nothing; the trail it opens does. The route is the
+`connects` list (computed at ingest by snapping each trailhead onto trail lines within 35 m) plus
+the same-name / same-ref / unnamed-connector ways `follow_trail_network` walks on to, stored in
+`trails.route_ids` by the forage backfill. Records are counted within about 500 m of that route,
+not of the trailhead node (the parking lot).
 
 For a **forest road** (`kind = road`), records along the road dominate and length is damped, since
 an old logging road is worth walking because mushrooms fruit along it, not because it is long:

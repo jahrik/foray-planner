@@ -61,7 +61,7 @@ beyond the incremental window arrives through the bulk path, below.
 | `foray backfill-elevation-dem [--dry-run] [--workers N] [--batch-size N] [--sleep S] [--max-cells N]` | Elevation from local Copernicus GLO-90 tiles, so it is not rate-limited. Writes use a bulk `COPY` plus one `UPDATE ... FROM` per batch. `--dry-run` downloads tiles and reports without writing. |
 | `foray backfill-precip [--limit N] [--rebuild/--no-rebuild]` | Rain in the 7 and 30 days before each observation, from the ERA5 archive. A window inside ERA5's 5 to 7 day lag stays empty and is retried. |
 | `foray refresh-precip` | Recent rain (trailing 7, 14, 30 days) for every active destination cell. Skips cells refreshed in the last 20 hours, so a re-run resumes. |
-| `foray backfill-forage [--limit N]` | Recount research-grade fungi records within about 500 m of each trail (`trails.forage_obs`), stalest first. |
+| `foray backfill-forage [--limit N]` | Recount research-grade fungi records within about 500 m of each trail, or of a trailhead's whole route (`trails.forage_obs`, `trails.route_ids`), stalest first. |
 | `foray backfill-trail-land` | One-time: tag existing trails with the public land they cross. New trails are tagged at ingest. |
 | `foray backfill-satellite [--limit N] [--concurrency N] [--refresh]` | Pre-fetch the Esri aerial and label rasters for every region so selecting a destination never waits on a live fetch. `--refresh` clears the table first; use it after changing what a region's raster contains. |
 
