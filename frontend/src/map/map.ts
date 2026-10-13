@@ -7,6 +7,7 @@ import "leaflet.markercluster";
 
 import type { Home, PreciseObservation } from "../api/types";
 import { FIRE_ACTIVE, FIRE_SCAR } from "./basemap-fire";
+import { PALETTE } from "./basemap-roads";
 import { LAND_COLORS, LAND_DEFAULT } from "./basemap-land";
 import { FORAGE_RAMP, FORAGE_TIER_LABELS } from "./forage";
 import { clearCardCampMarkers, clearTrailheadMarkers, trailheadSvg } from "./pins";
@@ -211,43 +212,78 @@ async function applyVectorBasemap(theme: "dark" | "light"): Promise<void> {
 // clear, so it always mirrors what's on the map. Trails have no toggle, but a walk-in (gated)
 // forest road drawn from the Trails tab gets a legend entry while its distinct teal line is
 // shown (issue A4b, state.selectedTrailWalkIn).
-// Sentinel for the legend's precise-observation entry, drawn as a mini genus pin, not a colour.
-const PRECISE_SWATCH = "precise-pin";
-
 export function renderLegend(): void {
   const el = qs("#legend");
-  const blm = (document.getElementById("show-land-blm") as HTMLInputElement | null)?.checked;
-  const usfs = (document.getElementById("show-land-usfs") as HTMLInputElement | null)?.checked;
-  const tribal = (document.getElementById("show-land-tribal") as HTMLInputElement | null)?.checked;
-  const otherLand = (document.getElementById("show-land-other") as HTMLInputElement | null)?.checked;
+  const checked = (id: string): boolean =>
+    (document.getElementById(id) as HTMLInputElement | null)?.checked === true;
   const palette = markerPalette();
-  const entries: [string, string][] = [
-    [palette.rust, "Top destination"],
-    [palette.flush, "Seen in the last few weeks"],
-    [palette.moss, "Other region in range"],
-    [palette.purple, "Selected"],
-    [PRECISE_SWATCH, "Precise observation: icon shows its genus or shape"],
+  const roads = PALETTE[currentTheme()];
+  const dot = (color: string, label: string): string =>
+    `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`;
+  const line = (color: string, label: string): string =>
+    `<span class="legend-item"><i class="legend-line" style="background:${color}"></i>${label}</span>`;
+  const group = (title: string, items: string[]): string =>
+    items.length
+      ? `<span class="legend-group"><b class="legend-title">${title}</b>${items.join("")}</span>`
+      : "";
+
+  const regions = [
+    dot(palette.rust, "Top destination"),
+    dot(palette.flush, "Seen in the last few weeks"),
+    dot(palette.moss, "Other region in range"),
+    dot(palette.purple, "Selected"),
   ];
-  if ((document.getElementById("show-fire") as HTMLInputElement | null)?.checked) {
-    entries.push([FIRE_ACTIVE, "Active wildfire"], [FIRE_SCAR, "Recent burn scar"]);
+  const observations = [
+    `<span class="legend-item"><i class="legend-pin" aria-hidden="true">${genusIconSvg("gilled")}</i>Icon shows the genus or shape</span>`,
+  ];
+
+  // What the destination's POI layers hold right now: camp discs by cost, one row for the camp-type
+  // icons (they say what kind of camp, not a colour), and the trailhead pin.
+  const camping: string[] = [];
+  const camp: string[] = [];
+  const campIcons: string[] = [];
+  let trailheads = "";
+  for (const entry of poiLegendEntries()) {
+    if ("swatch" in entry) camp.push(dot(entry.swatch, escapeHtml(entry.label)));
+    else if ("iconKey" in entry) campIcons.push(campIconSvg(entry.iconKey));
+    else trailheads = poiLegendItem(entry);
   }
-  if (blm) entries.push([LAND_COLORS.BLM ?? LAND_DEFAULT, "BLM land"]);
-  if (usfs) entries.push([LAND_COLORS.USFS ?? LAND_DEFAULT, "USFS land"]);
-  if (tribal) entries.push([LAND_COLORS.Tribal ?? LAND_DEFAULT, "Tribal land"]);
-  if (otherLand) entries.push([LAND_DEFAULT, "State & other federal land"]);
-  if (state.selectedTrailWalkIn) entries.push([TRAIL_WALKIN, "Walk-in forest road (gated)"]);
+  camping.push(...camp);
+  if (campIcons.length) {
+    camping.push(
+      `<span class="legend-item">${campIcons
+        .map((icon) => `<i class="legend-pin camp" aria-hidden="true">${icon}</i>`)
+        .join("")}Icon shows the camp type</span>`,
+    );
+  }
+
+  // Trails are always drawn from the tiles; the selected line (Trails tab) adds its own rows.
+  const trails = [line(roads.path, "Trail"), line(roads.track, "Forest road")];
+  if (trailheads) trails.push(trailheads);
+  if (state.selectedTrailWalkIn)
+    trails.push(line(TRAIL_WALKIN, "Selected: walk-in road (gated to vehicles)"));
   if (state.selectedTrailForage > 0) {
     const idx = state.selectedTrailForage - 1; // 0..2 into the tier-1/2/3 ramp
-    entries.push([FORAGE_RAMP[idx] ?? FORAGE_RAMP[2], `Selected trail: ${FORAGE_TIER_LABELS[idx] ?? ""}`]);
+    trails.push(line(FORAGE_RAMP[idx] ?? FORAGE_RAMP[2], `Selected: ${FORAGE_TIER_LABELS[idx] ?? ""}`));
   }
-  el.innerHTML =
-    entries
-      .map(([color, label]) =>
-        color === PRECISE_SWATCH
-          ? `<span class="legend-item"><i class="legend-pin" aria-hidden="true">${genusIconSvg("gilled")}</i>${label}</span>`
-          : `<span class="legend-item"><i style="background:${color}"></i>${label}</span>`,
-      )
-      .join("") + poiLegendEntries().map(poiLegendItem).join("");
+
+  const land: string[] = [];
+  if (checked("show-land-blm")) land.push(dot(LAND_COLORS.BLM ?? LAND_DEFAULT, "BLM"));
+  if (checked("show-land-usfs")) land.push(dot(LAND_COLORS.USFS ?? LAND_DEFAULT, "USFS"));
+  if (checked("show-land-tribal")) land.push(dot(LAND_COLORS.Tribal ?? LAND_DEFAULT, "Tribal"));
+  if (checked("show-land-other")) land.push(dot(LAND_DEFAULT, "State & other federal"));
+  const fire = checked("show-fire")
+    ? [dot(FIRE_ACTIVE, "Active wildfire"), dot(FIRE_SCAR, "Recent burn scar")]
+    : [];
+
+  el.innerHTML = [
+    group("Regions", regions),
+    group("Observations", observations),
+    group("Camping", camping),
+    group("Trails", trails),
+    group("Public land", land),
+    group("Fire", fire),
+  ].join("");
 }
 
 // A camp (disc colour or type icon) or the trailhead signpost, from the camp/trailhead layers
