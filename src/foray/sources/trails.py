@@ -836,8 +836,13 @@ def resolve_trail_network(
     if live is not None:
         _persist_resolved_link(con, trailhead, node_id, live["rows"])
         trail = dataclasses.replace(trailhead, name=live["name"], kind=live["kind"], geometry=live["geometry"])
-        # The live query only returns ways sharing the node; walk on from the rows it just cached.
-        seeds = scoring.connected_trails(con, [row[0] for row in live["rows"]])
+        # The live query only returns ways sharing the node; walk on from what it just cached. The
+        # write-back's duplicate prune can swap a raw OSM row for its surviving twin and remap
+        # the trailhead's links, so read them back; the raw ids are only the fallback for when
+        # persisting failed.
+        persisted = scoring.get_trail(con, trailhead_id)
+        link_ids = (persisted.connects if persisted else None) or [row[0] for row in live["rows"]]
+        seeds = scoring.connected_trails(con, link_ids)
         extras = scoring.follow_trail_network(con, seeds)
         if extras:
             trail = _merge_connected(trail, [trail, *extras]) or trail
@@ -1184,15 +1189,18 @@ def backfill_forage_obs(con: psycopg.Connection | None = None, *, max_trails: in
     observations within ``_FORAGE_OBS_RADIUS_M`` of each trail line - and, for a trailhead, of
     the whole route it leads along (also recorded in ``route_ids``).
 
-    Processes the ``max_trails`` (default ``_FORAGE_BACKFILL_BATCH``) rows whose count is
-    oldest, NULLs first, so a frequent small cron cycles the whole table and keeps it roughly
+    Processes at most ``max_trails`` (default ``_FORAGE_BACKFILL_BATCH``) rows in total, whose
+    count is oldest, NULLs first, so a frequent small cron cycles the whole table and keeps it roughly
     fresh as observations drift. Returns the number of rows updated. Purely set-based - no
     external calls - so it can't fail an ingest it's wired after; it just does one bounded pass.
     """
     limit = max_trails if max_trails is not None else _FORAGE_BACKFILL_BATCH
+    # One cap across both passes: up to half (and at most ``_TRAILHEAD_ROUTE_BATCH``) goes to
+    # trailheads, the rest to lines, so a small ``--limit`` still serves both and never exceeds it.
+    trailhead_limit = min(limit // 2, _TRAILHEAD_ROUTE_BATCH)
     with connection(con) as database:
-        updated = _backfill_trailhead_routes(database, min(limit, _TRAILHEAD_ROUTE_BATCH))
-        updated += database.execute(_FORAGE_BACKFILL_SQL, [limit, _FORAGE_OBS_RADIUS_M]).rowcount
+        updated = _backfill_trailhead_routes(database, trailhead_limit) if trailhead_limit else 0
+        updated += database.execute(_FORAGE_BACKFILL_SQL, [limit - updated, _FORAGE_OBS_RADIUS_M]).rowcount
     if updated:
         logger.info("trails: refreshed forage_obs for %d trails", updated)
     return updated
