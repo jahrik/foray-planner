@@ -651,9 +651,19 @@ export function setSatelliteBasemapEnabled(on: boolean): void {
   });
 }
 
+// Bumped by every clearSelectedTrail(); a trail draw that started earlier sees its token go stale
+// and drops its result instead of drawing onto a map that was cleared (or re-selected) meanwhile.
+let trailSelectionEpoch = 0;
+export function trailSelectionToken(): () => boolean {
+  const token = trailSelectionEpoch;
+  return () => token === trailSelectionEpoch;
+}
+
+// Also invalidates any draw still waiting on its network request.
 // Clears whichever trail is currently drawn from a destination card's Trails tab selection
 // (layers.ts's selectTrailhead) - at most one at a time, see state.selectedTrailLayer.
 export function clearSelectedTrail(): void {
+  trailSelectionEpoch += 1;
   state.selectedTrailLayer = clearLayer(map, state.selectedTrailLayer);
   const hadEntry = state.selectedTrailWalkIn || state.selectedTrailForage > 0;
   state.selectedTrailWalkIn = false;

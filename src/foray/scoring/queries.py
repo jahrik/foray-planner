@@ -803,15 +803,14 @@ def follow_trail_network(con: psycopg.Connection, seeds: Sequence[Trail]) -> lis
     """Rows that continue ``seeds`` (not including them): same name or same road ``ref``, plus
     unnamed path / route connectors (never unnamed roads - a forest road grid would sprawl).
 
-    Stops at differently-named trails (a junction is where the trail ends, not an invitation
-    to wander the network), after ``_FOLLOW_MAX_HOPS`` hops, or once the walk adds
-    ``_FOLLOW_MAX_KM`` of line, so a trailhead in a dense trail system can't pull in the park.
+    Road seeds and path / route seeds are walked separately (a junction can seed both), each
+    only ever adding rows of its own kind. Stops at differently-named trails (a junction is
+    where the trail ends, not an invitation to wander the network), after ``_FOLLOW_MAX_HOPS``
+    hops, or once the walk has added ``_FOLLOW_MAX_KM`` of line in total. Rows are consumed in
+    id order against that budget, so the cap holds for a hop that returns many segments; the
+    one segment that crosses it is kept whole (a line is never cut mid-way) and the rest dropped.
     """
     seen = {seed.id for seed in seeds}
-    frontier = list(seeds)
-    names = {seed.name for seed in seeds if seed.name and seed.name not in _FOLLOW_UNNAMED}
-    refs = {str(seed.attrs["ref"]) for seed in seeds if seed.attrs and seed.attrs.get("ref")}
-    kinds = ["road"] if all(seed.kind == "road" for seed in seeds) else ["path", "route"]
     found: list[Trail] = []
     added_km = 0.0
     sql: LiteralString = """
@@ -827,35 +826,43 @@ def follow_trail_network(con: psycopg.Connection, seeds: Sequence[Trail]) -> lis
           AND (t.name = ANY(%s)
                OR (t.attrs IS NOT NULL AND t.attrs::jsonb->>'ref' = ANY(%s))
                OR (t.kind <> 'road' AND (t.name IS NULL OR t.name = ANY(%s))))
+        ORDER BY t.id
         """
-    for _ in range(_FOLLOW_MAX_HOPS):
-        if not frontier or added_km >= _FOLLOW_MAX_KM:
-            break
-        rows = con.execute(
-            sql,
-            [
-                kinds,
-                list(seen),
-                [trail.id for trail in frontier],
-                _FOLLOW_TOUCH_M,
-                sorted(names),
-                sorted(refs),
-                list(_FOLLOW_UNNAMED),
-            ],
-        ).fetchall()
-        frontier = []
-        for row in rows:
-            trail = _base_trail(row, distance_km=0.0, camp_distance_km=None)
-            if trail.id in seen:
-                continue
-            seen.add(trail.id)
-            frontier.append(trail)
-            found.append(trail)
-            added_km += trail.length_km or 0.0
-            if trail.attrs and trail.attrs.get("ref"):
-                refs.add(str(trail.attrs["ref"]))
-            if trail.name and trail.name not in _FOLLOW_UNNAMED:
-                names.add(trail.name)
+    for kinds, group in (
+        (["road"], [seed for seed in seeds if seed.kind == "road"]),
+        (["path", "route"], [seed for seed in seeds if seed.kind != "road"]),
+    ):
+        frontier = group
+        names = {seed.name for seed in group if seed.name and seed.name not in _FOLLOW_UNNAMED}
+        refs = {str(seed.attrs["ref"]) for seed in group if seed.attrs and seed.attrs.get("ref")}
+        for _ in range(_FOLLOW_MAX_HOPS):
+            if not frontier or added_km >= _FOLLOW_MAX_KM:
+                break
+            rows = con.execute(
+                sql,
+                [
+                    kinds,
+                    list(seen),
+                    [trail.id for trail in frontier],
+                    _FOLLOW_TOUCH_M,
+                    sorted(names),
+                    sorted(refs),
+                    list(_FOLLOW_UNNAMED),
+                ],
+            ).fetchall()
+            frontier = []
+            for row in rows:
+                if added_km >= _FOLLOW_MAX_KM:
+                    break
+                trail = _base_trail(row, distance_km=0.0, camp_distance_km=None)
+                if trail.id in seen:
+                    continue
+                seen.add(trail.id)
+                frontier.append(trail)
+                found.append(trail)
+                added_km += trail.length_km or 0.0
+                if trail.attrs and trail.attrs.get("ref"):
+                    refs.add(str(trail.attrs["ref"]))
     return found
 
 
