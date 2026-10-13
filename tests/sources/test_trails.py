@@ -332,9 +332,9 @@ def test_parse_trails_links_the_nearest_line_when_nothing_is_within_the_snap() -
 
     payload = {
         "elements": [
-            node(1, 47.600),  # 100-120 m from both ways: past the snap, so only the nearer links
+            node(1, 47.600),  # ~111 m and ~133 m from the ways: past the snap, inside the fallback
             way(2, "Near", 47.6010),
-            way(3, "Next", 47.5985),
+            way(3, "Next", 47.5988),
             node(4, 47.700),  # ~900 m from the nearest line: too far for even the fallback
             node(5, 47.6102),  # ~20 m from "Snapped": inside the snap, links normally
             way(6, "Snapped", 47.6104),

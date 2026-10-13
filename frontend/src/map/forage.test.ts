@@ -41,7 +41,7 @@ describe("highlightCutoff", () => {
     const cutoff = highlightCutoff(dense);
     expect(cutoff).toBeGreaterThan(FORAGE_HI_THRESHOLD);
     const lit = dense.filter((count) => count >= cutoff).length;
-    expect(lit).toBeLessThanOrEqual(Math.ceil(dense.length / 4) + 1);
-    expect(lit).toBeGreaterThan(0);
+    expect(lit).toBe(Math.ceil(dense.length / 4));
+    expect(highlightCutoff([300, 400, 500, 600])).toBe(600);
   });
 });
