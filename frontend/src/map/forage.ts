@@ -35,6 +35,6 @@ export function forageTier(obs: number | null | undefined): 0 | 1 | 2 | 3 {
 export function highlightCutoff(counts: ReadonlyArray<number | null | undefined>): number {
   const known = counts.filter((count): count is number => count != null && count > 0).sort((a, b) => a - b);
   if (known.length === 0) return FORAGE_HI_THRESHOLD;
-  const upperQuarter = known[Math.floor((known.length - 1) * 0.75)] ?? FORAGE_HI_THRESHOLD;
+  const upperQuarter = known[Math.floor(known.length * 0.75)] ?? FORAGE_HI_THRESHOLD;
   return Math.max(FORAGE_HI_THRESHOLD, upperQuarter);
 }
