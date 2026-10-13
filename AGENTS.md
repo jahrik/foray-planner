@@ -148,8 +148,9 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   its **own** `out geom;` - inside a union `out geom` drops relation members. At ingest each
   trailhead is snapped (<=35 m) onto the payload's trail polylines and the matched ids (expanded to
   every segment sharing a `_group_key` - `name`, or `ref`+`operator` for an unnamed forest road)
-  stored in `trails.connects`, so `resolve_trail_network` draws the whole named trail / whole
-  numbered road from cache; a live per-selection query is the fallback and its result is written
+  stored in `trails.connects`; `resolve_trail_network` then walks on from those seeds at read time
+  (`scoring.follow_trail_network`: same name / road `ref` / unnamed path connectors that touch the
+  line, capped at 25 hops and 15 km) so it draws the whole named trail / whole numbered road from cache; a live per-selection query is the fallback and its result is written
   back. Also derived at parse: `length_km` and `attrs` (highway/surface/tracktype/access/
   motor_vehicle/foot/ref/...). Geometry cached as GeoJSON *text* + `geom` GIST + a representative
   center. Coverage-wide data now comes from the bulk source (`osm_trails.py`, below), which

@@ -194,6 +194,24 @@ function trailParts(geometry: GeoJSON.Geometry): L.LatLngTuple[][] {
   return [];
 }
 
+// Starts a camera move and resolves once the map has stopped. Leaflet fires no `moveend` when the
+// target is the current view, so a timeout settles it instead of hanging the draw.
+function flyThen(start: () => void): Promise<void> {
+  return new Promise((resolve) => {
+    const done = (): void => {
+      window.clearTimeout(timer);
+      map.off("moveend", done);
+      resolve();
+    };
+    const timer = window.setTimeout(done, 900);
+    map.once("moveend", done);
+    start();
+  });
+}
+
+// Only the latest trail selection may still be drawing once its awaits resolve.
+const selectionGuard = createRunGuard();
+
 // Only the most recently started animation should still be drawing - if the user clicks a
 // different trailhead mid-animation, clearSelectedTrail() already removed the in-progress layer
 // from the map, but without this guard the orphaned rAF loop would keep computing frames for a
@@ -247,7 +265,9 @@ async function drawSelectedTrail(
   requestedName: string,
 ): Promise<void> {
   clearSelectedTrail();
-  map.flyTo([flyLat, flyLng], Math.max(map.getZoom(), 14), { duration: 0.5 });
+  const isCurrent = selectionGuard.begin();
+  // The fetch runs while the camera flies, but nothing is drawn until the camera has stopped.
+  const arrived = flyThen(() => map.flyTo([flyLat, flyLng], Math.max(map.getZoom(), 14), { duration: 0.5 }));
   let path: TrailPath;
   try {
     path = (await getJson("/api/trails/network", { query: { trail_id: id } })) as unknown as TrailPath;
@@ -255,6 +275,8 @@ async function drawSelectedTrail(
     setStatus(errorDetail(error));
     return;
   }
+  await arrived;
+  if (!isCurrent()) return; // another trail was picked while this one loaded
   // /api/trails/network always resolves a geometry (live OSM topology or the nearest cached
   // trail); the null case only exists for the geometry-less /api/trails list rows.
   if (!path.trail.geometry) return;
@@ -292,7 +314,11 @@ async function drawSelectedTrail(
   }
   setSelectedTrail(layer, t.walk_in === true, t.walk_in ? 0 : tier);
   renderLegend(); // surface / hide the walk-in + foraging-density legend entries
-  map.flyToBounds(L.latLngBounds(parts.flat()), { padding: [40, 40], maxZoom: 15, duration: 0.5 });
+  // Zoom to the trail's extent, let the camera settle, and only then draw the line in.
+  await flyThen(() =>
+    map.flyToBounds(L.latLngBounds(parts.flat()), { padding: [40, 40], maxZoom: 15, duration: 0.5 }),
+  );
+  if (!isCurrent()) return;
   animateTrail(layer, parts);
 }
 

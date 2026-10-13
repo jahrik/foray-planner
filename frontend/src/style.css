@@ -840,27 +840,39 @@ a.chip:hover {
   color: var(--ink);
 }
 
-/* Trailhead marker (map.ts's plotTrailhead) - a destination card's Trails tab list, plotted on
-   the map. Leaflet's default divIcon box (white bg/border) is cleared so only the signpost SVG
-   shows. Active (its list chip is selected): scales up from the post base so the foot stays
-   pinned to the trailhead point. */
-.leaflet-div-icon.trailhead-icon {
-  background: transparent;
-  border: none;
+/* A trailhead pin (pins.ts trailheadIcon): the signpost in ink on a TRAIL-red disc, same ring and
+   hover/active treatment as the camp pins below. */
+.trailhead-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.trailhead-marker {
+.trailhead-icon span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: #ff5555; /* map.ts TRAIL */
+  border: 2px solid #0c0d09; /* map.ts HOME_RING */
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.55);
+  color: #0c0d09;
   cursor: pointer;
-  line-height: 0;
-  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.45));
   transition: transform 0.12s ease;
 }
-.trailhead-marker svg {
-  display: block;
+.trailhead-icon svg {
+  width: 16px;
+  height: 16px;
 }
-.trailhead-marker.active {
-  filter: drop-shadow(0 0 5px var(--accent));
+.trailhead-icon:hover span,
+.trailhead-icon:focus-visible span {
+  transform: scale(1.15);
+}
+.trailhead-icon.active span {
   transform: scale(1.25);
-  transform-origin: 50% 92%;
+  box-shadow: 0 0 0 2px var(--accent);
 }
 /* A single precise-observation pin (map.ts precisePinIcon, issue #449): the 24px icon box is the
    hover/tap target; inside it a 22px --spore disc with an ink ring carries the genus icon in ink.
@@ -1387,18 +1399,22 @@ table.cal .heat {
 .map-legend i.legend-pin.camp {
   background: #fff;
 }
-/* The trailhead signpost, bare. */
+/* The trailhead signpost on its red disc. */
 .map-legend i.legend-signpost {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 14px;
   height: 14px;
-  background: none;
+  border-radius: 50%;
+  background: #ff5555; /* map.ts TRAIL */
+  border: 1.5px solid #0c0d09;
+  box-sizing: border-box;
+  color: #0c0d09;
 }
 .map-legend i.legend-signpost svg {
-  width: 14px;
-  height: 14px;
+  width: 9px;
+  height: 9px;
 }
 
 @media (max-width: 780px) {

@@ -790,6 +790,75 @@ def connected_trails(con: psycopg.Connection, trail_ids: Sequence[str]) -> list[
     return [by_id[tid] for tid in trail_ids if tid in by_id]
 
 
+# A trailhead's ``connects`` list is only the ways within a few metres of its node, so the drawn
+# line stops at the first junction or gap in a trail's name. ``follow_trail_network`` keeps
+# walking outward from those seeds, hop by hop, over cached rows that touch the line so far.
+_FOLLOW_TOUCH_M = 12.0  # endpoints this close count as joined (OSM ways meet at a shared node)
+_FOLLOW_MAX_HOPS = 25
+_FOLLOW_MAX_KM = 15.0
+_FOLLOW_UNNAMED = ("Trail (OSM)", "Forest road (OSM)", "Hiking route (OSM)")
+
+
+def follow_trail_network(con: psycopg.Connection, seeds: Sequence[Trail]) -> list[Trail]:
+    """Rows that continue ``seeds`` (not including them): same name or same road ``ref``, plus
+    unnamed path / route connectors (never unnamed roads - a forest road grid would sprawl).
+
+    Stops at differently-named trails (a junction is where the trail ends, not an invitation
+    to wander the network), after ``_FOLLOW_MAX_HOPS`` hops, or once the walk adds
+    ``_FOLLOW_MAX_KM`` of line, so a trailhead in a dense trail system can't pull in the park.
+    """
+    seen = {seed.id for seed in seeds}
+    frontier = list(seeds)
+    names = {seed.name for seed in seeds if seed.name and seed.name not in _FOLLOW_UNNAMED}
+    refs = {str(seed.attrs["ref"]) for seed in seeds if seed.attrs and seed.attrs.get("ref")}
+    kinds = ["road"] if all(seed.kind == "road" for seed in seeds) else ["path", "route"]
+    found: list[Trail] = []
+    added_km = 0.0
+    sql: LiteralString = """
+        SELECT t.id, t.name, t.kind, t.source, t.url, t.center_lat, t.center_lng, g.geojson,
+               t.length_km, t.attrs
+        FROM trails t
+        LEFT JOIN trail_geometry g ON g.id = t.id
+        WHERE t.kind = ANY(%s) AND t.geom IS NOT NULL AND t.id <> ALL(%s)
+          AND ST_DWithin(
+                t.geom,
+                (SELECT ST_Collect(f.geom::geometry)::geography FROM trails f WHERE f.id = ANY(%s)),
+                %s)
+          AND (t.name = ANY(%s)
+               OR (t.attrs IS NOT NULL AND t.attrs::jsonb->>'ref' = ANY(%s))
+               OR (t.kind <> 'road' AND (t.name IS NULL OR t.name = ANY(%s))))
+        """
+    for _ in range(_FOLLOW_MAX_HOPS):
+        if not frontier or added_km >= _FOLLOW_MAX_KM:
+            break
+        rows = con.execute(
+            sql,
+            [
+                kinds,
+                list(seen),
+                [trail.id for trail in frontier],
+                _FOLLOW_TOUCH_M,
+                sorted(names),
+                sorted(refs),
+                list(_FOLLOW_UNNAMED),
+            ],
+        ).fetchall()
+        frontier = []
+        for row in rows:
+            trail = _base_trail(row, distance_km=0.0, camp_distance_km=None)
+            if trail.id in seen:
+                continue
+            seen.add(trail.id)
+            frontier.append(trail)
+            found.append(trail)
+            added_km += trail.length_km or 0.0
+            if trail.attrs and trail.attrs.get("ref"):
+                refs.add(str(trail.attrs["ref"]))
+            if trail.name and trail.name not in _FOLLOW_UNNAMED:
+                names.add(trail.name)
+    return found
+
+
 # OSM splits one real named trail into many way rows; when a card lists it (as a ``path``/
 # ``route`` row, issue #306 C2) and the user selects it, stitch the sibling segments back
 # together so the drawn line is the whole trail, not the one way the row happened to be.

@@ -824,7 +824,8 @@ def resolve_trail_network(
 
     trailhead = trail
     if trailhead.connects:
-        merged = _merge_connected(trailhead, scoring.connected_trails(con, trailhead.connects))
+        seeds = scoring.connected_trails(con, trailhead.connects)
+        merged = _merge_connected(trailhead, [*seeds, *scoring.follow_trail_network(con, seeds)])
         if merged is not None:
             return scoring.TrailPath(trail=merged, authoritative=True)
 
@@ -833,6 +834,11 @@ def resolve_trail_network(
     if live is not None:
         _persist_resolved_link(con, trailhead, node_id, live["rows"])
         trail = dataclasses.replace(trailhead, name=live["name"], kind=live["kind"], geometry=live["geometry"])
+        # The live query only returns ways sharing the node; walk on from the rows it just cached.
+        seeds = scoring.connected_trails(con, [row[0] for row in live["rows"]])
+        extras = scoring.follow_trail_network(con, seeds)
+        if extras:
+            trail = _merge_connected(trail, [trail, *extras]) or trail
         return scoring.TrailPath(trail=trail, authoritative=True)
     nearest = scoring.nearest_trail(con, lat=trailhead.center_lat, lng=trailhead.center_lng)
     if nearest is None:
