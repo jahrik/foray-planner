@@ -12,9 +12,10 @@ export const FORAGE_TIER_LABELS = [
   "many records nearby",
 ] as const;
 // forage_obs cutoffs between tier 1|2 and 2|3, and the "give the row a visual lift" threshold
-// (== the tier-3 break). Rough and tunable; picked from typical PNW/CA counts where a
-// well-visited trail sees dozens of records and a backcountry line sees a handful.
-const FORAGE_TIER_BREAKS = [12, 40] as const;
+// (== the tier-3 break). Set from the cached counts (2026-10): across counted paths and routes the
+// median is 1 record within ~500 m, the 75th percentile 5 and the 90th 25, so 5+ is the busiest
+// quarter. The first guess of 12 / 40 sat above the 90th percentile and almost nothing lit up.
+const FORAGE_TIER_BREAKS = [2, 5] as const;
 export const FORAGE_HI_THRESHOLD = FORAGE_TIER_BREAKS[1];
 
 /** 0 = unknown (forage_obs null), else 1 (few) / 2 (some) / 3 (many) records within ~500 m. */
