@@ -2259,6 +2259,50 @@ def test_resolve_trail_network_uses_the_cached_link_without_a_live_call(con: psy
     assert result.trail.geometry is not None and result.trail.geometry["type"] == "LineString"
 
 
+def test_resolve_trail_network_follows_the_trail_past_the_trailhead_segment(con: psycopg.Connection) -> None:
+    # The trailhead touches only way 2; way 3 continues the same name, way 4 is an unnamed
+    # connector, way 5 a differently-named trail at the junction, way 6 the same name far away.
+    unnamed = _parse_element(
+        {
+            "type": "way",
+            "id": 4,
+            "tags": {"highway": "path"},
+            "geometry": [{"lat": 47.62, "lon": -122.30}, {"lat": 47.63, "lon": -122.30}],
+        }
+    )
+    assert unnamed is not None
+    trailhead = (
+        "osm:node/1",
+        "TH",
+        "trailhead",
+        "osm",
+        "u",
+        47.60,
+        -122.30,
+        '{"type":"Point","coordinates":[-122.30,47.60]}',
+        ["osm:way/2"],
+        None,
+        None,
+    )
+    upsert_trails(
+        con,
+        [
+            trailhead,
+            _named_way(2, "Ridge", [(47.60, -122.30), (47.61, -122.30)]),
+            _named_way(3, "Ridge", [(47.61, -122.30), (47.62, -122.30)]),
+            unnamed,
+            _named_way(5, "Other Trail", [(47.61, -122.30), (47.61, -122.29)]),
+            _named_way(6, "Ridge", [(48.60, -122.30), (48.61, -122.30)]),
+        ],
+    )
+    result = resolve_trail_network(con, "osm:node/1", client=httpx.Client())
+    assert result is not None
+    assert result.authoritative is True
+    geometry = result.trail.geometry
+    assert geometry is not None and geometry["type"] == "MultiLineString"
+    assert len(geometry["coordinates"]) == 3  # ways 2, 3 and the unnamed connector
+
+
 def test_resolve_trail_network_uses_live_topology_when_available(con: psycopg.Connection) -> None:
     trailhead = _parse_element({"type": "node", "id": 1, "lat": 47.6, "lon": -122.3, "tags": {"highway": "trailhead"}})
     assert trailhead is not None

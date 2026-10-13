@@ -6,39 +6,36 @@ import L from "leaflet";
 import type { CampSite } from "../api/types";
 import { state } from "../state";
 import { clearLayerList } from "./layer-lifecycle";
-import { HOME_RING, map, TRAIL } from "./map";
+import { map } from "./map";
 import { campIcon, campLabel } from "./poi-layers";
 
-// Signpost marker for a destination card's Trails tab trailhead list (views.ts) - drawn over the
-// always-on circle layer's identical signposts (poi-layers.ts) so a selected row can light up. Only the
+// Trailhead marker for a destination card's Trails tab trailhead list (views.ts) - drawn over the
+// always-on circle layer's identical markers (poi-layers.ts) so a selected row can light up. Only the
 // currently open card's trailheads are on the map at once (plotTrailhead clears the previous
 // set first), same "one destination's detail at a time" approach as camps/land. Clicking a
 // marker selects that trailhead's real trail (layers.ts's selectTrailhead), same as clicking
-// its matching list chip; setTrailheadActive keeps the two in visual sync. Drawn in the same
-// TRAIL red as the selected trail line, with a dark keyline so it holds up on either basemap.
+// its matching list chip; setTrailheadActive keeps the two in visual sync. A signpost in ink on a
+// TRAIL-red disc with the same ring as the camp and observation pins, so every pin on the map
+// reads at the same visibility.
 //
-// Built lazily inside trailheadIcon(), not as a module-level const: map.ts and pins.ts import
-// each other (map.ts needs pins.ts's clear* functions; pins.ts needs map.ts's HOME_RING/TRAIL),
-// and a top-level template literal reading those bindings at pins.ts's own module-eval time can
-// run before map.ts's `const HOME_RING = ...` has executed, hitting the TDZ and throwing
-// "Cannot access 'HOME_RING' before initialization" on load (Copilot review, PR #376).
+// The disc colour is set in CSS (`.trailhead-icon span`, mirroring map.ts TRAIL), not here, so this
+// module needn't read map.ts bindings at eval time (map.ts and pins.ts import each other; a
+// top-level read can hit the TDZ - Copilot review, PR #376).
 export function trailheadSvg(): string {
   return [
-    `<svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">`,
-    `<path d="M12 3.5v18" stroke="${HOME_RING}" stroke-width="3.4" stroke-linecap="round"/>`,
-    `<path d="M12 3.5v18" stroke="${TRAIL}" stroke-width="1.8" stroke-linecap="round"/>`,
-    `<path d="M12 5.2h8l3 2.6-3 2.6h-8z" fill="${TRAIL}" stroke="${HOME_RING}" stroke-width="1.1" stroke-linejoin="round"/>`,
-    `<path d="M12 12.4H5l-3 2.5 3 2.5h7z" fill="${TRAIL}" stroke="${HOME_RING}" stroke-width="1.1" stroke-linejoin="round"/>`,
+    `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" fill="currentColor" stroke="currentColor">`,
+    `<path d="M12 4v16" stroke-width="2" stroke-linecap="round" fill="none"/>`,
+    `<path d="M12 5.5h7l2.5 2.3-2.5 2.3h-7z" stroke-width="0.8" stroke-linejoin="round"/>`,
+    `<path d="M12 11.9H5l-2.5 2.3L5 16.5h7z" stroke-width="0.8" stroke-linejoin="round"/>`,
     `</svg>`,
   ].join("");
 }
 
 export function trailheadIcon(active: boolean): L.DivIcon {
   return L.divIcon({
-    html: `<div class="trailhead-marker${active ? " active" : ""}">${trailheadSvg()}</div>`,
-    className: "trailhead-icon",
-    iconSize: [24, 24],
-    iconAnchor: [12, 22],
+    html: `<span>${trailheadSvg()}</span>`,
+    className: `trailhead-icon${active ? " active" : ""}`,
+    iconSize: L.point(26, 26),
   });
 }
 
@@ -53,7 +50,7 @@ export function plotTrailhead(lat: number, lng: number, name: string, onSelect: 
   tooltip.textContent = name;
   const marker = L.marker([lat, lng], { icon: trailheadIcon(false), bubblingMouseEvents: false })
     .addTo(map)
-    .bindTooltip(tooltip, { direction: "top", offset: [0, -22] });
+    .bindTooltip(tooltip, { direction: "top", offset: [0, -14] });
   marker.on("click", onSelect);
   state.trailheadMarkers.push(marker);
   return marker;

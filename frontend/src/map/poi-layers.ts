@@ -133,7 +133,7 @@ export function createTrailheadMarker(
     icon: trailheadIcon(false),
     pane: POI_PANE,
     bubblingMouseEvents: false,
-  }).bindTooltip(tooltip, { direction: "top", offset: [0, -22] });
+  }).bindTooltip(tooltip, { direction: "top", offset: [0, -14] });
   marker.on("click", onSelect);
   marker.on("add", () => marker.getElement()?.setAttribute("aria-label", `Trailhead: ${name}`));
   return marker;
