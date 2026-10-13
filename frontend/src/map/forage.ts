@@ -25,3 +25,16 @@ export function forageTier(obs: number | null | undefined): 0 | 1 | 2 | 3 {
   if (obs < FORAGE_TIER_BREAKS[1]) return 2;
   return 3;
 }
+
+/**
+ * The record count a listed row needs to get the list highlight: the top quarter of this list's
+ * counts, but never below the absolute floor (`FORAGE_HI_THRESHOLD`). The absolute tiers colour the
+ * line; the highlight is for telling rows apart, and in a dense area every row clears the floor, so
+ * the floor alone would light them all.
+ */
+export function highlightCutoff(counts: ReadonlyArray<number | null | undefined>): number {
+  const known = counts.filter((count): count is number => count != null && count > 0).sort((a, b) => a - b);
+  if (known.length === 0) return FORAGE_HI_THRESHOLD;
+  const upperQuarter = known[Math.floor((known.length - 1) * 0.75)] ?? FORAGE_HI_THRESHOLD;
+  return Math.max(FORAGE_HI_THRESHOLD, upperQuarter);
+}

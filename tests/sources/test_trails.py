@@ -318,6 +318,34 @@ def test_parse_trails_links_a_trailhead_to_the_path_it_sits_on() -> None:
     assert rows["osm:way/2"][8] is None  # non-trailhead rows carry no connects
 
 
+def test_parse_trails_links_the_nearest_line_when_nothing_is_within_the_snap() -> None:
+    def way(way_id: int, name: str, lat: float) -> dict[str, object]:
+        return {
+            "type": "way",
+            "id": way_id,
+            "tags": {"highway": "path", "name": name},
+            "geometry": [{"lat": lat, "lon": -122.300}, {"lat": lat, "lon": -122.296}],
+        }
+
+    def node(node_id: int, lat: float) -> dict[str, object]:
+        return {"type": "node", "id": node_id, "lat": lat, "lon": -122.298, "tags": {"highway": "trailhead"}}
+
+    payload = {
+        "elements": [
+            node(1, 47.600),  # 100-120 m from both ways: past the snap, so only the nearer links
+            way(2, "Near", 47.6010),
+            way(3, "Next", 47.5985),
+            node(4, 47.700),  # ~900 m from the nearest line: too far for even the fallback
+            node(5, 47.6102),  # ~20 m from "Snapped": inside the snap, links normally
+            way(6, "Snapped", 47.6104),
+        ]
+    }
+    rows = {row[0]: row for row in _parse_trails(payload)}
+    assert rows["osm:node/1"][8] == ["osm:way/2"]
+    assert rows["osm:node/4"][8] is None
+    assert rows["osm:node/5"][8] == ["osm:way/6"]
+
+
 def test_parse_trails_links_a_trailhead_to_the_whole_named_trail() -> None:
     # OSM splits "Ridge Trail" into ways 2 and 3; the node touches only way 2, but the link
     # covers both so selecting it draws the whole trail (issue #306).

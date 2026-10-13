@@ -458,7 +458,13 @@ def _parse_element(
     return None
 
 
-_LINK_SNAP_M = 35.0  # a trailhead node this close to a trail's polyline is treated as connected
+# A trailhead node this close to a trail's polyline is treated as connected. Measured on the cached
+# data: of the trailheads that linked nothing at 35 m, 19% have a mapped line within 75 m and a
+# further 13% within 150 m - OSM trailhead nodes are usually dropped at the parking lot, not on the
+# path.
+_LINK_SNAP_M = 75.0
+# With nothing inside the snap, the single nearest line within this still links (never several).
+_LINK_NEAREST_M = 150.0
 _LINK_CELL_DEG = 0.02  # ~2 km grid cells for the trailhead/trail spatial prefilter
 
 
@@ -527,7 +533,8 @@ def _group_key(tags: dict[str, Any]) -> str | None:
 
 
 def _link_trailheads(payload: dict[str, Any]) -> dict[str, list[str]]:
-    """Trailhead row id -> ids of the trails whose geometry passes within ``_LINK_SNAP_M``.
+    """Trailhead row id -> ids of the trails whose geometry passes within ``_LINK_SNAP_M`` (or, when
+    none does, the one nearest line within ``_LINK_NEAREST_M``).
 
     Computed here, at ingest, from geometry already in the payload so ``resolve_trail_network``
     can draw a selected trailhead's trail straight from the cache instead of a live Overpass
@@ -566,7 +573,12 @@ def _link_trailheads(payload: dict[str, Any]) -> dict[str, list[str]]:
         for d_lat in (-1, 0, 1):
             for d_lng in (-1, 0, 1):
                 candidates |= grid.get((cell_lat + d_lat, cell_lng + d_lng), set())
-        hits = {lines[index][0] for index in candidates if _point_polyline_m(node, lines[index][1]) <= _LINK_SNAP_M}
+        distances = [(_point_polyline_m(node, lines[index][1]), index) for index in sorted(candidates)]
+        hits = {lines[index][0] for metres, index in distances if metres <= _LINK_SNAP_M}
+        if not hits and distances:
+            metres, index = min(distances)
+            if metres <= _LINK_NEAREST_M:
+                hits = {lines[index][0]}
         expanded = set(hits)
         for hit in hits:
             expanded |= kin.get(id_group.get(hit, ""), set())

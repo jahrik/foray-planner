@@ -146,7 +146,7 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   picks up where it stopped (the uncapped version OOM-killed the 2 GB droplet on road-dense
   states). The route clause needs
   its **own** `out geom;` - inside a union `out geom` drops relation members. At ingest each
-  trailhead is snapped (<=35 m) onto the payload's trail polylines and the matched ids (expanded to
+  trailhead is snapped (<=75 m, else the one nearest line within 150 m) onto the payload's trail polylines and the matched ids (expanded to
   every segment sharing a `_group_key` - `name`, or `ref`+`operator` for an unnamed forest road)
   stored in `trails.connects`; `resolve_trail_network` then walks on from those seeds at read time
   (`scoring.follow_trail_network`: same name / road `ref` / unnamed path connectors that touch the
