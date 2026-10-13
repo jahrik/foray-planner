@@ -1362,8 +1362,24 @@ table.cal .heat {
   line-height: 1.4;
   /* Wraps to as many rows as the entries need (the toggleable camp/land/fire rows can push it
      to three or four); capped so it never eats more than a strip of the map, scroll past that. */
-  max-height: 4.6em;
+  max-height: 6.4em;
   overflow-y: auto;
+}
+/* A legend section (Regions / Observations / Camping / Trails / ...): a muted title then its items,
+   set off from the next section by a thin rule so the strip reads as groups, not one run of dots. */
+.legend-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 12px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+.legend-title {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted, var(--ink));
+  opacity: 0.75;
 }
 .legend-item {
   display: inline-flex;
@@ -1377,6 +1393,12 @@ table.cal .heat {
   border-radius: 50%;
   margin-right: 5px;
   flex-shrink: 0;
+}
+/* A trail / road line swatch: a short bar, not a dot. */
+.map-legend i.legend-line {
+  width: 16px;
+  height: 4px;
+  border-radius: 2px;
 }
 /* The precise-observation legend entry: a mini genus pin rather than a colour dot. */
 .map-legend i.legend-pin {

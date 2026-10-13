@@ -481,10 +481,13 @@ def trails_near(
         )
         for row in candidates
     ]
-    return with_live_forage(con, trails[:limit] if limit is not None else trails)
+    result = trails[:limit] if limit is not None else trails
+    # The live count is for a card-sized list; the map's circle layer asks for hundreds of rows
+    # it only draws as pins, and counting those is what the statement timeout was written for.
+    return with_live_forage(con, result) if limit is not None and limit <= _LIVE_FORAGE_MAX_ROWS else result
 
 
-_LIVE_FORAGE_MAX_ROWS = 80  # rows per call that get a live count; the rest wait for the backfill
+_LIVE_FORAGE_MAX_ROWS = 50  # rows per call that get a live count; larger lists wait for the backfill
 
 _LIVE_FORAGE_SQL: LiteralString = f"""
     SELECT t.id, (

@@ -1063,8 +1063,11 @@ def test_listed_trails_get_a_live_forage_count_before_the_backfill_reaches_them(
         )
     stored = get_trail(con, "osm:way/1")
     assert stored is not None and stored.forage_obs is None  # never backfilled
-    listed = trails_near(con, lat=47.605, lng=-122.30, radius_km=5.0)
+    listed = trails_near(con, lat=47.605, lng=-122.30, radius_km=5.0, limit=20)
     assert [trail.forage_obs for trail in listed] == [1]
+    # a pin-sized request (the map's circle layer) skips the live count rather than risk a timeout
+    pins = trails_near(con, lat=47.605, lng=-122.30, radius_km=5.0, limit=500)
+    assert [trail.forage_obs for trail in pins] == [None]
 
 
 def test_changing_a_trailheads_links_resets_its_derived_route(con: psycopg.Connection) -> None:
