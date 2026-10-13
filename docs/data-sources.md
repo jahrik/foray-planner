@@ -130,7 +130,12 @@ against a shared API, timed out, and never picked up OSM edits after the first p
     the trail polylines in the payload and the matched trail ids are stored in `trails.connects`
     - expanded to every way sharing that feature's `name`, or its `ref`+`operator` for an
     unnamed forest road (OSM splits `FR 300` into dozens of ref-only segments). Selecting a
-    trailhead then draws the whole named trail / whole numbered road straight from cache; a live
+    trailhead then draws the whole named trail / whole numbered road straight from cache. At
+    read time `scoring.follow_trail_network` walks on from those seeds over cached rows that
+    touch the line within 12 m: same name, same road `ref`, or an unnamed path/route connector
+    (never an unnamed road); roads and paths/routes are walked separately, it stops at a
+    differently-named trail, after 25 hops, or once 15 km of line has been added (a segment
+    crossing the cap is kept whole). A live
     per-selection Overpass query is only the fallback for an unlinked trailhead, and its result
     is written back to `connects`.
   - **`length_km` / `attrs`:** great-circle length of the full polyline, and the kept OSM detail

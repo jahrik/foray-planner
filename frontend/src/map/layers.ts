@@ -27,6 +27,7 @@ import {
   setFireVisibility,
   setLandVisibility,
   setSelectedTrail,
+  trailSelectionToken,
   TRAIL,
   TRAIL_WALKIN,
 } from "./map";
@@ -209,9 +210,6 @@ function flyThen(start: () => void): Promise<void> {
   });
 }
 
-// Only the latest trail selection may still be drawing once its awaits resolve.
-const selectionGuard = createRunGuard();
-
 // Only the most recently started animation should still be drawing - if the user clicks a
 // different trailhead mid-animation, clearSelectedTrail() already removed the in-progress layer
 // from the map, but without this guard the orphaned rAF loop would keep computing frames for a
@@ -265,7 +263,7 @@ async function drawSelectedTrail(
   requestedName: string,
 ): Promise<void> {
   clearSelectedTrail();
-  const isCurrent = selectionGuard.begin();
+  const isCurrent = trailSelectionToken();
   // The fetch runs while the camera flies, but nothing is drawn until the camera has stopped.
   const arrived = flyThen(() => map.flyTo([flyLat, flyLng], Math.max(map.getZoom(), 14), { duration: 0.5 }));
   let path: TrailPath;

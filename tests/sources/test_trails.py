@@ -25,7 +25,14 @@ from foray.cache import (
     upsert_trails,
 )
 from foray.config import CoverageRegion, Home, Ingest, Settings
-from foray.scoring import get_trail, nearest_trail, trail_segments_by_name, trails_near
+from foray.scoring import (
+    connected_trails,
+    follow_trail_network,
+    get_trail,
+    nearest_trail,
+    trail_segments_by_name,
+    trails_near,
+)
 from foray.sources import overpass
 from foray.sources.trails import (
     _TRAILS_QUERY_VERSION,
@@ -2301,6 +2308,47 @@ def test_resolve_trail_network_follows_the_trail_past_the_trailhead_segment(con:
     geometry = result.trail.geometry
     assert geometry is not None and geometry["type"] == "MultiLineString"
     assert len(geometry["coordinates"]) == 3  # ways 2, 3 and the unnamed connector
+
+
+def _forest_road(way_id: int, ref: str, coords: list[tuple[float, float]]) -> tuple[object, ...]:
+    row = _parse_element(
+        {
+            "type": "way",
+            "id": way_id,
+            "tags": {"highway": "track", "ref": ref},
+            "geometry": [{"lat": lat, "lon": lng} for lat, lng in coords],
+        }
+    )
+    assert row is not None
+    return row
+
+
+def test_follow_trail_network_walks_road_and_path_seeds_separately(con: psycopg.Connection) -> None:
+    upsert_trails(
+        con,
+        [
+            _named_way(2, "Ridge", [(47.60, -122.30), (47.61, -122.30)]),
+            _named_way(3, "Ridge", [(47.61, -122.30), (47.62, -122.30)]),
+            _forest_road(4, "FR 300", [(47.60, -122.30), (47.60, -122.29)]),
+            _forest_road(5, "FR 300", [(47.60, -122.29), (47.60, -122.28)]),
+        ],
+    )
+    seeds = connected_trails(con, ["osm:way/2", "osm:way/4"])
+    followed = follow_trail_network(con, seeds)
+    assert sorted(trail.id for trail in followed) == ["osm:way/3", "osm:way/5"]
+
+
+def test_follow_trail_network_stops_at_the_length_budget(con: psycopg.Connection) -> None:
+    # Ten ~1.1 km same-name segments end to end: the walk must stop at the 15 km cap even though
+    # every hop could keep going, and never overshoot by more than the one segment crossing it.
+    upsert_trails(
+        con,
+        [_named_way(10 + n, "Long", [(47.0 + 0.1 * n, -122.3), (47.0 + 0.1 * (n + 1), -122.3)]) for n in range(40)],
+    )
+    seeds = connected_trails(con, ["osm:way/10"])
+    followed = follow_trail_network(con, seeds)
+    assert sum(trail.length_km or 0.0 for trail in followed) < 15.0 + 12.0
+    assert len(followed) < 39
 
 
 def test_resolve_trail_network_uses_live_topology_when_available(con: psycopg.Connection) -> None:
