@@ -1013,10 +1013,15 @@ def test_backfill_forage_obs_counts_research_grade_fungi_hugging_the_line(con: p
     )
     assert near_line is not None and far_line is not None
     upsert_trails(con, [near_line, far_line])
-    # a trailhead node sitting right on the line - stays NULL (points don't get a count)
+    # a trailhead node on the line: counted along the route it leads along (below), while one
+    # linked to nothing has no route to measure and stays NULL
     th_point = '{"type":"Point","coordinates":[-122.30,47.605]}'
     upsert_trails(
-        con, [("osm:node/9", "Loop TH", "trailhead", "osm", "u", 47.605, -122.30, th_point, None, None, None)]
+        con,
+        [
+            ("osm:node/9", "Loop TH", "trailhead", "osm", "u", 47.605, -122.30, th_point, ["osm:way/1"], None, None),
+            ("osm:node/8", "Orphan TH", "trailhead", "osm", "u", 47.605, -122.30, th_point, None, None, None),
+        ],
     )
     with con.cursor() as cur:
         cur.execute("INSERT INTO taxa (taxon_id, name, rank) VALUES (48701, 'Boletus', 'genus')")
@@ -1034,15 +1039,56 @@ def test_backfill_forage_obs_counts_research_grade_fungi_hugging_the_line(con: p
             ],
         )
 
-    assert backfill_forage_obs(con) == 2  # the two line rows; the trailhead is skipped
+    assert backfill_forage_obs(con) == 3  # the two line rows and the linked trailhead
     loop = get_trail(con, "osm:way/1")
     far = get_trail(con, "osm:way/2")
     th = get_trail(con, "osm:node/9")
     assert loop is not None and loop.forage_obs == 3
     assert far is not None and far.forage_obs == 0
-    assert th is not None and th.forage_obs is None
+    assert th is not None and th.forage_obs == 3
+    orphan = get_trail(con, "osm:node/8")
+    assert orphan is not None and orphan.forage_obs is None
     # oldest-first rotation: a capped pass re-times only the stalest row
-    assert backfill_forage_obs(con, max_trails=1) == 1
+    assert backfill_forage_obs(con, max_trails=1) == 2  # one trailhead + the one stalest line row
+
+
+def test_trailhead_forage_counts_the_whole_route_not_the_node(con: psycopg.Connection) -> None:
+    # The trailhead touches only way 1; the finds are along way 2, which continues the same
+    # trail ~2 km on. Counted around the node they would be 0; along the route they are 2.
+    upsert_trails(
+        con,
+        [
+            _named_way(1, "Ridge", [(47.600, -122.30), (47.610, -122.30)]),
+            _named_way(2, "Ridge", [(47.610, -122.30), (47.630, -122.30)]),
+            (
+                "osm:node/9",
+                "TH",
+                "trailhead",
+                "osm",
+                "u",
+                47.600,
+                -122.30,
+                '{"type":"Point","coordinates":[-122.30,47.600]}',
+                ["osm:way/1"],
+                None,
+                None,
+            ),
+        ],
+    )
+    with con.cursor() as cur:
+        cur.execute("INSERT INTO taxa (taxon_id, name, rank) VALUES (48701, 'Boletus', 'genus')")
+        cur.executemany(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade, obscured)"
+            " VALUES (%s, %s, %s, %s, '2022-09-15', 9, 'research', false)",
+            [(1, 48701, 47.625, -122.3000), (2, 48701, 47.628, -122.3002)],
+        )
+    backfill_forage_obs(con)
+    th = get_trail(con, "osm:node/9")
+    assert th is not None and th.forage_obs == 2
+    with con.cursor() as cur:
+        cur.execute("SELECT route_ids FROM trails WHERE id = 'osm:node/9'")
+        row = cur.fetchone()
+        assert row is not None and sorted(row[0]) == ["osm:way/1", "osm:way/2"]
 
 
 def test_trails_near_dedupes_same_named_trailheads(con: psycopg.Connection) -> None:

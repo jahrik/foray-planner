@@ -1107,13 +1107,23 @@ _FORAGE_OBS_RADIUS_M = 500
 # operator can raise it via ``--limit`` / ``FORAY_FORAGE_LIMIT`` (the scheduler default).
 _FORAGE_BACKFILL_BATCH = 20000
 
-# Only line kinds get a count - a trailhead is a point, and a selected trailhead row draws its
-# *connected* trail line(s), so a 500 m-of-the-node count would mislabel that line. Trailheads
-# keep forage_obs NULL -> tier 0 -> the default line colour. The ``taxa`` genus guard is
-# belt-and-braces: ``sources.ingest`` already drops any observation it can't resolve to a
-# catalog genus, but the homonym-leak machinery (issue #242) means "is a catalog genus" is the
-# honest bar for "counts as a fungi find".
-_FORAGE_BACKFILL_SQL = """
+# Line kinds count observations within the radius of their own line. A trailhead is a point, but
+# the row stands for the trail it leads along, so its count is taken along that whole *route* (its
+# ``connects`` plus the ways ``scoring.follow_trail_network`` walks on to, stored in
+# ``route_ids``) - never the 500 m around the node, which would score the parking lot. The
+# ``taxa`` genus guard is belt-and-braces: ``sources.ingest`` already drops any observation it
+# can't resolve to a catalog genus, but the homonym-leak machinery (issue #242) means "is a
+# catalog genus" is the honest bar for "counts as a fungi find".
+_FORAGE_OBS_COUNT_SQL = """
+        SELECT count(*) FROM observations o
+        WHERE o.geom IS NOT NULL
+          AND o.quality_grade = 'research'
+          AND NOT COALESCE(o.obscured, false)
+          AND o.taxon_id IN (SELECT taxon_id FROM taxa WHERE rank = 'genus')
+          AND ST_DWithin(o.geom, {line}, %s)
+"""
+_FORAGE_BACKFILL_SQL = (
+    """
     WITH batch AS (
         SELECT id FROM trails
         WHERE geom IS NOT NULL AND kind IN ('path', 'road', 'route')
@@ -1121,23 +1131,56 @@ _FORAGE_BACKFILL_SQL = """
         LIMIT %s
     )
     UPDATE trails t SET
-        forage_obs = (
-            SELECT count(*) FROM observations o
-            WHERE o.geom IS NOT NULL
-              AND o.quality_grade = 'research'
-              AND NOT COALESCE(o.obscured, false)
-              AND o.taxon_id IN (SELECT taxon_id FROM taxa WHERE rank = 'genus')
-              AND ST_DWithin(o.geom, t.geom, %s)
-        ),
+        forage_obs = ("""
+    + _FORAGE_OBS_COUNT_SQL.format(line="t.geom")
+    + """),
         forage_obs_at = now()
     FROM batch
     WHERE t.id = batch.id
 """
+)
+# A trailhead walks its route in Python (several queries each), so its pass is far smaller than
+# the set-based one above; the same oldest-first rotation still cycles every trailhead.
+_TRAILHEAD_ROUTE_BATCH = 500
+_TRAILHEAD_BATCH_SQL = """
+    SELECT id FROM trails
+    WHERE kind = 'trailhead' AND geom IS NOT NULL AND connects IS NOT NULL
+    ORDER BY forage_obs_at NULLS FIRST, id
+    LIMIT %s
+"""
+_TRAILHEAD_ROUTE_SQL = (
+    """
+    UPDATE trails t SET
+        route_ids = %s,
+        forage_obs = ("""
+    + _FORAGE_OBS_COUNT_SQL.format(
+        line="(SELECT ST_Collect(r.geom::geometry)::geography FROM trails r WHERE r.id = ANY(%s))"
+    )
+    + """),
+        forage_obs_at = now()
+    WHERE t.id = %s
+"""
+)
+
+
+def _backfill_trailhead_routes(database: psycopg.Connection, limit: int) -> int:
+    """Walk each stale trailhead's route, store it in ``route_ids``, and count the observations
+    along it into ``forage_obs``. Returns the number of trailheads updated."""
+    ids = [row[0] for row in database.execute(_TRAILHEAD_BATCH_SQL, [limit]).fetchall()]
+    for trailhead_id in ids:
+        connects = scoring.get_trail(database, trailhead_id)
+        seeds = scoring.connected_trails(database, (connects.connects if connects else None) or [])
+        route = sorted(
+            {*(seed.id for seed in seeds), *(trail.id for trail in scoring.follow_trail_network(database, seeds))}
+        )
+        database.execute(_TRAILHEAD_ROUTE_SQL, [route or None, route, _FORAGE_OBS_RADIUS_M, trailhead_id])
+    return len(ids)
 
 
 def backfill_forage_obs(con: psycopg.Connection | None = None, *, max_trails: int | None = None) -> int:
     """Refresh ``trails.forage_obs`` - the count of research-grade, non-obscured fungi
-    observations within ``_FORAGE_OBS_RADIUS_M`` of each trail line.
+    observations within ``_FORAGE_OBS_RADIUS_M`` of each trail line - and, for a trailhead, of
+    the whole route it leads along (also recorded in ``route_ids``).
 
     Processes the ``max_trails`` (default ``_FORAGE_BACKFILL_BATCH``) rows whose count is
     oldest, NULLs first, so a frequent small cron cycles the whole table and keeps it roughly
@@ -1146,7 +1189,8 @@ def backfill_forage_obs(con: psycopg.Connection | None = None, *, max_trails: in
     """
     limit = max_trails if max_trails is not None else _FORAGE_BACKFILL_BATCH
     with connection(con) as database:
-        updated = database.execute(_FORAGE_BACKFILL_SQL, [limit, _FORAGE_OBS_RADIUS_M]).rowcount
+        updated = _backfill_trailhead_routes(database, min(limit, _TRAILHEAD_ROUTE_BATCH))
+        updated += database.execute(_FORAGE_BACKFILL_SQL, [limit, _FORAGE_OBS_RADIUS_M]).rowcount
     if updated:
         logger.info("trails: refreshed forage_obs for %d trails", updated)
     return updated

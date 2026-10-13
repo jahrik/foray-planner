@@ -341,7 +341,9 @@ def trails_near(
         lead_join = """
         LEFT JOIN LATERAL (
             SELECT sum(ct.length_km) AS lead_len, bool_or(ct.kind = 'route') AS has_route
-            FROM trails ct WHERE t.connects IS NOT NULL AND ct.id = ANY(t.connects)
+            FROM trails ct
+            WHERE COALESCE(t.route_ids, t.connects) IS NOT NULL
+              AND ct.id = ANY(COALESCE(t.route_ids, t.connects))
         ) lead ON true"""
         lead_select = "lead.lead_len, lead.has_route"
     # Foraging-relevance term: count target-genus observations hugging the trail line. Only for a
@@ -353,12 +355,20 @@ def trails_near(
     relevance_targets = as_targets(con, taxon_ids) if taxon_ids else None
     if sort == "relevance" and relevance_targets is not None and not relevance_targets.covers_all:
         target_sql, target_params = target_filter(relevance_targets, "(o.taxon_id + 0)", "(o.species_id + 0)")
+        # A trailhead is measured along the route it leads along (``route_ids``, else the ways its
+        # node touches), not the 500 m around its node; a line row along its own geometry.
         obs_join: LiteralString = cast(
             LiteralString,
             f"""
         LEFT JOIN LATERAL (
+            SELECT ST_Collect(rt.geom::geometry)::geography AS g
+            FROM trails rt
+            WHERE t.kind = 'trailhead' AND rt.id = ANY(COALESCE(t.route_ids, t.connects))
+        ) route ON true
+        LEFT JOIN LATERAL (
             SELECT count(*) AS n FROM observations o
-            WHERE o.geom IS NOT NULL AND ST_DWithin(o.geom, t.geom, {_OBS_RELEVANCE_RADIUS_M})
+            WHERE o.geom IS NOT NULL
+              AND ST_DWithin(o.geom, COALESCE(route.g, t.geom), {_OBS_RELEVANCE_RADIUS_M})
               AND o.quality_grade = 'research' AND {target_sql}
         ) obs ON true""",
         )
