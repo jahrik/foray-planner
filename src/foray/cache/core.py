@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS trails (
                                      -- rewritten, matching how this file treats SCHEMA as frozen
                                      -- history and _MIGRATIONS as the source of truth.
     connects    TEXT[],              -- trailhead rows only: ids of the path/route trails whose
-                                     -- geometry passes within ~35 m of the node, computed at
+                                     -- geometry passes within ~75 m of the node, computed at
                                      -- ingest so selecting a trailhead draws its trail straight
                                      -- from cache with no live Overpass call (issue #306)
     length_km   DOUBLE PRECISION,    -- path/route rows: great-circle length of the full polyline

@@ -111,7 +111,10 @@ jobs:
         with:
           python-version: "3.13"
 
+      # Normally ~2.5 min; it took 11.5 min once (2026-10-13) with no output to say slow or hung.
+      # A stall should fail the deploy in minutes, not sit for the 6 h job default.
       - name: Install Ansible
+        timeout-minutes: 20
         working-directory: infra/ansible
         run: |
           pip install uv
@@ -125,6 +128,7 @@ jobs:
           chmod 600 ~/.ssh/foray_deploy_key
 
       - name: Allow this runner's IP through the DO firewall
+        timeout-minutes: 10
         working-directory: infra/ansible
         env:
           DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
@@ -147,6 +151,7 @@ jobs:
       # and cutting ssh-keyscan's ~4 connection attempts keeps the deploy step's own connection
       # comfortably clear of the rate limit.
       - name: Deploy
+        timeout-minutes: 30
         working-directory: infra/ansible
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"

@@ -13,7 +13,7 @@ import type {
   RecentObservationsPage,
   Trail,
 } from "../api/types";
-import { FORAGE_HI_THRESHOLD } from "../map/forage";
+import { highlightCutoff } from "../map/forage";
 import { gradeLabel, seasonalNote } from "../map/trail-attrs";
 import { directionsLink } from "../map/directions";
 import { selectTrailhead } from "../map/layers";
@@ -251,6 +251,7 @@ export async function loadTrailheadsInto(
     selectTrailhead(trailhead);
     pinAction.select({ kind: "trail", id: trailhead.id, name: trailhead.name });
   };
+  const hiCutoff = highlightCutoff(trailheads.map((trailhead) => trailhead.forage_obs));
   trailheads.forEach((trailhead) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -281,7 +282,7 @@ export async function loadTrailheadsInto(
       ]
         .filter(Boolean)
         .join(" · ");
-      if (trailhead.forage_obs >= FORAGE_HI_THRESHOLD) button.classList.add("forage-hi");
+      if (trailhead.forage_obs >= hiCutoff) button.classList.add("forage-hi");
     }
     // A snow gate / winter closure / fire-season gate - the road isn't open year-round. We don't
     // resolve the condition against today's date, just flag it and carry the raw OSM condition.

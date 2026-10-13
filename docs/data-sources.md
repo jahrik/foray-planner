@@ -126,7 +126,7 @@ against a shared API, timed out, and never picked up OSM edits after the first p
   - **Query quirk:** inside a `(...)` union, Overpass's `out geom` returns a relation with only
     `bounds` and no members, so the route clause gets its own `out geom;` after the way/node
     union - without it, `kind='route'` rows silently never appear.
-  - **Preload link:** at ingest, each trailhead node is snapped (≤35 m, point-to-segment) onto
+  - **Preload link:** at ingest, each trailhead node is snapped (≤75 m, point-to-segment; with nothing that close, the single nearest line within 150 m) onto
     the trail polylines in the payload and the matched trail ids are stored in `trails.connects`
     - expanded to every way sharing that feature's `name`, or its `ref`+`operator` for an
     unnamed forest road (OSM splits `FR 300` into dozens of ref-only segments). Selecting a

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { FORAGE_HI_THRESHOLD, FORAGE_RAMP, FORAGE_TIER_LABELS, forageTier } from "./forage";
+import { FORAGE_HI_THRESHOLD, FORAGE_RAMP, FORAGE_TIER_LABELS, forageTier, highlightCutoff } from "./forage";
 
 describe("forageTier", () => {
   it("maps a null / undefined count to the unknown tier", () => {
@@ -23,5 +23,25 @@ describe("forageTier", () => {
       expect(FORAGE_TIER_LABELS[tier - 1]).toContain("records nearby");
     }
     expect(forageTier(FORAGE_HI_THRESHOLD)).toBe(3);
+  });
+});
+
+describe("highlightCutoff", () => {
+  it("falls back to the absolute floor with no known counts", () => {
+    expect(highlightCutoff([])).toBe(FORAGE_HI_THRESHOLD);
+    expect(highlightCutoff([null, undefined, 0])).toBe(FORAGE_HI_THRESHOLD);
+  });
+
+  it("never drops below the floor, so a quiet area does not light up one-record rows", () => {
+    expect(highlightCutoff([1, 1, 2, 3, 4])).toBe(FORAGE_HI_THRESHOLD);
+  });
+
+  it("rises to the top quarter in a dense area so the highlight still separates rows", () => {
+    const dense = [94, 107, 159, 166, 172, 328, 383, 399, 419, 593, 1256, 2030];
+    const cutoff = highlightCutoff(dense);
+    expect(cutoff).toBeGreaterThan(FORAGE_HI_THRESHOLD);
+    const lit = dense.filter((count) => count >= cutoff).length;
+    expect(lit).toBeLessThanOrEqual(Math.ceil(dense.length / 4) + 1);
+    expect(lit).toBeGreaterThan(0);
   });
 });
