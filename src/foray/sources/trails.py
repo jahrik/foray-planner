@@ -820,6 +820,7 @@ def resolve_trail_network(
         merged = _merge_connected(trail, segments) or trail
         if merged.geometry is None:  # no cached geometry at all - a real 404, per the contract below
             return None
+        (merged,) = scoring.with_live_forage(con, [merged])
         return scoring.TrailPath(trail=merged, authoritative=True)
 
     trailhead = trail
@@ -827,6 +828,7 @@ def resolve_trail_network(
         seeds = scoring.connected_trails(con, trailhead.connects)
         merged = _merge_connected(trailhead, [*seeds, *scoring.follow_trail_network(con, seeds)])
         if merged is not None:
+            (merged,) = scoring.with_live_forage(con, [merged])
             return scoring.TrailPath(trail=merged, authoritative=True)
 
     node_id = _parse_trailhead_id(trailhead_id)

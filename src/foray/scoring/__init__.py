@@ -47,6 +47,7 @@ from foray.scoring.queries import (
     resolve_pin,
     trail_segments_by_name,
     trails_near,
+    with_live_forage,
 )
 from foray.scoring.ranking import rank_destinations, rank_destinations_corridor
 from foray.scoring.regions import build_phenology
@@ -82,4 +83,5 @@ __all__ = [
     "resolve_pin",
     "trail_segments_by_name",
     "trails_near",
+    "with_live_forage",
 ]

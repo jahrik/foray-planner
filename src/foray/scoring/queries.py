@@ -481,7 +481,46 @@ def trails_near(
         )
         for row in candidates
     ]
-    return trails[:limit] if limit is not None else trails
+    return with_live_forage(con, trails[:limit] if limit is not None else trails)
+
+
+_LIVE_FORAGE_MAX_ROWS = 80  # rows per call that get a live count; the rest wait for the backfill
+
+_LIVE_FORAGE_SQL: LiteralString = f"""
+    SELECT t.id, (
+        SELECT count(*) FROM observations o
+        WHERE o.geom IS NOT NULL AND o.quality_grade = 'research'
+          AND NOT COALESCE(o.obscured, false)
+          AND o.taxon_id IN (SELECT taxon_id FROM taxa WHERE rank = 'genus')
+          AND ST_DWithin(o.geom, COALESCE(route.g, t.geom), {_OBS_RELEVANCE_RADIUS_M})
+    )
+    FROM trails t
+    LEFT JOIN LATERAL (
+        SELECT ST_Collect(rt.geom::geometry)::geography AS g
+        FROM trails rt
+        WHERE t.kind = 'trailhead' AND rt.id = ANY(COALESCE(t.route_ids, t.connects))
+    ) route ON true
+    WHERE t.id = ANY(%s) AND t.geom IS NOT NULL
+"""
+
+
+def with_live_forage(con: psycopg.Connection, trails: list[Trail]) -> list[Trail]:
+    """``trails`` with ``forage_obs`` counted now for rows the nightly backfill has not reached.
+
+    The persisted count rotates through ~1M rows over weeks, so a freshly ingested (or just
+    re-linked) trail would show no foraging hint at all. A row that is listed or selected gets its
+    count here instead - same rule as the backfill (research-grade, non-obscured, a catalogued
+    genus, within the relevance radius of the line, or of a trailhead's whole route) - for at
+    most ``_LIVE_FORAGE_MAX_ROWS`` rows per call. Read-only: nothing is persisted.
+    """
+    missing = [trail.id for trail in trails if trail.forage_obs is None][:_LIVE_FORAGE_MAX_ROWS]
+    if not missing:
+        return trails
+    counts = dict(con.execute(_LIVE_FORAGE_SQL, [missing]).fetchall())
+    return [
+        replace(trail, forage_obs=counts[trail.id]) if trail.forage_obs is None and trail.id in counts else trail
+        for trail in trails
+    ]
 
 
 def _base_trail(

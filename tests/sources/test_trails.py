@@ -1052,6 +1052,20 @@ def test_backfill_forage_obs_counts_research_grade_fungi_hugging_the_line(con: p
     assert backfill_forage_obs(con, max_trails=1) == 2  # one trailhead + the one stalest line row
 
 
+def test_listed_trails_get_a_live_forage_count_before_the_backfill_reaches_them(con: psycopg.Connection) -> None:
+    upsert_trails(con, [_named_way(1, "Loop", [(47.600, -122.30), (47.610, -122.30)])])
+    with con.cursor() as cur:
+        cur.execute("INSERT INTO taxa (taxon_id, name, rank) VALUES (48701, 'Boletus', 'genus')")
+        cur.execute(
+            "INSERT INTO observations (id, taxon_id, lat, lng, observed_on, month, quality_grade, obscured)"
+            " VALUES (1, 48701, 47.605, -122.3002, '2022-09-15', 9, 'research', false)"
+        )
+    stored = get_trail(con, "osm:way/1")
+    assert stored is not None and stored.forage_obs is None  # never backfilled
+    listed = trails_near(con, lat=47.605, lng=-122.30, radius_km=5.0)
+    assert [trail.forage_obs for trail in listed] == [1]
+
+
 def test_trailhead_forage_counts_the_whole_route_not_the_node(con: psycopg.Connection) -> None:
     # The trailhead touches only way 1; the finds are along way 2, which continues the same
     # trail ~2 km on. Counted around the node they would be 0; along the route they are 2.
