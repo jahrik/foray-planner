@@ -35,7 +35,7 @@ dependencies = [
     # foray job ...`), so there's no separate CLI-only image to move this out of.
     "rasterio>=1.5.2,<2.0",
     # sources/satellite.py stitches Esri XYZ map tiles into one raster per destination.
-    "pillow>=12.3.0,<13.0",
+    "pillow>=13.0.0,<14.0",
     "sentry-sdk>=2.72.0",
     # schedule.py parses jobs.yaml (issue #332 PR 2) - already a transitive dep, declared
     # explicit since the app now imports it directly.
