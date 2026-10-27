@@ -383,8 +383,8 @@ The Dockerfile uses a three-stage build:
 | Stage | Base | What it does |
 |---|---|---|
 | `frontend` | `node:26-slim` | `npm ci` + `npm run build` -> emits the Vite/TS bundle |
-| `builder` | `ghcr.io/astral-sh/uv:python3.13-bookworm-slim` | `uv sync --frozen --no-dev` -> self-contained `.venv` |
-| `runtime` | `python:3.13-slim-bookworm` | Copies app + venv + bundle, adds `libexpat1` and `gdal-bin`; runs as non-root uid 1000 |
+| `builder` | `ghcr.io/astral-sh/uv:python3.14-bookworm-slim` | `uv sync --frozen --no-dev` -> self-contained `.venv` |
+| `runtime` | `python:3.14-slim-bookworm` | Copies app + venv + bundle, adds `libexpat1` and `gdal-bin`; runs as non-root uid 1000 |
 
 No local volume - the database is Postgres, reached entirely via env vars.
 Port: `8000`.

@@ -15,7 +15,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # ---- builder: resolve + install deps and the project with uv ----
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim AS builder
 
 # Byte-compile for faster cold starts; copy (not symlink) so /app/.venv is self-contained;
 # use the image's system Python rather than a uv-managed download (keeps the venv's python
@@ -39,7 +39,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
 # ---- runtime: slim image, non-root, app + venv only ----
-FROM python:3.15-slim-bookworm AS runtime
+FROM python:3.14-slim-bookworm AS runtime
 
 # No local volume needed: the DB is Postgres, reached via the standard PGHOST/PGPORT/PGUSER/
 # PGPASSWORD/PGDATABASE env vars (never baked into the image). No fixed target-genus list

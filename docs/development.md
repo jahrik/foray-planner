@@ -164,8 +164,8 @@ docker build -t local/foray-planner:dev .
 ```
 
 The Dockerfile has three stages: the frontend build (`node:26-slim`), the Python build
-(`uv` on `python3.13-bookworm-slim`, producing a self-contained `.venv`) and a lean runtime
-(`python:3.13-slim-bookworm` plus `libexpat1` and `gdal-bin`, running as uid 1000, no volume). The same
+(`uv` on `python3.14-bookworm-slim`, producing a self-contained `.venv`) and a lean runtime
+(`python:3.14-slim-bookworm` plus `libexpat1` and `gdal-bin`, running as uid 1000, no volume). The same
 image runs the web server, every scheduled job and the bulk stagers. Production details are in
 [deployment.md](deployment.md).
 
