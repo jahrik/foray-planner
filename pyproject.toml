@@ -13,12 +13,12 @@ dependencies = [
     # longer re-exports the BucketFullException 0.21.0 imports).
     "pyinaturalist>=0.21.1,<1.0",
     "psycopg[binary,pool]>=3.3.6,<4.0",
-    "fastapi>=0.142.2,<1.0",
+    "fastapi>=0.156.4,<1.0",
     # Pulled in transitively by starlette; declared explicitly because api/app.py imports it
     # directly to cap the sync-handler thread pool to the DB pool size.
     "anyio>=4.15.1,<5.0",
     "uvicorn[standard]>=0.54.0,<1.0",
-    "pydantic-settings>=2.15.0,<3.0",
+    "pydantic-settings>=2.16.1,<3.0",
     "click>=8.5.0,<9.0",
     "httpx>=0.27,<1.0",
     # inat.py imports requests.exceptions directly (to catch and re-raise as typed errors);
@@ -35,24 +35,24 @@ dependencies = [
     # foray job ...`), so there's no separate CLI-only image to move this out of.
     "rasterio>=1.5.2,<2.0",
     # sources/satellite.py stitches Esri XYZ map tiles into one raster per destination.
-    "pillow>=12.3.0,<13.0",
-    "sentry-sdk>=2.71.0",
+    "pillow>=13.0.0,<14.0",
+    "sentry-sdk>=2.72.0",
     # schedule.py parses jobs.yaml (issue #332 PR 2) - already a transitive dep, declared
     # explicit since the app now imports it directly.
     "pyyaml>=6.0,<7.0",
     # spaces.py: S3-compatible client for DO Spaces (issue #334 PR 1) - region_satellite's
     # rasters and the bulk-snapshot staging path.
-    "boto3>=1.43.108,<2.0",
+    "boto3>=1.43.116,<2.0",
     # ingest_bulk.py's future loaders (issue #334 PR 3, #335) query staged Parquet/GPKG
     # snapshots directly rather than loading them into Python first.
     "duckdb>=1.5.6,<2.0",
     # issue #359: the standard bulk-snapshot format (write_snapshot_parquet/read_snapshot_parquet
     # in foray.spaces) is Parquet, streamed via pyarrow.parquet.ParquetWriter/ParquetFile.
-    "pyarrow>=25.0.1,<26.0",
+    "pyarrow>=26.0.0,<27.0",
     # usfs_trails.py's trail_geometry column: WKB bytes in the Parquet snapshot (compact, no
     # per-row JSON re-parse) round-tripped to/from the GeoJSON text the trails table's
     # ST_GeomFromGeoJSON trigger expects (see cache.upsert_trails).
-    "shapely>=2.0,<3.0",
+    "shapely>=2.2.0,<3.0",
     # inat_bulk.py streams the live DwC-A archive as a single continuous GET and parses it
     # forward-only (no seeking to the central directory) - see that module's docstring for why
     # this replaced range reads. Zip64-aware, which observations.csv needs.
@@ -69,7 +69,7 @@ dependencies = [
     "prometheus-client>=0.21,<1.0",
     # osm_trails.py (issue #442): reads Geofabrik .osm.pbf extracts in the bulk stager - the
     # libosmium bindings, with node-location indexing to build way geometry.
-    "osmium>=4.0,<5.0",
+    "osmium>=4.3.2,<5.0",
 ]
 
 [project.scripts]
@@ -81,11 +81,11 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "pre-commit>=4.6.2,<5.0",
+    "pre-commit>=4.7.0,<5.0",
     "pytest>=8.3,<10.0",
     "pytest-cov>=6.0,<8.0",
-    "ruff>=0.16.10,<1.0",
-    "ty>=0.0.85,<1.0",
+    "ruff>=0.17.1,<1.0",
+    "ty>=0.0.90,<1.0",
     "vulture>=2.14,<3.0",
 ]
 
