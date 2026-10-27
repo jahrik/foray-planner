@@ -8,6 +8,10 @@ updates:
       python-dependencies:
         patterns:
           - "*"
+      python-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
 
   - package-ecosystem: uv
     directory: /infra/ansible
@@ -15,6 +19,10 @@ updates:
       interval: weekly
     groups:
       ansible-dependencies:
+        patterns:
+          - "*"
+      ansible-security:
+        applies-to: security-updates
         patterns:
           - "*"
 
@@ -26,13 +34,25 @@ updates:
       frontend-dependencies:
         patterns:
           - "*"
+      frontend-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    groups:
+      docker-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions-dependencies:
+        patterns:
+          - "*"
