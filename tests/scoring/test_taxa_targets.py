@@ -99,17 +99,21 @@ def _seed(con: psycopg.Connection) -> None:
     rows: list[tuple] = []
     obs_id = 1
 
-    def add(count: int, genus: int, species: int | None, lat: float, lng: float, day: dt.date) -> None:
+    def add(
+        count: int, genus: int, species: int | None, lat: float, lng: float, day: dt.date, month: int | None = None
+    ) -> None:
         nonlocal obs_id
         for _ in range(count):
-            rows.append((obs_id, genus, species, lat, lng, day, day.month, "research", 10, False))
+            rows.append((obs_id, genus, species, lat, lng, day, month or day.month, "research", 10, False))
             obs_id += 1
 
     add(6, AMANITA, MUSCARIA, APR_LAT, APR_LNG, dt.date(2022, 4, 15))
     add(4, AMANITA, PANTHERINA, APR_LAT, APR_LNG, dt.date(2022, 4, 16))
     add(5, AMANITA, None, APR_LAT, APR_LNG, dt.date(2022, 4, 17))  # genus-only identifications
     add(7, CANTHARELLUS, None, OCT_LAT, OCT_LNG, dt.date(2022, 10, 15))
-    add(2, AMANITA, PANTHERINA, APR_LAT, APR_LNG, today)  # fresh, precise: feeds alerts / pins
+    # Fresh, precise: feeds alerts / pins. Its month is pinned to April so it is always inside the
+    # ranked months (4, 10); `today.month` would drop it out of every run outside April and October.
+    add(2, AMANITA, PANTHERINA, APR_LAT, APR_LNG, today, month=4)
     with con.cursor() as cur:
         cur.executemany(
             "INSERT INTO observations (id, taxon_id, species_id, lat, lng, observed_on, month, quality_grade,"
