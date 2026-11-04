@@ -578,7 +578,10 @@ def fire_cmd(ctx: click.Context) -> None:
     "--batch-size",
     default=2000,
     show_default=True,
-    help="How many of the oldest/never-checked cached observations to re-fetch per batch.",
+    help=(
+        "How many cached observations to re-fetch per batch: those still missing a species "
+        "first, then the oldest/never-checked."
+    ),
 )
 @click.option(
     "--until-done",
@@ -594,9 +597,9 @@ def fire_cmd(ctx: click.Context) -> None:
 )
 @click.pass_context
 def resync_cmd(ctx: click.Context, batch_size: int, until_done: bool) -> None:
-    """Re-check the observations cache against iNat, oldest/never-checked first - the only path
-    that eventually trues up every column (including `obscured`, never set by the bulk
-    historical import) and catches a misidentification too rare within its genus for
+    """Re-check the observations cache against iNat, rows still missing a species first and then
+    oldest/never-checked - the only path that eventually trues up every column (including
+    `obscured`, never set by the bulk historical import) and catches a misidentification too rare within its genus for
     `revalidate`'s ratio check to flag. Meant to run frequently in small batches on a schedule
     (the hourly `resync` job in jobs.yaml), grinding through the whole cache over time - or pass
     --until-done for a one-off run that doesn't stop until the whole cache is caught up."""
@@ -612,7 +615,9 @@ def resync_cmd(ctx: click.Context, batch_size: int, until_done: bool) -> None:
         # checked-this-run rows are always exhausted before any repeat appears, so once
         # cumulative `checked` reaches the row count observed at the start, every row that
         # existed then has been re-verified at least once (a handful of ids in the final batch
-        # may be benign repeats, not missed rows).
+        # may be benign repeats, not missed rows). The species-less rows `stale_observation_ids`
+        # takes first don't break that: a check stamps `revalidated_at`, which moves a row
+        # that stays species-less out of the priority window, so none repeats within a run.
         target = observation_count(con)
         total_checked = total_purged = total_reassigned = 0
         try:

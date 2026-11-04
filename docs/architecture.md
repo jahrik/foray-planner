@@ -251,7 +251,7 @@ History is loaded in bulk instead (next section). Three re-check passes keep the
 | Pass | What it fixes |
 |---|---|
 | `revalidate` | A handful of fungal genera share a name with an animal genus (fungal *Olla* vs. the ladybug genus). If the cached count for a genus drifts from iNaturalist's live count, re-fetch just those rows and purge or reassign anything no longer Fungi. |
-| `resync` | A slow, hourly sweep of the **whole** table, oldest-checked first. The only path that eventually verifies every column, including `obscured`, and catches a misidentification too rare for `revalidate`'s ratio to flag. |
+| `resync` | A slow, hourly sweep of the **whole** table, oldest-checked first, except that rows still missing a `species_id` go ahead of the rest: the bulk snapshot holds openly licensed observations only, so this is the only way a cached row it never contained gets its species. The only path that eventually verifies every column, including `obscured`, and catches a misidentification too rare for `revalidate`'s ratio to flag. |
 | backfills | Elevation (`backfill-elevation-dem`, with the Open-Meteo `backfill-elevation` as a safety net) and antecedent rain (`backfill-precip`), drained from the activity-weighted `backfill_queue` so cells people actually look at fill first. |
 
 ### The three delivery patterns

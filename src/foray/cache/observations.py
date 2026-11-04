@@ -229,17 +229,32 @@ def delete_observations(con: psycopg.Connection, ids: Sequence[int]) -> int:
     return len(ids)
 
 
+# How long a row still lacking a ``species_id`` goes unchecked before ``stale_observation_ids``
+# puts it back at the head of the queue. A row whose live identification really is coarser than
+# species (genus, complex, section) stays untagged after every check, so without this window it
+# would be picked ahead of the whole table forever and starve the rest of the grind.
+_UNTAGGED_RECHECK_DAYS = 7
+
+
 def stale_observation_ids(con: psycopg.Connection, limit: int) -> list[int]:
-    """The next batch for ``ingest.resync``'s full-table grind: never-live-checked rows first
-    (``revalidated_at IS NULL`` - every bulk-historical-import row starts this way), then the
-    longest-since-checked. Unlike ``suspect_genus_taxon_ids`` (targeted at one known failure
-    pattern), this is what eventually re-verifies every column of every cached row against iNat,
-    including ``obscured`` (never set by the bulk import) and misidentifications too rare within
-    their genus to trip the ratio-based suspect check.
+    """The next batch for ``ingest.resync``'s full-table grind. Rows without a ``species_id`` that
+    were never checked, or last checked over ``_UNTAGGED_RECHECK_DAYS`` ago, come first: the
+    bulk snapshot only holds openly licensed observations, so a row it never contained can only
+    pick up its species from a live re-check (issue #472). The rest of the batch is the plain
+    grind: never-live-checked rows (``revalidated_at IS NULL`` - every bulk-historical-import
+    row starts this way), then the longest-since-checked. Unlike ``suspect_genus_taxon_ids``
+    (targeted at one known failure pattern), the grind is what eventually re-verifies every
+    column of every cached row against iNat, including ``obscured`` (never set by the bulk
+    import) and misidentifications too rare within their genus to trip the ratio-based suspect
+    check.
     """
+    # One sort on the priority flag, not a second query that excludes the first one's ids: an
+    # `id <> ALL(array)` filter compares every row against every id and took seconds on dev.
     rows = con.execute(
-        "SELECT id FROM observations ORDER BY revalidated_at ASC NULLS FIRST LIMIT %s",
-        [limit],
+        "SELECT id FROM observations ORDER BY"
+        " (species_id IS NULL AND (revalidated_at IS NULL OR revalidated_at < now() - make_interval(days => %s))) DESC,"
+        " revalidated_at ASC NULLS FIRST LIMIT %s",
+        [_UNTAGGED_RECHECK_DAYS, limit],
     ).fetchall()
     return [row[0] for row in rows]
 

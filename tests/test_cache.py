@@ -218,6 +218,54 @@ def test_stale_observation_ids_respects_limit(con: psycopg.Connection) -> None:
     assert len(stale_observation_ids(con, limit=2)) == 2
 
 
+def _set_check_state(con: psycopg.Connection, obs_id: int, *, species_id: int | None, days_ago: int | None) -> None:
+    """Pin one cached row's ``species_id`` and how long ago it was last live-checked (None = never)."""
+    con.execute(
+        "UPDATE observations SET species_id = %s,"
+        " revalidated_at = CASE WHEN %s::int IS NULL THEN NULL ELSE now() - make_interval(days => %s::int) END"
+        " WHERE id = %s",
+        [species_id, days_ago, days_ago, obs_id],
+    )
+
+
+def test_stale_observation_ids_puts_untagged_rows_ahead_of_older_tagged_rows(con: psycopg.Connection) -> None:
+    for obs_id in (1, 2, 3):
+        _insert(con, (obs_id, 111, *_ROW[2:]))
+    # The tagged row was checked longest ago, so the plain grind would take it first; the two
+    # untagged rows (one never checked, one checked a month ago) must still come ahead of it.
+    _set_check_state(con, 1, species_id=500, days_ago=90)
+    _set_check_state(con, 2, species_id=None, days_ago=30)
+    _set_check_state(con, 3, species_id=None, days_ago=None)
+
+    assert stale_observation_ids(con, limit=2) == [3, 2]
+    assert stale_observation_ids(con, limit=3) == [3, 2, 1]
+
+
+def test_stale_observation_ids_leaves_a_recently_checked_untagged_row_to_the_grind(con: psycopg.Connection) -> None:
+    """A row whose live identification really is coarser than species stays untagged after every
+    check; without the recheck window it would head the queue forever."""
+    for obs_id in (1, 2):
+        _insert(con, (obs_id, 111, *_ROW[2:]))
+    _set_check_state(con, 1, species_id=500, days_ago=90)
+    _set_check_state(con, 2, species_id=None, days_ago=1)
+
+    assert stale_observation_ids(con, limit=1) == [1]
+    assert stale_observation_ids(con, limit=2) == [1, 2]
+
+
+def test_stale_observation_ids_never_repeats_an_id_when_filling_from_the_grind(con: psycopg.Connection) -> None:
+    for obs_id in range(1, 6):
+        _insert(con, (obs_id, 111, *_ROW[2:]))
+    _set_check_state(con, 1, species_id=None, days_ago=30)
+    for obs_id in (2, 3, 4, 5):
+        _set_check_state(con, obs_id, species_id=500, days_ago=40 - obs_id)
+
+    batch = stale_observation_ids(con, limit=4)
+
+    assert batch == [1, 2, 3, 4]
+    assert len(set(stale_observation_ids(con, limit=10))) == 5
+
+
 def test_observation_taxon_ids_maps_current_cached_taxon(con: psycopg.Connection) -> None:
     _insert(con, (1, 111, *_ROW[2:]))
     _insert(con, (2, 222, *_ROW[2:]))
