@@ -74,7 +74,10 @@ planner), `api/` (FastAPI). Root-level modules are the shared leaves: `config`, 
   only genus taxon_ids flagged by `cache.suspect_genus_taxon_ids` (cached-count vs.
   `taxa.observations_count`, DB-only, no iNat call) and re-fetches just those cached
   observations to purge/reassign anything no longer Fungi. `resync()` is the slower complement:
-  a whole-table grind, one small batch per call, oldest/never-live-checked first
+  a whole-table grind, one small batch per call, oldest/never-live-checked first - except that
+  rows still missing a `species_id` (never checked, or unchecked for 7 days) go ahead of the
+  rest, since the bulk snapshot only holds openly licensed observations and a live re-check is
+  the only way a row it never contained gets its species (issue #472)
   (`cache.stale_observation_ids`, driven by the `revalidated_at` column both functions stamp via
   `cache.mark_revalidated`) - it's the only path that eventually re-verifies every column of
   every row, including `obscured` (never set by the bulk historical import) and

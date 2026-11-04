@@ -70,7 +70,7 @@ beyond the incremental window arrives through the bulk path, below.
 | Command | What it does |
 |---|---|
 | `foray revalidate` | Re-check observations under genera whose cached count has drifted from iNaturalist's live count; purge or reassign those misfiled under a same-named animal genus. |
-| `foray resync [--batch-size N] [--until-done]` | Re-check the whole cache against iNaturalist, oldest-checked first. The only path that verifies every column, including `obscured`. One batch by default (the scheduler runs it hourly); `--until-done` loops until every row has been checked once, for a deliberate catch-up after a data bug. |
+| `foray resync [--batch-size N] [--until-done]` | Re-check the whole cache against iNaturalist, oldest-checked first, except that rows still missing a `species_id` (never checked, or unchecked for 7 days) go ahead of the rest. The only path that verifies every column, including `obscured`. One batch by default (the scheduler runs it hourly); `--until-done` loops until every row has been checked once, for a deliberate catch-up after a data bug. |
 | `foray prune-duplicates` | Fold duplicate campsites and trailheads cached before the dedup rules existed, tile by tile. Run it detached on a large database. |
 
 ## Bulk snapshots

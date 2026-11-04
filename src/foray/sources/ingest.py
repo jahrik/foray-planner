@@ -692,10 +692,11 @@ def resync(
     progress_cb: Callable[[str, float], None] | None = None,
     abort_event: threading.Event | None = None,
 ) -> dict[str, int]:
-    """Re-check one batch of the *whole* observations table against iNat, oldest/never-checked
-    first (``cache.stale_observation_ids``). Meant to run frequently with a small batch (the hourly
-    ``resync`` job in ``jobs.yaml``) so it grinds through every cached row
-    over time without front-loading a multi-hour iNat pull onto one run.
+    """Re-check one batch of the *whole* observations table against iNat: rows still missing a
+    ``species_id`` first (the bulk snapshot never held them, so only a live check can tag them -
+    issue #472), then oldest/never-checked (``cache.stale_observation_ids``). Meant to run
+    frequently with a small batch (the hourly ``resync`` job in ``jobs.yaml``) so it grinds
+    through every cached row over time without front-loading a multi-hour iNat pull onto one run.
 
     ``revalidate`` only targets genus taxon_ids whose cached-vs-live ratio trips (a genus that's
     *almost entirely* misidentified); it can't catch a genus where misidentified rows are a

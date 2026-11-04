@@ -44,7 +44,7 @@ Each entry:
 | `dispersed-coverage` | `dispersed --all` | 168 h | night | OSM-reported dispersed camping, coverage-wide |
 | `genera` | `genera-refresh` | 168 h | night | Genera and the ranks above them, with iNaturalist's observation counts (drives `revalidate` and the genus icons) |
 | `revalidate` | `revalidate` | 168 h | night | Purges or reassigns observations misfiled under a same-named animal genus |
-| `resync` | `resync --batch-size 2000` | 1 h | any | A rolling re-check of the whole observation cache against iNaturalist, oldest first |
+| `resync` | `resync --batch-size 2000` | 1 h | any | A rolling re-check of the whole observation cache against iNaturalist, oldest first; rows still missing a `species_id` go ahead of the rest |
 | `elevation-backfill` | `backfill-elevation --limit 20000 --no-rebuild` | 1 h | any | Elevation via Open-Meteo; now a safety net for rows the DEM job cannot reach |
 | `elevation-backfill-dem` | `backfill-elevation-dem` | 24 h | night | Elevation from local Copernicus GLO-90 tiles; the fast steady-state path |
 | `precip-backfill` | `backfill-precip` | 24 h | any | Antecedent rain (7 and 30 days before each observation), from ERA5 |

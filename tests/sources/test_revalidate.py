@@ -174,6 +174,36 @@ def test_resync_checks_a_batch_regardless_of_suspect_status(con: psycopg.Connect
     assert result == {"checked": 2, "purged": 0, "reassigned": 0}
 
 
+def test_resync_tags_species_on_untagged_rows_first_and_leaves_tagged_rows_alone(
+    con: psycopg.Connection, cfg_with_home: Settings
+) -> None:
+    """Issue #472: a row the bulk snapshot never held stays genus-only until a live re-check sees
+    its species. ``resync`` takes such rows ahead of the grind, and a row that already has its
+    species is neither fetched nor changed."""
+    upsert_observations(con, [_cached_row(1, taxon_id=CANTHARELLUS), _cached_row(2, taxon_id=CANTHARELLUS)])
+    # obs 2 already has a species and was never checked, so the plain grind would take it first;
+    # obs 1 is genus-only and was last checked a month ago.
+    con.execute("UPDATE observations SET species_id = 777777 WHERE id = 2")
+    con.execute("UPDATE observations SET revalidated_at = now() - interval '30 days' WHERE id = 1")
+
+    with patch("foray.sources.ingest.fetch_observations") as mock_fetch:
+        mock_fetch.return_value = [
+            _live_obs(
+                1,
+                iconic_taxon_id=47170,
+                taxon_id=555555,
+                rank="species",
+                ancestor_ids=[47170, CANTHARELLUS, 555555],
+            ),
+        ]
+        result = resync(cfg_with_home, con, batch_size=1)
+
+    assert mock_fetch.call_args[0][0] == [1]
+    assert result == {"checked": 1, "purged": 0, "reassigned": 0}
+    species = dict(con.execute("SELECT id, species_id FROM observations").fetchall())
+    assert species == {1: 555555, 2: 777777}
+
+
 def test_resync_reassigns_across_a_mixed_genus_batch(con: psycopg.Connection, cfg_with_home: Settings) -> None:
     """A resync batch can span many different genera at once (unlike revalidate, which only
     ever looks at one genus's ids per call) - reassignment must be judged per-id against each

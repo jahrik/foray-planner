@@ -541,8 +541,10 @@ checking the issue's own text first - see AGENTS.md's Conventions section.
     resolves that `taxonID` through `taxa` by rank - the genus ancestor into `observations.taxon_id`,
     the species ancestor (if identified to species or finer) into `species_id` - and inserts rows
     not already cached; an id missing from `taxa` is counted and skipped. It also fills `species_id`
-    on already-cached rows that lack one, so the ~2M rows cached before the column existed pick it
-    up over the weekly loads. `taxa` must load first (`ingest-bulk taxa`). A snapshot staged before
+    on already-cached rows that lack one, but only rows that are in the snapshot. The export
+    carries openly licensed observations only (rows iNat lists as all rights reserved never
+    appear in it), so a cached row it never contained keeps only its genus until `resync` - which
+    re-checks rows missing a `species_id` ahead of the rest - sees its species live. `taxa` must load first (`ingest-bulk taxa`). A snapshot staged before
     this change has no `taxonID`: the loader matches the genus *name* against `taxa` until the next
     weekly stage replaces it. Replaces the old manual
     `just bulk-download`/`bulk-filter`/`bulk-load` + `scripts/inat_dwca_filter.py` /
